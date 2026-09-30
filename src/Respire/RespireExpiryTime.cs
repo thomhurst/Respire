@@ -3,10 +3,10 @@ namespace Respire;
 /// <summary>The resolution requested from an absolute expiry-time command.</summary>
 public enum ExpiryTimePrecision
 {
-    /// <summary>Preserve millisecond resolution (HPEXPIRETIME).</summary>
+    /// <summary>Preserve millisecond resolution (PEXPIRETIME/HPEXPIRETIME).</summary>
     Milliseconds,
 
-    /// <summary>Use whole-second resolution, rounded up by the server (HEXPIRETIME).</summary>
+    /// <summary>Use the server's whole-second resolution (EXPIRETIME/HEXPIRETIME).</summary>
     Seconds,
 }
 

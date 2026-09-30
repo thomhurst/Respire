@@ -23,6 +23,13 @@
 
 ### Breaking API changes
 
+- `IKeyCommands` and `IBatchKeyCommands` add absolute expiration and OBJECT metadata
+  members. External implementations, decorators, and mocks must implement or forward
+  `ExpiryTimeAsync`/`ExpiryTime` (both overloads), `EncodingAsync`/`Encoding`,
+  `IdleTimeAsync`/`IdleTime`, `FrequencyAsync`/`Frequency`, and
+  `ReferenceCountAsync`/`ReferenceCount`. These APIs are mirrored by batches and
+  transactions. See the [key metadata guide](../website/docs/commands/strings-and-keys.md#absolute-expiration-and-object-metadata).
+
 - Count-based set and sorted-set pops are now named `PopManyAsync(key, count, ...)`.
   Rename the corresponding batch and transaction calls from `Pop` to `PopMany`,
   including typed sorted-set calls. Scalar `PopAsync(key, ...)` and `Pop(key, ...)`

@@ -123,3 +123,39 @@ Create a lightweight client view when one service or tenant needs a namespace:
 IRespireClient tenant = redis.WithKeyPrefix("tenant:42:");
 await tenant.SetAsync("settings", json); // tenant:42:settings
 ```
+
+## Absolute expiration and object metadata
+
+`Keys.ExpiryTimeAsync(key)` uses Redis 7's `PEXPIRETIME`; pass `ExpiryTimePrecision.Seconds`
+for `EXPIRETIME`. Both return `RespireExpiryTime`, the same result used for hash-field expiration.
+`Exists` distinguishes a missing key from a persistent key. `HasExpiry` and nullable
+`UnixTimeMilliseconds` describe an absolute expiration, not a remaining TTL. The seconds variant
+preserves the server's whole-second result and expresses it in milliseconds. Use
+`TryGetExpiresAt(out var instant)` when a Redis timestamp might exceed `DateTimeOffset`'s range.
+
+```csharp
+RespireExpiryTime expiration = await redis.Keys.ExpiryTimeAsync("session:42");
+string? encoding = await redis.Keys.EncodingAsync("session:42");
+TimeSpan? idle = await redis.Keys.IdleTimeAsync("session:42");
+long? references = await redis.Keys.ReferenceCountAsync("session:42");
+```
+
+`EncodingAsync`, `IdleTimeAsync`, `FrequencyAsync`, and `ReferenceCountAsync` map to
+`OBJECT ENCODING`, `IDLETIME`, `FREQ`, and `REFCOUNT`. Missing keys return null. Idle time has
+second resolution. Frequency is a logarithmic counter, not an exact access count, and requires
+an LFU eviction policy; `IDLETIME` is unavailable under LFU. Unsupported policy combinations
+retain the server error. Encoding names and reference counts describe Redis implementation details
+and can change with value size, encoding, or server version. These methods support binary keys and
+apply the client view's key prefix before routing.
+
+Batch and transaction `Keys` facets expose `ExpiryTime`, `Encoding`, `IdleTime`, `Frequency`, and
+`ReferenceCount` with the same results. Deferred strings own their data after execution; none of
+these metadata results requires disposal.
+
+Existing `Keys.ExpireAsync` / queued `Keys.Expire` support `ExpireWhen.NotExists` (`NX`), `Exists`
+(`XX`), `GreaterThan` (`GT`), and `LessThan` (`LT`). Relative inputs use `PEXPIRE`; absolute inputs
+use `PEXPIREAT`. `RespireExpiry.Persist` uses `PERSIST`, which rejects these conditions.
+
+See Redis's [EXPIRETIME](https://redis.io/docs/latest/commands/expiretime/),
+[OBJECT IDLETIME](https://redis.io/docs/latest/commands/object-idletime/), and
+[OBJECT FREQ](https://redis.io/docs/latest/commands/object-freq/) command references.

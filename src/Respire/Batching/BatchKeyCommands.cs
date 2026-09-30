@@ -28,6 +28,26 @@ public interface IBatchKeyCommands
     /// </summary>
     RespirePending<RespireTtl> Expiry(RespireKey key);
 
+    /// <summary>Absolute expiration, distinguishing missing and persistent keys. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
+    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key);
+
+    /// <summary>Absolute expiration at the requested server precision. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
+    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision);
+
+    /// <summary>The server's internal value encoding, or null for a missing key. Redis: OBJECT ENCODING.</summary>
+    RespirePending<string?> Encoding(RespireKey key);
+
+    /// <summary>Time since last access, with second resolution, or null for a missing key. Redis: OBJECT IDLETIME.</summary>
+    /// <remarks>Redis rejects this command under LFU eviction policies.</remarks>
+    RespirePending<TimeSpan?> IdleTime(RespireKey key);
+
+    /// <summary>The logarithmic access frequency counter, or null for a missing key. Redis: OBJECT FREQ.</summary>
+    /// <remarks>Requires an LFU eviction policy. Server errors surface through the pending result.</remarks>
+    RespirePending<long?> Frequency(RespireKey key);
+
+    /// <summary>The server's internal value reference count, or null for a missing key. Redis: OBJECT REFCOUNT.</summary>
+    RespirePending<long?> ReferenceCount(RespireKey key);
+
     /// <summary>The data structure stored at a key, or <see cref="RespireKeyType.None"/>. Redis: TYPE.</summary>
     RespirePending<RespireKeyType> Type(RespireKey key);
 
@@ -103,6 +123,34 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
         => sink.Add<Cmd1, RespireTtl>(
             "PTTL", new Cmd1(Verbs.Pttl, sink.Client.Key(in key)),
             static (c, v) => RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in v)));
+
+    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key)
+        => ExpiryTime(key, ExpiryTimePrecision.Milliseconds);
+
+    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision)
+    {
+        var (operation, verb) = KeyCommands.ExpiryTimeCommand(precision);
+        return sink.Add<Cmd1, RespireExpiryTime>(operation, new Cmd1(verb, sink.Client.Key(in key)),
+            precision == ExpiryTimePrecision.Seconds
+                ? static (c, v) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in v), ExpiryTimePrecision.Seconds)
+                : static (c, v) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in v), ExpiryTimePrecision.Milliseconds));
+    }
+
+    public RespirePending<string?> Encoding(RespireKey key)
+        => sink.Add<Cmd1, string?>("OBJECT ENCODING", new Cmd1(RespireCommands.Key.OBJECT_ENCODING.Verb, sink.Client.Key(in key)),
+            static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<TimeSpan?> IdleTime(RespireKey key)
+        => sink.Add<Cmd1, TimeSpan?>("OBJECT IDLETIME", new Cmd1(RespireCommands.Key.OBJECT_IDLETIME.Verb, sink.Client.Key(in key)),
+            static (c, v) => KeyCommands.ParseIdleTime(in v));
+
+    public RespirePending<long?> Frequency(RespireKey key)
+        => sink.Add<Cmd1, long?>("OBJECT FREQ", new Cmd1(RespireCommands.Key.OBJECT_FREQ.Verb, sink.Client.Key(in key)),
+            static (c, v) => ResponseReader.IntegerOrNull(in v));
+
+    public RespirePending<long?> ReferenceCount(RespireKey key)
+        => sink.Add<Cmd1, long?>("OBJECT REFCOUNT", new Cmd1(RespireCommands.Key.OBJECT_REFCOUNT.Verb, sink.Client.Key(in key)),
+            static (c, v) => ResponseReader.IntegerOrNull(in v));
 
     public RespirePending<RespireKeyType> Type(RespireKey key)
         => sink.Add<Cmd1, RespireKeyType>(

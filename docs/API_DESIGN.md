@@ -312,6 +312,13 @@ commit. If `CommitAsync` returns false, dispose that attempt and recreate the wa
 including its reads and writes. Keep retries bounded. Scripts/functions remain preferable when
 the operation can be expressed server-side because they avoid round trips and retries.
 
+Key metadata is available through `Keys.ExpiryTimeAsync` (PEXPIRETIME/EXPIRETIME),
+`EncodingAsync`, `IdleTimeAsync`, `FrequencyAsync`, and `ReferenceCountAsync` (OBJECT).
+The absolute-expiry result reuses `RespireExpiryTime`, preserving missing/persistent distinctions
+and the raw Unix-millisecond timestamp. OBJECT metadata is nullable for missing keys and retains
+server policy errors (FREQ requires LFU; IDLETIME excludes it). Batch and transaction Keys facets
+mirror these operations. Existing ExpireWhen conditions map to NX/XX/GT/LT on PEXPIRE/PEXPIREAT.
+
 ## 7. Pub/Sub: `IAsyncEnumerable`
 
 Subscriptions are async streams. Dispose the subscription to unsubscribe. Cancelling an
