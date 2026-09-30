@@ -7,9 +7,31 @@ namespace Respire;
 /// An owned, binary-safe pub/sub channel or pattern. Equality compares bytes, independently of
 /// subscription kind. The default value is a valid empty literal channel.
 /// </summary>
-public readonly struct RespireChannel : IEquatable<RespireChannel>
+public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 {
     private readonly byte[]? _bytes;
+    private readonly ChannelMetadata _metadata;
+
+    // A single scalar keeps RespireChannel at 16 bytes on 64-bit runtimes. Keep packing
+    // and null encodings together so additional metadata cannot overlap existing fields.
+    private readonly struct ChannelMetadata(ulong bits)
+    {
+        private const int ScopeShift = 8;
+        private const int SlotShift = 16;
+        private const int DatabaseShift = 32;
+        private readonly ulong _bits = bits;
+
+        internal ChannelMetadata(SubscriptionKind kind, RespireChannelRoutingScope scope, int? database, int? slot)
+            : this((byte)kind | ((ulong)(byte)scope << ScopeShift)
+                | ((ulong)(slot is { } value ? checked((ushort)(value + 1)) : (ushort)0) << SlotShift)
+                | ((ulong)(database is { } number ? (uint)number + 1 : 0) << DatabaseShift)) { }
+
+        internal SubscriptionKind Kind => (SubscriptionKind)(byte)_bits;
+        internal RespireChannelRoutingScope Scope => (RespireChannelRoutingScope)(byte)(_bits >> ScopeShift);
+        internal int? Slot => (ushort)(_bits >> SlotShift) is 0 ? null : (ushort)(_bits >> SlotShift) - 1;
+        internal int? Database => (uint)(_bits >> DatabaseShift) is 0 ? null : (int)((uint)(_bits >> DatabaseShift) - 1);
+        internal ChannelMetadata WithKind(SubscriptionKind kind) => new((_bits & ~0xffUL) | (byte)kind);
+    }
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
     /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
@@ -23,10 +45,11 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public RespireChannel(ReadOnlyMemory<byte> value)
         => _bytes = value.IsEmpty ? [] : value.ToArray();
 
-    private RespireChannel(byte[]? bytes, SubscriptionKind kind)
+    private RespireChannel(byte[]? bytes, SubscriptionKind kind, RespireChannelRoutingScope routingScope = default,
+        int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
-        Kind = kind;
+        _metadata = new(kind, routingScope, notificationDatabase, routingSlot);
     }
 
     /// <summary>The exact owned channel bytes; accessing them does not allocate.</summary>
@@ -35,7 +58,16 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
-    public SubscriptionKind Kind { get; }
+    public SubscriptionKind Kind => _metadata.Kind;
+
+    /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
+    public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
+    /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
+    public RespireChannelRoutingScope RoutingScope => _metadata.Scope;
+    /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
+    public int? RoutingSlot => _metadata.Slot;
+    /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
+    public int? NotificationDatabase => _metadata.Database;
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
@@ -84,10 +116,20 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     /// <summary>Decodes UTF-8 for display, replacing invalid bytes. Never use display text as identity.</summary>
     public override string ToString() => Utf8String.GetString(Bytes);
 
-    internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, SubscriptionKind.Channel);
+    internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, default(ChannelMetadata));
+
+    // Incoming wire names carry bytes and subscription kind, not the caller's routing intent.
+    internal RespireChannel WithoutNotificationMetadata()
+        => IsNotification ? new(_bytes, new ChannelMetadata((byte)Kind)) : this;
 
     internal ReadOnlySpan<byte> Span => _bytes;
 
-    internal RespireChannel WithKind(SubscriptionKind kind) => new(_bytes, kind);
+    internal RespireChannel WithKind(SubscriptionKind kind)
+    {
+        if (IsNotification && kind != Kind)
+            throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));
+        return new(_bytes, _metadata.WithKind(kind));
+    }
+    private RespireChannel(byte[]? bytes, ChannelMetadata metadata) => (_bytes, _metadata) = (bytes, metadata);
     internal RespireValue AsValue() => new(Bytes);
 }

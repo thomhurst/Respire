@@ -32,9 +32,11 @@ public readonly struct RespireMessage
     public RespireSubscriptionGap? Gap { get; }
 
     /// <summary>The published channel; empty for a gap marker. Use ToString() for UTF-8 display.</summary>
+    /// <remarks>Contains wire identity, without subscription-descriptor routing or database metadata.</remarks>
     public RespireChannel Channel { get; }
 
     /// <summary>The glob pattern that matched, for pattern subscriptions; otherwise null.</summary>
+    /// <remarks>Contains wire identity and pattern kind, without subscription-descriptor metadata.</remarks>
     public RespireChannel? Pattern { get; }
 
     /// <summary>The raw message payload as owned memory; empty for a gap marker.</summary>
@@ -73,6 +75,24 @@ public readonly struct RespireMessage
         }
 
         return _serializer!.Deserialize<T>(Payload.Span);
+    }
+
+    /// <summary>Parses a keyspace, keyevent, or Redis 8.8 subkey notification without allocating.</summary>
+    /// <remarks>Unknown event names remain lossless. Ordinary messages and malformed frames return false.</remarks>
+    public bool TryParseKeyNotification(out RespireKeyNotification notification)
+        => KeyNotificationParser.TryParse(in this, out notification);
+
+    /// <summary>Parses a notification, filters its physical key, and strips the matched prefix.</summary>
+    /// <remarks>Channel and RawValue retain the original bytes. Client key prefixes are never applied implicitly.</remarks>
+    public bool TryParseKeyNotification(ReadOnlySpan<byte> requiredKeyPrefix, out RespireKeyNotification notification)
+    {
+        if (TryParseKeyNotification(out notification) && notification.KeyStartsWith(requiredKeyPrefix))
+        {
+            notification = notification.StripPrefix(requiredKeyPrefix.Length);
+            return true;
+        }
+        notification = default;
+        return false;
     }
 
     /// <inheritdoc/>

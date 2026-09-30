@@ -343,6 +343,14 @@ mirror these operations. Existing ExpireWhen conditions map to NX/XX/GT/LT on PE
 
 ## 7. Pub/Sub: `IAsyncEnumerable`
 
+Typed notification descriptors and zero-copy `RespireMessage.TryParseKeyNotification` support
+standard keyspace/keyevent and Redis 8.8 subkey layouts. Descriptors preserve subscription
+kind, database, physical-key slot, and all-primary versus key-owner routing scope. Unknown
+event names remain lossless. Physical prefixes are explicit; no subscription changes server
+configuration. Standalone delivery uses the ordinary bounded subscription lifecycle. Cluster
+fan-out remains #298 and currently fails explicitly. See the keyspace-notifications guide.
+
+
 Subscriptions are async streams. Dispose the subscription to unsubscribe. Cancelling an
 enumerator stops that reader; it does not dispose the subscription:
 

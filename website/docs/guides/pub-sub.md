@@ -7,6 +7,8 @@ description: Consume Redis channels as async streams.
 
 Respire models subscriptions as `IAsyncEnumerable<RespireMessage>`. Leaving the loop and disposing the subscription performs cleanup—no delegate bookkeeping required.
 
+For typed keyspace, keyevent, and Redis 8.8 subkey events, see [Keyspace notifications](keyspace-notifications.md).
+
 ## Subscribe
 
 `SubscribeAsync` returns once the server has acknowledged the SUBSCRIBE, so the subscription is live before the first message is published—no polling on `PublishAsync`'s receiver count.

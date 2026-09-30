@@ -28,6 +28,7 @@ const sidebars = {
         'guides/vector-sets',
         'guides/reconnect-policy',
         'guides/pub-sub',
+        'guides/keyspace-notifications',
         'guides/pub-sub-introspection',
         'guides/client-administration',
         'guides/acl-administration',
