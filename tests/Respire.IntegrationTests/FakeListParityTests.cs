@@ -84,6 +84,9 @@ public class FakeListParityTests(RedisTestContainer fixture)
             ("LPOS", ["list", "a", "RANK", "-9223372036854775809"]), ("LPOS", ["list", "a", "COUNT", -1]),
             ("LPOS", ["list", "a", "MAXLEN", -1]), ("LPOS", ["list", "a", "COUNT"]),
             ("LPOS", ["list", "a", "UNKNOWN", 1]),
+            ("LPOS", ["list", "a", "RANK", 0, "RANK", 1]),
+            ("LPOS", ["list", "a", "COUNT", -1, "COUNT", 1]),
+            ("LPOS", ["list", "a", "MAXLEN", -1, "MAXLEN", 0]),
         })
         {
             Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync(command, args); };
