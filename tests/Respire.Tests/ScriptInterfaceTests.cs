@@ -59,6 +59,12 @@ public class ScriptInterfaceTests
         public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         private static bool SameStorage<T>(ReadOnlySpan<T> actual, T[] expected)
             => actual.Length == expected.Length && (actual.IsEmpty || Unsafe.AreSame(
                 ref MemoryMarshal.GetReference(actual), ref MemoryMarshal.GetArrayDataReference(expected)));

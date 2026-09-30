@@ -1344,6 +1344,12 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 // This test interceptor retains a callback to simulate delayed sends, so it owns copies.
                 => ExecuteAsync(script, keys.ToArray(), args.ToArray(), cancellationToken);
 
+            public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
+                => inner.ExistsAsync(sha1s, cancellationToken);
+
+            public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+                => inner.FlushAsync(mode, cancellationToken);
+
             public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
                 => inner.LoadAsync(script, cancellationToken);
         }

@@ -1213,6 +1213,21 @@ public class ClientSideCacheTests
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("SCRIPT FLUSH");
     }
 
+    [Test]
+    public async Task ReadOnlyScriptPreservesCachedValues()
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(),
+            "-NOSCRIPT missing\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        var script = RespireScript.Create("return 1", readOnly: true);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(script)).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(6);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
