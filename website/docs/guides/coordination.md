@@ -173,6 +173,9 @@ keep-alive loop in this API; explicitly renew within a valid lease when needed.
 The same package provides immediate shared-read and exclusive-write leases:
 
 ```csharp
+using Respire.Extensions.Coordination;
+
+var coordination = new RespireCoordination(redis);
 await using var read = await coordination.TryAcquireReadLockAsync(
     "{account:42}:rw", TimeSpan.FromSeconds(30));
 if (!read.Acquired) return;
@@ -183,7 +186,9 @@ Use `TryAcquireWriteLockAsync` for an exclusive lease. Both methods return immed
 contention; they do not queue, poll or promise fairness. Callers choose retry behavior.
 Each owner has a bounded lease. Renew it with `ResetExpiryAsync`, check it with
 `VerifyStillHeldAsync`, and release it with `ReleaseAsync` or `DisposeAsync`. A failed or
-uncertain renewal marks the local handle lost. Stop protected work when ownership is uncertain.
+uncertain renewal marks the local handle lost. A cancelled or failed verification leaves the
+handle unchanged, so release still removes the Redis entry. Stop protected work when ownership
+is uncertain.
 
 One sorted-set key stores owner tokens and server-time expiry deadlines. Redis prunes expired
 owners atomically before each acquisition and expires the key at its latest owner deadline.

@@ -36,6 +36,25 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task CancelledReadWriteVerifyAndReleaseKeepLeaseReleasable()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.That(async () => await attempt.Lock.VerifyStillHeldAsync(cancelled.Token)).Throws<OperationCanceledException>();
+        await Assert.That(async () => await attempt.Lock.ReleaseAsync(cancelled.Token)).Throws<OperationCanceledException>();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());

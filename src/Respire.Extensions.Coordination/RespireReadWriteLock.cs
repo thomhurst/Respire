@@ -72,21 +72,25 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     public bool IsReleased => Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks whether this exact reader or writer lease still exists on Redis.</summary>
+    /// <remarks>
+    /// Only a definitive "not held" reply ends local ownership. Cancellation or a transport failure
+    /// leaves the handle unchanged, so a later release or dispose still removes the Redis entry.
+    /// </remarks>
     public async ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
     {
-        if (IsReleased) return false;
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (IsReleased) return false;
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireCoordination.VerifyReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-            var held = response.AsInteger() == 1;
-            if (!held) Interlocked.Exchange(ref _released, 1);
-            return held;
-        }
-        catch
-        {
+            if (response.AsInteger() == 1) return true;
             Interlocked.Exchange(ref _released, 1);
-            throw;
+            return false;
+        }
+        finally
+        {
+            _operationGate.Release();
         }
     }
 
@@ -111,7 +115,8 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 {
                     Interlocked.Exchange(ref _durationTicks, milliseconds * TimeSpan.TicksPerMillisecond);
                     Interlocked.Exchange(ref _renewedTimestamp, started);
-                    return true;
+                    // A concurrent release does not wait for renewal; it wins if it already started.
+                    return Volatile.Read(ref _released) == 0;
                 }
             }
             catch
@@ -132,20 +137,18 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     /// <summary>Releases only this owner lease. Repeated calls return false.</summary>
+    /// <remarks>
+    /// Release does not wait for an in-flight renewal or verification. Every script is atomic and
+    /// owner-checked, so whichever runs second observes the release.
+    /// </remarks>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (Interlocked.Exchange(ref _released, 1) != 0) return false;
-            using var response = await _client.Scripts.ExecuteAsync(
-                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-            return response.AsInteger() == 1;
-        }
-        finally
-        {
-            _operationGate.Release();
-        }
+        // A pre-cancelled token sends nothing, so keep the handle releasable.
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Interlocked.Exchange(ref _released, 1) != 0) return false;
+        using var response = await _client.Scripts.ExecuteAsync(
+            RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
     }
 
     /// <summary>Releases this lease on a best-effort basis.</summary>
@@ -155,7 +158,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         catch (Exception) { }
     }
 
-    private string Role => _isWriter ? "W:" : "R:";
+    private string Role => _isWriter ? RespireCoordination.WriterRole : RespireCoordination.ReaderRole;
     private ReadOnlyMemory<byte> OwnerBytes() => _owner.Bytes;
 
     private async ValueTask ReleaseBestEffortAsync()
