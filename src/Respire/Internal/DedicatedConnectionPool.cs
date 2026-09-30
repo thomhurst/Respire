@@ -133,7 +133,19 @@ internal sealed class DedicatedConnectionPool(
     internal ValueTask RetireAsync() => Stop(abortBorrowed: false);
 
     /// <summary>Stops the pool and aborts borrowed operations, including an existing retirement.</summary>
-    public ValueTask DisposeAsync() => Stop(abortBorrowed: true);
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await Stop(abortBorrowed: true).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            // Preserve best-effort client disposal. Retirement owners can still observe
+            // the fault on the shared completion returned by RetireAsync.
+            logger?.LogWarning(error, "Failed to dispose a dedicated pool for {Host}:{Port}", host, port);
+        }
+    }
 
     private ValueTask Stop(bool abortBorrowed)
     {

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -173,6 +174,43 @@ public class DedicatedPoolRetirementTests
         finally
         {
             release.Set();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposalObservesCleanupFailureWhileRetirementPreservesIt(bool retireFirst)
+    {
+        await using var server = new FakeRespServer();
+        var logger = new FailingDisconnectLogger();
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            RespireConnectionOptions.Default, logger);
+        var connection = await pool.RentAsync(CancellationToken.None);
+        pool.Return(connection);
+        var retirement = retireFirst ? pool.RetireAsync().AsTask() : null;
+        await pool.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        retirement ??= pool.RetireAsync().AsTask();
+        var error = await Assert.That(async () => await retirement).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(error).IsSameReferenceAs(logger.Failure);
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(logger.ReportedFailure).IsTrue();
+        await pool.DisposeAsync();
+    }
+
+    private sealed class FailingDisconnectLogger : ILogger
+    {
+        internal readonly InvalidOperationException Failure = new("Test disconnect failure.");
+        internal bool ReportedFailure;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            // Throw only after physical DisposeAsync has completed resource cleanup.
+            if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+                throw Failure;
+            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure)) ReportedFailure = true;
         }
     }
 

@@ -604,8 +604,9 @@ are unchanged, including an empty result for a zero count.
 closes idle connections, and waits for accepted borrowed leases to return or be discarded.
 Those borrowed operations keep their connections until they finish. `DisposeAsync` escalates
 an existing retirement by aborting borrowed operations, including indefinitely blocking reads.
-Both methods return the same completion task, which includes receive/flush cleanup and pending
-acquisitions, not merely removal from the rented set. Ordinary returned connections remain
+Both methods await the same cleanup, including receive/flush work and pending acquisitions,
+not merely removal from the rented set. Retirement completion reports cleanup failures; disposal
+logs them and returns so client shutdown can continue disposing other resources. Ordinary returned connections remain
 reusable until retirement begins; closing connections never reenter the idle pool. Retirement has no implicit timeout: a caller
 can bound its own wait without cancelling accepted work, or explicitly dispose the pool to abort
 borrowed sockets. Receive callbacks must remain nonblocking; disposal cannot forcibly terminate
@@ -615,7 +616,7 @@ This is a lifecycle primitive for Cluster generation retirement. Router integrat
 retiring pools until completion, protect owed correction barriers before retiring control pools,
 and avoid handing a retired pool to a new generation. That integration is tracked by #466;
 this primitive alone does not remove departed nodes from Cluster routing. Owners must observe
-the returned completion, including cleanup failures. A handshake cancelled by retirement reports
+retirement completion, including cleanup failures. A handshake cancelled by retirement reports
 `OperationCanceledException`; a later or rejected rental reports `ObjectDisposedException`.
 Router retry decisions must also inspect its own generation state and the caller's cancellation
 rather than treating every cancellation as retirement.
