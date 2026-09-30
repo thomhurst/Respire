@@ -9,6 +9,8 @@ description: Exercise real Respire client code against a deterministic strings a
 Your application uses a real `RespireClient`: command serialization, coalescing, FIFO
 response dispatch, result leases, serialization settings, prefixing, and batches all run
 through the normal client code. The fake opens no TCP socket and requires no Docker daemon.
+Keep `Respire.Testing` and `Respire` at the same package version: the test transport uses an
+internal core hook. The repository builds and publishes them with one generated version.
 
 ```csharp
 using Respire.Testing;
@@ -33,6 +35,11 @@ Dispose clients before their server. Disposing one client leaves other clients a
 data intact. Server disposal closes all owned pipe endpoints and joins server loops;
 concurrent calls join the same cleanup task. It does not dispose your client objects.
 Previously obtained options cannot create connections after server disposal.
+Unexpected command/clock failures close the affected connection and are reported again by
+server disposal. Failed connections remain retained until disposal so their errors cannot
+be lost after a client disconnects. Keep fixture lifetimes bounded and dispose the server
+even when a test fails. Other connections remain independent; a command failure does not
+make future connections throw a historical error.
 
 ## Supported subset
 

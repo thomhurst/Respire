@@ -230,18 +230,29 @@ public class FakeServerTests
     public sealed record Person(string Name, int Age);
 
     [Test]
-    public async Task UnexpectedServerFailuresAreObservedDuringCleanup()
+    [Arguments("invalid-operation")]
+    [Arguments("io")]
+    [Arguments("cancellation")]
+    [Arguments("disposed")]
+    public async Task UnexpectedServerFailuresAreObservedDuringCleanup(string kind)
     {
-        var server = new RespireFakeServer(new ThrowingClock());
+        Exception expected = kind switch
+        {
+            "io" => new IOException("clock failure"),
+            "cancellation" => new OperationCanceledException("clock failure"),
+            "disposed" => new ObjectDisposedException("clock", "clock failure"),
+            _ => new InvalidOperationException("clock failure"),
+        };
+        var server = new RespireFakeServer(new ThrowingClock(expected));
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespProtocol.Resp2 });
         await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
         var failure = await Assert.That(async () => await Task.Run(async () => await server.DisposeAsync())
-            .WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<InvalidOperationException>();
-        await Assert.That(failure!.Message).IsEqualTo("clock failure");
+            .WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
+        await Assert.That(failure).IsSameReferenceAs(expected);
     }
 
-    private sealed class ThrowingClock : TimeProvider
+    private sealed class ThrowingClock(Exception error) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => throw new InvalidOperationException("clock failure");
+        public override DateTimeOffset GetUtcNow() => throw error;
     }
 }

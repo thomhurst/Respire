@@ -77,20 +77,21 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                     var status = RespParser.TryParseValue(buffer.AsSpan(0, length), ref consumed, out var request);
                     if (status == RespParseStatus.NeedMoreData) break;
                     if (status != RespParseStatus.Done) throw new IOException("Invalid RESP request to fake server.");
-                    byte[] reply;
+                    byte[]? reply;
                     try
                     {
                         var arguments = ReadArguments(in request);
                         reply = ExecuteLocked(connection, arguments);
                     }
                     finally { request.Dispose(); }
+                    if (reply is null) return; // Server disposal won the command's state lock.
                     await connection.Stream.WriteAsync(reply).ConfigureAwait(false);
                 }
                 buffer.AsSpan(consumed, length - consumed).CopyTo(buffer);
                 length -= consumed;
             }
         }
-        catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
+        catch (Exception error) when (!connection.Failed && (error is IOException or OperationCanceledException or ObjectDisposedException))
         {
             // Peer closure/cancellation terminates this connection; the real client observes EOF.
         }
@@ -126,14 +127,23 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         return arguments;
     }
 
-    private byte[] ExecuteLocked(Connection connection, byte[][] arguments)
+    private byte[]? ExecuteLocked(Connection connection, byte[][] arguments)
     {
         // Keep synchronous state protection outside the async receive state machine,
         // including exceptional command execution and clock callbacks.
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return Execute(connection, arguments).Encode(connection.Resp3);
+            if (_disposed) return null;
+            try
+            {
+                return Execute(connection, arguments).Encode(connection.Resp3);
+            }
+            catch
+            {
+                // Command/clock exceptions are faults even if their types also describe pipe closure.
+                connection.Failed = true;
+                throw;
+            }
         }
     }
 
