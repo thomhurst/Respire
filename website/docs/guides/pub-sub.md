@@ -98,7 +98,7 @@ one subscription; channels on the same primary share its connection. Duplicate c
 one server-side subscription until the last consumer disposes. `SPUBLISH` uses the command
 connection for the channel's slot. Channel names are never affected by a client's key prefix.
 
-`MOVED` replies, unsolicited `SUNSUBSCRIBE` frames during resharding, and refreshed topology
+`MOVED` and `ASK` replies, unsolicited `SUNSUBSCRIBE` frames during resharding, and refreshed topology
 all trigger routing to the current owner. Socket failures restore the affected channels without
 resubscribing healthy primaries. The existing subscription and its buffer survive these changes.
 A reconnect gap marker precedes messages from the replacement subscription; Redis pub/sub
@@ -109,7 +109,8 @@ with health retained for every affected primary until the episode completes. An 
 another primary cannot clear an earlier primary's failure. Successful recovery clears all
 affected endpoints; exhaustion marks them disconnected. Topology-driven recovery reports
 subscription owners rather than an unrelated configured seed. New sharded subscriptions
-fail while an episode is active, with or without a configured `ReconnectPolicy`; subscribe
+fail while an episode is active, with or without a configured `ReconnectPolicy`, even for
+channels whose primary is healthy, because the episode owns every sharded route; subscribe
 again after recovery completes. Existing subscriptions keep their buffers and routes.
 With a null policy, recovery retries indefinitely: the first attempt is immediate, then
 exponential waits begin at 250 ms and stop growing at five seconds. New subscriptions do

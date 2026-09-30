@@ -496,7 +496,10 @@ internal sealed partial class SubscriptionHub
                                     _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
                         }
                     }
-                    await CloseUnusedPrimariesAsync().ConfigureAwait(false);
+                    // An unexpected cleanup failure counts as a failed attempt. Ending the loop
+                    // here would leave interrupted routes and unhealthy endpoints unrecovered.
+                    try { await CloseUnusedPrimariesAsync().ConfigureAwait(false); }
+                    catch (Exception error) when (!cancellationToken.IsCancellationRequested) { failure ??= error; }
                     if (failure is not null && policy?.IsExhausted(attempt) == true)
                     {
                         ExhaustShardedRecovery(failure, attempt);

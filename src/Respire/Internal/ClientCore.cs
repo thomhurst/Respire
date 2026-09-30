@@ -97,10 +97,9 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             if (Disposed) return;
             _subscriptionStates ??= [];
-            if (clusterSharded && change.State == RespireConnectionState.Connected)
-                _subscriptionStates.Remove((true, change.Endpoint));
-            else
-                _subscriptionStates[(clusterSharded, change.Endpoint)] = change.State;
+            // Keep recovered sharded endpoints (as Connected) so disposal still reports a
+            // terminal state for them. ASK targets are not active Cluster command endpoints.
+            _subscriptionStates[(clusterSharded, change.Endpoint)] = change.State;
             // Regular subscriptions move as one group; sharded primaries recover independently.
             if (!clusterSharded && _regularSubscriptionEndpoint is { } previous && previous != change.Endpoint)
             {

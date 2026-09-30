@@ -30,6 +30,22 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task RecoveredShardedEndpointReceivesTerminalStateOnDisposal()
+    {
+        // An ASK target is not an active Cluster command endpoint, so disposal must learn
+        // about it from sharded subscription health even after that endpoint recovered.
+        var core = new ClientCore(new RespireOptions());
+        var target = new RespireEndpoint("ask-target", 7000);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(target, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(target, RespireConnectionState.Connected, null), clusterSharded: true);
+        await core.DisposeAsync();
+        await Assert.That(changes.Where(change => change.Endpoint == target).Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Reconnecting, RespireConnectionState.Connected, RespireConnectionState.Disconnected]);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task PubSubGroupsCannotOverwriteEachOthersFailure(bool failedSharded)
