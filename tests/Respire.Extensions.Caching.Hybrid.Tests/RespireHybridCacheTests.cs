@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Respire.Extensions.Caching;
+using Respire.Compression;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -95,6 +96,40 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
             _ => throw new InvalidOperationException("Factory ran — the value was not served from L2."));
 
         await Assert.That(value).IsEqualTo("from provider A");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CodecBackedL2SeedsAFreshHybridCache(bool registeredClient)
+    {
+        var value = Enumerable.Repeat((byte)255, 4096).ToArray();
+        await using (var first = BuildCodecProvider())
+        {
+            await first.GetRequiredService<HybridCache>().SetAsync("codec-l2", value);
+            await Assert.That(await WaitForRedisKeyAsync(InstanceName + "codec-l2")).IsTrue();
+        }
+
+        using var stored = await _client.ExecuteAsync("HGET", InstanceName + "codec-l2", "data");
+        await Assert.That(stored.AsSpan()[..4].SequenceEqual("RVC\0"u8)).IsTrue();
+        await Assert.That(stored.AsSpan()[5]).IsEqualTo((byte)1);
+        await using var second = BuildCodecProvider();
+        var fetched = await second.GetRequiredService<HybridCache>().GetOrCreateAsync<byte[]>(
+            "codec-l2", _ => throw new InvalidOperationException("Factory must not run on an L2 hit."));
+        await Assert.That(fetched.AsSpan().SequenceEqual(value)).IsTrue();
+
+        ServiceProvider BuildCodecProvider()
+        {
+            var services = new ServiceCollection();
+            if (registeredClient) services.AddSingleton<IRespireClient>(_client);
+            services.AddRespireHybridCache(options =>
+            {
+                if (!registeredClient) options.ConnectionString = fixture.ConnectionString;
+                options.InstanceName = InstanceName;
+                options.ValueCodec = new BrotliValueCodec();
+            });
+            return services.BuildServiceProvider();
+        }
     }
 
     private async Task<bool> WaitForRedisKeyAsync(string key)

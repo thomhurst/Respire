@@ -63,9 +63,82 @@ builder.Services.AddRespireHybridCache(
 
 This combines an in-process L1 with Redis-backed L2 storage.
 
+## Opt-in payload compression
+
+Set `RespireCacheOptions.ValueCodec` to encode the hash's `data` field. The default is
+null: cache bytes stay raw. This setting is independent of the client's serializer;
+`RespireValueCodecSerializer` on a shared or cache-owned client does not enable cache compression.
+
+```csharp
+using Respire.Compression;
+
+builder.Services.AddRespireDistributedCache(options =>
+{
+    options.ConnectionString = "redis://localhost";
+    options.InstanceName = "myapp:compressed-v1:";
+    options.ValueCodec = new BrotliValueCodec(new RespireValueCodecOptions
+    {
+        MinimumLength = 1024,
+        MaximumDecodedLength = 4 * 1024 * 1024,
+    });
+});
+```
+
+The same option applies to `AddRespireHybridCache` through its `configureCache` callback:
+
+```csharp
+using Respire.Compression;
+
+builder.Services.AddRespireHybridCache(options =>
+{
+    options.ConnectionString = "redis://localhost";
+    options.InstanceName = "myapp:hybrid-compressed-v1:";
+    options.ValueCodec = new BrotliValueCodec();
+});
+```
+
+With neither `ConnectionString` nor `ClientOptions`, these registrations use the registered
+`IRespireClient`. Direct construction also accepts `new RespireCacheOptions { ValueCodec = codec }`.
+The cache captures the codec reference at construction; changing the options afterward does not
+switch existing instances. Codecs must support concurrent calls. The cache does not dispose a
+shared codec or take ownership of a registered client.
+
+Both synchronous and asynchronous array and buffer APIs apply the codec. HybridCache applies it
+only to serialized L2 payloads; L1 behavior and serialization remain HybridCache's responsibility.
+Buffer reads decode into the supplied `IBufferWriter<byte>`; built-in codecs avoid an intermediate
+decoded array. Writes retain an owned encoded array through the asynchronous send. Multi-segment
+input is combined before encoding. Compression is synchronous CPU work, not streaming or
+allocation-free. Cancellation is checked before encoding and again before sending; it cannot
+interrupt a codec call already executing. Existing accepted-send cancellation semantics still apply.
+For Brotli, start with the default quality `4`; measure CPU time and stored size before increasing
+quality, especially for large values. The cache does not schedule codec work onto another thread.
+
+The threshold determines whether compression is attempted, not whether a frame is written. Small,
+empty, or incompressible values still carry an uncompressed frame; those can coexist with compressed
+frames. Built-in settings are validated by the codec constructor. Maximum decoded length bounds
+original/decoded payload bytes; it does not cap total workspace. Oversized writes fail before
+publication. RespireDistributedCache throws for corrupt, oversized, or incompatible frames instead
+of returning a cache miss. HybridCache's handling of backend exceptions remains controlled by HybridCache.
+Built-in buffer decoding advances the destination only on success, though a decompression failure
+can modify uncommitted buffer memory. Custom codecs define their own decoding contract.
+
+`absexp`, `sldexp`, TTLs, sliding refresh, and removal are unchanged. Refresh and removal never
+invoke a codec. Reads refresh sliding TTL through the existing script before decoding, so even a
+corrupt entry can have its sliding TTL refreshed. There is no extra Redis command for compression.
+See [value codecs](../guides/value-codecs.md) for frame layout and resource costs.
+
 ## Migration compatibility
 
-Cache entries use the same Redis layout as `Microsoft.Extensions.Caching.StackExchangeRedis`. You can switch providers without flushing existing entries. Sliding-expiration reads refresh TTL atomically in the same round trip.
+With `ValueCodec = null`, cache entries use the same Redis layout and payload bytes as
+`Microsoft.Extensions.Caching.StackExchangeRedis`; existing entries remain interchangeable.
+Sliding-expiration reads refresh TTL atomically in the same round trip.
+
+Opting into a codec changes the `data` payload contract. Built-in decoders reject unframed legacy
+entries; raw readers return encoded bytes and do not decode them. Every process sharing a namespace,
+including HybridCache instances, must use a compatible codec. Use a new `InstanceName` namespace or
+explicitly rewrite old entries with the appropriate reader and writer, preserving desired expiry.
+Enabling a reader first does not make legacy entries readable. Changing compression algorithms also
+requires compatible decoding or migration; there is no automatic detection/fallback to raw bytes.
 
 ## Redis ACL commands
 

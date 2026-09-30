@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Respire.Compression;
 
 namespace Respire.Extensions.Caching;
 
@@ -23,6 +24,19 @@ public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
     /// without colliding. Same semantics as the Microsoft Redis cache's InstanceName.
     /// </summary>
     public string? InstanceName { get; set; }
+
+    /// <summary>
+    /// Optional codec for the cache's data field, including HybridCache L2 payloads.
+    /// Null preserves raw bytes and Microsoft Redis cache interoperability.
+    /// </summary>
+    /// <remarks>
+    /// Captured when the cache is constructed; independent of the client's serializer.
+    /// All readers and writers sharing a key namespace must use compatible codecs.
+    /// Built-in codecs reject unframed legacy entries. Implementations must be thread-safe.
+    /// Built-in buffer decoders advance the destination only on success but may modify uncommitted memory.
+    /// Custom decoders control their own partial-output behavior; the cache cannot roll back writer changes.
+    /// </remarks>
+    public IRespireValueCodec? ValueCodec { get; set; }
 
     RespireCacheOptions IOptions<RespireCacheOptions>.Value => this;
 }
