@@ -157,27 +157,9 @@ public class ImmediateRawKeyLayoutTests
         // Concurrent GC can perturb the thread allocation counter even for an empty
         // interval. See docs/ALLOCATION_MEASUREMENT.md. Failure to establish or retain
         // this boundary fails the test; it never skips or relaxes the zero-byte check.
-        // The control needs about 64 KiB on X64; 16 MiB leaves bounded headroom for
-        // runtime/coverage activity without changing the measured zero-byte requirement.
-        if (!GC.TryStartNoGCRegion(16 * 1024 * 1024))
-            throw new InvalidOperationException("Could not establish the allocation measurement's no-GC region.");
-        long allocated;
-        long positiveControl;
-        InvalidOperationException? regionError = null;
-        try
-        {
-            allocated = MeasureValidationAllocations(keys, allocate: false, iterations: 1000);
-            positiveControl = MeasureValidationAllocations(keys, allocate: true, iterations: 1000);
-        }
-        finally
-        {
-            try { GC.EndNoGCRegion(); }
-            catch (InvalidOperationException error) { regionError = error; }
-        }
-        // A measurement exception propagates unchanged. If only cleanup failed,
-        // report the invalid boundary explicitly and preserve the runtime diagnostic.
-        if (regionError is not null)
-            throw new InvalidOperationException("The allocation measurement's no-GC region was not retained.", regionError);
+        var (allocated, positiveControl) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureValidationAllocations(keys, allocate: false, iterations: 1000),
+                MeasureValidationAllocations(keys, allocate: true, iterations: 1000)));
         await Assert.That(allocated).IsEqualTo(0);
         await Assert.That(positiveControl).IsGreaterThanOrEqualTo(1000 * 37);
     }
