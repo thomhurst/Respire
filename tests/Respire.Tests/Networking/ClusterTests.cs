@@ -267,8 +267,8 @@ public class ClusterTests
         var slot = ClusterHash.GetSlot("key");
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n" +
-            $"*4\r\n$9\r\n192.0.2.1\r\n:{target.Port}\r\n$2\r\nid\r\n" +
-            "%1\r\n+hostname\r\n$9\r\n127.0.0.1\r\n");
+            $"*4\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n$2\r\nid\r\n" +
+            "%1\r\n+hostname\r\n$16\r\nunusable.invalid\r\n");
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {

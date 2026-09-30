@@ -346,7 +346,16 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     internal void FlushForUnknownCommand() => Flush(continuityLost: false);
 
+    // Only mutate internal state here; callers may hold membership and health gates.
+    internal int FlushForContinuityLossWithoutMetrics() => FlushState(continuityLost: true);
+
+    internal static void PublishContinuityFlushMetrics(int removed)
+        => PublishFlushMetrics(removed, continuityLost: true);
+
     private void Flush(bool continuityLost)
+        => PublishFlushMetrics(FlushState(continuityLost), continuityLost);
+
+    private int FlushState(bool continuityLost)
     {
         Interlocked.Increment(ref _continuityEpoch);
         Interlocked.Increment(ref _queryEpoch);
@@ -355,12 +364,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         if (removed > 0)
         {
             Interlocked.Add(ref _evictions, removed);
-            RespireTelemetry.ClientCacheEvictions.Add(removed);
         }
 
         if (continuityLost)
         {
             Interlocked.Increment(ref _continuityFlushes);
+        }
+        return removed;
+    }
+
+    private static void PublishFlushMetrics(int removed, bool continuityLost)
+    {
+        if (removed > 0)
+        {
+            RespireTelemetry.ClientCacheEvictions.Add(removed);
+        }
+        if (continuityLost)
+        {
             RespireTelemetry.ClientCacheContinuityFlushes.Add(1);
         }
     }

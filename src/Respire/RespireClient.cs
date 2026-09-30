@@ -2479,7 +2479,8 @@ public sealed partial class RespireClient : IRespireClient
     internal readonly record struct TrackedConnectionIdentity(
         RespireEndpoint Endpoint,
         long ServerClientId,
-        bool RequiresAsking = false);
+        bool RequiresAsking = false,
+        RespireConnection? Connection = null);
 
     internal sealed class TrackedScriptExecution
     {
@@ -2722,12 +2723,11 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         bool reliable,
         bool requiresAsking = false)
-        => reliable && connection.ServerClientId > 0
-            ? new TrackedConnectionIdentity(
-                new RespireEndpoint(connection.Host, connection.Port),
-                connection.ServerClientId,
-                requiresAsking)
-            : default;
+        => new(
+            new RespireEndpoint(connection.Host, connection.Port),
+            reliable ? connection.ServerClientId : 0,
+            requiresAsking,
+            connection);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -2867,7 +2867,9 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
 
         var pool = core.Cluster is { } cluster
-            ? cluster.GetDedicatedPool(identity.Endpoint)
+            ? identity.Connection is { } original
+                ? cluster.GetCorrectionPool(original)
+                : cluster.GetDedicatedPool(identity.Endpoint)
             : core.DedicatedPool;
         // A cold control connection may need SELECT/AUTH while the server is paused.
         // The fence cannot abandon those commands before it reaches CLIENT KILL.
@@ -2894,7 +2896,11 @@ public sealed partial class RespireClient : IRespireClient
             pool.Return(control);
         }
 
-        if (core.Cluster is { } router)
+        if (identity.Connection?.Multiplexer is { } originalMultiplexer)
+        {
+            await originalMultiplexer.RetireConnectionAsync(identity.ServerClientId).ConfigureAwait(false);
+        }
+        else if (core.Cluster is { } router)
         {
             await router.RetireConnectionAsync(identity.Endpoint, identity.ServerClientId).ConfigureAwait(false);
         }
@@ -3143,9 +3149,10 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             args.CopyTo(tail, 1 + keys.Length);
-            var multiplexer = core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
-                ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
-                : core.Multiplexer;
+            var multiplexer = connectionIdentity.Connection?.Multiplexer
+                ?? (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
+                    ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
+                    : core.Multiplexer);
             await multiplexer.SendToAllConnectionsAsync(
                 new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
                 connectionIdentity.RequiresAsking,

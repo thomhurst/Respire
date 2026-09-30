@@ -81,6 +81,9 @@ internal sealed class RespireConnection : IAsyncDisposable
     private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
 
+    // Set by the multiplexer before publication; endpoint aliases may later change owners.
+    internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
+
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);

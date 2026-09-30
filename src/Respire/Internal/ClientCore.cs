@@ -125,50 +125,80 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionStateChange change)
     {
-        if (change.State != RespireConnectionState.Connected)
-        {
-            ClientCache?.FlushForContinuityLoss();
-        }
+        int? cacheEvictions = null;
 
         lock (_stateGate)
         {
-            var commandSlot = (node, slot);
-            switch (change.State)
+            // Keep observer membership stable through cache and health mutation.
+            lock (Cluster?.NodeStateGate ?? _stateGate)
             {
-                case RespireConnectionState.Reconnecting:
-                    _disconnectedCommandSlots.Remove(commandSlot);
-                    _reconnectingCommandSlots.Add(commandSlot);
-                    break;
-                case RespireConnectionState.Disconnected:
-                    _reconnectingCommandSlots.Remove(commandSlot);
-                    _disconnectedCommandSlots.Add(commandSlot);
-                    break;
-                default:
-                    _reconnectingCommandSlots.Remove(commandSlot);
-                    _disconnectedCommandSlots.Remove(commandSlot);
-                    break;
-            }
+                if (Cluster is { } cluster && !cluster.IsNodeObserved(node))
+                {
+                    return;
+                }
+                if (change.State != RespireConnectionState.Connected)
+                {
+                    cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
+                }
+                var commandSlot = (node, slot);
+                switch (change.State)
+                {
+                    case RespireConnectionState.Reconnecting:
+                        _disconnectedCommandSlots.Remove(commandSlot);
+                        _reconnectingCommandSlots.Add(commandSlot);
+                        break;
+                    case RespireConnectionState.Disconnected:
+                        _reconnectingCommandSlots.Remove(commandSlot);
+                        _disconnectedCommandSlots.Add(commandSlot);
+                        break;
+                    default:
+                        _reconnectingCommandSlots.Remove(commandSlot);
+                        _disconnectedCommandSlots.Remove(commandSlot);
+                        break;
+                }
 
-            QueueEndpointStateLocked(change);
+                QueueEndpointStateLocked(change);
+            }
         }
 
+        // Metrics listeners and health subscribers can run user code, outside both gates.
+        if (cacheEvictions is { } removed)
+        {
+            ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+        }
         PublishQueuedStates();
     }
 
     internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
     {
-        ClientCache?.FlushForContinuityLoss();
+        int? cacheEvictions = null;
 
         lock (_stateGate)
         {
-            _reconnectingCommandSlots.RemoveWhere(
-                commandSlot => ReferenceEquals(commandSlot.Node, node));
-            _disconnectedCommandSlots.RemoveWhere(
-                commandSlot => ReferenceEquals(commandSlot.Node, node));
-            QueueEndpointStateLocked(new RespireConnectionStateChange(
-                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
+            // Keep observer membership stable through cache and health mutation.
+            lock (Cluster?.NodeStateGate ?? _stateGate)
+            {
+                // Topology publication and callbacks are separate. A node reactivated before
+                // this callback acquired the health lock must retain its current health state.
+                if (Cluster?.IsNodeObserved(node) == true)
+                {
+                    return;
+                }
+                cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
+                _reconnectingCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node));
+                _disconnectedCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node));
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
+            }
         }
 
+        // Metrics listeners and health subscribers can run user code, outside both gates.
+        if (cacheEvictions is { } removed)
+        {
+            ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+        }
         PublishQueuedStates();
     }
 

@@ -178,6 +178,19 @@ await using var redis = RespireClient.Create(options);
 
 The first command triggers connection. Dependency-injection registration uses this lazy behavior so Redis availability does not block host startup.
 
+## Redis Cluster endpoint identity
+
+With `UseCluster = true`, newly discovered nodes connect through the preferred endpoint
+reported by `CLUSTER SLOTS`. Announced `ip` and `hostname` metadata are aliases, so an IP
+redirect to a node discovered by hostname reuses its existing command connections and
+dedicated pool. Hostnames compare case-insensitively. Node IDs, when supplied, distinguish
+reassigned endpoints from the previous Redis node.
+
+An alias does not change an existing connection's TLS certificate/SNI name. Configure
+`TlsOptions.TargetHost` when certificate identity differs from the connection hostname;
+that explicit value remains authoritative. Configured seed connections are reused when
+topology identifies their aliases.
+
 ## Redis Sentinel
 
 Set `SentinelPrimaryName` to resolve the current primary from one or more Sentinel endpoints before

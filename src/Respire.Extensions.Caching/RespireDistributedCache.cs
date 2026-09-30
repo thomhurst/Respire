@@ -410,8 +410,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 if (_wireClient is { } wire && originalConnection.ServerClientId > 0)
                 {
                     await wire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
-                    originalConnection = new RespireClient.TrackedConnectionIdentity(
-                        originalConnection.Endpoint, ServerClientId: 0);
+                    originalConnection = originalConnection with { ServerClientId = 0 };
                     _ = ObservePassAsync(pass);
                     previous = TimeSpan.MaxValue;
                     continue;

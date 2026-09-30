@@ -145,6 +145,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 var connections = await Task.WhenAll(connectTasks).ConfigureAwait(false);
                 for (var i = 0; i < connections.Length; i++)
                 {
+                    connections[i].Multiplexer = this;
                     Volatile.Write(ref _connections[i], connections[i]);
                     ObserveConnectionFailure(i, connections[i]);
                 }
@@ -663,6 +664,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 return;
             }
 
+            replacement.Multiplexer = this;
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
             var publishedReplacement = replacement;
             replacement = null;
