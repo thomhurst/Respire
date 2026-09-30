@@ -25,14 +25,14 @@ public class SentinelRoutingTests
         var changes = new List<RespireConnectionStateChange>();
         client.ConnectionStateChanged += changes.Add;
         var pubSubError = new RespireConnectionException("subscription reconnect pending");
-        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Disconnected, pubSubError));
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(endpoint, RespireConnectionState.Disconnected, pubSubError));
         changes.Clear();
 
         core.NotifySentinelPrimaryChanged(node, node);
         await Assert.That(changes.Select(change => change.State))
             .IsEquivalentTo([RespireConnectionState.Disconnected]);
 
-        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null));
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(endpoint, RespireConnectionState.Connected, null));
         await Assert.That(changes.Select(change => change.State))
             .IsEquivalentTo([RespireConnectionState.Disconnected, RespireConnectionState.Connected]);
     }
