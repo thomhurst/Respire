@@ -13,6 +13,7 @@
 
     <ItemGroup>
         <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+        <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
         <Using Include="Respire.Testing" />
     </ItemGroup>
 

@@ -62,6 +62,7 @@ public sealed partial class RespireFakeServer
             result = score;
         }
         if (entry is null && set.Count != 0) _entries[args[1]] = new Entry(set);
+        if (added + updated != 0) TouchWatchedKey(args[1]);
         if (increment) return result is { } value ? FakeReply.Double(value) : FakeReply.Null;
         return FakeReply.Integer(added + (changed ? updated : 0));
     }
@@ -83,6 +84,7 @@ public sealed partial class RespireFakeServer
         for (var index = 2; index < args.Length; index++)
             if (set.Remove(args[index])) removed++;
         if (set.Count == 0) _entries.Remove(args[1]);
+        if (removed != 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(removed);
     }
 
@@ -126,6 +128,7 @@ public sealed partial class RespireFakeServer
         {
             foreach (var entry in taken) set.Remove(entry.Key);
             if (set.Count == 0) _entries.Remove(args[1]);
+            if (taken.Length != 0) TouchWatchedKey(args[1]);
         }
         // RESP3 nests counted pops but preserves the flat, omitted-count reply.
         return SortedSetReply(taken, withScores: true, nested: resp3 && args.Length == 3);
@@ -203,6 +206,7 @@ public sealed partial class RespireFakeServer
         {
             foreach (var entry in entries) set.Remove(entry.Key);
             if (set.Count == 0) _entries.Remove(args[1]);
+            if (entries.Length != 0) TouchWatchedKey(args[1]);
         }
         return count || remove ? FakeReply.Integer(entries.Length) : SortedSetReply(entries, withScores, resp3);
     }

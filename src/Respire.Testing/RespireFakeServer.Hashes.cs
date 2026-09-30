@@ -18,6 +18,7 @@ public sealed partial class RespireFakeServer
             hash[args[index]] = args[index + 1];
         }
         if (entry is null) _entries[args[1]] = new Entry(hash);
+        TouchWatchedKey(args[1]);
         return command == "HMSET" ? FakeReply.Ok : FakeReply.Integer(added);
     }
 
@@ -40,6 +41,7 @@ public sealed partial class RespireFakeServer
         if (hash is null) return FakeReply.Integer(0);
         var removed = args.Skip(2).Count(hash.Remove);
         if (hash.Count == 0) _entries.Remove(args[1]);
+        if (removed != 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(removed);
     }
 
@@ -61,6 +63,7 @@ public sealed partial class RespireFakeServer
             _entries[args[1]] = new Entry(hash);
         }
         hash[args[2]] = value;
+        TouchWatchedKey(args[1]);
         return FakeReply.Integer(result);
     }
 }

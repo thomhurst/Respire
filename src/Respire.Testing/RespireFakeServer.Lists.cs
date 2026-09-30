@@ -18,6 +18,7 @@ public sealed partial class RespireFakeServer
             for (var index = 2; index < args.Length; index++) list.Add(args[index]);
         }
         if (entry is null) _entries[args[1]] = new Entry(list);
+        TouchWatchedKey(args[1]);
         return FakeReply.Integer(list.Count);
     }
 
@@ -34,6 +35,7 @@ public sealed partial class RespireFakeServer
             values[index] = FakeReply.Bulk(list[left ? index : list.Count - index - 1]);
         list.RemoveRange(left ? 0 : list.Count - count, count);
         if (list.Count == 0) _entries.Remove(args[1]);
+        if (count > 0) TouchWatchedKey(args[1]);
         return counted ? FakeReply.Array(values) : values[0];
     }
 
@@ -53,6 +55,7 @@ public sealed partial class RespireFakeServer
         var index = NormalizeListIndex(Integer(args[2]), list.Count);
         if (index is not { } position) return FakeReply.Error("ERR index out of range");
         list[position] = args[3];
+        TouchWatchedKey(args[1]);
         return FakeReply.Ok;
     }
 
@@ -82,6 +85,7 @@ public sealed partial class RespireFakeServer
             list.RemoveRange(start + count, list.Count - start - count);
             list.RemoveRange(0, start);
         }
+        TouchWatchedKey(args[1]);
         return FakeReply.Ok;
     }
 
@@ -118,6 +122,7 @@ public sealed partial class RespireFakeServer
             return true;
         });
         if (list.Count == 0) _entries.Remove(args[1]);
+        if (removed > 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(removed);
     }
 
@@ -130,6 +135,7 @@ public sealed partial class RespireFakeServer
         var pivot = list.FindIndex(value => SameListValue(value, args[3]));
         if (pivot < 0) return FakeReply.Integer(-1);
         list.Insert(position == "BEFORE" ? pivot : pivot + 1, args[4]);
+        TouchWatchedKey(args[1]);
         return FakeReply.Integer(list.Count);
     }
 

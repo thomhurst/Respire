@@ -6,7 +6,7 @@ using Respire.Protocol;
 
 namespace Respire.Testing;
 
-/// <summary>An in-memory RESP server for the documented strings, keys, hashes, lists, sets, sorted sets, and pub/sub subset, using the real Respire client transport.</summary>
+/// <summary>An in-memory RESP server for the documented strings, keys, collections, pub/sub, and transactions subset, using the real Respire client transport.</summary>
 /// <remarks>No TCP socket or Docker daemon is used. Each server owns independent data and connection state.
 /// Unsupported commands fail explicitly. This is not a substitute for compatibility tests against Redis or Valkey.</remarks>
 public sealed partial class RespireFakeServer : IAsyncDisposable
@@ -136,6 +136,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             catch (Exception error) { lock (_gate) _failures.Add(error); }
             lock (_gate)
             {
+                ClearTransaction(connection);
                 _connections.Remove(connection);
             }
         }
@@ -163,9 +164,12 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         lock (_gate)
         {
             if (_disposed || connection.Closed) return null;
+            connection.ExecutingReply = true;
             try
             {
                 scope?.ObserveExecution();
+                // EXEC and all its commands share one server-time sample.
+                _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
                 var reply = Execute(connection, arguments).Encode(connection.Resp3);
                 // Enqueue before releasing state ownership: newly subscribed routes cannot
                 // receive a publication ahead of their acknowledgement, even behind a fault gate.
@@ -176,22 +180,41 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 connection.Failed = true;
                 throw;
             }
+            finally
+            {
+                connection.ExecutingReply = false;
+                FlushDeferredPushesLocked(connection);
+            }
         }
     }
 
     private FakeReply Execute(Connection connection, byte[][] args)
     {
         var command = Token(args[0]);
-        _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         try
         {
             if (!Commands.TryGetValue(command, out var handler))
-                return FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}");
-            if (args.Length < handler.MinimumArity || args.Length > handler.MaximumArity)
-                return WrongArity(command);
+                return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}"));
+            // Redis command-table arity is either exact or a minimum. Optional-argument
+            // upper bounds (PING, LPOP/RPOP) are checked by the handler, including in EXEC.
+            if (args.Length < handler.MinimumArity
+                || handler.MaximumArity == handler.MinimumArity && args.Length > handler.MaximumArity)
+                return RejectCommand(connection, command, WrongArity(command));
             if (connection.IsResp2Subscribed
                 && command is not ("SUBSCRIBE" or "UNSUBSCRIBE" or "PING"))
                 return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
+            // Redis resolves CLIENT subcommands and their arity before queueing.
+            if (command == "CLIENT")
+            {
+                var subcommand = Token(args[1]);
+                var arity = subcommand switch { "ID" or "GETNAME" => 2, "SETNAME" => 3, _ => 0 };
+                if (arity == 0)
+                    return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}"));
+                if (args.Length != arity) return RejectCommand(connection, command, WrongArity($"CLIENT|{subcommand}"));
+            }
+            if (connection.Transaction is not null && command is not ("MULTI" or "EXEC" or "DISCARD" or "WATCH"))
+                return QueueTransaction(connection, args);
+            if (args.Length > handler.MaximumArity) return WrongArity(command);
             return handler.Execute(this, connection, args);
         }
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
@@ -239,11 +262,24 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private Entry? Find(byte[] key)
     {
         if (!_entries.TryGetValue(key, out var entry)) return null;
-        if (entry.ExpiresAt is { } expires && expires <= Now) { _entries.Remove(key); return null; }
+        if (entry.ExpiresAt is { } expires && expires <= Now) { DeleteEntry(key); return null; }
         return entry;
     }
 
-    private bool Remove(byte[] key) => Find(key) is not null && _entries.Remove(key);
+    private bool Remove(byte[] key) => Find(key) is not null && DeleteEntry(key);
+
+    private void SetEntry(byte[] key, Entry entry)
+    {
+        _entries[key] = entry;
+        TouchWatchedKey(key);
+    }
+
+    private bool DeleteEntry(byte[] key)
+    {
+        if (!_entries.Remove(key)) return false;
+        TouchWatchedKey(key);
+        return true;
+    }
 
     // ReadArguments owns each byte array. Stored keys never reference client or parser buffers.
     private sealed class BinaryKeyComparer : IEqualityComparer<byte[]>
@@ -327,6 +363,13 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             AllowSynchronousContinuations = false,
         });
         internal int PendingPushBytes;
+        internal bool ExecutingReply;
+        internal List<Outbound>? DeferredPushes;
+        internal List<byte[][]>? Transaction { get; set; }
+        internal long QueuedBytes { get; set; }
+        internal bool TransactionError { get; set; }
+        internal bool WatchChanged { get; set; }
+        internal HashSet<byte[]> WatchedKeys { get; } = new(BinaryKeyComparer.Instance);
     }
 
     private sealed class WrongTypeException : Exception { }

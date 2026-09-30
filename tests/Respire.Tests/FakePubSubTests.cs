@@ -79,17 +79,14 @@ public class FakePubSubTests
         using (var reply = await wire.ReadAsync())
         {
             if (protocol == 2) await Assert.That(reply.IsError).IsTrue();
-            else
-            {
-                await Assert.That(reply.Type).IsEqualTo(RespDataType.Push);
-                await Assert.That(reply.AsArray()[0].AsString()).IsEqualTo("message");
-                await Assert.That(reply.AsArray()[2].AsString()).IsEqualTo("self");
-            }
+            else await Assert.That(reply.AsInteger()).IsEqualTo(1);
         }
         if (protocol == 3)
         {
-            using var count = await wire.ReadAsync();
-            await Assert.That(count.AsInteger()).IsEqualTo(1);
+            using var message = await wire.ReadAsync();
+            await Assert.That(message.Type).IsEqualTo(RespDataType.Push);
+            await Assert.That(message.AsArray()[0].AsString()).IsEqualTo("message");
+            await Assert.That(message.AsArray()[2].AsString()).IsEqualTo("self");
         }
         await wire.SendAsync("UNSUBSCRIBE", "missing", "first", "first");
         await Confirmation(wire, "unsubscribe", "missing", 2, protocol);
