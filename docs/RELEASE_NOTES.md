@@ -31,6 +31,15 @@
   and mocks must add all twelve methods. See [server diagnostics](../website/docs/guides/server-diagnostics.md) for
   versions, units, ownership, collection costs, and partial-success semantics.
 
+### Valkey command logs
+
+- Server APIs add typed Valkey 8.1+ COMMANDLOG GET/LEN/RESET for slow execution,
+  large requests, and large replies. Owned entries retain binary arguments, client
+  metadata, measurement units, and future trailing fields. Explicit all-node variants
+  preserve endpoint results; RESET requires `AllowAdmin`. This is a breaking interface
+  extension for external `IServerCommands` implementations, which must add six members.
+  See the [command-log guide](../website/docs/guides/command-logs.md).
+
 ### Stream reference policies
 
 - Redis 8.2+ stream removal adds XDELEX and XACKDEL through `RemoveAsync(key, policy, ids)`

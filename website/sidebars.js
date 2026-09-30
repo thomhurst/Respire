@@ -30,6 +30,7 @@ const sidebars = {
         'guides/server-metadata-and-persistence',
         'guides/server-diagnostics',
         'guides/cluster-inspection',
+        'guides/command-logs',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
