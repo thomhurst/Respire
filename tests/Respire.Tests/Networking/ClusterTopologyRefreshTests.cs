@@ -8,25 +8,46 @@ namespace Respire.Tests.Networking;
 public class ClusterTopologyRefreshTests
 {
     [Test]
+    public async Task CreateDoesNotConnectUntilFirstClusterOperation()
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(50),
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+
+        await Task.Delay(250);
+        await Assert.That(seed.ReceivedCommands).IsEmpty();
+
+        await client.Core.Cluster!.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
+            await Task.Delay(10, timeout.Token);
+    }
+
+    [Test]
     public async Task ConcurrentSignalsShareRefreshAndPublishReplicaMetadata()
     {
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slotsCalls = 0;
         await using var seed = new FakeRespServer
         {
             SuppressReply = command =>
             {
-                if (command == "CLUSTER SLOTS") refreshStarted.TrySetResult();
-                return command == "CLUSTER SLOTS";
+                if (command != "CLUSTER SLOTS") return false;
+                if (Interlocked.Increment(ref slotsCalls) == 1) return false;
+                refreshStarted.TrySetResult();
+                return true;
             },
         };
         var replicaPort = seed.Port + 1;
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
-            ? Encoding.UTF8.GetBytes(
-                "*1\r\n*4\r\n:0\r\n:16383\r\n"
-                + $"*3\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n$9\r\nmaster-id\r\n"
-                + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n")
+            ? Topology(seed.Port, replicaPort)
             : null;
-        await using var client = RespireClient.Create(new RespireOptions
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
@@ -53,7 +74,7 @@ public class ClusterTopologyRefreshTests
         await Assert.That(replica.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replicaPort));
         await Assert.That(replica.NodeId).IsEqualTo("replica-id");
         await Assert.That(replica.Aliases).Contains(new RespireEndpoint("replica", replicaPort));
-        await Assert.That(seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(1);
+        await Assert.That(seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
     }
 
     [Test]

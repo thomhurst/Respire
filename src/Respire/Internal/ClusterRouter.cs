@@ -56,7 +56,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _primary = primary;
         _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         ObserveNode(primary);
-        StartTopologyRefreshWorker();
     }
 
     internal bool IsConnected
@@ -138,6 +137,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if (Volatile.Read(ref _seed) is { IsConnected: true } readySeed && discovery?.HasRejected(readySeed) != true)
         {
+            StartTopologyRefreshWorker();
             return;
         }
 
@@ -149,6 +149,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (Volatile.Read(ref _seed) is { IsConnected: true } seed && discovery?.HasRejected(seed) != true)
             {
+                StartTopologyRefreshWorker();
                 return;
             }
 
@@ -165,6 +166,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     SetSeed(node);
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
+                    StartTopologyRefreshWorker();
                     return;
                 }
                 catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken))
@@ -193,7 +195,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (discovery is null && _options.ReconnectPolicy is not null
-            && TryGetReadyConnection(slot) is { } ready) return new(ready);
+            && TryGetReadyConnection(slot) is { } ready)
+        {
+            StartTopologyRefreshWorker();
+            return new(ready);
+        }
         return GetConnectionWithDiscoveryAsync(slot, cancellationToken, discovery);
     }
 
@@ -247,6 +253,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if (slot is null && TryGetConnectedNode() is { } connectedNode)
         {
+            StartTopologyRefreshWorker();
             if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(connectedNode), cancellationToken).ConfigureAwait(false);
             return connectedNode.GetConnection();
         }
@@ -303,11 +310,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
-    private static async ValueTask EnsureRouteNodeConnectedAsync(
+    private async ValueTask EnsureRouteNodeConnectedAsync(
         RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(node), cancellationToken).ConfigureAwait(false);
-        try { await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
+        try
+        {
+            await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            StartTopologyRefreshWorker();
+        }
         catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
         {
             // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
@@ -1286,7 +1297,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             var resolved = _identities.ApplySnapshot(ranges, protectedNodes);
             Volatile.Write(ref _replicas, ranges.SelectMany(static range => range.Replicas)
-                .DistinctBy(static replica => replica.Endpoint).ToArray());
+                .GroupBy(static replica => replica.Endpoint)
+                .Select(static group => new ClusterTopologyReplica(group.Key,
+                    group.Select(static replica => replica.NodeId).FirstOrDefault(static nodeId => nodeId is not null),
+                    group.SelectMany(static replica => replica.Aliases).Distinct().ToList()))
+                .ToArray());
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)
             {

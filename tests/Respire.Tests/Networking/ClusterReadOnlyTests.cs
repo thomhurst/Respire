@@ -579,6 +579,7 @@ public class ClusterReadOnlyTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
