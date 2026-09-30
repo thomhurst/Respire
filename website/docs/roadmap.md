@@ -28,7 +28,7 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 
 | Capability | Current behavior |
 | --- | --- |
-| Redis Cluster gaps | Cluster routing is supported; `WATCH` transactions and sharded pub/sub remain unavailable in cluster mode |
+| Redis Cluster gaps | Cluster routing and same-slot `WATCH` transactions are supported; sharded pub/sub remains unavailable in cluster mode |
 | Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
 | RESP3-first internals | Protocol option exists; broader adoption remains planned |
 

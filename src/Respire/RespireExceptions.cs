@@ -76,6 +76,19 @@ public sealed class RespirePendingNotReadyException() : RespireException(
 public sealed class RespireTransactionAbortedException() : RespireException(
     "The transaction was aborted — a watched key changed, so no command ran.");
 
+/// <summary>Redis Cluster rejected a watched transaction because its slot owner changed or is migrating.</summary>
+/// <remarks>No automatic replay occurs. Start a new watched transaction and re-read its inputs before retrying.
+/// This exception is not used for an ambiguous connection failure or an error inside an executed result array.</remarks>
+public sealed class RespireTransactionRetryException : RespireException
+{
+    internal RespireTransactionRetryException(RespireServerException serverError)
+        : base("Redis Cluster rejected the watched transaction. Start a new WATCH attempt and re-read all inputs before retrying.", serverError)
+        => ServerError = serverError;
+
+    /// <summary>The original MOVED, ASK, or READONLY rejection.</summary>
+    public RespireServerException ServerError { get; }
+}
+
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
 public sealed class RespireServerException : RespireException
 {

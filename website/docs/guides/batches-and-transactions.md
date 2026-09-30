@@ -224,6 +224,54 @@ Dispose that attempt, create a new watched transaction, re-read state, and retry
 policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes
 atomic intent clearer.
 
+When client-side caching is enabled, a successful WATCH invalidates the watched keys locally
+and prevents earlier reads from restoring cached values. Reads started after transaction creation
+therefore fetch fresh state even if tracking invalidations from earlier writes are still in transit.
+
+## Cluster WATCH transactions
+
+Use matching hash tags for every watched and queued key, such as `{account:42}:balance`
+and `{account:42}:history`. Respire validates watched keys before discovery or network I/O,
+and rejects a cross-slot queued command before adding it to the transaction. Validation uses
+keys after the client prefix is applied, including hash tags inside that prefix.
+
+The slot owner's dedicated connection holds WATCH state through MULTI/EXEC. Successful commits
+and watched aborts return the connection to its original node pool. Cancellation, connection
+failure, or disposal before EXEC discards the connection so another caller cannot inherit WATCH.
+
+MOVED, ASK, or READONLY rejections during WATCH or transaction queueing throw
+`RespireTransactionRetryException`. Its `ServerError` preserves the original rejection. Start a
+new watched transaction and re-read every input; never replay queued writes using old reads.
+MOVED updates the learned route for that next attempt. ASK leaves the permanent route unchanged,
+so an attempt may keep failing until migration finishes. Use a bounded retry policy and delay.
+
+```csharp
+bool committed = false;
+for (var attempt = 0; attempt < 5 && !committed; attempt++)
+{
+    try
+    {
+        await using var transaction = await redis.CreateTransactionAsync(
+            ["{account:42}:balance"], cancellationToken);
+        long current = await redis.GetAsync<long>("{account:42}:balance", cancellationToken);
+        transaction.Set("{account:42}:balance", current - 100);
+        transaction.Set("{account:42}:history", "withdrawal");
+        committed = await transaction.CommitAsync(cancellationToken);
+    }
+    catch (RespireTransactionRetryException) when (attempt < 4)
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+    }
+}
+if (!committed) throw new InvalidOperationException("Watched keys kept changing.");
+```
+
+A socket failure or timeout after sending remains ambiguous and does not become this retry
+exception. Errors inside an executed result array stay on their individual pending results;
+other commands may have succeeded, so Respire never replays that array. These restrictions
+preserve Redis's [WATCH semantics](https://redis.io/docs/latest/commands/watch/) and
+[same-slot transaction requirement](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/).
+
 ## Redis Functions
 
 `Functions.Execute` and its typed, string, integer, and span variants queue Redis 7+

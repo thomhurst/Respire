@@ -1007,7 +1007,9 @@ public sealed partial class RespireClient : IRespireClient
     /// In an optimistic retry loop, read watched values through this client after creating the
     /// transaction, then queue writes on the transaction. Transaction reads are deferred and
     /// cannot be inspected before commit. A failed commit ends that attempt, so create a new
-    /// watched transaction and re-read the values before retrying.
+    /// watched transaction and re-read the values before retrying. In Cluster mode, all watched and
+    /// queued keys must share one effective hash slot. A cluster rejection throws
+    /// <see cref="RespireTransactionRetryException"/>; restart WATCH and re-read inputs before retrying.
     /// </remarks>
     /// <example>
     /// <code>
@@ -1042,36 +1044,59 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (watchKeys.Length == 0)
         {
-            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this, watchConnection: null));
+            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this));
         }
 
-        return CreateWatchedTransactionAsync(watchKeys.ToArray(), cancellationToken);
+        // Resolve and own keys before the first await so routing and WATCH use the same bytes.
+        var keys = MapKeys(watchKeys);
+        int? slot = null;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            keys[i] = keys[i].Snapshot();
+            if (_core.Cluster is not null && keys[i].TryGetClusterSlot(out var keySlot))
+                RespireTransactionBase.ValidateClusterSlot(keySlot, ref slot);
+        }
+        return CreateWatchedTransactionAsync(keys, slot, cancellationToken);
     }
 
     private async ValueTask<RespireWatchedTransaction> CreateWatchedTransactionAsync(
-        RespireKey[] watchKeys, CancellationToken cancellationToken)
+        RespireValue[] watchKeys, int? slot, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
-        if (_core.Cluster is not null)
-        {
-            throw new NotSupportedException(
-                "WATCH transactions are not supported in Redis Cluster mode. " +
-                "Use a same-slot Lua script for atomic read-modify-write operations.");
-        }
-
-        // Rented from the tracked dedicated pool (not raw-connected) so client disposal can
-        // see and abort this connection even if it opens mid-disposal.
-        var connection = await _core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
+        var cluster = _core.Cluster;
+        var pool = cluster is null ? _core.DedicatedPool
+            : await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
+        // The owning pool must follow the lease through commit/disposal, even if topology changes.
+        var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var command = new Cmd1N(Verbs.Watch, Key(watchKeys[0]), MapKeys(watchKeys.AsSpan(1)));
-            var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
-            reply.Dispose();
-            return new RespireWatchedTransaction(this, connection);
+            var command = new CmdN(Verbs.Watch, watchKeys);
+            using var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
+            if (_core.ClientCache is { } cache)
+            {
+                // Tracking pushes use other sockets and may lag writes processed before WATCH.
+                // Also fence reads already in flight so they cannot restore a pre-WATCH value.
+                foreach (var key in watchKeys) cache.Invalidate(key.AsKey());
+            }
+            return new RespireWatchedTransaction(this, connection, pool, slot);
         }
-        catch
+        catch (Exception error)
         {
-            await _core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+            // Cancellation and I/O failures can leave WATCH state or unread replies on the lease.
+            try
+            {
+                await pool.DiscardAsync(connection).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The pool reports cleanup failures. Preserve the original WATCH failure.
+            }
+            if (cluster is not null && error is RespireServerException rejection
+                && ClusterRouter.CanRecover(rejection, slot))
+            {
+                cluster.LearnWatchedRoute(rejection, connection, slot);
+                throw new RespireTransactionRetryException(rejection);
+            }
             throw;
         }
     }

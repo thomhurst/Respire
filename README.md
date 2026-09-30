@@ -228,8 +228,10 @@ if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(3
 
 Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows
 `MOVED`/`ASK` redirects, and caches learned routes. Batches may span nodes; transactions must keep
-all keys in one slot, so use Redis hash tags for related keys. `WATCH` transactions are not
-supported in cluster mode—use a same-slot Lua script instead. Sharded pub/sub is also unavailable
+all keys in one slot, so use Redis hash tags for related keys. Watched transactions use a dedicated
+connection to that slot owner; a redirect requires a new WATCH attempt and fresh reads. See the
+[Cluster WATCH guide](website/docs/guides/batches-and-transactions.md#cluster-watch-transactions).
+Sharded pub/sub is unavailable
 in cluster mode; `SSUBSCRIBE` subscriptions require a non-cluster client.
 
 ```csharp

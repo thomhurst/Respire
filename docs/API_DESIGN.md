@@ -317,6 +317,12 @@ commit. If `CommitAsync` returns false, dispose that attempt and recreate the wa
 including its reads and writes. Keep retries bounded. Scripts/functions remain preferable when
 the operation can be expressed server-side because they avoid round trips and retries.
 
+Cluster WATCH transactions require all watched and queued keys to share one effective hash slot
+(after prefixing). WATCH and MULTI/EXEC use the same dedicated connection and return it to its
+owning node pool only after a complete EXEC reply. MOVED, ASK, and READONLY rejections surface
+as `RespireTransactionRetryException`; callers restart the entire WATCH/read/write attempt.
+There is no cross-node replay of watched transactions and no retry of EXEC result-array errors.
+
 Key metadata is available through `Keys.ExpiryTimeAsync` (PEXPIRETIME/EXPIRETIME),
 `EncodingAsync`, `IdleTimeAsync`, `FrequencyAsync`, and `ReferenceCountAsync` (OBJECT).
 The absolute-expiry result reuses `RespireExpiryTime`, preserving missing/persistent distinctions

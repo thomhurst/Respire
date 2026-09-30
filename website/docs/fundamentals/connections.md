@@ -59,7 +59,9 @@ Caller cancellation still cancels recovery.
 This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked
 script commands. Transactions retry only when a queue error aborted the whole transaction;
 errors inside an executed result array are never replayed because other commands may have
-succeeded. Cluster WATCH transactions remain unsupported. `NoRedirect`, commands without a
+succeeded. Watched Cluster transactions instead throw `RespireTransactionRetryException` for
+MOVED, ASK, or READONLY rejections: restart WATCH and re-read inputs before retrying. They never
+replay on another connection. `NoRedirect`, commands without a
 known slot, standalone clients, and other server error codes retain their existing behavior.
 
 ## Full configuration
