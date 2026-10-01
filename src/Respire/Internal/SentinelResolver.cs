@@ -15,7 +15,8 @@ internal static class SentinelResolver
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
-        IReadOnlyList<RespireEndpoint>? rejectedPrimaries = null)
+        IReadOnlyList<RespireEndpoint>? rejectedPrimaries = null,
+        bool allowPreferredRejectedPrimary = false)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -68,7 +69,8 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (IsRejectedAfterSwitch(primary, endpoint, preferredSentinel, rejectedPrimaries))
+                if (IsRejectedAfterSwitch(primary, endpoint, preferredSentinel, rejectedPrimaries,
+                    allowPreferredRejectedPrimary))
                     throw new RespireConnectionException(
                         $"Sentinel at {endpoint} reports rejected primary {primary} after a switch event.");
                 var primaryOptions = options with
@@ -172,15 +174,18 @@ internal static class SentinelResolver
         return false;
     }
 
-    // Switch events name primaries they retire, and lagging Sentinels may still report them.
-    // Only the Sentinel that reported the switch (the preferred one) may confirm such an endpoint.
+    // Switch events name primaries they retire, and even the reporting Sentinel can lag while a
+    // transition is still in progress. A preferred Sentinel may confirm a gap baseline only
+    // when the caller explicitly permits it.
     private static bool IsRejectedAfterSwitch(RespireEndpoint primary, RespireEndpoint sentinel,
-        RespireEndpoint? preferredSentinel, IReadOnlyList<RespireEndpoint>? rejectedPrimaries)
+        RespireEndpoint? preferredSentinel, IReadOnlyList<RespireEndpoint>? rejectedPrimaries,
+        bool allowPreferredRejectedPrimary)
     {
-        if (rejectedPrimaries is null || preferredSentinel is { } reporting && SameEndpoint(sentinel, reporting))
-            return false;
+        if (rejectedPrimaries is null) return false;
         foreach (var rejected in rejectedPrimaries)
-            if (SameEndpoint(primary, rejected)) return true;
+            if (SameEndpoint(primary, rejected))
+                return !(allowPreferredRejectedPrimary && preferredSentinel is { } preferred
+                    && SameEndpoint(sentinel, preferred));
         return false;
     }
 

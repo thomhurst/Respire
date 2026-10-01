@@ -28,11 +28,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private readonly HashSet<RespireEndpoint> _monitoredSentinels = [];
     private readonly List<Task> _sentinelMonitors = [];
     private readonly HashSet<Task> _sentinelRefreshes = [];
-    // Subscription gaps coalesce: while one gap refresh waits for the discovery gate,
-    // later gaps only update the generation and Sentinel it reconciles against.
-    private bool _gapRefreshQueued;
-    private Generation? _gapGeneration;
-    private RespireEndpoint _gapSentinel;
+    // Each monitor must reconcile its own baseline after losing pub/sub messages.
+    private readonly HashSet<RespireEndpoint> _gapRefreshQueued = [];
+    private readonly Dictionary<RespireEndpoint, Generation?> _gapGenerations = [];
     private long _switchRefreshVersion;
     private RespireEndpoint? _pendingSwitchPrimary;
     private RespireEndpoint? _pendingSwitchPrevious;
@@ -107,6 +105,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         var acquired = false;
         Generation? unpublished = null;
         long? pendingSwitchVersion = null;
+        var gapSentinel = preferredSentinel;
         RespireEndpoint? reconcileSentinel = null;
         try
         {
@@ -140,9 +139,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 lock (_gate)
                 {
-                    expectedGeneration = _gapGeneration;
-                    if (!inheritedSwitch) preferredSentinel = _gapSentinel;
-                    _gapRefreshQueued = false;
+                    if (gapSentinel is { } reportingGap)
+                    {
+                        _gapGenerations.TryGetValue(reportingGap, out expectedGeneration);
+                        _gapGenerations.Remove(reportingGap);
+                    }
                 }
                 if (expectedGeneration is not null && !ReferenceEquals(previous, expectedGeneration))
                 {
@@ -151,6 +152,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     if (previousHealthy) return previous!;
                     expectedGeneration = previous;
                 }
+                if (!inheritedSwitch && expectedGeneration is { } gapBaseline)
+                    rejectedPrimaries = [gapBaseline.Endpoint];
             }
             if (expectedPrimary is null && rejectedPrimaries is null && !refreshAfterSubscriptionGap && previousHealthy)
                 return previous!;
@@ -177,7 +180,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (!preservePrevious && previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, ConnectGenerationAsync, linked.Token, _discovery,
-                preferredSentinel, rejectedPrimaries).ConfigureAwait(false);
+                preferredSentinel, rejectedPrimaries,
+                allowPreferredRejectedPrimary: refreshAfterSubscriptionGap && !inheritedSwitch).ConfigureAwait(false);
             unpublished = replacement;
             Generation? unchanged = null;
             lock (_gate)
@@ -196,10 +200,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         || expectedGeneration is { IsRetired: true } && !expectedWasRetired);
                 var supersededSwitch = pendingSwitchVersion is { } pendingVersion
                     && pendingVersion != _switchRefreshVersion;
-                var staleSwitchCandidate = switchRefreshVersion is not null && expectedPrimary is { } announced
-                    && old is { IsRetired: false } && old.Multiplexer.IsConnected
-                    && !SentinelResolver.SameEndpoint(replacement.Endpoint, announced);
-                if (supersededGap || supersededSwitch || staleSwitchCandidate)
+                if (supersededGap || supersededSwitch)
                 {
                     if (old is { IsRetired: false } && old.Multiplexer.IsConnected) unchanged = old;
                     else throw new SupersededSentinelRefreshException();
@@ -307,7 +308,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 // Client disposal ends the subscription without UNSUBSCRIBE, so router disposal
                 // never waits a full command timeout on an unresponsive Sentinel.
-                await using var client = await RespireClient.ConnectAsync(options, _lifetime.Token).ConfigureAwait(false);
+                await using var client = RespireClient.Create(options);
                 var subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], _lifetime.Token).ConfigureAwait(false);
                 // Events published before this subscription (or while a previous one was down)
@@ -345,7 +346,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     }
                 }
                 if (!_lifetime.IsCancellationRequested)
+                {
+                    if (await subscription.Completion.ConfigureAwait(false) == RespireSubscriptionEndReason.ReconnectExhausted)
+                    {
+                        QueueSentinelDiagnostic(() => core.Logger?.LogWarning(
+                            "Sentinel event monitoring stopped at {Endpoint} after subscription reconnects were exhausted; it restarts after the next primary discovery",
+                            endpoint));
+                        return;
+                    }
                     throw new RespireConnectionException($"Sentinel event subscription ended at {endpoint}.");
+                }
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             catch (Exception error)
@@ -437,7 +447,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // Keep newer events received while an earlier event refresh is waiting for discovery.
                 // This covers rapid A->B->C changes and switchbacks such as A->B->A. Unrelated
                 // events wait for the pending refresh, whose discovery fences still apply.
-                if (!SentinelResolver.SameEndpoint(oldPrimary, pending)) return;
+                if (!SentinelResolver.SameEndpoint(oldPrimary, pending)
+                    && !(_pendingSwitchRejected ?? []).Any(endpoint => SentinelResolver.SameEndpoint(endpoint, oldPrimary))) return;
                 retired = retired.Concat(_pendingSwitchRejected ?? []);
             }
             if (_pendingSwitchPrimary is null && currentHealthy && !SentinelResolver.SameEndpoint(current!.Endpoint, oldPrimary))
@@ -496,13 +507,29 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate)
         {
             if (_disposed) return;
-            _gapGeneration = Current;
-            _gapSentinel = sentinel;
-            if (_gapRefreshQueued) return;
-            _gapRefreshQueued = true;
+            _gapGenerations[sentinel] = Current;
+            if (!_gapRefreshQueued.Add(sentinel)) return;
         }
-        TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, expectedPrimary: null, rejectedPrimaries: null,
-            refreshAfterSubscriptionGap: true));
+        TrackRefresh(ReconcileSubscriptionGapAsync(sentinel));
+    }
+
+    private async Task ReconcileSubscriptionGapAsync(RespireEndpoint sentinel)
+    {
+        try
+        {
+            await RefreshAfterSentinelEventAsync(sentinel, expectedPrimary: null, rejectedPrimaries: null,
+                refreshAfterSubscriptionGap: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            var retry = false;
+            lock (_gate)
+            {
+                if (_gapGenerations.ContainsKey(sentinel)) retry = true;
+                else _gapRefreshQueued.Remove(sentinel);
+            }
+            if (retry) TrackRefresh(ReconcileSubscriptionGapAsync(sentinel));
+        }
     }
 
     private void TrackRefresh(Task refresh)

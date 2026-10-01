@@ -715,9 +715,8 @@ public class SentinelTests
             && reportingSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
         await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilQuietAsync(() => reportingSentinel.ReceivedCommands.Count + staleSentinel.ReceivedCommands.Count);
         var reportingLookups = reportingSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
-        var staleLookups = staleSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
         var commandIndex = reportingSentinel.ReceivedCommands.ToList()
             .FindIndex(command => command == "SUBSCRIBE +switch-master");
@@ -727,8 +726,6 @@ public class SentinelTests
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > reportingLookups);
         await WaitUntilQuietAsync(() => reportingSentinel.ReceivedCommands.Count + staleSentinel.ReceivedCommands.Count);
         await Assert.That(client.Core.Sentinel!.Current!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replacement.Port));
-        await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(staleLookups);
     }
 
     [Test]
