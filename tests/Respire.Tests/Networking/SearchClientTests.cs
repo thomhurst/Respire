@@ -2,6 +2,7 @@ using Redis.Search;
 using Respire.Internal;
 using Respire.Protocol;
 using System.Text;
+using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -452,10 +453,14 @@ public class SearchClientTests
     }
 
     [Test]
-    public async Task HybridSearchIsClassifiedAsReadOnlyForClientCache()
+    public async Task SearchQueryCommandsDeclareReadOnlyCacheMutation()
     {
-        await Assert.That(ClientSideCacheCoordinator.IsReadOnly("FT.HYBRID")).IsTrue();
-        await Assert.That(ClientSideCacheCoordinator.IsSingleKeyMutation("FT.HYBRID")).IsFalse();
+        var commands = typeof(RespireSearchClient).Assembly.GetType("Redis.Search.IRespireSearchCommands", throwOnError: true)!;
+        foreach (var methodName in new[] { "InfoAsync", "SearchAsync", "AggregateAsync", "HybridAsync", "ExplainAsync", "ExplainCliAsync" })
+        {
+            var command = commands.GetMethod(methodName)!.GetCustomAttribute<RespireCommandAttribute>()!;
+            await Assert.That(command.Mutation).IsEqualTo(RespireCacheMutation.ReadOnly).Because(methodName);
+        }
     }
 
     [Test]
