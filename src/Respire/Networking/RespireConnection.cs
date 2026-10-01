@@ -99,6 +99,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 if (Volatile.Read(ref _disposed) != 0) return;
                 var version = Volatile.Read(ref _version);
                 var delay = ComputeDelay();
+                Task? cancellationCallbacks = null;
                 lock (_scheduleGate)
                 {
                     // A maintenance change raced this calculation; the newest state must win.
@@ -109,12 +110,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         catch (ObjectDisposedException) { }
                         return;
                     }
+                    // Request cancellation under the same gate as maintenance changes. CancelAsync
+                    // signals the token now and runs registrations asynchronously, so callbacks
+                    // cannot run inline while this gate is held.
+                    try { cancellationCallbacks = _source.CancelAsync(); }
+                    catch (ObjectDisposedException) { }
                 }
 
-                // Cancel outside the gate: registrations run the caller's continuations inline.
-                try { _source.Cancel(); }
-                catch (ObjectDisposedException) { }
-                catch (AggregateException) { }
+                if (cancellationCallbacks is { IsFaulted: true }) _ = cancellationCallbacks.Exception;
+                else if (cancellationCallbacks is not null)
+                    _ = cancellationCallbacks.ContinueWith(static completed => _ = completed.Exception,
+                        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
                 return;
             }
         }
