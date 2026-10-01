@@ -164,15 +164,16 @@ Managed renewal requires `CLIENT ID` and `CLIENT KILL` permissions to fence unce
 commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing a copied
 attempt is idempotent through the shared handle and never deletes another owner's lease.
 
-Cancellation, timeout or disconnect can occur after Redis accepted acquisition. Respire
-does not replay that command after uncertain acceptance. It can leave a counter gap and an
-unreturned lease that expires after its server-side duration. It makes a best-effort
-owner-checked release. If Redis cannot be reached for cleanup, the lease expires after its
-server-side duration. A reply arriving after the local lease estimate elapses is not returned
-as acquired. There is no acquisition-owned keep-alive loop in this API; explicitly renew within
-a valid lease when needed. When renewal or release outcome is uncertain, the handle fails
-closed for its local estimate, but a later explicit renewal or release can ask Redis to settle
-ownership.
+Cancellation, timeout or disconnect can occur after Redis accepts acquisition. Fenced-lock
+acquisition can leave a counter gap and an unreturned lease that expires after its server-side
+duration. For named hash-field leases, Respire does not replay the command after uncertain
+acceptance; it makes a best-effort owner-checked release. If Redis cannot be reached for
+cleanup, the lease expires after its server-side duration. A reply arriving after the local
+lease estimate elapses is not returned as acquired. Fenced-lock acquisitions retain their
+separate expiry behavior. There is no acquisition-owned keep-alive loop in this API; explicitly
+renew within a valid lease when needed. When renewal or release outcome is uncertain, the handle
+fails closed for its local estimate, but a later explicit renewal or release can ask Redis to
+settle ownership.
 
 ## Multi-node Redlock
 

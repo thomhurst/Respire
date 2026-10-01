@@ -62,6 +62,22 @@ public class HashFieldLeaseTests
     }
 
     [Test]
+    public async Task OlderRedisReportsUnsupportedLeaseExpiryEvenWhenFieldIsOccupied()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.2-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
+        await client.Hashes.SetAsync("registry", "worker-1", "another owner");
+        var coordination = new RespireCoordination(client);
+
+        var error = await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
+                "registry", "worker-1", TimeSpan.FromSeconds(1)))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Message).Contains("Redis 7.4+");
+        await Assert.That(await client.Hashes.GetStringAsync("registry", "worker-1"))
+            .IsEqualTo("another owner");
+    }
+
+    [Test]
     public async Task ExpiringHashKeyIsRejectedBeforeLeaseFieldIsWritten()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });

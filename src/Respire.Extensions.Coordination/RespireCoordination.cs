@@ -182,6 +182,13 @@ public sealed class RespireCoordination
         """);
 
     private static readonly RespireScript AcquireHashFieldLease = RespireScript.Create("""
+        local capability = redis.pcall('HPTTL', KEYS[1], 'FIELDS', 1, ARGV[1])
+        if type(capability) == 'table' and capability.err then
+            if string.find(string.lower(capability.err), 'unknown', 1, true) then
+                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
+            end
+            return redis.error_reply(capability.err)
+        end
         if redis.call('PTTL', KEYS[1]) >= 0 then
             return redis.error_reply('ERR coordination leases require a hash key without key expiration')
         end
