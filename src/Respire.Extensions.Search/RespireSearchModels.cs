@@ -442,6 +442,9 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
 /// <summary>Aggregation response rows.</summary>
 public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IReadOnlyDictionary<string, string?>> Rows)
 {
+    /// <summary>Rows with nested RESP collections preserved for collection-valued reducers such as TOLIST.</summary>
+    public IReadOnlyList<IReadOnlyDictionary<string, RespireSearchAggregateValue>> StructuredRows { get; init; } = [];
+
     internal static RespireSearchAggregateResult Parse(RespireResult result)
     {
         if (result.Count == 0) return new(0, []);
@@ -449,6 +452,7 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
         {
             long total = 0;
             var mappedRows = new List<IReadOnlyDictionary<string, string?>>();
+            var structuredRows = new List<IReadOnlyDictionary<string, RespireSearchAggregateValue>>();
             for (var i = 0; i + 1 < result.Count; i += 2)
             {
                 var key = result[i].AsString();
@@ -466,28 +470,58 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
                             fields = item[k + 1];
                             break;
                         }
-                        mappedRows.Add(ParseFields(fields));
+                        var parsedFields = ParseFields(fields);
+                        mappedRows.Add(parsedFields.Scalar);
+                        structuredRows.Add(parsedFields.Structured);
                     }
                 }
             }
-            return new(total, mappedRows);
+            return new(total, mappedRows) { StructuredRows = structuredRows };
         }
         var rows = new List<IReadOnlyDictionary<string, string?>>();
+        var structured = new List<IReadOnlyDictionary<string, RespireSearchAggregateValue>>();
         for (var i = 1; i < result.Count; i++)
         {
-            var row = new Dictionary<string, string?>(StringComparer.Ordinal);
-            var values = result[i];
-            for (var j = 0; j + 1 < values.Count; j += 2) row[values[j].AsString()] = values[j + 1].IsNull ? null : values[j + 1].AsString();
-            rows.Add(row);
+            var parsedFields = ParseFields(result[i]);
+            rows.Add(parsedFields.Scalar);
+            structured.Add(parsedFields.Structured);
         }
-        return new(result[0].AsInteger(), rows);
+        return new(result[0].AsInteger(), rows) { StructuredRows = structured };
     }
 
-    private static IReadOnlyDictionary<string, string?> ParseFields(RespireResult values)
+    private static (IReadOnlyDictionary<string, string?> Scalar, IReadOnlyDictionary<string, RespireSearchAggregateValue> Structured) ParseFields(RespireResult values)
     {
-        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var scalar = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var structured = new Dictionary<string, RespireSearchAggregateValue>(StringComparer.Ordinal);
         for (var i = 0; i + 1 < values.Count; i += 2)
-            fields[values[i].AsString()] = values[i + 1].IsNull ? null : values[i + 1].AsString();
-        return fields;
+        {
+            var value = values[i + 1];
+            var name = values[i].AsString();
+            scalar[name] = value.IsNull ? null : value.AsString();
+            structured[name] = RespireSearchAggregateValue.From(value);
+        }
+        return (scalar, structured);
+    }
+}
+
+/// <summary>An immutable RESP value in a structured aggregate row.</summary>
+/// <param name="Type">RESP wire type.</param>
+/// <param name="Scalar">Decoded scalar value, or null for null and collection types.</param>
+/// <param name="Items">Collection elements in wire order; map items alternate keys and values.</param>
+public sealed record RespireSearchAggregateValue(
+    RespDataType Type,
+    string? Scalar,
+    IReadOnlyList<RespireSearchAggregateValue> Items)
+{
+    internal static RespireSearchAggregateValue From(RespireResult value)
+    {
+        if (value.Type is RespDataType.Array or RespDataType.Map or RespDataType.Set or RespDataType.Push or RespDataType.Attribute)
+        {
+            var items = new RespireSearchAggregateValue[value.Count];
+            for (var i = 0; i < items.Length; i++) items[i] = From(value[i]);
+            return new(value.Type, null, items);
+        }
+
+        return new(value.Type, value.IsNull ? null : value.AsString(), []);
     }
 }

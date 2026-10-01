@@ -1,4 +1,5 @@
 using Respire.Extensions.Search;
+using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -32,6 +33,46 @@ public class SearchClientTests
         await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@count", "DESC"]);
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Rows[0]["name"]).IsEqualTo("foo");
+    }
+
+    [Test]
+    public async Task AggregatePreservesResp2CollectionValues()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "FT.AGGREGATE idx *"
+                ? "*2\r\n:1\r\n*2\r\n$5\r\nitems\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var result = await search.AggregateAsync("idx", "*");
+        var values = result.StructuredRows[0]["items"];
+
+        await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"]);
+    }
+
+    [Test]
+    public async Task AggregatePreservesResp3CollectionValues()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => Hello,
+                _ => "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$16\r\nextra_attributes\r\n%1\r\n$5\r\nitems\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"u8.ToArray(),
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        var result = await search.AggregateAsync("idx", "*");
+        var values = result.StructuredRows[0]["items"];
+
+        await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"]);
     }
 
     [Test]
