@@ -30,6 +30,7 @@ const sidebars = {
         'guides/reconnect-policy',
         'guides/renewable-credentials',
         'guides/aws-iam-credentials',
+        'guides/azure-managed-redis',
         'guides/pub-sub',
         'guides/keyspace-notifications',
         'guides/pub-sub-introspection',
