@@ -19,6 +19,7 @@ public class SentinelTests
         var dataTls = new SslClientAuthenticationOptions { TargetHost = "redis.example" };
         var sentinelTls = new SslClientAuthenticationOptions { TargetHost = "sentinel.example" };
         var endpoint = new RespireEndpoint("sentinel.example", 26379);
+        var reconnectEpisodes = 0;
         var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
         {
             Endpoints = [new("redis.example", 6379)],
@@ -31,7 +32,7 @@ public class SentinelTests
             SentinelUseTls = false,
             SentinelTlsOptions = sentinelTls,
             SentinelPrimaryName = "mymaster",
-        }, endpoint);
+        }, endpoint, () => reconnectEpisodes++);
 
         await Assert.That(options.Endpoints).IsEquivalentTo([endpoint]);
         await Assert.That(options.Username).IsEqualTo("sentinel-user");
@@ -40,6 +41,9 @@ public class SentinelTests
         await Assert.That(options.TlsOptions).IsSameReferenceAs(sentinelTls);
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
         await Assert.That(options.SentinelPrimaryName).IsNull();
+        await Assert.That(options.ReconnectTelemetryScope).IsEqualTo("sentinel-monitor");
+        options.ReconnectEpisodeStarted?.Invoke();
+        await Assert.That(reconnectEpisodes).IsEqualTo(1);
     }
 
     // Each row: which credential sources are configured, and the expected monitor credentials and protocol.

@@ -11,12 +11,16 @@ namespace Respire.Internal;
 /// The hint reports a fault or a delivery gap, so a discovery that started before it arrived cannot satisfy it.
 /// </param>
 /// <param name="OldPrimaryAddresses">Resolved addresses of a hostname <paramref name="OldPrimary"/>, if any.</param>
+/// <param name="AdditionalOldPrimaries">Other switch sources retained while pending hints merge.</param>
+/// <param name="ReportingSentinel">The Sentinel that delivered the switch hint.</param>
 internal readonly record struct SentinelHint(
     string Key,
     RespireEndpoint? Target = null,
     RespireEndpoint? OldPrimary = null,
     bool MustRediscover = false,
-    string[]? OldPrimaryAddresses = null);
+    string[]? OldPrimaryAddresses = null,
+    RespireEndpoint[]? AdditionalOldPrimaries = null,
+    RespireEndpoint? ReportingSentinel = null);
 
 /// <summary>
 /// Coalesces failover hints for the single notification rediscovery worker. At most one hint is
@@ -79,7 +83,7 @@ internal sealed class SentinelNotificationCoalescer
             && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(previousTarget, hintTarget);
         var mustRediscover = previous.MustRediscover || hint.MustRediscover || conflictingTargets
             || hint.OldPrimary is not null && hint.Target is null;
-        return hint.OldPrimary is not null || previous.OldPrimary is null
+        var merged = hint.OldPrimary is not null || previous.OldPrimary is null
             ? hint with
             {
                 // A later switch away from the earlier target supersedes it rather than inheriting it.
@@ -88,6 +92,29 @@ internal sealed class SentinelNotificationCoalescer
                 MustRediscover = mustRediscover,
             }
             : previous with { MustRediscover = mustRediscover };
+        var sources = EnumerateOldPrimaries(previous).Concat(EnumerateOldPrimaries(hint))
+            .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
+        var additionalSources = merged.OldPrimary is { } selected
+            ? sources.Where(source => !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source, selected)).ToArray()
+            : sources;
+        return merged with
+        {
+            AdditionalOldPrimaries = additionalSources.Length == 0 ? null : additionalSources,
+            OldPrimaryAddresses = merged.OldPrimary is { } old && previous.OldPrimary is { } previousOld
+                && SentinelDiscoveryState.EndpointComparer.Instance.Equals(old, previousOld)
+                ? previous.OldPrimaryAddresses
+                : hint.OldPrimaryAddresses,
+            ReportingSentinel = hint.Target is not null
+                ? hint.ReportingSentinel ?? previous.ReportingSentinel
+                : previous.ReportingSentinel ?? hint.ReportingSentinel,
+        };
+    }
+
+    private static IEnumerable<RespireEndpoint> EnumerateOldPrimaries(SentinelHint hint)
+    {
+        if (hint.OldPrimary is { } oldPrimary) yield return oldPrimary;
+        if (hint.AdditionalOldPrimaries is { } additional)
+            foreach (var endpoint in additional) yield return endpoint;
     }
 
     /// <summary>Takes the pending hint and makes it active. Returns null when nothing is pending.</summary>

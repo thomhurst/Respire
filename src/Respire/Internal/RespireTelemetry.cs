@@ -181,6 +181,7 @@ internal static class RespireTelemetry
         RespireReconnectSource.Command => "command",
         RespireReconnectSource.Dedicated => "dedicated",
         RespireReconnectSource.PubSub => "pubsub",
+        RespireReconnectSource.SentinelMonitor => "sentinel-monitor",
         _ => "unspecified",
     };
 

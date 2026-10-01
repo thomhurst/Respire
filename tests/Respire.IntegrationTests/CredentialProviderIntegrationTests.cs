@@ -101,8 +101,11 @@ public class CredentialProviderIntegrationTests
             messages.Current.Text.Should().Be("after");
             (await ConnectionsAsync(administrators)).Keys.Should().BeEquivalentTo(initial.Keys);
 
+            await client.PingAsync();
             var active = await ConnectionsAsync(administrators);
-            var pooled = initial.First(pair => pair.Value is "get" or "publish");
+            var pooled = active.FirstOrDefault(pair => pair.Value is "get" or "publish" or "ping");
+            if (pooled.Key is null)
+                throw new InvalidOperationException($"No ordinary pooled command connection was visible: {string.Join(",", active.Select(pair => $"{pair.Key}={pair.Value}"))}.");
             var endpointPrefix = pooled.Key.Split(':')[0] + ":";
             var identity = pooled.Key.Split(':');
             var reconnectCalls = data.Calls;

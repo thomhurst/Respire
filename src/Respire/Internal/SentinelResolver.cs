@@ -94,7 +94,9 @@ internal static class SentinelResolver
         RespireOptions options,
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken,
-        SentinelDiscoveryState? discoveryState = null)
+        SentinelDiscoveryState? discoveryState = null,
+        RespireEndpoint? preferredSentinel = null,
+        RespireEndpoint? expectedPrimary = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -111,6 +113,16 @@ internal static class SentinelResolver
         discoveryState ??= new SentinelDiscoveryState(options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost", 26379)] : options.Endpoints);
         var sentinelEndpoints = discoveryState.Snapshot().ToList();
+        if (preferredSentinel is { } preferred)
+        {
+            var preferredIndex = sentinelEndpoints.FindIndex(endpoint =>
+                SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, preferred));
+            if (preferredIndex > 0)
+            {
+                sentinelEndpoints.RemoveAt(preferredIndex);
+                sentinelEndpoints.Insert(0, preferred);
+            }
+        }
         var initialCount = sentinelEndpoints.Count;
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
@@ -141,6 +153,12 @@ internal static class SentinelResolver
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
+                if (expectedPrimary is { } expected
+                    && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, expected))
+                {
+                    throw new RespireConnectionException(
+                        $"Sentinel {endpoint} reports primary {primary}, which does not match its switch target {expected}.");
+                }
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
                 var primaryOptions = options with
                 {

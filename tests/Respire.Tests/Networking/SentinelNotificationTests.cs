@@ -149,6 +149,7 @@ public class SentinelNotificationTests
 
         // B may still report ROLE master briefly, so the target shortcut must not consume C's hint.
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
+        await Assert.That(coalescer.Pending!.Value.AdditionalOldPrimaries!).Contains(NewPrimary);
     }
 
     [Test]
