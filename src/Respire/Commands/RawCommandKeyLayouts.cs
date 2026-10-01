@@ -177,6 +177,10 @@ internal static class RawCommandKeyLayouts
                 Require(args.Length >= 2);
                 return new(0, 2);
             case LayoutKind.AfterFirst:
+                if (args.Length == 1 && args[0].EqualsAsciiIgnoreCase("HELP"))
+                {
+                    return new(0, 0);
+                }
                 Require(args.Length >= 2);
                 return new(1, 1);
             case LayoutKind.All:

@@ -326,6 +326,11 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteRawAsync(command.Name, args, flags, cancellationToken);
         }
 
+        if (TryPrefixCatalogJsonCommand(command, args, out var catalogPrefixedArguments))
+        {
+            return ExecuteRawAsync(command.Name, catalogPrefixedArguments, flags, cancellationToken);
+        }
+
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
             if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
@@ -361,6 +366,11 @@ public sealed partial class RespireClient : IRespireClient
         if (command.IsCallerSupplied)
         {
             return ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken);
+        }
+
+        if (TryPrefixCatalogJsonCommand(command, args, out var catalogPrefixedArguments))
+        {
+            return ExecuteRawFireAndForgetAsync(command.Name, catalogPrefixedArguments, cancellationToken);
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
@@ -405,6 +415,22 @@ public sealed partial class RespireClient : IRespireClient
         if (layout.Extra >= 0)
             prefixedArguments[layout.Extra] = arguments[layout.Extra].AsKey().Prepend(_keyPrefix!).AsValue();
         return true;
+    }
+
+    private bool TryPrefixCatalogJsonCommand(
+        RespireCommand command,
+        RespireValue[] args,
+        out RespireValue[] prefixedArguments)
+    {
+        if (_keyPrefix is not null
+            && command.Name.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+            && RawCommandKeyLayouts.TryGetLayout(command.Name, args, out _))
+        {
+            return TryPrefixGeneratedKeys(command.Name, args, out prefixedArguments);
+        }
+
+        prefixedArguments = [];
+        return false;
     }
 
     /// <summary>
