@@ -39,6 +39,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
     private readonly object?[] _slotSnapshotBatches = new object?[ClusterHash.SlotCount];
+    // Includes discovery publications, so queued SMIGRATED work can detect every newer
+    // route mutation without treating completed discovery as a direct-route fence.
+    private readonly long[] _slotMutationVersions = new long[ClusterHash.SlotCount];
+    private long _slotMutationVersion;
     private int _disposed;
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
@@ -1600,11 +1604,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 throw new RespireConnectionRetiredException(node.Host, node.Port);
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
+            if (ReferenceEquals(previous, node)) return;
             PublishSlotLocked(slot, node, ++_topologyVersion);
-            if (ReferenceEquals(previous, node))
-            {
-                return;
-            }
+            _slotMutationVersions[slot] = ++_slotMutationVersion;
 
             AddSlot(node);
             if (previous is not null && RemoveSlot(previous))
@@ -1638,6 +1640,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
             PublishSlotLocked(slot, null, ++_topologyVersion);
             topologyVersion = _topologyVersion;
+            _slotMutationVersions[slot] = ++_slotMutationVersion;
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {
@@ -1750,6 +1753,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 topologyChanged |= !ReferenceEquals(Volatile.Read(ref _slots[slot]), node);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.
+                if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
+                {
+                    topologyChanged = true;
+                    _slotMutationVersions[slot] = ++_slotMutationVersion;
+                }
                 PublishSlotLocked(slot, node, _slotVersions[slot]);
                 if (snapshotBatch is not null && coveredSlots[slot])
                     _slotSnapshotBatches[slot] = snapshotBatch;

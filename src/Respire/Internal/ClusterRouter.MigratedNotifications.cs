@@ -11,7 +11,8 @@ internal sealed partial class ClusterRouter
     private const int RecentSmigratedSequenceLimit = 256;
 
     private sealed record QueuedSmigratedNotification(
-        RespireConnectionMultiplexer Sender, MaintenanceNotification Notification, long TopologyVersion);
+        RespireConnectionMultiplexer Sender, MaintenanceNotification Notification,
+        long TopologyVersion, long SlotMutationVersion);
 
     private sealed class SmigratedSequenceWindow
     {
@@ -54,9 +55,14 @@ internal sealed partial class ClusterRouter
             return;
         }
         long topologyVersion;
-        try { topologyVersion = _topologyVersion; }
+        long slotMutationVersion;
+        try
+        {
+            topologyVersion = _topologyVersion;
+            slotMutationVersion = _slotMutationVersion;
+        }
         finally { Monitor.Exit(_nodesGate); }
-        _smigratedNotifications.Writer.TryWrite(new(sender, notification, topologyVersion));
+        _smigratedNotifications.Writer.TryWrite(new(sender, notification, topologyVersion, slotMutationVersion));
     }
 
     private async Task ProcessSmigratedNotificationsAsync()
@@ -121,9 +127,11 @@ internal sealed partial class ClusterRouter
                 {
                     var slot = slots[index];
                     if (_slotVersions[slot] > item.TopologyVersion
+                        || _slotMutationVersions[slot] > item.SlotMutationVersion
                         || !ReferenceEquals(Volatile.Read(ref _slots[slot]), source)) continue;
                     if (migrationVersion == 0) migrationVersion = ++_topologyVersion;
                     PublishSlotLocked(slot, target, migrationVersion);
+                    _slotMutationVersions[slot] = ++_slotMutationVersion;
                     AddSlot(target);
                     topologyChanged = true;
                     if (RemoveSlot(source)) (retiredNodes ??= []).Add(source);
@@ -134,13 +142,16 @@ internal sealed partial class ClusterRouter
             if (retiredNodes is not null)
             {
                 var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
+                retained.UnionWith(_redirectVersions.Keys);
+                if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
                 retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
+                if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
             }
         }
 
-        if (Volatile.Read(ref _disposed) != 0) return;
         if (retirements is not null)
             foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
+        if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
         if (topologyChanged) TopologyChanged?.Invoke();
