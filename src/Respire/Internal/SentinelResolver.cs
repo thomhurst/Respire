@@ -49,6 +49,7 @@ internal static class SentinelResolver
             var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
             var discoveryCompleted = false;
+            var primaryConnectDeadlineExpired = false;
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -83,6 +84,7 @@ internal static class SentinelResolver
                     && connectTimeoutSource.IsCancellationRequested)
                 {
                     // The connection deadline fired while the caller token stayed live.
+                    primaryConnectDeadlineExpired = true;
                     throw new RespireTimeoutException(
                         "CONNECT", options.ConnectTimeout, error,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
@@ -106,8 +108,7 @@ internal static class SentinelResolver
                 // fires first, report the same timeout the caller's deadline would have raised.
                 lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                     && (ex is RespireTimeoutException || ContainsCancellation(ex));
-                lastErrorIsPrimaryConnectTimeout = discoveryCompleted
-                    && ex is RespireTimeoutException { CommandName: "CONNECT" };
+                lastErrorIsPrimaryConnectTimeout = primaryConnectDeadlineExpired;
                 lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
