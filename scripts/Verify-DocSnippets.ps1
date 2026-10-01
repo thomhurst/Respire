@@ -40,6 +40,7 @@ $requiredPackages = @(
     'Respire.Testing'
     'Respire.Extensions.Caching'
     'Respire.Extensions.Coordination'
+    'Respire.Extensions.Aws'
     'Respire.Extensions.Caching.Hybrid'
     'Respire.Extensions.DependencyInjection'
     'Respire.Testing.Containers'
@@ -236,6 +237,7 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using Respire.Extensions.Caching;')
 [void]$builder.AppendLine('using Respire.Extensions.Caching.Hybrid;')
 [void]$builder.AppendLine('using Respire.Extensions.DependencyInjection;')
+[void]$builder.AppendLine('using Respire.Extensions.Aws;')
 [void]$builder.AppendLine('using Respire.Serialization;')
 [void]$builder.AppendLine('#pragma warning disable')
 
