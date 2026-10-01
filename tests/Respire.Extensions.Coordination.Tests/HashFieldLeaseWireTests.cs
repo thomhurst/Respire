@@ -434,6 +434,7 @@ public class HashFieldLeaseWireTests
             RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
         using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
         await client.GetStringAsync("registry");
+        oldOwner.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
         await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
             "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity);
 

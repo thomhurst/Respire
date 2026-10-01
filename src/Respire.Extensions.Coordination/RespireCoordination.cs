@@ -460,6 +460,8 @@ public sealed class RespireCoordination
                 originalFailure ??= error;
             }
 
+            await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
+
             if (originalCorrection is not null)
             {
                 var probeDelay = TimeSpan.FromMilliseconds(100);
@@ -478,6 +480,7 @@ public sealed class RespireCoordination
                     {
                         originalFailure ??= error;
                     }
+                    await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
                     probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
                 }
 
@@ -485,20 +488,7 @@ public sealed class RespireCoordination
                 {
                     try { await originalCorrection.ConfigureAwait(false); }
                     catch (Exception error) { originalFailure ??= error; }
-
-                    if (client.Core.Cluster is not null)
-                    {
-                        try
-                        {
-                            using var currentOwnerRelease = await client.Scripts.ExecuteAsync(
-                                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None)
-                                .ConfigureAwait(false);
-                        }
-                        catch (Exception error)
-                        {
-                            originalFailure ??= error;
-                        }
-                    }
+                    await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
                 }
                 else
                 {
@@ -515,6 +505,7 @@ public sealed class RespireCoordination
             {
                 originalFailure ??= error;
             }
+            await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
         }
         else
         {
@@ -524,6 +515,21 @@ public sealed class RespireCoordination
 
         if (originalFailure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
+
+        async Task ReleaseCurrentClusterOwnerAsync()
+        {
+            if (client.Core.Cluster is null) return;
+            try
+            {
+                using var currentOwnerRelease = await client.Scripts.ExecuteAsync(
+                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
+            }
+        }
     }
 
     private static void ObserveCorrectionFailure(Task correction)
