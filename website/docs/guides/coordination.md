@@ -188,7 +188,9 @@ Each owner has a bounded lease. Renew it with `ResetExpiryAsync`, check it with
 `VerifyStillHeldAsync`, and release it with `ReleaseAsync` or `DisposeAsync`. A failed or
 uncertain renewal marks the local handle lost. A cancelled or failed verification leaves the
 handle unchanged, so release still removes the Redis entry. Stop protected work when ownership
-is uncertain.
+is uncertain. `DisposeAsync` releases on a best-effort basis and ignores failures; an entry it
+could not remove keeps blocking incompatible owners until its lease expires. Prefer short leases,
+and call `ReleaseAsync` when the caller must observe whether release succeeded.
 
 One sorted-set key stores owner tokens and server-time expiry deadlines. Redis prunes expired
 owners atomically before each acquisition and expires the key at its latest owner deadline.

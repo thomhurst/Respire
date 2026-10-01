@@ -152,6 +152,34 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task RejectedReadWriteRenewalSendsOneOwnerCheckedRelease()
+    {
+        await using var server = new FakeRespServer(":1
+"u8.ToArray(), ":0
+"u8.ToArray(), ":1
+"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        // Renewal cleanup completed the single-flight release, so explicit release sends nothing more.
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task ReadWriteRolesDoNotPrefixEachOther()
+    {
+        // Acquisition identifies a writer member by its role prefix.
+        await Assert.That(RespireCoordination.WriterRole.StartsWith(RespireCoordination.ReaderRole, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(RespireCoordination.ReaderRole.StartsWith(RespireCoordination.WriterRole, StringComparison.Ordinal)).IsFalse();
+    }
+
+    [Test]
     public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());

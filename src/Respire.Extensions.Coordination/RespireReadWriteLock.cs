@@ -28,6 +28,9 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
 {
     private sealed record LeaseSnapshot(long DurationTicks, long RenewedTimestamp);
 
+    // Bounds release waits that no caller or configured command timeout would otherwise bound.
+    private static readonly TimeSpan ReleaseFallbackTimeout = TimeSpan.FromSeconds(2);
+
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
     private readonly bool _isWriter;
@@ -135,12 +138,12 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             catch
             {
                 MarkOwnershipUnavailable();
-                await ReleaseBestEffortAsync().ConfigureAwait(false);
+                await ReleaseAfterLostRenewalAsync().ConfigureAwait(false);
                 throw;
             }
 
             MarkOwnershipUnavailable();
-            await ReleaseBestEffortAsync().ConfigureAwait(false);
+            await ReleaseAfterLostRenewalAsync().ConfigureAwait(false);
             return false;
         }
         finally
@@ -183,7 +186,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         try
         {
             fallbackTimeout = _client is RespireClient client && client.Core.Options.CommandTimeout is null
-                ? new CancellationTokenSource(TimeSpan.FromSeconds(2))
+                ? new CancellationTokenSource(ReleaseFallbackTimeout)
                 : null;
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role],
@@ -225,14 +228,11 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         }
     }
 
-    private async ValueTask ReleaseBestEffortAsync()
+    // Uses the single-flight release path, so a later ReleaseAsync or DisposeAsync joins or
+    // observes this cleanup instead of sending a second release.
+    private async ValueTask ReleaseAfterLostRenewalAsync()
     {
-        try
-        {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            using var _ = await _client.Scripts.ExecuteAsync(
-                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], timeout.Token).ConfigureAwait(false);
-        }
+        try { _ = await ReleaseAsync().AsTask().WaitAsync(ReleaseFallbackTimeout).ConfigureAwait(false); }
         catch (Exception) { }
     }
 }

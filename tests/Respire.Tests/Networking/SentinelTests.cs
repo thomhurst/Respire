@@ -154,6 +154,35 @@ public class SentinelTests
         await Assert.That(timeout.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(200));
     }
 
+    [Test]
+    public async Task Discovery_PeerDiscoveryTimeoutDoesNotReclassifyPrimaryConnectTimeout()
+    {
+        // Optional peer discovery hits the discovery deadline after the primary reply arrived.
+        // The later primary connection deadline must still surface as CONNECT.
+        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0
+"u8.ToArray())
+        {
+            SuppressReply = command => command == "SENTINEL SENTINELS mymaster",
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromMilliseconds(300),
+        };
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return 0;
+        }, CancellationToken.None).AsTask();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.InnerException is RespireTimeoutException).IsTrue();
+        var timeout = (RespireTimeoutException)error.InnerException!;
+        await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
+        await Assert.That(timeout.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(300));
+    }
+
     private static byte[] PeersReply(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 
