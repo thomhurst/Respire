@@ -383,6 +383,7 @@ public sealed record RespireHybridSearchQuery(string TextExpression, string Vect
         var args = new List<RespireValue> { "SEARCH", TextExpression, "VSIM", "@" + VectorField, "$vector", "KNN", 2, "K", K, "COMBINE", "RRF", 2, "CONSTANT", RrfConstant, "LIMIT", 0, Limit };
         if (LoadFields.Count > 0) { args.Add("LOAD"); args.Add(LoadFields.Count); foreach (var field in LoadFields) args.Add(field); }
         args.Add("PARAMS"); args.Add(2); args.Add("vector"); args.Add(Vector);
+        args.Add("DIALECT"); args.Add(2);
         return [.. args];
     }
 }
@@ -406,6 +407,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     {
         if (result.Type == RespDataType.Map) return ParseResp3(result, hybrid);
         if (result.Count == 0) return new(0, [], []);
+        if (hybrid) return ParseResp2Hybrid(result);
         var total = result[0].AsInteger();
         var docs = new List<RespireSearchDocument>();
         for (var i = 1; i < result.Count;)
@@ -419,6 +421,30 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             docs.Add(new(id, fields, score));
         }
         return new(total, docs, []);
+    }
+
+    private static RespireSearchResult ParseResp2Hybrid(RespireResult result)
+    {
+        var total = result[0].AsInteger();
+        var documents = new List<RespireSearchDocument>(Math.Max(0, result.Count - 1));
+        for (var i = 1; i < result.Count; i++)
+        {
+            var row = result[i];
+            string? id = null;
+            double? score = null;
+            var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+            for (var j = 0; j + 1 < row.Count; j += 2)
+            {
+                var key = row[j].AsString();
+                var value = row[j + 1];
+                if (key is "id" or "key" or "keyid") id = value.AsString();
+                else if (key == "score") score = value.AsDouble();
+                else if (key == "extra_attributes") fields = ParseFields(value);
+                else fields[key] = value.IsNull ? null : value.AsString();
+            }
+            if (id is not null) documents.Add(new(id, fields, score));
+        }
+        return new(total, documents, []);
     }
 
     private static RespireSearchResult ParseResp3(RespireResult result, bool hybrid)

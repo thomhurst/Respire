@@ -173,6 +173,27 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task HybridSearchParsesResp2RowsAndSelectsDialectTwo()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal)
+                ? "*2\r\n:1\r\n*4\r\n$2\r\nid\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3));
+
+        await Assert.That(result.Total).IsEqualTo(1);
+        await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
+        await Assert.That(result.Documents[0].Fields["title"]).IsEqualTo("foo");
+        var command = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
+        await Assert.That(command[^2..]).IsEquivalentTo(["DIALECT", "2"], CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task VectorSearchRejectsDialectOneBeforeSendingCommand()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
