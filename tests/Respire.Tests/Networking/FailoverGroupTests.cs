@@ -62,20 +62,19 @@ public class FailoverGroupTests
             {
                 ProbeInterval = TimeSpan.FromMilliseconds(30),
                 ProbeTimeout = TimeSpan.FromSeconds(2),
+                // A probe failure would keep the only candidate unavailable for the rest of the test.
+                CircuitOpenDuration = TimeSpan.FromMinutes(1),
             });
         Volatile.Write(ref primaryPort, newPrimary.Port);
         Volatile.Write(ref demoted, 1);
 
-        try { await WaitUntilAsync(() => group.IsConnected && group.ActiveClient.Endpoint == Endpoint(newPrimary)); }
-        catch (Exception error)
-        {
-            throw new InvalidOperationException($"Sentinel commands: {string.Join(" | ", sentinel.ReceivedCommands)}; "
-                + $"stale Sentinel commands: {string.Join(" | ", staleSentinel.ReceivedCommands)}; "
-                + $"old commands: {string.Join(" | ", oldPrimary.ReceivedCommands)}; "
-                + $"new commands: {string.Join(" | ", newPrimary.ReceivedCommands)}; "
-                + $"status endpoint: {group.GetEndpointStatuses().Single().Endpoint}", error);
-        }
+        await WaitUntilAsync(() => group.IsConnected && group.ActiveClient.Endpoint == Endpoint(newPrimary)
+            && newPrimary.ReceivedCommands.Contains("PING"));
         await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(newPrimary));
+        // Rediscovering a validated replacement within the probe is a healthy handoff, not a failure.
+        var status = group.GetEndpointStatuses().Single();
+        await Assert.That(status.IsHealthy).IsTrue();
+        await Assert.That(status.ConsecutiveFailures).IsEqualTo(0);
     }
 
     [Test]

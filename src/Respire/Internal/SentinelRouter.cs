@@ -128,9 +128,36 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    internal async ValueTask<bool> IsCurrentPrimaryAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Checks the published primary with <c>ROLE</c>. On a mismatch, or when the probed generation
+    /// was retired while answering, retires only that generation and rediscovers. Returns true when
+    /// a ROLE-validated primary is current afterwards; discovery failures propagate.
+    /// </summary>
+    internal async ValueTask<bool> ProbePrimaryAsync(CancellationToken cancellationToken)
     {
         var generation = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+        bool isPrimary;
+        try
+        {
+            isPrimary = await HasPrimaryRoleAsync(generation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested && generation.IsRetired)
+        {
+            // A ROLE mismatch observed on the response retires the generation before this resumes.
+            isPrimary = false;
+        }
+        if (isPrimary) return true;
+
+        // Application traffic may already have published a replacement; never retire that one.
+        Invalidate(generation);
+        // Discovery validates the replacement with ROLE before publishing it.
+        var replacement = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+        _ = replacement;
+        return true;
+    }
+
+    private static async ValueTask<bool> HasPrimaryRoleAsync(Generation generation, CancellationToken cancellationToken)
+    {
         using var role = await generation.Multiplexer.GetConnection()
             .SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
         if (role.Type != RespDataType.Array) return false;
@@ -140,12 +167,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             && fields[0].AsString() == "master"
             && fields[1].Type == RespDataType.Integer
             && fields[2].Type == RespDataType.Array;
-    }
-
-    internal async ValueTask RediscoverAfterRoleMismatchAsync(CancellationToken cancellationToken)
-    {
-        if (Current is { } current) Invalidate(current);
-        await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)

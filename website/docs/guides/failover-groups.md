@@ -2,12 +2,14 @@
 title: Failover groups
 ---
 
-`RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy`r`ndeployment for new operations. Lower candidate priorities win. The group uses bounded health`r`nprobes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
+`RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy
+deployment for new operations. Lower candidate priorities win. The group uses bounded health
+probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
-Health means a standalone endpoint answers `PING` within `ProbeTimeout`. Cluster candidates use the
-`CLUSTER INFO` probe described below. The group does not inspect
-application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
+Health means standalone endpoints answer `PING` within `ProbeTimeout`. Cluster candidates use `CLUSTER INFO`; Sentinel candidates first check primary `ROLE`, as described below. The probe
+checks the discovered primary with `ROLE`. The group does not
+inspect application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
 `-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
 unreachable. Choose these settings with that detection delay in mind. Probes use the candidate
@@ -80,10 +82,15 @@ reach. The candidate's user needs permission to run `CLUSTER INFO`.
 
 Each Cluster candidate must be a separate Cluster. Duplicate detection compares only the configured
 seed endpoints. Two candidates whose seeds differ but whose nodes belong to the same Cluster pass
-validation and provide no deployment redundancy.`r`n`r`nFor a Sentinel deployment, set `SentinelPrimaryName` to that deployment's service name and
+validation and provide no deployment redundancy.
+
+For a Sentinel deployment, set `SentinelPrimaryName` to that deployment's service name and
 provide one or more Sentinel endpoints. Configure data and Sentinel credentials and TLS settings
 on each candidate's `RespireOptions`. The client validates the discovered primary with `ROLE`
-before routing `PING` or application commands. Endpoint status and switch events report the
+before routing `PING` or application commands. Each probe also sends `ROLE` to the current primary.
+When that node has been demoted, the probe rediscovers the primary through Sentinel and stays
+healthy if a validated replacement answers `PING` within `ProbeTimeout`; it fails only when
+rediscovery or the replacement fails. Endpoint status and switch events report the
 validated current primary; when discovery has not produced a primary, failed-probe telemetry uses
 the first configured Sentinel endpoint.
 
