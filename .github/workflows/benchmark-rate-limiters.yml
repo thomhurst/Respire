@@ -20,7 +20,8 @@ jobs:
   rate-limiters:
     name: Compare Redis rate limiters (informational)
     runs-on: ubuntu-latest
-    timeout-minutes: 30    services:
+    timeout-minutes: 30
+    services:
       redis:
         image: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
         ports: ['6379:6379']
