@@ -8,6 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
         <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj" />
     </ItemGroup>
 

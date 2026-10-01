@@ -46,7 +46,31 @@ public readonly struct RespireCommand
 
     internal RespireCommandBehavior Behavior { get; }
 
-    internal bool IsCallerSupplied => Sources == RespireCommandSource.None;
+    internal bool IsCallerSupplied => _verb.Bulk is null;
+
+    /// <summary>
+    /// Encodes a single command token once for repeated execution, including custom module commands.
+    /// The token is normalized to uppercase ASCII. Pass subcommands and options as arguments.
+    /// </summary>
+    /// <remarks>
+    /// Uses the same safety, routing, and cache invalidation policies as catalog commands.
+    /// Key-prefixed views are unsupported because arbitrary commands have no known key layout.
+    /// This does not declare the command read-only or associate it with an official command source.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
+    public static RespireCommand Create(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        foreach (var character in name)
+        {
+            if (character is < '!' or > '~')
+            {
+                throw new ArgumentException("A command name must be one printable ASCII token.", nameof(name));
+            }
+        }
+
+        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None);
+    }
 
     /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>
     public static implicit operator RespireCommand(string name)

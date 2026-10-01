@@ -7,6 +7,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
         <ProjectReference Include="..\..\src\Respire.Compression.Lz4\Respire.Compression.Lz4.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Zstd\Respire.Compression.Zstd.csproj" />
         <ProjectReference Include="..\..\src\Respire.Testing\Respire.Testing.csproj" />

@@ -67,6 +67,11 @@ public class CommandCatalogTests
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
             .IsEqualTo(18);
+        // IsCallerSupplied keys off the pre-encoded verb because RespireCommand.Create also uses
+        // RespireCommandSource.None; every catalog entry must still be pre-encoded with a source.
+        await Assert.That(commands.Where(static command =>
+                command.IsCallerSupplied || command.Sources == RespireCommandSource.None))
+            .IsEmpty();
     }
 
     [Test]
@@ -249,6 +254,37 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task PreencodedSafeSubcommands_UseSubcommandAwareExecution()
+    {
+        await using var server = new FakeRespServer(
+            "*1\r\n:1\r\n"u8.ToArray(),
+            "$6\r\nstring\r\n"u8.ToArray(),
+            "+OK\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        using (var exists = await client.ExecuteAsync(RespireCommands.Scripting.SCRIPT, "EXISTS", "sha1"))
+        {
+            await Assert.That(exists.Count).IsEqualTo(1);
+        }
+
+        using (var encoding = await client.ExecuteAsync(RespireCommands.Key.OBJECT, "ENCODING", "key"))
+        {
+            await Assert.That(encoding.AsString()).IsEqualTo("string");
+        }
+
+        using (var clients = await client.ExecuteAsync(RespireCommands.Connection.CLIENT, "LIST"))
+        {
+            await Assert.That(clients.AsString()).IsEqualTo("OK");
+        }
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SCRIPT EXISTS sha1",
+            "OBJECT ENCODING key",
+            "CLIENT LIST",
+        ]);
+    }
+
+    [Test]
     public async Task CatalogCommands_OnKeyPrefixedViews_AreRejectedBeforeSending()
     {
         await using var server = new FakeRespServer();
@@ -257,6 +293,12 @@ public class CommandCatalogTests
 
         await Assert.That(async () => await tenant.ExecuteAsync(RespireCommands.String.GET, "settings"))
             .Throws<NotSupportedException>();
+        // Subcommand-normalized descriptors report the rejection through the returned task.
+        var pending = tenant.ExecuteAsync(RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group");
+        await Assert.That(async () => await pending).Throws<NotSupportedException>();
+        var pendingFireAndForget = tenant.ExecuteFireAndForgetAsync(
+            RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group");
+        await Assert.That(async () => await pendingFireAndForget).Throws<NotSupportedException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
