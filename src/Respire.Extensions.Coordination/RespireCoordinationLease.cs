@@ -1,0 +1,165 @@
+using System.Diagnostics;
+
+namespace Respire.Extensions.Coordination;
+
+/// <summary>A named coordination lease stored in one expiring Redis hash field.</summary>
+/// <remarks>Ownership operations compare the unique owner token atomically. Hash-field expiration requires Redis 7.4 or later.</remarks>
+public sealed class RespireCoordinationLease : IAsyncDisposable
+{
+    private sealed record LeaseSnapshot(long DurationTicks, long RenewedTimestamp);
+
+    private readonly RespireCoordination _coordination;
+    private readonly RespireLockToken _owner;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly object _releaseSync = new();
+    private LeaseSnapshot _snapshot;
+    private int _state;
+    private Task<LockReleaseOutcome>? _releaseTask;
+
+    private const int StateHeld = 0;
+    private const int StateReleasing = 1;
+    private const int StateReleased = 2;
+    private const int StateNotOwned = 3;
+
+    internal RespireCoordinationLease(RespireCoordination coordination,
+        RespireKey hashKey, RespireKey field, RespireLockToken owner, TimeSpan duration, long acquiredTimestamp)
+    {
+        _coordination = coordination;
+        HashKey = hashKey.Snapshot();
+        Field = field.Snapshot();
+        _owner = owner;
+        _snapshot = new LeaseSnapshot(duration.Ticks, acquiredTimestamp);
+    }
+
+    /// <summary>The hash key, before the client's prefix.</summary>
+    public RespireKey HashKey { get; }
+
+    /// <summary>The binary-safe hash field that stores this lease.</summary>
+    public RespireKey Field { get; }
+
+    /// <summary>The generated owner token used to compare every operation.</summary>
+    public RespireLockToken OwnerToken => _owner;
+
+    /// <summary>The currently configured lease duration.</summary>
+    public TimeSpan Duration => TimeSpan.FromTicks(Volatile.Read(ref _snapshot).DurationTicks);
+
+    /// <summary>A conservative local estimate; it is not a server ownership guarantee.</summary>
+    public TimeSpan RemainingEstimate
+    {
+        get
+        {
+            if (Volatile.Read(ref _state) != StateHeld) return TimeSpan.Zero;
+            var snapshot = Volatile.Read(ref _snapshot);
+            var remaining = TimeSpan.FromTicks(snapshot.DurationTicks) - Stopwatch.GetElapsedTime(snapshot.RenewedTimestamp);
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+    }
+
+    /// <summary>Whether this handle was released or its local lease estimate elapsed.</summary>
+    public bool IsReleased => Volatile.Read(ref _state) != StateHeld || RemainingEstimate == TimeSpan.Zero;
+
+    /// <summary>Checks that this owner still holds the expiring hash field.</summary>
+    public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => _coordination.VerifyHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken);
+
+    /// <summary>Renews only this owner and preserves the hash field's independent expiry.</summary>
+    public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+    {
+        var milliseconds = RespireCoordination.ValidateLease(HashKey, duration);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (IsReleased) return false;
+            var started = Stopwatch.GetTimestamp();
+            try
+            {
+                if (!await _coordination.RenewHashFieldLeaseAsync(HashKey, Field, _owner, milliseconds, cancellationToken)
+                        .ConfigureAwait(false))
+                {
+                    Volatile.Write(ref _state, StateNotOwned);
+                    return false;
+                }
+            }
+            catch (RespireServerException)
+            {
+                throw;
+            }
+            catch
+            {
+                Volatile.Write(ref _state, StateNotOwned);
+                throw;
+            }
+
+            var appliedTicks = checked(milliseconds * TimeSpan.TicksPerMillisecond);
+            Volatile.Write(ref _snapshot, new LeaseSnapshot(appliedTicks, started));
+            return true;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    /// <summary>Releases only this owner, leaving unrelated hash fields untouched.</summary>
+    public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_releaseSync)
+        {
+            if (_state == StateReleased) return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
+            if (_state == StateNotOwned) return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
+            if (_state == StateReleasing) return new ValueTask<LockReleaseOutcome>(_releaseTask!);
+            _state = StateReleasing;
+            return new ValueTask<LockReleaseOutcome>(_releaseTask = ReleaseCoreAsync(cancellationToken));
+        }
+    }
+
+    private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
+    {
+        var entered = false;
+        try
+        {
+            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            entered = true;
+            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken)
+                .ConfigureAwait(false);
+            Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
+            return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
+        }
+        catch (RespireServerException)
+        {
+            lock (_releaseSync)
+            {
+                if (_state == StateReleasing) Volatile.Write(ref _state, StateHeld);
+                _releaseTask = null;
+            }
+            throw;
+        }
+        catch
+        {
+            lock (_releaseSync)
+            {
+                Volatile.Write(ref _state, StateNotOwned);
+                _releaseTask = null;
+            }
+            throw;
+        }
+        finally
+        {
+            if (entered) _operationGate.Release();
+        }
+    }
+
+    /// <summary>Releases this lease.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await ReleaseAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is RespireConnectionException or RespireTimeoutException
+            or ObjectDisposedException or OperationCanceledException)
+        {
+            // Uncertain release expires on its own; cleanup must not mask the caller's exception.
+        }
+    }
+}

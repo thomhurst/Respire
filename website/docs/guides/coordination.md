@@ -1,9 +1,9 @@
 ---
-title: Fencing-token locks
+title: Coordination leases and fencing-token locks
 ---
 
-`Respire.Extensions.Coordination` adds immediate fencing-lock acquisition to an existing
-client. A successful lease carries a random `RespireLockToken` for ownership and a positive
+`Respire.Extensions.Coordination` adds fencing locks and named hash-field leases to an existing
+client. A fencing lock carries a random `RespireLockToken` for ownership and a positive
 64-bit fencing token for a cooperating protected resource. Install the optional package:
 
 ```bash
@@ -76,6 +76,33 @@ lease. Tokens can have gaps when execution or delivery fails. Redis returns the 
 decimal bytes, preserving every positive `long` value, including values above 2^53.
 The script uses EVALSHA with a definitive NOSCRIPT fallback to EVAL and works on Redis 7+
 and compatible Valkey deployments; it does not require Redis 8.8 commands.
+
+## Named leases in hash fields
+
+`TryAcquireLeaseAsync` stores each named lease as one hash field and applies an independent field
+expiry. `AcquireLeaseAsync` waits for tracking invalidations and the field's `HPTTL` deadline.
+Lease fields and hash keys accept binary bytes. The owner token guards renewal, verification,
+and release, so an expired owner's handle cannot change a replacement lease or another field in
+the same hash.
+
+Hash-field expiration requires Redis 7.4 or later. The containing hash key must have no key-level
+expiry; Redis deletes the whole hash when that expiry elapses. Acquisition rejects expiring hash
+keys before writing the lease field. Older servers fail before the lease field is written, with
+an error that identifies the required Redis feature.
+
+```csharp
+using Respire.Extensions.Coordination;
+
+await using var leaseClient = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = ["localhost:6379"],
+    Protocol = RespProtocol.Resp3,
+    ClientSideCache = new RespireClientSideCacheOptions(),
+});
+var leaseCoordination = new RespireCoordination(leaseClient);
+await using var lease = await leaseCoordination.AcquireLeaseAsync(
+    "coordination:leases", "worker:42", TimeSpan.FromSeconds(30));
+```
 
 ## Enforce fencing at the protected resource
 
