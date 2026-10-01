@@ -60,6 +60,7 @@ internal static class SentinelResolver
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
+                discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
