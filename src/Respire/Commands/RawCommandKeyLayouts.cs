@@ -74,6 +74,13 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
+        Add(LayoutKind.First,
+            "BF.RESERVE", "BF.ADD", "BF.EXISTS", "BF.MADD", "BF.MEXISTS", "BF.INSERT", "BF.INFO", "BF.CARD", "BF.SCANDUMP", "BF.LOADCHUNK",
+            "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO", "CF.SCANDUMP", "CF.LOADCHUNK",
+            "CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.QUERY", "CMS.INFO",
+            "TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY", "TOPK.QUERY", "TOPK.COUNT", "TOPK.LIST", "TOPK.INFO",
+            "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD", "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK", "TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN", "TDIGEST.INFO");
+        Add(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)

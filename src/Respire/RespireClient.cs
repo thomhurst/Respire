@@ -331,10 +331,10 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteCatalogAsync(command, args, flags, cancellationToken);
         }
 
-        // Report the rejection through the task, as ExecuteCatalogAsync does, rather than synchronously.
-        return _keyPrefix is null
-            ? ExecuteRawAsync(operation, rawArguments, flags, cancellationToken)
-            : ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
+        if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
+        if (!TryPrefixModuleKeys(operation, rawArguments, out var prefixedArguments))
+            return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
+        return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
     }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
@@ -352,9 +352,35 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
         }
 
-        return _keyPrefix is null
-            ? ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken)
-            : ValueTask.FromException(KeyPrefixNotSupported());
+        if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
+        if (!TryPrefixModuleKeys(operation, rawArguments, out var prefixedArguments))
+            return ValueTask.FromException(KeyPrefixNotSupported());
+        return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
+    }
+
+    private bool TryPrefixModuleKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    {
+        if (!(operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase))
+            || !RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        {
+            prefixedArguments = [];
+            return false;
+        }
+
+        prefixedArguments = arguments.ToArray();
+        for (var index = 0; index < layout.Count; index++)
+        {
+            var keyIndex = layout.Start + index * layout.Stride;
+            prefixedArguments[keyIndex] = arguments[keyIndex].AsKey().Prepend(_keyPrefix!).AsValue();
+        }
+        if (layout.Extra >= 0)
+            prefixedArguments[layout.Extra] = arguments[layout.Extra].AsKey().Prepend(_keyPrefix!).AsValue();
+        return true;
     }
 
     /// <summary>
