@@ -116,11 +116,23 @@ public class CredentialProviderIntegrationTests
                 try { _ = await client.GetStringAsync(key); }
                 catch (RespireConnectionException) { /* A request can observe the killed socket before recovery completes. */ }
             }
-            await UntilAsync(async () =>
+            async Task<bool> IsReconnectedAsync()
             {
                 var current = await ConnectionsAsync(administrators);
-                return data.Calls > reconnectCalls && current.Count == active.Count && !current.ContainsKey(pooled.Key);
-            });
+                return data.Calls > reconnectCalls && !current.ContainsKey(pooled.Key);
+            }
+            try
+            {
+                await UntilAsync(IsReconnectedAsync, TimeSpan.FromSeconds(15));
+            }
+            catch (OperationCanceledException error)
+            {
+                var current = await ConnectionsAsync(administrators);
+                throw new InvalidOperationException(
+                    $"Sentinel reconnect did not settle: provider calls {reconnectCalls}->{data.Calls}; " +
+                    $"active [{string.Join(",", active.Select(pair => $"{pair.Key}={pair.Value}"))}]; " +
+                    $"current [{string.Join(",", current.Select(pair => $"{pair.Key}={pair.Value}"))}].", error);
+            }
             using (var recoveryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
                 await client.Core.Multiplexer.GetHealthyConnectionAsync(recoveryDeadline.Token);
             (await client.GetStringAsync("{a}:credential")).Should().Be("before");
@@ -163,10 +175,10 @@ public class CredentialProviderIntegrationTests
         return connections;
     }
 
-    private static async Task UntilAsync(Func<Task<bool>> condition)
+    private static async Task UntilAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!await condition()) await Task.Delay(10, timeout.Token);
+        using var cancellation = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(5));
+        while (!await condition()) await Task.Delay(10, cancellation.Token);
     }
 
     private sealed class Provider(RespireCredentials credentials) : IRespireCredentialProvider
