@@ -212,6 +212,7 @@ public class MaintenanceNotificationTests
         await source.SendRawAsync(Encoding.UTF8.GetBytes(
             $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
         await WaitForCommands(target, 2); // HELLO and maintenance negotiation completed on replacement.
+        await WaitForRetirement(staleSelection);
         using var pong = await staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await staleSelection.SendFireAndForgetAsync(new RawCommand(FakeRespServer.PingFrame))
@@ -242,7 +243,7 @@ public class MaintenanceNotificationTests
         await source.SendRawAsync(Encoding.UTF8.GetBytes(
             $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
         await WaitForCommands(target, 2);
-        while (multiplexer.GetConnection().Port != target.Port) await Task.Delay(5);
+        await WaitForRetirement(staleSelection);
 
         await Assert.That(async () => await staleSelection.SendCheckedAsync(
                 new RawCommand(FakeRespServer.PingFrame), commandName: "PING").AsTask())
@@ -280,6 +281,85 @@ public class MaintenanceNotificationTests
         await Assert.That(acceptedReply.AsString()).IsEqualTo("PONG");
         await Assert.That(reroutedReply.AsString()).IsEqualTo("PONG");
         await Assert.That(target.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MovingFromReplacementServerIsHonouredDespiteLowerSequence()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        await using var final = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await source.SendRawAsync(Moving(7, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+        // Sequence IDs belong to the announcing server; the replacement starts its own numbering.
+        await target.SendRawAsync(Moving(1, final.Port));
+        await WaitForPort(multiplexer, final.Port);
+
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(final.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MovingRetriesTargetSetupWithinGracePeriod()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride!;
+        var negotiations = 0;
+        target.ReplyOverride = (connectionId, command) =>
+            command == "CLIENT MAINT_NOTIFICATIONS ON" && Interlocked.Increment(ref negotiations) == 1
+                ? "-ERR maintenance subsystem unavailable\r\n"u8.ToArray()
+                : targetReply(connectionId, command);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await source.SendRawAsync(Moving(1, target.Port, seconds: 10));
+        await WaitForPort(multiplexer, target.Port);
+
+        await Assert.That(Volatile.Read(ref negotiations)).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MovingKeepsCurrentConnectionsWhenTargetStaysUnavailable()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server("-ERR maintenance subsystem unavailable\r\n"u8.ToArray(), maxConnections: 64);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await source.SendRawAsync(Moving(1, target.Port, seconds: 1));
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            // Wait for more than one setup attempt, then for the grace period to lapse.
+            while (target.ReceivedCommands.Count(command => command == "CLIENT MAINT_NOTIFICATIONS ON") < 2)
+                await Task.Delay(5, timeout.Token);
+        }
+        await Task.Delay(1200);
+
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
+    }
+
+    private static byte[] Moving(long sequence, int port, int seconds = 10)
+        => Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:{sequence}\r\n:{seconds}\r\n+127.0.0.1:{port}\r\n");
+
+    private static async Task WaitForRetirement(RespireConnection connection)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+    }
+
+    private static async Task WaitForPort(RespireConnectionMultiplexer multiplexer, int port)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (multiplexer.GetConnection().Port != port) await Task.Delay(5, timeout.Token);
     }
 
     [Test]

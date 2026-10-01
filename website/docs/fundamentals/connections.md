@@ -98,7 +98,12 @@ connects and completes the normal TLS, authentication, database, and notificatio
 with the announced endpoint before publishing replacement sockets. A null target reconnects
 to the configured logical host; that host remains the reconnect name so DNS can change later.
 Accepted commands drain on the old sockets, while commands selected just before retirement
-move to a current socket only when the old socket had not accepted their frame. Blocking,
+move to a current socket only when the old socket had not accepted their frame, keeping the
+command timeout that started on the old socket. The advertised grace period starts when the
+notification arrives: a target that cannot be reached is retried until it ends, after which the
+current connections stay in place and normal reconnect applies, and old sockets still draining
+when it ends are closed. Sequence IDs are tracked per announcing server, so the replacement
+server can announce a later `MOVING` with its own numbering. Blocking,
 pub/sub, Sentinel discovery, and correction-control connections do not negotiate maintenance
 notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
 topology recovery budgets, and explicit operation-level cancellation deadlines also retain

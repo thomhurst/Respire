@@ -25,11 +25,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly RespireConnectionOptions _options;
     private ActiveEndpoint _activeEndpoint;
     private readonly object _movingGate = new();
+    // Highest MOVING sequence announced by the published sockets. Sequence IDs belong to the
+    // announcing server, so each completed handoff resets it for the new endpoint.
     private long _movingSequence = -1;
-    private long _completedMovingSequence = -1;
-    private RespireEndpoint _pendingMovingEndpoint;
-    private long _pendingMovingDeadline;
-    private int _movingWorker;
+    private MovingRequest? _pendingMoving;
+    private bool _movingWorker;
     private TaskCompletionSource? _movingCompletion;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
@@ -868,9 +868,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void ObserveConnectionFailure(int slot, RespireConnection connection)
     {
-        connection.MovingNotification += notification => QueueMovingHandoff(notification);
+        // Replay a MOVING received before subscription; duplicate delivery is deduplicated.
+        connection.MovingNotification += notification => QueueMovingHandoff(slot, connection, notification);
         if (connection.LastMovingNotification is { } notification)
-            QueueMovingHandoff(notification);
+            QueueMovingHandoff(slot, connection, notification);
         if (_options.EnableClientTracking)
         {
             connection.PendingCommandsFailing += () => HandleConnectionFailure(slot, connection);
@@ -883,16 +884,26 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
-    private void QueueMovingHandoff(MaintenanceNotification notification)
+    private sealed record MovingRequest(RespireEndpoint Endpoint, long Deadline);
+
+    private void QueueMovingHandoff(int slot, RespireConnection connection, MaintenanceNotification notification)
     {
         lock (_movingGate)
         {
-            if (!IsOperational || notification.SequenceId <= _movingSequence) return;
+            // Replaced sockets can still deliver the MOVING that started their own handoff
+            // while they drain; only published sockets speak for the active endpoint.
+            if (!IsOperational || !ReferenceEquals(Volatile.Read(ref _connections[slot]), connection)
+                || notification.SequenceId <= _movingSequence)
+            {
+                return;
+            }
             _movingSequence = notification.SequenceId;
-            _pendingMovingEndpoint = notification.Target ?? new RespireEndpoint(Host, Port);
             var grace = TimeSpan.FromSeconds(Math.Clamp(notification.Seconds ?? 5, 1, 30));
-            _pendingMovingDeadline = Environment.TickCount64 + (long)grace.TotalMilliseconds;
-            if (Interlocked.Exchange(ref _movingWorker, 1) != 0) return;
+            // The grace period starts at receipt, so slow target setup consumes drain time.
+            _pendingMoving = new MovingRequest(notification.Target ?? new RespireEndpoint(Host, Port),
+                Environment.TickCount64 + (long)grace.TotalMilliseconds);
+            if (_movingWorker) return;
+            _movingWorker = true;
             _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         _ = Task.Run(ProcessMovingHandoffsAsync);
@@ -900,106 +911,177 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private async Task ProcessMovingHandoffsAsync()
     {
+        while (true)
+        {
+            MovingRequest request;
+            lock (_movingGate)
+            {
+                if (!IsOperational || _pendingMoving is null)
+                {
+                    _pendingMoving = null;
+                    _movingWorker = false;
+                    _movingCompletion?.TrySetResult();
+                    _movingCompletion = null;
+                    return;
+                }
+                request = _pendingMoving;
+                _pendingMoving = null;
+            }
+            try
+            {
+                await HandOffAsync(request).ConfigureAwait(false);
+            }
+            catch (Exception error) when (IsOperational)
+            {
+                _logger?.LogWarning(error, "MOVING handoff to {Host}:{Port} failed",
+                    request.Endpoint.Host, request.Endpoint.Port);
+            }
+            catch (Exception error)
+            {
+                _logger?.LogDebug(error, "MOVING handoff stopped by multiplexer retirement");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Connects every replacement before publishing any, retrying until the advertised grace
+    /// period ends. A newer MOVING supersedes this one without publishing its sockets.
+    /// </summary>
+    private async Task HandOffAsync(MovingRequest request)
+    {
+        var endpoint = request.Endpoint;
+        RespireConnection[] replacements;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                replacements = await ConnectMovingReplacementsAsync(endpoint).ConfigureAwait(false);
+                break;
+            }
+            catch (Exception error) when (IsOperational)
+            {
+                lock (_movingGate)
+                {
+                    if (_pendingMoving is not null) return;
+                }
+                var remaining = request.Deadline - Environment.TickCount64;
+                if (remaining <= 0)
+                {
+                    _logger?.LogWarning(error,
+                        "MOVING handoff to {Host}:{Port} failed within its grace period; keeping current connections",
+                        endpoint.Host, endpoint.Port);
+                    return;
+                }
+                _logger?.LogDebug(error, "MOVING handoff to {Host}:{Port} failed; retrying", endpoint.Host, endpoint.Port);
+                var backoff = Math.Min(remaining, 50L << Math.Min(attempt, 4));
+                await Task.Delay(TimeSpan.FromMilliseconds(backoff), _stopConnecting.Token).ConfigureAwait(false);
+            }
+        }
+
+        var old = new RespireConnection?[_connections.Length];
+        var published = false;
         try
         {
-            while (IsOperational)
+            lock (_lifecycleGate)
             {
-                long sequence;
-                RespireEndpoint endpoint;
-                long drainDeadline;
                 lock (_movingGate)
                 {
-                    sequence = _movingSequence;
-                    endpoint = _pendingMovingEndpoint;
-                    drainDeadline = _pendingMovingDeadline;
-                }
-                if (sequence < 0) return;
-                var replacements = new RespireConnection[_connections.Length];
-                try
-                {
+                    if (!IsOperational || _pendingMoving is not null) return;
+                    _options.CredentialCacheInvalidation?.Invoke();
+                    Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
+                    _movingSequence = -1;
                     for (var i = 0; i < replacements.Length; i++)
                     {
-                        replacements[i] = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
-                            _options, _logger, _stopConnecting.Token).ConfigureAwait(false);
-                        if (Volatile.Read(ref _trackServerClientIds) != 0)
-                            await replacements[i].EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
+                        replacements[i].Multiplexer = this;
+                        old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
                     }
-                    RespireConnection?[] old;
-                    lock (_lifecycleGate)
-                    {
-                        ThrowIfUnavailable();
-                        lock (_movingGate)
-                        {
-                            if (sequence != _movingSequence) continue;
-                            _options.CredentialCacheInvalidation?.Invoke();
-                            Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
-                        }
-                        old = new RespireConnection?[_connections.Length];
-                        for (var i = 0; i < replacements.Length; i++)
-                        {
-                            replacements[i].Multiplexer = this;
-                            old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
-                            ObserveConnectionFailure(i, replacements[i]);
-                            replacements[i] = null!;
-                        }
-                    }
-                    var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
-                    try
-                    {
-                        var remainingMilliseconds = Math.Max(0, drainDeadline - Environment.TickCount64);
-                        await Task.WhenAll(drains).WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds)).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException)
-                    {
-                        foreach (var connection in old)
-                        {
-                            if (connection is null || connection.DrainedSuccessfully) continue;
-                            RetireConnection(connection);
-                            await connection.DisposeAsync().ConfigureAwait(false);
-                        }
-                        try { await Task.WhenAll(drains).ConfigureAwait(false); }
-                        catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after abortive drain cleanup"); }
-                        if (HasPendingCorrectionFences)
-                            await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
-                        _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborted remaining old sockets");
-                    }
+                    published = true;
                 }
-                catch (OperationCanceledException) when (!IsOperational) { return; }
-                catch (Exception error)
-                {
-                    _logger?.LogWarning(error, "MOVING handoff to {Host}:{Port} failed; keeping current connections", endpoint.Host, endpoint.Port);
-                }
-                finally
-                {
-                    foreach (var replacement in replacements)
-                        if (replacement is not null) await replacement.DisposeAsync().ConfigureAwait(false);
-                }
-                lock (_movingGate)
-                {
-                    if (sequence > _completedMovingSequence) _completedMovingSequence = sequence;
-                    if (sequence == _movingSequence) return;
-                }
+                for (var i = 0; i < replacements.Length; i++)
+                    ObserveConnectionFailure(i, replacements[i]);
             }
         }
         finally
         {
-            var restart = false;
-            lock (_movingGate)
+            if (!published)
             {
-                Volatile.Write(ref _movingWorker, 0);
-                if (IsOperational && _movingSequence > _completedMovingSequence)
-                {
-                    Volatile.Write(ref _movingWorker, 1);
-                    restart = true;
-                }
-                else
-                {
-                    _movingCompletion?.TrySetResult();
-                    _movingCompletion = null;
-                }
+                foreach (var replacement in replacements)
+                    await replacement.DisposeAsync().ConfigureAwait(false);
             }
-            if (restart) _ = Task.Run(ProcessMovingHandoffsAsync);
         }
+
+        await DrainMovedConnectionsAsync(old, request.Deadline).ConfigureAwait(false);
+    }
+
+    private async Task<RespireConnection[]> ConnectMovingReplacementsAsync(RespireEndpoint endpoint)
+    {
+        var connects = new Task<RespireConnection>[_connections.Length];
+        for (var i = 0; i < connects.Length; i++)
+            connects[i] = ConnectMovingReplacementAsync(endpoint);
+        try
+        {
+            return await Task.WhenAll(connects).ConfigureAwait(false);
+        }
+        catch
+        {
+            foreach (var connect in connects)
+            {
+                if (connect.Status == TaskStatus.RanToCompletion)
+                    await connect.Result.DisposeAsync().ConfigureAwait(false);
+            }
+            throw;
+        }
+    }
+
+    private async Task<RespireConnection> ConnectMovingReplacementAsync(RespireEndpoint endpoint)
+    {
+        var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
+            _options, _logger, _stopConnecting.Token).ConfigureAwait(false);
+        try
+        {
+            if (Volatile.Read(ref _trackServerClientIds) != 0)
+                await connection.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Drains the unpublished sockets until the grace deadline and aborts any still busy. Every
+    /// identity whose socket did not drain cleanly is fenced, whatever ended the drain.
+    /// </summary>
+    private async Task DrainMovedConnectionsAsync(RespireConnection?[] old, long deadline)
+    {
+        var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
+        try
+        {
+            var remainingMilliseconds = Math.Max(0, deadline - Environment.TickCount64);
+            await Task.WhenAll(drains).WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+            foreach (var connection in old)
+            {
+                if (connection is null || connection.DrainedSuccessfully) continue;
+                RetireConnection(connection);
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception error)
+        {
+            _logger?.LogDebug(error, "MOVING handoff drain of old sockets failed");
+        }
+
+        try { await Task.WhenAll(drains).ConfigureAwait(false); }
+        catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after drain cleanup"); }
+        foreach (var connection in old) RetireConnection(connection);
+        if (HasPendingCorrectionFences)
+            await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
     }
 
     private void HandleConnectionFailure(int slot, RespireConnection connection)
