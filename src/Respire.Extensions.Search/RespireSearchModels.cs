@@ -1,3 +1,4 @@
+using System.Text;
 using Respire.Protocol;
 
 namespace Respire.Extensions.Search;
@@ -119,9 +120,9 @@ public static class RespireSearchQueryBuilder
     /// <summary>Matches a text term across indexed text fields.</summary>
     public static string Text(string term) => Quote(term);
     /// <summary>Matches one text field.</summary>
-    public static string TextField(string field, string term) => $"@{Require(field)}:{Quote(term)}";
+    public static string TextField(string field, string term) => $"@{EscapeField(field)}:{Quote(term)}";
     /// <summary>Matches an exact tag value.</summary>
-    public static string Tag(string field, string value) => $"@{Require(field)}:{{{EscapeTag(value)}}}";
+    public static string Tag(string field, string value) => $"@{EscapeField(field)}:{{{EscapeTag(value)}}}";
     /// <summary>Matches an inclusive numeric range.</summary>
     public static string NumericRange(string field, double minimum, double maximum)
     {
@@ -131,7 +132,7 @@ public static class RespireSearchQueryBuilder
         if (minimum > maximum) throw new ArgumentOutOfRangeException(nameof(minimum));
         var lower = FormatBound(minimum);
         var upper = FormatBound(maximum);
-        return $"@{field}:[{lower} {upper}]";
+        return $"@{EscapeField(field)}:[{lower} {upper}]";
     }
     private static string FormatBound(double value) => value switch
     {
@@ -162,10 +163,22 @@ public static class RespireSearchQueryBuilder
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         var escaped = new System.Text.StringBuilder(value.Length);
-        foreach (var character in value)
+        foreach (var rune in value.EnumerateRunes())
         {
-            if (!char.IsLetterOrDigit(character) && character != '_') escaped.Append('\\');
-            escaped.Append(character);
+            if (!System.Text.Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
+            escaped.Append(rune.ToString());
+        }
+        return escaped.ToString();
+    }
+
+    private static string EscapeField(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        var escaped = new System.Text.StringBuilder(value.Length);
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (!System.Text.Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
+            escaped.Append(rune.ToString());
         }
         return escaped.ToString();
     }
@@ -229,8 +242,16 @@ public sealed record RespireSearchQueryOptions
             args.Add("TIMEOUT");
             args.Add(timeout);
         }
+        ArgumentNullException.ThrowIfNull(Parameters);
         AddParameters(args, Parameters);
-        if (Dialect is { } dialect)
+        if (Parameters.Count > 0 && Dialect is < 2)
+            throw new ArgumentOutOfRangeException(nameof(Dialect), Dialect, "Named parameters require dialect 2 or later.");
+        if (Parameters.Count > 0 && Dialect is null)
+        {
+            args.Add("DIALECT");
+            args.Add(2);
+        }
+        else if (Dialect is { } dialect)
         {
             if (dialect <= 0) throw new ArgumentOutOfRangeException(nameof(Dialect));
             args.Add("DIALECT");
