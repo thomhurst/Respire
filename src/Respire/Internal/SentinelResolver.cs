@@ -35,6 +35,7 @@ internal static class SentinelResolver
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
         var lastErrorIsDiscoveryTimeout = false;
+        var lastErrorIsPrimaryConnectTimeout = false;
         var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
         for (var index = 0; index < sentinelEndpoints.Count; index++)
@@ -105,6 +106,8 @@ internal static class SentinelResolver
                 // fires first, report the same timeout the caller's deadline would have raised.
                 lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                     && (ex is RespireTimeoutException || ContainsCancellation(ex));
+                lastErrorIsPrimaryConnectTimeout = discoveryCompleted
+                    && ex is RespireTimeoutException { CommandName: "CONNECT" };
                 lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
@@ -123,7 +126,9 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (lastErrorIsDiscoveryTimeout && lastError is RespireTimeoutException timeoutError) throw timeoutError;
+        if (lastError is RespireTimeoutException timeoutError
+            && (lastErrorIsDiscoveryTimeout || lastErrorIsPrimaryConnectTimeout))
+            throw timeoutError;
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
