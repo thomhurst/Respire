@@ -257,11 +257,25 @@ internal sealed partial class SubscriptionHub
             node.Connection = connection;
             _notificationNodes[endpoint] = node;
         }
+        List<(SubscriptionKind Kind, RespireChannel Name)>? rejected = null;
         try
         {
             foreach (var (kind, name) in SnapshotNotificationRoutes(node))
-                await SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                    cancellationToken, instrument: false).ConfigureAwait(false);
+            {
+                try
+                {
+                    await SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                        cancellationToken, instrument: false).ConfigureAwait(false);
+                }
+                catch (Exception error) when (ContainsServerRejection(error))
+                {
+                    // A rejection (for example NOPERM after an ACL change) is specific to this
+                    // route and leaves the socket healthy. Keep replaying the others.
+                    TryLogWarning(error, "Cluster notification route {Route} was rejected by {Host}:{Port}",
+                        name.ToString(), endpoint.Host, endpoint.Port);
+                    (rejected ??= []).Add((kind, name));
+                }
+            }
         }
         catch
         {
@@ -280,11 +294,23 @@ internal sealed partial class SubscriptionHub
             catch (Exception error) { TryLogDebug(error, "Closing a failed cluster notification replacement failed"); }
             throw;
         }
+        if (rejected is not null)
+        {
+            // Drop the rejected routes locally so they match the server. Topology
+            // reconciliation then retries them for their owning subscriptions under the
+            // reconnect policy and ends only those subscriptions if the limit is reached.
+            lock (_gate)
+            {
+                foreach (var (kind, name) in rejected) node.Routes[(int)kind].Remove(name);
+            }
+            ScheduleNotificationReconciliation();
+        }
         bool recovered;
         lock (_gate)
         {
-            recovered = node.InterruptedAt is not null | _notificationDisconnectedEndpoints.Remove(endpoint)
-                | _notificationRetryingEndpoints.Remove(endpoint);
+            // A reconciliation retry state is cleared only after its pass acknowledges routes,
+            // not when a socket merely opens.
+            recovered = node.InterruptedAt is not null | _notificationDisconnectedEndpoints.Remove(endpoint);
         }
         PublishNotificationReconnectGaps(node);
         if (recovered)
@@ -649,9 +675,10 @@ internal sealed partial class SubscriptionHub
     }
 
     private async Task ReconcileNotificationsAsync(
-        long version, RespireEndpoint[] endpoints, bool authoritative, int attempt = 0)
+        long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt = 0)
     {
         var retry = false;
+        TimeSpan? retryDelay = null;
         try
         {
             await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
@@ -690,10 +717,12 @@ internal sealed partial class SubscriptionHub
                         (failures ??= []).Add((subscription, failingEndpoint.Value, error, subscriptionAttempt));
                     }
                 }
+                HashSet<RespireEndpoint> stillRetrying = [];
                 if (failures is not null)
                 {
                     // The first pass counts as the first attempt to reach a new route owner.
                     var policy = core.Options.ReconnectPolicy;
+                    retryDelay = NotificationReconciliationDelay(attempt + 1);
                     foreach (var (subscription, endpoint, error, subscriptionAttempt) in failures)
                     {
                         if (policy?.IsExhausted(subscriptionAttempt) == true)
@@ -702,11 +731,14 @@ internal sealed partial class SubscriptionHub
                         else
                         {
                             retry = true;
-                            ReportNotificationReconciliationRetry(endpoint, error, subscriptionAttempt);
+                            if (ReportNotificationReconciliationRetry(endpoint, error, subscriptionAttempt, retryDelay.Value)
+                                && endpoint is { } retrying)
+                                stillRetrying.Add(retrying);
                         }
                     }
                 }
-                else ClearNotificationReconciliationRetries();
+                // Endpoints that this pass reached, or no longer needs, have recovered.
+                ClearNotificationReconciliationRetries(stillRetrying);
             }
             finally { _controlGate.Release(); }
         }
@@ -717,11 +749,29 @@ internal sealed partial class SubscriptionHub
             retry = true;
         }
         if (retry && !_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
-            _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative, attempt + 1);
+            _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative, attempt + 1,
+                retryDelay ?? NotificationReconciliationDelay(attempt + 1));
+    }
+
+    private TimeSpan NotificationReconciliationDelay(int attempt)
+        => core.Options.ReconnectPolicy?.GetDelay(attempt)
+            ?? TimeSpan.FromMilliseconds(Math.Min(250 * Math.Pow(2, Math.Min(attempt - 1, 5)), 5000));
+
+    // Retries the current topology, for example after a node replay dropped a rejected route.
+    private void ScheduleNotificationReconciliation()
+    {
+        NotificationTopology? latest;
+        long version;
+        lock (_gate)
+        {
+            latest = _latestNotificationTopology;
+            version = _notificationTopologyVersion;
+        }
+        _ = ReconcileNotificationsAsync(version, latest?.Endpoints, latest?.Authoritative ?? false);
     }
 
     private async ValueTask<bool> ReconcileNotificationSubscriptionAsync(
-        RespireSubscription subscription, long version, RespireEndpoint[] endpoints, bool authoritative,
+        RespireSubscription subscription, long version, RespireEndpoint[]? endpoints, bool authoritative,
         StrongBox<RespireEndpoint?> failingEndpoint)
     {
         if (version != Volatile.Read(ref _notificationTopologyVersion)) return false;
@@ -952,10 +1002,8 @@ internal sealed partial class SubscriptionHub
     }
 
     private async Task RetryNotificationReconciliationAsync(
-        long version, RespireEndpoint[] endpoints, bool authoritative, int attempt)
+        long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt, TimeSpan delay)
     {
-        var delay = core.Options.ReconnectPolicy?.GetDelay(attempt)
-            ?? TimeSpan.FromMilliseconds(Math.Min(250 * Math.Pow(2, Math.Min(attempt - 1, 5)), 5000));
         try { await Task.Delay(delay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
         if (!_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
@@ -963,31 +1011,44 @@ internal sealed partial class SubscriptionHub
     }
 
     // A topology route that cannot reach its endpoint has no node watcher to report the outage,
-    // because rollback retires the empty node. Report it as reconnecting until a later pass
-    // succeeds, the endpoint recovers, or the subscription exhausts.
-    private void ReportNotificationReconciliationRetry(RespireEndpoint? endpoint, Exception error, int attempt)
+    // because rollback retires the empty node. Report it as reconnecting, with the same attempt
+    // telemetry as a node watcher, until a later pass reaches or drops the endpoint, or the
+    // subscription exhausts. Returns whether the endpoint is now reported as retrying.
+    private bool ReportNotificationReconciliationRetry(
+        RespireEndpoint? endpoint, Exception error, int attempt, TimeSpan nextDelay)
     {
-        if (endpoint is not { } failed || ContainsServerRejection(error)) return;
+        if (endpoint is not { } failed || ContainsServerRejection(error)) return false;
         lock (_gate)
         {
-            if (_notificationNodes.ContainsKey(failed)) return;
+            if (_notificationNodes.ContainsKey(failed)) return false;
             _notificationRetryingEndpoints.Add(failed);
+        }
+        try
+        {
+            RespireTelemetry.RecordReconnectAttempt(failed.Host, failed.Port, attempt, nextDelay,
+                RespireReconnectSource.PubSub);
+        }
+        catch (Exception telemetryError)
+        {
+            TryLogWarning(telemetryError, "Cluster notification reconnect telemetry listener threw");
         }
         core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
             failed, RespireConnectionState.Reconnecting, error)
         {
             ReconnectAttempt = attempt,
+            NextReconnectDelay = nextDelay,
         });
+        return true;
     }
 
-    private void ClearNotificationReconciliationRetries()
+    private void ClearNotificationReconciliationRetries(HashSet<RespireEndpoint> stillRetrying)
     {
         RespireEndpoint[] cleared;
         lock (_gate)
         {
             if (_notificationRetryingEndpoints.Count == 0) return;
-            cleared = [.. _notificationRetryingEndpoints];
-            _notificationRetryingEndpoints.Clear();
+            cleared = _notificationRetryingEndpoints.Where(endpoint => !stillRetrying.Contains(endpoint)).ToArray();
+            foreach (var endpoint in cleared) _notificationRetryingEndpoints.Remove(endpoint);
         }
         foreach (var endpoint in cleared)
             core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(

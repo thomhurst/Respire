@@ -682,6 +682,46 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task NodeReplayRejectionEndsOnlyTheRejectedSubscription()
+    {
+        await using var server = new FakeRespServer(20);
+        var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
+        var tenantDescriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var stableSubscribes = 0;
+        var stableReplayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
+        var configured = server.ReplyOverride!;
+        var reject = false;
+        server.ReplyOverride = (connectionId, command) =>
+        {
+            if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableSubscribes) == 2)
+                stableReplayed.TrySetResult();
+            return reject && command == $"PSUBSCRIBE {tenantDescriptor}"
+                ? "-NOPERM denied\r\n"u8.ToArray()
+                : configured(connectionId, command);
+        };
+        await using var client = CreateClusterClient(server.Port, resp3: false, new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(1),
+            MaxDelay = TimeSpan.FromMilliseconds(1),
+            JitterRatio = 0,
+            MaxAttempts = 2,
+        });
+        var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var tenant = await client.SubscribeAsync(tenantDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        reject = true;
+        var index = server.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {stableDescriptor}");
+        server.CloseConnection(server.ReceivedConnectionIds[index]);
+
+        await Assert.That(await tenant.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await stableReplayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+        await stable.DisposeAsync();
+    }
+
+    [Test]
     public async Task ActivationAppliesTopologyChangePublishedBeforeItsFinalAck()
     {
         await using var first = new FakeRespServer(20);
