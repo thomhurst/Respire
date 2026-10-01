@@ -67,6 +67,9 @@ public static class RespireFailoverSwitchReasons
 
     /// <summary>A higher-priority endpoint stayed healthy for the failback grace period.</summary>
     public const string HigherPriorityEndpointRecovered = "higher-priority-endpoint-recovered";
+
+    /// <summary>An earlier endpoint with equal priority stayed healthy for the failback grace period.</summary>
+    public const string EarlierEqualPriorityEndpointRecovered = "earlier-equal-priority-endpoint-recovered";
 }
 
 /// <summary>Describes an active endpoint change.</summary>
@@ -338,7 +341,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 if (recovered is not null)
                 {
                     selected = recovered;
-                    reason = RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered;
+                    reason = recovered.Priority == active.Priority
+                        ? RespireFailoverSwitchReasons.EarlierEqualPriorityEndpointRecovered
+                        : RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered;
                 }
             }
 

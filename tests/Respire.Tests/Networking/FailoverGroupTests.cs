@@ -98,11 +98,19 @@ public class FailoverGroupTests
 
         await using var group = await RespireFailoverGroup.ConnectAsync(
             [Candidate(primary, priority: 0), Candidate(secondary, priority: 0)], FastOptions());
+        var reasons = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        group.EndpointSwitched += change => reasons.Enqueue(change.Reason);
         Volatile.Write(ref primaryFailed, 1);
         await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
 
         Volatile.Write(ref primaryFailed, 0);
         await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(primary));
+        await WaitUntilAsync(() => reasons.Count >= 2);
+        await Assert.That(reasons.ToArray()).IsEquivalentTo(new[]
+        {
+            RespireFailoverSwitchReasons.ActiveEndpointUnhealthy,
+            RespireFailoverSwitchReasons.EarlierEqualPriorityEndpointRecovered,
+        });
     }
 
     [Test]
