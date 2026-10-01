@@ -140,8 +140,11 @@ partial renewal leaves nodes with different expiries. Acquire again if work must
 
 Call `ReleaseAsync` to remove the token from all nodes. Its cancellation token only bounds the
 wait for a concurrent renewal; once started, release runs on every node within `NodeTimeout`.
-`RemainingEstimate` is local timing information; it cannot prove current ownership. Dispose the
-attempt to release best-effort. The clients remain owned by the caller.
+It returns true when a quorum replies, whether each token was removed or was already absent.
+If it returns false, the handle stops reporting ownership and retains its token for a later
+cleanup retry. `DisposeAsync` makes one best-effort attempt; retry `ReleaseAsync` if cleanup
+does not reach a quorum. `RemainingEstimate` is local timing information; it cannot prove
+current ownership. The clients remain owned by the caller.
 
 Redlock does not provide consensus or fencing tokens. Redis asynchronous replication, failover,
 partitions and clock drift can violate mutual exclusion. A node that cannot be reached during

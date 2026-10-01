@@ -9,7 +9,9 @@ public class RedlockWireTests
 {
     private static readonly byte[] Ok = "+OK\r\n"u8.ToArray();
     private static readonly byte[] Nil = "$-1\r\n"u8.ToArray();
+    private static readonly byte[] Zero = ":0\r\n"u8.ToArray();
     private static readonly byte[] One = ":1\r\n"u8.ToArray();
+    private static readonly byte[] ReleaseError = "-ERR injected release failure\r\n"u8.ToArray();
 
     [Test]
     [Arguments(10_000, 0, 0.01, 9_898)]
@@ -77,6 +79,22 @@ public class RedlockWireTests
     }
 
     [Test]
+    public async Task CallerCancellationDuringRenewalEndsLeaseAndCleansUpEveryNode()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayReleaseMs: 500);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        await using var attempt = await group.TryAcquireAsync("redlock:renew-cancel", TimeSpan.FromSeconds(10));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.That(async () => await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        foreach (var server in nodes.Servers)
+            await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ReleaseCompletesOnEveryNodeDespiteCallerCancellation()
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayReleaseMs: 300);
@@ -88,6 +106,33 @@ public class RedlockWireTests
         await Assert.That(await attempt.Lock.ReleaseAsync(cancellation.Token)).IsTrue();
         await Assert.That(cancellation.IsCancellationRequested).IsTrue();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
+    }
+
+    [Test]
+    public async Task ReleaseWithoutQuorumCanRetryAndConfirmAbsentTokens()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        var releaseReplies = new int[2];
+        for (var i = 0; i < releaseReplies.Length; i++)
+        {
+            var node = i;
+            nodes.Servers[node].ReplyOverride = (_, command) =>
+            {
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return null;
+                return Interlocked.Increment(ref releaseReplies[node]) == 1 ? ReleaseError : Zero;
+            };
+        }
+
+        var group = new RespireRedlockGroup(nodes.Clients);
+        await using var attempt = await group.TryAcquireAsync("redlock:release-retry", TimeSpan.FromSeconds(10));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsFalse();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsTrue();
+        var commandsAfterRetry = nodes.CommandsSeen;
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsFalse();
+        await Assert.That(nodes.CommandsSeen).IsEqualTo(commandsAfterRetry);
     }
 
     [Test]

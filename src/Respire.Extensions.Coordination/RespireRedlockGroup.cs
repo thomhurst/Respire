@@ -191,7 +191,11 @@ internal sealed class RespireRedlockNodes
     internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token)
     {
         var released = await RunAsync(
-            (client, cancellation) => client.Locks.ReleaseAsync(key, token, cancellation),
+            async (client, cancellation) =>
+            {
+                _ = await client.Locks.ReleaseAsync(key, token, cancellation).ConfigureAwait(false);
+                return true;
+            },
             CancellationToken.None).ConfigureAwait(false);
         return released.Count(static success => success) >= Quorum;
     }
@@ -258,6 +262,7 @@ public sealed class RespireRedlock : IAsyncDisposable
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private RespireRedlockLease _lease;
     private int _released;
+    private int _releaseConfirmed;
 
     internal RespireRedlock(RespireRedlockNodes nodes, RespireKey key, RespireLockToken token, RespireRedlockLease lease)
     {
@@ -347,8 +352,11 @@ public sealed class RespireRedlock : IAsyncDisposable
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (Interlocked.Exchange(ref _released, 1) != 0) return false;
-            return await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
+            if (Volatile.Read(ref _releaseConfirmed) != 0) return false;
+            Volatile.Write(ref _released, 1);
+            var confirmed = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
+            if (confirmed) Volatile.Write(ref _releaseConfirmed, 1);
+            return confirmed;
         }
         finally
         {
@@ -366,6 +374,7 @@ public sealed class RespireRedlock : IAsyncDisposable
     private async ValueTask LoseOwnershipAsync()
     {
         Volatile.Write(ref _released, 1);
-        _ = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
+        if (await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false))
+            Volatile.Write(ref _releaseConfirmed, 1);
     }
 }
