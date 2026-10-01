@@ -112,13 +112,24 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             if (_state == StateReleased) return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
             if (_state == StateNotOwned) return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
-            if (_state == StateReleasing) return new ValueTask<LockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
+            if (_state == StateReleasing)
+                return new ValueTask<LockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
             _releasePreviousState = _state;
             _state = StateReleasing;
-            _releaseTask = ReleaseCoreAsync();
-            return new ValueTask<LockReleaseOutcome>(_releaseTask.WaitAsync(cancellationToken));
+            // The shared release outlives each caller so cancellation cannot cancel another waiter's operation.
+            var releaseTask = ReleaseCoreAsync();
+            _releaseTask = releaseTask;
+            ObserveReleaseFailure(releaseTask);
+            return new ValueTask<LockReleaseOutcome>(releaseTask.WaitAsync(cancellationToken));
         }
     }
+
+    private static void ObserveReleaseFailure(Task releaseTask)
+        => _ = releaseTask.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {

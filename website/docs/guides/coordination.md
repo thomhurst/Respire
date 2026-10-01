@@ -91,6 +91,7 @@ expiry; Redis deletes the whole hash when that expiry elapses. Acquisition rejec
 keys before writing the lease field. Older servers fail before the lease field is written, with
 an error that identifies the required Redis feature. Waiters subscribe to invalidations for the
 whole hash key, so unrelated field changes can wake them and cause another owner-checked attempt.
+Many waiters sharing one hash can therefore retry together after one field changes.
 
 ```csharp
 using Respire.Extensions.Coordination;

@@ -157,6 +157,27 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
+    public async Task BestEffortAcquireCleanupIsBoundedWhenRedisDoesNotReply()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        var pending = new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(5, timeout.Token);
+        cancellation.Cancel();
+
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
     public async Task EmptyHashKeyOrLeaseFieldIsRejectedBeforeConnecting()
     {
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });

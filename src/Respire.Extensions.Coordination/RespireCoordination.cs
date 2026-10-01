@@ -6,6 +6,7 @@ namespace Respire.Extensions.Coordination;
 /// <summary>Coordination primitives using a caller-owned Redis client.</summary>
 public sealed class RespireCoordination
 {
+    private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
 
     private readonly struct FencedLockWaitTarget(
@@ -308,6 +309,7 @@ public sealed class RespireCoordination
         }
         catch (RespireServerException)
         {
+            // The script returned a definitive Redis error, so there is no uncertain acquisition to clean up.
             throw;
         }
         catch
@@ -357,9 +359,10 @@ public sealed class RespireCoordination
     private async ValueTask BestEffortReleaseHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner)
     {
+        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
         try
         {
-            _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, CancellationToken.None).ConfigureAwait(false);
+            _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, timeout.Token).ConfigureAwait(false);
         }
         catch
         {
