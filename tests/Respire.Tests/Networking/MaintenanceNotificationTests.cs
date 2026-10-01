@@ -284,6 +284,62 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingReroutePreservesMaintenanceRelaxedDeadline()
+    {
+        await using var source = Server(maxConnections: 2);
+        source.DelayReply(2, 450);
+        await using var target = Server(maxConnections: 2);
+        target.DelayReply(2, 450);
+        var connectionOptions = Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+        {
+            MaxInflightCommands = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(4),
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: connectionOptions);
+        var staleSelection = multiplexer.GetConnection();
+
+        var accepted = staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(source, 3);
+        var waitingForCapacity = staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await source.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(staleSelection);
+        await source.SendRawAsync(Moving(1, target.Port));
+
+        using var acceptedReply = await accepted.WaitAsync(TimeSpan.FromSeconds(5));
+        using var reroutedReply = await waitingForCapacity.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(acceptedReply.AsString()).IsEqualTo("PONG");
+        await Assert.That(reroutedReply.AsString()).IsEqualTo("PONG");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NewerMovingCancelsObsoleteTargetConnect()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var obsoleteTarget = Server(maxConnections: 2);
+        obsoleteTarget.DelayReply(0, 2000);
+        await using var currentTarget = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                ConnectTimeout = TimeSpan.FromSeconds(10),
+            });
+
+        await source.SendRawAsync(Moving(1, obsoleteTarget.Port));
+        await WaitForCommands(obsoleteTarget, 1);
+        await source.SendRawAsync(Moving(2, currentTarget.Port));
+        await WaitForPort(multiplexer, currentTarget.Port);
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(currentTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task MovingFromReplacementServerIsHonouredDespiteLowerSequence()
     {
         await using var source = Server(maxConnections: 2);

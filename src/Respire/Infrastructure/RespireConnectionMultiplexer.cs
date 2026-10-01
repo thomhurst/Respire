@@ -26,10 +26,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private ActiveEndpoint _activeEndpoint;
     private readonly object _movingGate = new();
     // Highest MOVING sequence seen from each physical peer of a published socket. Sequence IDs
-    // belong to the announcing server: sockets to one server repeat its IDs, while a different
-    // server (after DNS change or a handoff) numbers independently. Cleared by each handoff.
+    // belong to the announcing server; forget a peer only after no published socket reaches it.
     private readonly Dictionary<(string Host, int Port), long> _movingSequences = new();
     private MovingRequest? _pendingMoving;
+    private MovingRequest? _activeMoving;
     private bool _movingWorker;
     private TaskCompletionSource? _movingCompletion;
     // Old sockets drain off the handoff worker so a later MOVING can start immediately.
@@ -780,6 +780,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         if (connection is { IsConnected: true, IsAcceptingCommands: false }) return;
         var error = connection?.CloseError;
         RetireConnection(connection);
+        ForgetMovingSequencesForUnavailablePeers();
         bool publish;
         var attempt = 0;
         var delay = TimeSpan.Zero;
@@ -826,6 +827,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 ThrowIfUnavailable();
                 if (!ReferenceEquals(endpoint, Volatile.Read(ref _activeEndpoint)))
                     throw new RespireConnectionException("Connection endpoint changed during reconnect.");
+                ForgetMovingSequencesForUnavailablePeers();
                 replacement.Multiplexer = this;
                 old = Interlocked.Exchange(ref _connections[slot], replacement);
                 publishedReplacement = replacement;
@@ -909,7 +911,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
-    private sealed record MovingRequest(RespireEndpoint Endpoint, long Deadline);
+    private sealed record MovingRequest(RespireEndpoint Endpoint, long Deadline, CancellationTokenSource Cancellation);
 
     private const long MaxMovingGraceSeconds = 24 * 60 * 60;
 
@@ -929,8 +931,15 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             // Honor the advertised grace; the upper bound only keeps tick arithmetic finite.
             var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
             // The grace period starts at receipt, so slow target setup consumes drain time.
+            _activeMoving?.Cancellation.Cancel();
+            if (_pendingMoving is { } pending)
+            {
+                pending.Cancellation.Cancel();
+                pending.Cancellation.Dispose();
+            }
+            var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
             _pendingMoving = new MovingRequest(notification.Target ?? new RespireEndpoint(Host, Port),
-                Environment.TickCount64 + (long)grace.TotalMilliseconds);
+                Environment.TickCount64 + (long)grace.TotalMilliseconds, requestCancellation);
             if (_movingWorker) return;
             _movingWorker = true;
             _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -947,7 +956,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 if (!IsOperational || _pendingMoving is null)
                 {
+                    if (_pendingMoving is { } pending)
+                    {
+                        pending.Cancellation.Cancel();
+                        pending.Cancellation.Dispose();
+                    }
                     _pendingMoving = null;
+                    _activeMoving = null;
                     _movingWorker = false;
                     _movingCompletion?.TrySetResult();
                     _movingCompletion = null;
@@ -955,11 +970,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 }
                 request = _pendingMoving;
                 _pendingMoving = null;
+                _activeMoving = request;
             }
             try
             {
                 await HandOffAsync(request).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception error) when (IsOperational)
             {
                 _logger?.LogWarning(error, "MOVING handoff to {Host}:{Port} failed",
@@ -968,6 +985,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             catch (Exception error)
             {
                 _logger?.LogDebug(error, "MOVING handoff stopped by multiplexer retirement");
+            }
+            finally
+            {
+                lock (_movingGate)
+                {
+                    if (ReferenceEquals(_activeMoving, request)) _activeMoving = null;
+                    request.Cancellation.Dispose();
+                }
             }
         }
     }
@@ -984,9 +1009,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             try
             {
-                replacements = await ConnectMovingReplacementsAsync(endpoint).ConfigureAwait(false);
+                replacements = await ConnectMovingReplacementsAsync(endpoint, request.Cancellation.Token).ConfigureAwait(false);
                 break;
             }
+            catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
             catch (Exception error) when (IsOperational)
             {
                 lock (_movingGate)
@@ -1003,7 +1029,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 }
                 _logger?.LogDebug(error, "MOVING handoff to {Host}:{Port} failed; retrying", endpoint.Host, endpoint.Port);
                 var backoff = Math.Min(remaining, 50L << Math.Min(attempt, 4));
-                await Task.Delay(TimeSpan.FromMilliseconds(backoff), _stopConnecting.Token).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromMilliseconds(backoff), request.Cancellation.Token).ConfigureAwait(false);
             }
         }
 
@@ -1022,7 +1048,6 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     if (!IsOperational || _pendingMoving is not null) return;
                     cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
                     Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
-                    _movingSequences.Clear();
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         replacements[i].Multiplexer = this;
@@ -1048,6 +1073,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
         // each socket's write gate, so it runs after the multiplexer locks are released.
         var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
+        ForgetMovingSequencesForUnpublishedPeers();
         lock (_movingGate)
         {
             var drain = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
@@ -1079,11 +1105,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async Task<RespireConnection[]> ConnectMovingReplacementsAsync(RespireEndpoint endpoint)
+    private async Task<RespireConnection[]> ConnectMovingReplacementsAsync(
+        RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         var connects = new Task<RespireConnection>[_connections.Length];
         for (var i = 0; i < connects.Length; i++)
-            connects[i] = ConnectMovingReplacementAsync(endpoint);
+            connects[i] = ConnectMovingReplacementAsync(endpoint, cancellationToken);
         try
         {
             return await Task.WhenAll(connects).ConfigureAwait(false);
@@ -1099,20 +1126,49 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async Task<RespireConnection> ConnectMovingReplacementAsync(RespireEndpoint endpoint)
+    private async Task<RespireConnection> ConnectMovingReplacementAsync(
+        RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
-            _options, _logger, _stopConnecting.Token).ConfigureAwait(false);
+            _options, _logger, cancellationToken).ConfigureAwait(false);
         try
         {
             if (Volatile.Read(ref _trackServerClientIds) != 0)
-                await connection.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
+                await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
             return connection;
         }
         catch
         {
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private void ForgetMovingSequencesForUnpublishedPeers()
+    {
+        lock (_movingGate)
+        {
+            foreach (var peer in _movingSequences.Keys.ToArray())
+            {
+                if (_connections.OfType<RespireConnection>().Any(connection =>
+                    string.Equals(connection.NetworkPeerAddress ?? connection.Host, peer.Host, StringComparison.Ordinal)
+                    && (connection.NetworkPeerPort ?? connection.Port) == peer.Port)) continue;
+                _movingSequences.Remove(peer);
+            }
+        }
+    }
+
+    private void ForgetMovingSequencesForUnavailablePeers()
+    {
+        lock (_movingGate)
+        {
+            foreach (var peer in _movingSequences.Keys.ToArray())
+            {
+                if (_connections.OfType<RespireConnection>().Any(connection => connection.IsConnected
+                    && string.Equals(connection.NetworkPeerAddress ?? connection.Host, peer.Host, StringComparison.Ordinal)
+                    && (connection.NetworkPeerPort ?? connection.Port) == peer.Port)) continue;
+                _movingSequences.Remove(peer);
+            }
         }
     }
 

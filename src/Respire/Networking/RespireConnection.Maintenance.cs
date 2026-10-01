@@ -119,6 +119,16 @@ internal sealed partial class RespireConnection
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
 
+    private long GetReroutedCommandDeadline(long deadline)
+    {
+        if (deadline == 0 || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
+        var window = Volatile.Read(ref _maintenanceState)?.GetWindow(Environment.TickCount64);
+        return window is not null && deadline > window.Started
+            && _maintenanceOptions.MaintenanceRelaxedTimeout > normal
+            ? deadline + (long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds
+            : deadline;
+    }
+
     private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, long deadline,
         string? commandName, CancellationToken cancellationToken)
     {

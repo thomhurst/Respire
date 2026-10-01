@@ -795,7 +795,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source);
             return multiplexer.GetConnection().SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName, commandDeadline);
+                transferOwnership, cancellationToken, commandName, GetReroutedCommandDeadline(commandDeadline));
         }
         catch
         {
@@ -840,7 +840,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             ReclaimUnpublished(source);
-            return multiplexer.GetConnection().SendStringAsync(in command, cancellationToken, commandName, commandDeadline);
+            return multiplexer.GetConnection().SendStringAsync(in command, cancellationToken, commandName,
+                GetReroutedCommandDeadline(commandDeadline));
         }
         catch
         {
@@ -907,7 +908,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source, discardRepliesBefore + 2);
             return multiplexer.GetConnection().SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken, commandDeadline);
+                discardRepliesBefore, retainRepliesBefore, cancellationToken, GetReroutedCommandDeadline(commandDeadline));
         }
         catch
         {
@@ -952,7 +953,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return await multiplexer.GetConnection().SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken, commandDeadline).ConfigureAwait(false);
+                discardRepliesBefore, retainRepliesBefore, cancellationToken,
+                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
         }
     }
 
@@ -975,7 +977,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             return await multiplexer.GetConnection().SendStringAsync(
-                in command, cancellationToken, commandName, commandDeadline).ConfigureAwait(false);
+                in command, cancellationToken, commandName, GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
         }
     }
 
@@ -1127,7 +1129,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source, replyCount + 1);
             return multiplexer.GetConnection().SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                commandDeadline);
+                GetReroutedCommandDeadline(commandDeadline));
         }
         catch
         {
@@ -1178,7 +1180,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source);
             return multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, commandDeadline);
+                cancellationToken, commandName, armCommandDeadline, GetReroutedCommandDeadline(commandDeadline));
         }
         catch
         {
@@ -1218,7 +1220,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             return multiplexer.GetConnection().SendFireAndForgetAsync(in command, cancellationToken, commandName,
-                capacityDeadline);
+                GetReroutedCommandDeadline(capacityDeadline));
         }
 
         return SendFireAndForgetSlowAsync(command, cancellationToken, commandName, capacityDeadline);
@@ -1571,7 +1573,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             return await multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, commandDeadline).ConfigureAwait(false);
+                cancellationToken, commandName, armCommandDeadline,
+                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
         }
     }
 
@@ -1622,7 +1625,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source, replyCount + 1);
             return await multiplexer.GetConnection().SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                commandDeadline).ConfigureAwait(false);
+                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
         }
         catch
         {
@@ -1660,7 +1663,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             return await multiplexer.GetConnection().SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName, commandDeadline).ConfigureAwait(false);
+                transferOwnership, cancellationToken, commandName,
+                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
         }
     }
 
@@ -1699,7 +1703,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
         {
             await multiplexer.GetConnection().SendFireAndForgetAsync(in command, cancellationToken, commandName,
-                deadline).ConfigureAwait(false);
+                GetReroutedCommandDeadline(deadline)).ConfigureAwait(false);
         }
     }
 
@@ -1755,17 +1759,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Re-stamps a source enqueued after a capacity wait with the deadline computed when the
-    /// send began, so time parked on a full ring counts against the command timeout instead
-    /// of restarting it. The store may race a sweep that already read the fresher stamp;
-    /// that only delays the timeout, by at most one sweep granularity interval.
+    /// Re-stamps a source enqueued after a capacity wait with the effective deadline computed
+    /// when the send began. This also carries a maintenance-relaxed deadline across reroutes.
+    /// The store may race a sweep that already read the fresher stamp; that only delays the
+    /// timeout, by at most one sweep granularity interval.
     /// </summary>
     private static void ClampDeadline(PendingResponse source, long deadline)
     {
-        if (deadline != 0 && deadline < source.Deadline)
-        {
-            source.Deadline = deadline;
-        }
+        if (deadline != 0) source.Deadline = deadline;
     }
 
     /// <summary>
