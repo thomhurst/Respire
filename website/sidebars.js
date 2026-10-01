@@ -29,6 +29,7 @@ const sidebars = {
         'guides/blocking-queues',
         'guides/vector-sets',
         'guides/json',
+        'guides/search',
         'guides/probabilistic',
         'guides/reconnect-policy',
         'guides/renewable-credentials',
