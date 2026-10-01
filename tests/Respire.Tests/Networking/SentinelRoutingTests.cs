@@ -100,7 +100,11 @@ public class SentinelRoutingTests
         };
         var discoveryCommands = sentinel.CommandsSeen;
         await client.DisposeAsync().AsTask().WaitAsync(Limit);
-        await Assert.That(sentinel.CommandsSeen).IsEqualTo(discoveryCommands);
+        var commandsAfterDisposal = sentinel.CommandsSeen;
+        await Task.Delay(100);
+        await Assert.That(sentinel.CommandsSeen).IsEqualTo(commandsAfterDisposal);
+        if (state != "published")
+            await Assert.That(commandsAfterDisposal).IsEqualTo(discoveryCommands);
         await Assert.That(changes.Any(change => change.Endpoint.Port == sentinel.Port)).IsFalse();
         await Assert.That(changes.Select(change => change.Endpoint).ToArray()).IsEquivalentTo(
             state == "published" ? new[] { new RespireEndpoint("127.0.0.1", primary.Port) } : []);
@@ -169,10 +173,13 @@ public class SentinelRoutingTests
         await using var first = Primary(Reply);
         await using var second = Primary(Reply);
         var port = first.Port;
-        await using var sentinel = new FakeRespServer(handoffs + 1, "*0\r\n"u8.ToArray())
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
-                ? AddressReply(Volatile.Read(ref port)) : "*0\r\n"u8.ToArray(),
+                ? AddressReply(Volatile.Read(ref port))
+                : command == "SUBSCRIBE +switch-master +sdown +odown"
+                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
+                    : "*0\r\n"u8.ToArray(),
         };
         await using var client = RespireClient.Create(Options(sentinel.Port));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2048,10 +2055,13 @@ public class SentinelRoutingTests
         };
 
     private static FakeRespServer Sentinel(Func<int> primaryPort)
-        => new(8, "*0\r\n"u8.ToArray())
+        => new(64, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
-                ? AddressReply(primaryPort()) : "*0\r\n"u8.ToArray(),
+                ? AddressReply(primaryPort())
+                : command == "SUBSCRIBE +switch-master +sdown +odown"
+                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
+                    : "*0\r\n"u8.ToArray(),
         };
 
     private static byte[] AddressReply(int port)

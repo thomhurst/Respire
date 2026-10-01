@@ -33,6 +33,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
     private bool _notificationPending;
+    private string? _activeNotificationKey;
+    private string? _pendingNotificationKey;
+    private RespireEndpoint? _pendingNotificationTarget;
+    private bool _pendingNotificationRetiresCurrent;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -78,13 +82,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate) _correctionPools.Remove(pool);
     }
 
-    internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken)
+    internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken, bool forceDiscovery = false)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
-        if (Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
+        if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
@@ -95,8 +99,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             // Another discovery owner may have published while this caller awaited the gate.
             var previous = Current;
-            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
-            if (previous is not null) Invalidate(previous);
+            if (!forceDiscovery && previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
+            if (!forceDiscovery && previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, ConnectGenerationAsync, linked.Token, _discovery).ConfigureAwait(false);
             unpublished = replacement;
@@ -107,6 +111,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (replacement.IsRetired)
                     throw new RespireConnectionException("Sentinel primary changed before its generation was published.");
                 var old = Current;
+                if (forceDiscovery && old is { IsRetired: false } && old.Multiplexer.IsConnected
+                    && SameEndpoint(old.Endpoint, replacement.Endpoint))
+                    return old;
+                if (old is not null) Invalidate(old);
                 Volatile.Write(ref _current, replacement);
                 unpublished = null;
                 // Publication owns this measurement even if disposal suppresses later health
@@ -307,35 +315,51 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             && (masterDownHint || fields.Length >= 6 && fields[0] == "slave"
                 && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
         if (!switchHint && !relatedDownEvent) return;
-        if (channel == "+switch-master"
-            && (!int.TryParse(fields[2], out var oldPort) || oldPort is < 1 or > 65535
-                || !int.TryParse(fields[4], out var newPort) || newPort is < 1 or > 65535)) return;
+        RespireEndpoint? promotedPrimary = null;
+        if (channel == "+switch-master")
+        {
+            if (!int.TryParse(fields[2], out var oldPort) || oldPort is < 1 or > 65535
+                || !int.TryParse(fields[4], out var newPort) || newPort is < 1 or > 65535) return;
+            promotedPrimary = new(fields[3], newPort);
+        }
         if (relatedDownEvent)
         {
             try { core.Logger?.LogInformation("Sentinel {Channel} hint for service {Service} from {Sentinel}", channel, serviceName, sentinel); }
             catch (Exception) { }
         }
-        if (switchHint || masterDownHint) QueueNotificationRediscovery();
+        if (switchHint || masterDownHint)
+            QueueNotificationRediscovery(channel + ":" + message.Text, promotedPrimary, retireCurrent: switchHint);
     }
 
-    private void QueueNotificationRediscovery()
+    private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target, bool retireCurrent)
     {
         lock (_gate)
         {
             if (_disposed) return;
+            if (_activeNotificationKey == notificationKey || _pendingNotificationKey == notificationKey) return;
+            var current = Current;
+            if (target is { } targetEndpoint && current is { IsRetired: false }
+                && SameEndpoint(current.Endpoint, targetEndpoint)) return;
             _notificationPending = true;
+            _pendingNotificationKey = notificationKey;
+            _pendingNotificationTarget = target;
+            _pendingNotificationRetiresCurrent = retireCurrent;
             if (_notificationRediscovery is { IsCompleted: false }) return;
             _notificationPending = false;
-            if (Current is { IsRetired: false } current) Invalidate(current);
-            _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
+            _pendingNotificationKey = null;
+            _pendingNotificationTarget = null;
+            _pendingNotificationRetiresCurrent = false;
+            _activeNotificationKey = notificationKey;
+            if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
+            _notificationRediscovery = Task.Run(() => RediscoverFromNotificationAsync(notificationKey));
         }
     }
 
-    private async Task RediscoverFromNotificationAsync()
+    private async Task RediscoverFromNotificationAsync(string notificationKey)
     {
         while (!_lifetime.IsCancellationRequested)
         {
-            try { await GetGenerationAsync(_lifetime.Token).ConfigureAwait(false); }
+            try { await GetGenerationAsync(_lifetime.Token, forceDiscovery: true).ConfigureAwait(false); }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             catch (Exception error)
             {
@@ -349,13 +373,33 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (!_notificationPending)
                 {
                     _notificationRediscovery = null;
+                    _activeNotificationKey = null;
                     return;
                 }
+                var pendingKey = _pendingNotificationKey;
+                var pendingTarget = _pendingNotificationTarget;
+                var retireCurrent = _pendingNotificationRetiresCurrent;
                 _notificationPending = false;
-                if (Current is { IsRetired: false } current) Invalidate(current);
+                _pendingNotificationKey = null;
+                _pendingNotificationTarget = null;
+                _pendingNotificationRetiresCurrent = false;
+                var current = Current;
+                if (pendingTarget is { } target && current is { IsRetired: false }
+                    && SameEndpoint(current.Endpoint, target))
+                {
+                    _notificationRediscovery = null;
+                    _activeNotificationKey = null;
+                    return;
+                }
+                if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
+                notificationKey = pendingKey ?? notificationKey;
+                _activeNotificationKey = notificationKey;
             }
         }
     }
+
+    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+        => left.Port == right.Port && left.Host.Equals(right.Host, StringComparison.OrdinalIgnoreCase);
 
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)
     {
