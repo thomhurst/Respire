@@ -436,6 +436,176 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task RawCursorContinuationFailsInsteadOfMovingToAnotherServer()
+    {
+        var promoted = 0;
+        FakeRespServer? pinned = null;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var first = new FakeRespServer(ReplicaRole);
+        await using var second = new FakeRespServer(ReplicaRole);
+        foreach (var server in new[] { first, second })
+        {
+            var self = server;
+            server.ReplyOverride = (_, command) =>
+            {
+                if (command == "ROLE")
+                    return Volatile.Read(ref promoted) == 1 && ReferenceEquals(self, Volatile.Read(ref pinned))
+                        ? PrimaryRole : ReplicaRole;
+                if (!command.StartsWith("SCAN ", StringComparison.Ordinal)) return null;
+                Interlocked.CompareExchange(ref pinned, self, null);
+                return ScanReply("7");
+            };
+        }
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ReplicaRefreshInterval = TimeSpan.Zero,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        using (await view.ExecuteAsync("SCAN", ["0"])) { }
+        var stale = Volatile.Read(ref pinned)!;
+        var other = ReferenceEquals(stale, first) ? second : first;
+        Volatile.Write(ref promoted, 1);
+
+        // The issuing replica fails, which drops the shared pin.
+        await Assert.That(async () => await view.ExecuteAsync("SCAN", ["7"])).Throws<RespireConnectionException>();
+        // Its cursor cannot continue anywhere else, so later pages fail without reaching a server.
+        await Assert.That(async () => await view.ExecuteAsync("SCAN", [7])).Throws<RespireConnectionException>();
+        await Assert.That(async () => await view.ExecuteAsync($"SCAN {"7"} COUNT {10}")).Throws<RespireConnectionException>();
+        await Assert.That(ScanCursors(other)).IsEmpty();
+        // A fresh scan selects a healthy replica.
+        using (await view.ExecuteAsync("SCAN", ["0"])) { }
+
+        await Assert.That(ScanCursors(other)).IsEquivalentTo(["0"]);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("SCAN ", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task ConcurrentFirstRawCursorReadsShareOnePin()
+    {
+        static byte[]? Reply(string command) => command.StartsWith("SCAN ", StringComparison.Ordinal) ? ScanReply("0") : null;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var first = new FakeRespServer(ReplicaRole) { ReplyOverride = (_, command) => Reply(command) };
+        await using var second = new FakeRespServer(ReplicaRole) { ReplyOverride = (_, command) => Reply(command) };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
+        {
+            using var result = await view.ExecuteAsync("SCAN", ["0"]);
+        }));
+
+        var firstScans = ScanCursors(first).Length;
+        var secondScans = ScanCursors(second).Length;
+        await Assert.That(firstScans + secondScans).IsEqualTo(16);
+        await Assert.That(firstScans == 0 || secondScans == 0).IsTrue();
+    }
+
+    [Test]
+    public async Task CursorPinToReplacedPrimaryIsNotReused()
+    {
+        static byte[]? Reply(string command) => command.StartsWith("SCAN ", StringComparison.Ordinal) ? ScanReply("0") : null;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = (_, command) => Reply(command) };
+        await using var replica = new FakeRespServer(ReplicaRole);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        // Models a failover: the pin records a primary multiplexer that the client has since replaced.
+        await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
+        var cursors = client.Core.ReadRouter.Cursors;
+
+        cursors.PinShared(RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced });
+        await Assert.That(async () => await view.ExecuteAsync("SCAN", ["5"])).Throws<RespireConnectionException>();
+
+        cursors.PinShared(RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced });
+        using (await view.ExecuteAsync("SCAN", ["0"])) { }
+        await Assert.That(cursors.TryGetShared(RespireReadFrom.PrimaryPreferred, out var repinned)).IsTrue();
+        await Assert.That(ReferenceEquals(repinned!.Primary, client.Core.Multiplexer)).IsTrue();
+
+        // A typed enumeration pinned to the replaced primary fails rather than continuing elsewhere.
+        await Assert.That(async () => await client.Core.ReadRouter.GetCursorConnectionAsync(
+                RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced }, isContinuation: true,
+                CancellationToken.None))
+            .Throws<RespireConnectionException>();
+        await Assert.That(ScanCursors(primary)).IsEquivalentTo(["0"]);
+        await Assert.That(replica.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task CursorContinuationIsReadFromTheCursorArgument()
+    {
+        var hscan = RespireCommands.All.ToArray().First(command => command.Name == "HSCAN");
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["0", "COUNT", 10]))).IsFalse();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, [0]))).IsFalse();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["17"]))).IsTrue();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("hscan", new CatalogCommand(hscan, ["key", "0"]))).IsFalse();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("HSCAN", new CatalogCommand(hscan, ["key", "9"]))).IsTrue();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("ZSCAN",
+            new DynamicCommand(["ZSCAN", "key", "9"], routingKeyIndex: 1))).IsTrue();
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SSCAN",
+            new DynamicCommand(["SSCAN", "key", "0"], routingKeyIndex: 1))).IsFalse();
+        // ARSCAN's cursor position is unknown, so it is always treated as a fresh scan.
+        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("ARSCAN",
+            new DynamicCommand(["ARSCAN", "key", "9"], routingKeyIndex: 1))).IsFalse();
+    }
+
+    [Test]
+    public async Task FireAndForgetReadUsesReplicaPolicy()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk("replica") : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await view.ExecuteFireAndForgetAsync(RespireCommands.String.GET, "fire");
+        // The same replica connection answers in order, so this read follows the fire-and-forget one.
+        await Assert.That(await view.GetStringAsync("after")).IsEqualTo("replica");
+
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "GET fire", "GET after"]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(1000, 0, 1000)]
+    [Arguments(1000, 1, 1000)]
+    [Arguments(1000, 2, 2000)]
+    [Arguments(1000, 4, 8000)]
+    [Arguments(1000, 6, 30000)]
+    [Arguments(1000, 1000, 30000)]
+    [Arguments(60000, 5, 60000)]
+    [Arguments(0, 5, 0)]
+    public async Task SentinelRetryDelayBacksOffDuringAnOutage(int intervalMs, int failures, int expectedMs)
+    {
+        await Assert.That(ReadEndpointRouter.SentinelRetryDelay(TimeSpan.FromMilliseconds(intervalMs), failures))
+            .IsEqualTo(TimeSpan.FromMilliseconds(expectedMs));
+    }
+
+    [Test]
     [Arguments("sync")]
     [Arguments("connect")]
     [Arguments("connecting")]
@@ -675,6 +845,69 @@ public class ReadEndpointRoutingTests
             await pinned.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally { await enumerator.DisposeAsync(); }
+    }
+
+    [Test]
+    public async Task RemovedReplicaFinishesAStreamedReadBeforeClosing()
+    {
+        const int payloadLength = 8 * 1024 * 1024;
+        var frame = new byte[payloadLength + 32];
+        var header = Encoding.ASCII.GetBytes($"${payloadLength}\r\n");
+        header.CopyTo(frame, 0);
+        frame.AsSpan(header.Length, payloadLength).Fill((byte)'x');
+        "\r\n"u8.CopyTo(frame.AsSpan(header.Length + payloadLength));
+        frame = frame[..(header.Length + payloadLength + 2)];
+        int[] replicaPorts = [];
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? PrimaryRole : FakeRespServer.OkReply,
+        };
+        await using var first = new FakeRespServer(4, ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? frame : null,
+        };
+        await using var second = new FakeRespServer(4, ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? frame : null,
+        };
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? SentinelAddressReply(primary.Port)
+                : command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                    ? ReplicasReply(Volatile.Read(ref replicaPorts))
+                    : "*0\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref replicaPorts, [first.Port, second.Port]);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            // Far shorter than the time the consumer below holds the stream open.
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            Protocol = RespProtocol.Resp2,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await using var stream = await view.Strings.GetStreamAsync("big");
+        var buffer = new byte[64 * 1024];
+        var total = await stream!.ReadAsync(buffer);
+        var serving = first.ReceivedCommands.Contains("GET big") ? first : second;
+        var other = ReferenceEquals(serving, first) ? second : first;
+
+        Volatile.Write(ref replicaPorts, [other.Port]);
+        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
+        // Outlast the retirement grace period and several command timeouts before reading the rest.
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+        int read;
+        while ((read = await stream.ReadAsync(buffer)) > 0) total += read;
+
+        await Assert.That(total).IsEqualTo(payloadLength);
+        // Once the stream completes, the drained replica closes without waiting for client disposal.
+        await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     private static byte[] SentinelAddressReply(int port)

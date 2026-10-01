@@ -450,16 +450,20 @@ topology can be:
   serving reads for up to one interval. Under heavy load one caller revalidates while others keep
   using the previously validated connection, which can extend the window to two intervals.
 - Sentinel clients refresh the replica set in the background at most once per interval and keep
-  the last known set when no Sentinel answers. Respire logs a warning when Sentinel stops answering
-  and an informational message when it recovers.
+  the last known set when no Sentinel answers. During a Sentinel outage the retry delay doubles
+  after each failed attempt, up to 30 seconds (or the interval, if that is longer), and returns to
+  one interval once Sentinel answers. Respire logs a warning when Sentinel stops answering and an
+  informational message when it recovers.
 - A replica that fails a connection attempt or a `ROLE` check is skipped for one interval, so a dead
   replica does not add a connect timeout to every read.
 
 `TimeSpan.Zero` revalidates on every read and disables the cooldown.
 
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
-for up to one second, then drain the commands they already accepted before closing. A configured
-`CommandTimeout` bounds the drain; without one, a long-running read is never cut off.
+for up to one second, then drain the commands they already accepted before closing. The drain
+waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;
+each command remains bounded by its own `CommandTimeout`, so retirement never cuts a read short.
+Disposing the client closes any replica that is still draining.
 
 ### Cursor reads
 
@@ -471,7 +475,14 @@ If that server leaves the topology or fails mid-enumeration, the enumeration thr
 
 Raw cursor commands sent through `ExecuteAsync` share one pinned server per read policy, because
 Respire cannot tell which enumeration a raw cursor belongs to. That pin is dropped when its server
-leaves the topology or fails, and the next cursor command selects a healthy server.
+leaves the topology or fails. A raw `SCAN`, `HSCAN`, `SSCAN` or `ZSCAN` with cursor `0` then
+selects a healthy server, but a command that continues a cursor (any other cursor value) throws a
+`RespireConnectionException` rather than sending the cursor to a server that never issued it;
+restart that scan with cursor `0`. Respire does not know where `ARSCAN` keeps its cursor, so a raw
+`ARSCAN` always reselects once its pin is dropped.
+
+Fire-and-forget commands follow the same policy: a catalogued read sent with
+`ExecuteFireAndForgetAsync` goes to the server the policy selects.
 
 ### Consistency
 

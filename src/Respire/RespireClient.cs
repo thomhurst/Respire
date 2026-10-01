@@ -2139,8 +2139,11 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         // Scan cursors are server-local, so successive pages must reach the server that issued them.
+        // A raw command's own cursor argument says whether it starts a scan or continues one.
         var connection = readKind == ReadCommandKind.CursorRead
-            ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity, cancellationToken).ConfigureAwait(false)
+            ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
+                affinity is null && ReadOnlyCommandCatalog.IsCursorContinuation(operation, in command),
+                cancellationToken).ConfigureAwait(false)
             : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
     }
@@ -2528,6 +2531,11 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains(operation))
+        {
+            // A read discards its reply here, but the policy still decides which server serves it.
+            return SendFireAndForgetViaReadRouterAsync(operation, command, cancellationToken, storedProcedureName);
+        }
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         if (mutationFence.IsRequired)
@@ -2661,6 +2669,19 @@ public sealed partial class RespireClient : IRespireClient
                 connection: connection);
             throw;
         }
+    }
+
+    private async ValueTask SendFireAndForgetViaReadRouterAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
+        where TCommand : struct, IRespCommand
+    {
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        await SendFireAndForgetOnConnectionAsync(
+                operation, connection, command, cancellationToken, storedProcedureName)
+            .ConfigureAwait(false);
     }
 
     private async ValueTask SendFireAndForgetAfterConnectAsync<TCommand>(

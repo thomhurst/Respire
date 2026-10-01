@@ -194,6 +194,18 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if ((uint)index < (uint)args.Length)
+        {
+            value = args[index];
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, args);
@@ -401,6 +413,19 @@ internal readonly struct DynamicCommand(
             ? RespireCommands.GetCacheMutation(operation)
             : cacheMutation;
 
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        var position = argumentOffset + index;
+        if (index >= 0 && (uint)position < (uint)tokens.Length)
+        {
+            value = tokens[position];
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, tokens, argumentOffset);
@@ -595,6 +620,18 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
         => command.CacheMutation == RespireCacheMutation.Unknown
             ? RespireCommands.GetCacheMutation(operation)
             : command.CacheMutation;
+
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if ((uint)index < (uint)args.Length)
+        {
+            value = args[index];
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
 
     private int RoutingKeyIndex => routing.Known
         ? routing.Index : DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);

@@ -10,18 +10,6 @@ using Respire.Protocol;
 
 namespace Respire.Internal;
 
-/// <summary>
-/// Remembers which server issued a cursor, so later pages of the same enumeration reach it.
-/// Each typed scan enumeration owns one; raw cursor commands share one per read policy.
-/// </summary>
-internal sealed class ReadAffinity
-{
-    internal ReadEndpointRouter.Entry? Replica;
-    internal RespireConnectionMultiplexer? Primary;
-
-    internal bool IsPinned => Replica is not null || Primary is not null;
-}
-
 internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 {
     // Longest wait before a removed replica starts draining. Covers reads that borrowed a
@@ -32,22 +20,27 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     // Entries removed from the topology drain before closing so reads already using them can finish.
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();
     private readonly SemaphoreSlim _sentinelRefreshGate = new(1, 1);
-    // Taken only to publish a new shared cursor pin; reads through an existing pin never wait on it.
-    private readonly SemaphoreSlim _sharedCursorGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly ConcurrentDictionary<RespireReadFrom, ReadAffinity> _sharedCursors = new();
     private RespireEndpoint[] _replicas = Order(core.Options.ReplicaEndpoints);
     private int _nextReplica;
     private int _disposed;
     private int _backgroundRefresh;
-    private int _refreshFailing;
-    private long _lastSentinelRefreshTicks;
+    // Consecutive failed Sentinel discoveries; grows the retry delay during an outage.
+    private int _refreshFailures;
+    // Stopwatch timestamp of the last discovery attempt; monotonic, so clock changes cannot stall it.
+    private long _lastSentinelRefresh;
 
     /// <summary>
     /// Bounds topology staleness: how long a ROLE check stays valid for one physical connection,
     /// how often Sentinel replica discovery can run, and how long a failed replica is skipped.
     /// </summary>
     internal TimeSpan RefreshInterval { get; set; } = core.Options.ReplicaRefreshInterval;
+
+    /// <summary>Cursor affinity for scans and raw cursor commands.</summary>
+    internal ReadCursorAffinity Cursors { get; } = new();
+
+    // Upper bound for the Sentinel retry delay during a discovery outage.
+    private static readonly TimeSpan s_maxSentinelRetryDelay = TimeSpan.FromSeconds(30);
 
     // Sorted so replica order survives Sentinel reply reordering.
     private static RespireEndpoint[] Order(IEnumerable<RespireEndpoint> endpoints)
@@ -87,9 +80,10 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             var timeout = core.Options.CommandTimeout;
             var grace = timeout is { } limit && limit < s_retirementGrace ? limit : s_retirementGrace;
             await Task.Delay(grace, _lifetime.Token).ConfigureAwait(false);
-            // Drain accepted work. A configured command timeout bounds the drain; without one,
-            // a long-running read is never cut off by retirement.
-            await entry.RetireAsync(timeout, _lifetime.Token).ConfigureAwait(false);
+            // Drain everything already accepted, including a streamed reply whose consumer reads
+            // slowly; each command is still bounded by its own timeout. Only router disposal cuts
+            // the drain short, the same contract as a retired Sentinel primary generation.
+            await entry.RetireAsync(_lifetime.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
         catch (Exception error)
@@ -120,89 +114,22 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     /// Selects a connection for one page of a cursor read. With an <paramref name="affinity"/>, the
     /// first page selects normally and later pages return to the same server, or fail when it is no
     /// longer usable because its cursor cannot continue elsewhere. Without one, raw cursor commands
-    /// share a pin per read policy that is dropped when its server leaves the topology or fails.
+    /// share a pin per read policy. When that pin's server leaves the topology or fails, a fresh
+    /// cursor reselects and a <paramref name="isContinuation"/> cursor fails.
     /// </summary>
-    internal async ValueTask<RespireConnection> GetCursorConnectionAsync(
-        RespireReadFrom readFrom, ReadAffinity? affinity, CancellationToken cancellationToken)
+    internal ValueTask<RespireConnection> GetCursorConnectionAsync(
+        RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        if (affinity is not null)
-        {
-            if (affinity.IsPinned) return await GetPinnedConnectionAsync(affinity, cancellationToken).ConfigureAwait(false);
-            var first = await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
-            affinity.Replica = first.Replica;
-            affinity.Primary = first.Primary;
-            return first.Connection;
-        }
-
-        if (_sharedCursors.TryGetValue(readFrom, out var shared))
-        {
-            if (await IsPinCurrentAsync(shared, cancellationToken).ConfigureAwait(false))
-                return await GetSharedPinnedConnectionAsync(readFrom, shared, cancellationToken).ConfigureAwait(false);
-            _sharedCursors.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
-        }
-
-        await _sharedCursorGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_sharedCursors.TryGetValue(readFrom, out shared))
-            {
-                if (await IsPinCurrentAsync(shared, cancellationToken).ConfigureAwait(false))
-                    return await GetSharedPinnedConnectionAsync(readFrom, shared, cancellationToken).ConfigureAwait(false);
-                _sharedCursors.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
-            }
-
-            var selection = await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
-            _sharedCursors[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary };
-            return selection.Connection;
-        }
-        finally { _sharedCursorGate.Release(); }
+        return Cursors.GetConnectionAsync(this, readFrom, affinity, isContinuation, cancellationToken);
     }
 
-    private async ValueTask<RespireConnection> GetSharedPinnedConnectionAsync(
-        RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken)
-    {
-        try { return await GetPinnedConnectionAsync(shared, cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (IsUnavailable(error, cancellationToken))
-        {
-            // The issuing server failed, so its cursors are lost. Let the next cursor read reselect.
-            _sharedCursors.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
-            throw;
-        }
-    }
+    internal ClientCore Core => core;
 
-    private async ValueTask<bool> IsPinCurrentAsync(ReadAffinity affinity, CancellationToken cancellationToken)
-    {
-        if (affinity.Replica is { } replica) return IsCurrent(replica);
-        // An unreachable primary invalidates the pin so the policy can select a replica instead.
-        try { await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (IsUnavailable(error, cancellationToken)) { return false; }
-        return ReferenceEquals(core.Multiplexer, affinity.Primary);
-    }
-
-    private bool IsCurrent(Entry entry)
+    internal bool IsCurrent(Entry entry)
         => _entries.TryGetValue(entry.Endpoint, out var current) && ReferenceEquals(current, entry);
 
-    private async ValueTask<RespireConnection> GetPinnedConnectionAsync(
-        ReadAffinity affinity, CancellationToken cancellationToken)
-    {
-        if (affinity.Replica is { } replica)
-        {
-            // Never recreate an entry for a replica removed from the topology.
-            if (!IsCurrent(replica))
-                throw new RespireConnectionException(
-                    $"Read replica {replica.Endpoint} that issued the cursor was removed from the topology.");
-            return await replica.GetConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var multiplexer = core.Multiplexer;
-        if (!ReferenceEquals(multiplexer, affinity.Primary))
-            throw new RespireConnectionException("The primary that issued the cursor was replaced.");
-        return multiplexer.GetConnection();
-    }
-
-    private async ValueTask<Selection> SelectAsync(RespireReadFrom readFrom, CancellationToken cancellationToken)
+    internal async ValueTask<Selection> SelectAsync(RespireReadFrom readFrom, CancellationToken cancellationToken)
     {
         switch (readFrom)
         {
@@ -222,7 +149,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     }
 
     // Fall back only for availability failures; programming errors and disposal propagate.
-    private static bool IsUnavailable(Exception error, CancellationToken cancellationToken)
+    internal static bool IsUnavailable(Exception error, CancellationToken cancellationToken)
         => !cancellationToken.IsCancellationRequested
             && error is RespireConnectionException or RespireTimeoutException or IOException or SocketException;
 
@@ -324,7 +251,24 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     }
 
     private bool IsSentinelRefreshDue()
-        => DateTime.UtcNow.Ticks - Volatile.Read(ref _lastSentinelRefreshTicks) >= RefreshInterval.Ticks;
+    {
+        var last = Volatile.Read(ref _lastSentinelRefresh);
+        return last == 0
+            || Stopwatch.GetElapsedTime(last) >= SentinelRetryDelay(RefreshInterval, Volatile.Read(ref _refreshFailures));
+    }
+
+    /// <summary>
+    /// Delay before the next Sentinel discovery: one refresh interval normally, doubling for each
+    /// consecutive failure up to 30 seconds (or the interval, when that is longer).
+    /// </summary>
+    internal static TimeSpan SentinelRetryDelay(TimeSpan interval, int consecutiveFailures)
+    {
+        if (consecutiveFailures <= 1 || interval <= TimeSpan.Zero) return interval;
+        var cap = interval > s_maxSentinelRetryDelay ? interval : s_maxSentinelRetryDelay;
+        var shift = Math.Min(consecutiveFailures - 1, 16);
+        var ticks = interval.Ticks < cap.Ticks >> shift ? interval.Ticks << shift : cap.Ticks;
+        return TimeSpan.FromTicks(ticks);
+    }
 
     private async Task RefreshSentinelReplicasInBackgroundAsync(SentinelRouter sentinel)
     {
@@ -350,10 +294,12 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             catch (OperationCanceledException) when (linked.IsCancellationRequested) { throw; }
             catch (Exception error)
             {
-                // Warn once per outage; later failures in the same outage stay at debug level.
+                // Warn once per outage; later failures in the same outage stay at debug level and
+                // back off, so a long outage does not query Sentinel every interval.
+                var failures = Interlocked.Increment(ref _refreshFailures);
                 try
                 {
-                    if (Interlocked.Exchange(ref _refreshFailing, 1) == 0)
+                    if (failures == 1)
                         core.Logger?.LogWarning(error,
                             "Sentinel replica discovery failed; serving the last known {Count} replica endpoint(s) until Sentinel answers",
                             Volatile.Read(ref _replicas).Length);
@@ -361,17 +307,17 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
                         core.Logger?.LogDebug(error, "Sentinel replica refresh failed; retaining current endpoints");
                 }
                 catch (Exception) { }
-                Volatile.Write(ref _lastSentinelRefreshTicks, DateTime.UtcNow.Ticks);
+                Volatile.Write(ref _lastSentinelRefresh, Stopwatch.GetTimestamp());
                 return;
             }
             if (Volatile.Read(ref _disposed) != 0) return;
-            if (Interlocked.Exchange(ref _refreshFailing, 0) != 0)
+            if (Interlocked.Exchange(ref _refreshFailures, 0) != 0)
             {
                 try { core.Logger?.LogInformation("Sentinel replica discovery recovered with {Count} replica endpoint(s)", endpoints.Length); }
                 catch (Exception) { }
             }
             SetEndpoints(endpoints);
-            Volatile.Write(ref _lastSentinelRefreshTicks, DateTime.UtcNow.Ticks);
+            Volatile.Write(ref _lastSentinelRefresh, Stopwatch.GetTimestamp());
         }
         finally { _sentinelRefreshGate.Release(); }
     }
@@ -392,11 +338,11 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         var entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
         _entries.Clear();
         _retiring.Clear();
-        _sharedCursors.Clear();
+        Cursors.Clear();
         await Task.WhenAll(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false);
     }
 
-    private readonly record struct Selection(
+    internal readonly record struct Selection(
         RespireConnection Connection, Entry? Replica, RespireConnectionMultiplexer? Primary);
 
     internal sealed class Entry(RespireEndpoint endpoint, ClientCore owner, ReadEndpointRouter router) : IAsyncDisposable
@@ -532,7 +478,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         }
 
         /// <summary>Stops new reads, then drains accepted work before the entry is disposed.</summary>
-        internal async Task RetireAsync(TimeSpan? drainTimeout, CancellationToken cancellationToken)
+        internal async Task RetireAsync(CancellationToken cancellationToken)
         {
             RespireConnectionMultiplexer? multiplexer;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -547,9 +493,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             finally { _gate.Release(); }
             if (multiplexer is null) return;
             owner.NotifyReadReplicaRetired(multiplexer);
-            await multiplexer.RetireAsync()
-                .WaitAsync(drainTimeout ?? Timeout.InfiniteTimeSpan, cancellationToken)
-                .ConfigureAwait(false);
+            await multiplexer.RetireAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         private void DetachHandlers(RespireConnectionMultiplexer multiplexer)
