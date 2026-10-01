@@ -184,6 +184,21 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         await Assert.That(async () => await latch.WaitAsync()).Throws<RespireProtocolException>();
     }
 
+    [Test]
+    public async Task JoinAndWaitRejectPartialLatchHash()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var coordination = new RespireCoordination(admin);
+        var latch = await coordination.CreateCountdownLatchAsync(key, 1);
+        (await admin.ExecuteAsync("DEL", key)).Dispose();
+        (await admin.ExecuteAsync("HSET", key, "remaining", "1")).Dispose();
+
+        await Assert.That(async () => await coordination.JoinCountdownLatchAsync(key))
+            .Throws<RespireProtocolException>();
+        await Assert.That(async () => await latch.WaitAsync()).Throws<RespireProtocolException>();
+    }
+
     private static ActivityListener SubscribeConfirmationListener(
         HashSet<int> ports, TaskCompletionSource confirmed)
     {

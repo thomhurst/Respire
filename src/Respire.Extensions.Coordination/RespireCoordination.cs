@@ -39,8 +39,9 @@ public sealed class RespireCoordination
         """);
 
     private const string ReadCountdownLatchSource = """
+        if redis.call('EXISTS', KEYS[1]) == 0 then return {'0', '', '', ''} end
         local values = redis.call('HMGET', KEYS[1], 'generation', 'remaining', 'channel')
-        return {values[1] or '', values[2] or '-1', values[3] or ''}
+        return {'1', values[1] or '', values[2] or '-1', values[3] or ''}
         """;
 
     internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create(ReadCountdownLatchSource, readOnly: true);
@@ -65,10 +66,10 @@ public sealed class RespireCoordination
         cancellationToken.ThrowIfCancellationRequested();
         var snapshot = key.Snapshot();
         using var result = await ReadLatchStateAsync(_client, snapshot, cancellationToken).ConfigureAwait(false);
-        var generation = result[0].AsString();
-        var remainingText = result[1].AsString();
-        var channel = result[2].AsString();
-        if (generation.Length == 0 && channel.Length == 0) return null;
+        if (result[0].AsString() == "0") return null;
+        var generation = result[1].AsString();
+        var remainingText = result[2].AsString();
+        var channel = result[3].AsString();
         if (generation.Length == 0 || channel.Length == 0
             || !long.TryParse(remainingText, NumberStyles.None, CultureInfo.InvariantCulture, out var remaining)
             || remaining < 0)
