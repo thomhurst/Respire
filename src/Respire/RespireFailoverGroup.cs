@@ -227,13 +227,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 if (isSentinel)
                 {
                     var normalizedEndpoints = NormalizeEndpoints(snapshot.Endpoints);
-                    var sameSentinelDeployment = sentinelDeployments.Any(existing =>
+                    var overlappingSentinelSeeds = sentinelDeployments.Any(existing =>
                         string.Equals(existing.PrimaryName, snapshot.SentinelPrimaryName, StringComparison.Ordinal)
-                        && existing.Endpoints.Length == normalizedEndpoints.Length
-                        && existing.Endpoints.All(endpoint => normalizedEndpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint)))
-                        && normalizedEndpoints.All(endpoint => existing.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
-                    if (sameSentinelDeployment)
-                        throw new RespireConfigurationException("Failover candidates cannot list the same Sentinel deployment more than once.");
+                        && existing.Endpoints.Any(endpoint => normalizedEndpoints.Any(
+                            candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
+                    if (overlappingSentinelSeeds)
+                        throw new RespireConfigurationException("Failover candidates for the same Sentinel service cannot use overlapping seed endpoints.");
                     sentinelDeployments.Add((snapshot.SentinelPrimaryName!, normalizedEndpoints));
                 }
                 else

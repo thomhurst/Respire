@@ -100,6 +100,28 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task SentinelCandidatesRejectOverlappingSeedSetsForSameService()
+    {
+        await using var sharedSeed = new FakeRespServer(FakeRespServer.PongReply);
+        await using var additionalSeed = new FakeRespServer(FakeRespServer.PongReply);
+        var first = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sharedSeed.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+        var second = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sharedSeed.Port), new("127.0.0.1", additionalSeed.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([first, second]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(sharedSeed.CommandsSeen).IsEqualTo(0);
+        await Assert.That(additionalSeed.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task UndiscoveredSentinelStatusHasNoDataEndpoint()
     {
         await using var invalidSentinel = new FakeRespServer("-ERR unavailable\r\n"u8.ToArray());
