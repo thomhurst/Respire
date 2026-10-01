@@ -240,6 +240,37 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task RetirementWakesStreamedSetQueuedBehindActiveStream()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        var activeSource = new PausedStream();
+        var activeCommand = new StreamedSetCommand((RespireValue)"active", activeSource, 4, default, SetWhen.Always);
+        var activeSet = connection.SendCheckedAsync(in activeCommand, commandName: "SET").AsTask();
+        await activeSource.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var queuedSource = new PausedStream();
+        var queuedCommand = new StreamedSetCommand((RespireValue)"queued", queuedSource, 4, default, SetWhen.Always);
+        var queuedSet = connection.SendCheckedAsync(in queuedCommand, commandName: "SET").AsTask();
+        await Task.Delay(50);
+        await Assert.That(queuedSet.IsCompleted).IsFalse();
+
+        var retirement = connection.RetireAsync();
+        await Assert.That(async () => await queuedSet.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+        await Assert.That(queuedSource.ReadStarted.Task.IsCompleted).IsFalse();
+
+        activeSource.ContinueReading.TrySetResult();
+        using var reply = await activeSet.WaitAsync(TimeSpan.FromSeconds(5));
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.AsString()).IsEqualTo("OK");
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
+    }
+
+    [Test]
     public async Task CancellationDuringPayloadWriteClosesConnection()
     {
         await using var server = new CountingSetServer();

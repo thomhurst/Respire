@@ -99,6 +99,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     // Cancelled by Abort so a streamed SET blocked on its source or on a stalled socket write
     // observes the closed connection. Never disposed: a racing streamed SET may still link to it.
     private readonly CancellationTokenSource _closedCancellation = new();
+    private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -1303,7 +1304,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var effectiveCancellation = linkedCancellation.Token;
         try
         {
-            await _streamingGate.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+            await WaitForStreamingGateAsync(effectiveCancellation).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (IsClosedCancellation(error, effectiveCancellation, cancellationToken))
         {
@@ -1417,6 +1418,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             // The connection is already dead, so no partial frame can be followed by other bytes.
             if (!requestQueued) ReclaimUnpublished(source);
+            else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
             throw ClosedDuringStreamedSet(error);
         }
         catch (OperationCanceledException error) when (timeoutCancellation is not null
@@ -1426,6 +1428,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 Abort(new RespireConnectionException(
                     $"Streamed SET on {Host}:{Port} timed out before its RESP frame completed.", error));
             if (!requestQueued) ReclaimUnpublished(source);
+            else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
             throw new RespireTimeoutException("SET", _commandTimeout!.Value, error,
                 CaptureTimeoutDiagnostics(stage: requestStarted
                     ? RespireCommandStage.Writing
@@ -1437,6 +1440,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 Abort(new RespireConnectionException(
                     $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
             if (!requestQueued) ReclaimUnpublished(source);
+            else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
         catch (Exception error)
@@ -1447,6 +1451,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
             }
             if (!requestQueued) ReclaimUnpublished(source);
+            else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
             throw;
         }
         finally
@@ -1460,6 +1465,47 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return await source.Task.ConfigureAwait(false);
+    }
+
+    private async ValueTask WaitForStreamingGateAsync(CancellationToken cancellationToken)
+    {
+        using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var gateWait = _streamingGate.WaitAsync(gateCancellation.Token);
+        if (await Task.WhenAny(gateWait, _retiredSignal.Task).ConfigureAwait(false) == _retiredSignal.Task)
+        {
+            gateCancellation.Cancel();
+            try
+            {
+                await gateWait.ConfigureAwait(false);
+                _streamingGate.Release();
+            }
+            catch (OperationCanceledException error)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    throw new OperationCanceledException(error.Message, error, cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfRetired();
+        }
+
+        try { await gateWait.ConfigureAwait(false); }
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+    }
+
+    private static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
+    {
+        try
+        {
+            using var response = await source.Task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Aborted or cancelled commands still need GetResult to release the caller reference.
+        }
     }
 
     private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
@@ -3343,6 +3389,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
+        _retiredSignal.TrySetResult();
         // Stop refresh deadlines and provider work while accepted transport frames drain.
         _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
