@@ -57,11 +57,14 @@ internal sealed partial class ClusterRouter
     private void QueueSmigratedNotification(
         RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
     {
+        // Capture the mutation fence before validation; otherwise a pause between validation
+        // and enqueue could give an old receive callback a token newer than intervening routes.
+        var item = CaptureSmigratedNotification(sender, sequenceScope, notification);
         if (notification.Kind != "SMIGRATED" || Volatile.Read(ref _disposed) != 0
             || notification.Migrations is not { Length: > 0 }) return;
         // This callback is attached only while the sender is active. Preserve that enqueue-time
         // validity: an earlier FIFO item can retire the sender before a later queued item runs.
-        _smigratedNotifications.Writer.TryWrite(CaptureSmigratedNotification(sender, sequenceScope, notification));
+        _smigratedNotifications.Writer.TryWrite(item);
     }
 
     internal QueuedSmigratedNotification CaptureSmigratedNotification(
