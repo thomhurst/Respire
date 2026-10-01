@@ -129,7 +129,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateHeld);
+                if (_state == StateReleasing) Volatile.Write(ref _state, StateHeld);
                 _releaseTask = null;
             }
             throw;
