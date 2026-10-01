@@ -1,4 +1,6 @@
-namespace Respire.Extensions.Search;
+using Respire;
+
+namespace Redis.Search;
 
 /// <summary>Typed FT.AGGREGATE pipeline options.</summary>
 /// <remarks>

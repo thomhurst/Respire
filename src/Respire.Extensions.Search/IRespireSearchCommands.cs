@@ -1,4 +1,6 @@
-namespace Respire.Extensions.Search;
+using Respire;
+
+namespace Redis.Search;
 
 /// <summary>Generated low-level Redis Search commands used by <see cref="RespireSearchClient"/>.</summary>
 [RespireCommands]

@@ -1,8 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
+using Respire;
 
-namespace Respire.Extensions.Search;
+namespace Redis.Search;
 
 /// <summary>Search query with typed modifiers. The expression is validated when the query is created.</summary>
 /// <param name="Expression">

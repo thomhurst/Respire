@@ -1,7 +1,8 @@
 using System.Globalization;
+using Respire;
 using Respire.Protocol;
 
-namespace Respire.Extensions.Search;
+namespace Redis.Search;
 
 /// <summary>Search response document with identifier and projected fields.</summary>
 public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string, string?> Fields, double? Score = null)

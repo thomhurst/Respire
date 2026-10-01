@@ -1,6 +1,7 @@
+using Respire;
 using Respire.Protocol;
 
-namespace Respire.Extensions.Search;
+namespace Redis.Search;
 
 /// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
 /// <remarks>

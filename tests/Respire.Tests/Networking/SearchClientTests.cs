@@ -1,4 +1,4 @@
-using Respire.Extensions.Search;
+using Redis.Search;
 using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;

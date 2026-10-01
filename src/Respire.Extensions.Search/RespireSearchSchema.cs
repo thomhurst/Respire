@@ -1,6 +1,7 @@
 using System.Globalization;
+using Respire;
 
-namespace Respire.Extensions.Search;
+namespace Redis.Search;
 
 /// <summary>Search index source type.</summary>
 public enum RespireSearchSource
