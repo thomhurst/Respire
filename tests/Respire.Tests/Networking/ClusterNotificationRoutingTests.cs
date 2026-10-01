@@ -722,6 +722,41 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task RejectedOnlyRouteKeepsItsSubscriptionInReconciliation()
+    {
+        await using var server = new FakeRespServer(20);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
+        var configured = server.ReplyOverride!;
+        var reject = false;
+        var rejections = 0;
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.ReplyOverride = (connectionId, command) =>
+        {
+            if (command != $"PSUBSCRIBE {descriptor}" || !Volatile.Read(ref reject)) return configured(connectionId, command);
+            // Reject the replay and the first reconciliation attempt, then accept the route again.
+            if (Interlocked.Increment(ref rejections) <= 2) return "-NOPERM denied\r\n"u8.ToArray();
+            accepted.TrySetResult();
+            return configured(connectionId, command);
+        };
+        await using var client = CreateClusterClient(server.Port, resp3: false, new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(1),
+            MaxDelay = TimeSpan.FromMilliseconds(1),
+            JitterRatio = 0,
+        });
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Volatile.Write(ref reject, true);
+        var index = server.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
+        server.CloseConnection(server.ReceivedConnectionIds[index]);
+
+        // The subscription's only route was rejected, yet reconciliation must still retry it.
+        await accepted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task ActivationAppliesTopologyChangePublishedBeforeItsFinalAck()
     {
         await using var first = new FakeRespServer(20);

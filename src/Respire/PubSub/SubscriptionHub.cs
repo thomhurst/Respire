@@ -171,6 +171,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                     if (node is not null)
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
                 }
+                lock (_gate) EndNotificationCoverageLocked(subscription);
                 return;
             }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
