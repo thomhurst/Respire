@@ -166,7 +166,7 @@ internal static class SentinelResolver
         return false;
     }
 
-    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+    internal static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
     private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)

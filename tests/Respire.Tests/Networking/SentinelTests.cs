@@ -730,6 +730,66 @@ public class SentinelTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task DuplicateSwitchEventsFromSeveralSentinelsReplacePrimaryOnce()
+    {
+        await using var first = CreatePrimary();
+        await using var replacement = CreatePrimary();
+        var switched = 0;
+        Func<int> primaryPort = () => Volatile.Read(ref switched) == 0 ? first.Port : replacement.Port;
+        await using var sentinelA = CreateSentinel(primaryPort);
+        await using var sentinelB = CreateSentinel(primaryPort);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinelA.Port), new("127.0.0.1", sentinelB.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinelA.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1
+            && sentinelB.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        // Subscription reconciliations must finish before the failover so only switch
+        // refreshes connect to the replacement.
+        await WaitUntilQuietAsync(() => sentinelA.ReceivedCommands.Count + sentinelB.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitorA = sentinelA.ReceivedConnectionIds[sentinelA.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+        var monitorB = sentinelB.ReceivedConnectionIds[sentinelB.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+
+        Volatile.Write(ref switched, 1);
+        var message = SwitchMasterMessage("mymaster", first.Port, replacement.Port);
+        await Task.WhenAll(sentinelA.SendRawAsync(message, monitorA), sentinelB.SendRawAsync(message, monitorB));
+
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == replacement.Port);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilQuietAsync(() => sentinelA.ReceivedCommands.Count + sentinelB.ReceivedCommands.Count + replacement.ReceivedCommands.Count);
+        await Assert.That(replacement.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
+        await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsFalse();
+    }
+
+    [Test]
+    public async Task MonitorDisposalDoesNotWaitForCommandTimeoutOnUnsubscribe()
+    {
+        await using var primary = CreatePrimary();
+        await using var sentinel = CreateSentinel(() => primary.Port);
+        var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromMinutes(1),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        sentinel.SuppressReply = command => command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal);
+
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task MonitorDisposalIsBoundedWhenCommandTimeoutIsDisabled()
     {
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
@@ -766,6 +826,35 @@ public class SentinelTests
                 return null;
             },
         };
+
+    private static FakeRespServer CreatePrimary()
+        => new FakeRespServer(16, PrimaryRole, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "ROLE" => PrimaryRole,
+                "PING" => FakeRespServer.PongReply,
+                _ => null,
+            },
+        };
+
+    private static async Task WaitUntilQuietAsync(Func<int> activity)
+    {
+        var last = activity();
+        var quietSince = Stopwatch.GetTimestamp();
+        for (var attempt = 0; attempt < 400; attempt++)
+        {
+            await Task.Delay(25);
+            var current = activity();
+            if (current != last)
+            {
+                last = current;
+                quietSince = Stopwatch.GetTimestamp();
+            }
+            else if (Stopwatch.GetElapsedTime(quietSince) >= TimeSpan.FromMilliseconds(500)) return;
+        }
+        throw new TimeoutException("Sentinel activity did not settle.");
+    }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
