@@ -661,7 +661,7 @@ public class ClusterShardedPubSubTests
         await using var client = cluster.CreateClient();
         await using var subscription = await client.SubscribeShardedAsync(["bar", "foo"]);
         var notifications = 0;
-        client.Core.Cluster!.TopologyChanged += () => Interlocked.Increment(ref notifications);
+        client.Core.Cluster!.TopologyChanged += (_, _) => Interlocked.Increment(ref notifications);
         _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
         await Assert.That(notifications).IsEqualTo(0);
         cluster.FirstOverride = (_, command) => command == "CLUSTER SLOTS"
