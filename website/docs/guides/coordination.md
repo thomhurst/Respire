@@ -84,8 +84,9 @@ and compatible Valkey deployments; it does not require Redis 8.8 commands.
 implementations of `System.Threading.RateLimiting.RateLimiter`. Redis scripts use server time
 and apply each permit decision atomically. Fixed windows use `INCREX` on Redis 8.8 and later;
 older Redis versions use an equivalent Lua counter with the same first-request window expiry.
-Each `RespireCoordination` probes `INCREX` once and then uses the Lua counter directly on older
-servers.
+After an older server rejects `INCREX`, every limiter from the same `RespireCoordination` uses
+the Lua counter directly and probes `INCREX` again only after five minutes, so upgraded servers
+regain the fast path.
 
 :::warning Asynchronous only
 Always acquire with `AcquireAsync`. Synchronous `AttemptAcquire` cannot reach Redis, so it returns

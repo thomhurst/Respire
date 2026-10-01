@@ -57,14 +57,20 @@ public sealed class RespireCoordination
     /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
     public RespireRateLimiters RateLimiters { get; }
 
-    // Learned once per connection so every limiter (for example, one per PartitionedRateLimiter partition)
-    // skips the failing INCREX probe after the first unknown-command reply from a pre-8.8 server.
-    private volatile bool _increxUnsupported;
+    // Shared per connection so every limiter (for example, one per PartitionedRateLimiter partition) skips the
+    // failing INCREX probe after an unknown-command reply from a pre-8.8 server. The result expires so that
+    // upgraded nodes (rolling Cluster upgrades, failover to a newer primary) regain the INCREX fast path.
+    private static readonly long IncrexRecheckInterval = (long)(Stopwatch.Frequency * TimeSpan.FromMinutes(5).TotalSeconds);
+    private long _increxUnsupportedUntil;
 
     internal bool IncrexUnsupported
     {
-        get => _increxUnsupported;
-        set => _increxUnsupported = value;
+        get
+        {
+            var until = Volatile.Read(ref _increxUnsupportedUntil);
+            return until != 0 && Stopwatch.GetTimestamp() < until;
+        }
+        set => Volatile.Write(ref _increxUnsupportedUntil, value ? Stopwatch.GetTimestamp() + IncrexRecheckInterval : 0);
     }
 
     internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
