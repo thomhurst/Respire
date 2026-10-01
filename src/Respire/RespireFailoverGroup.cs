@@ -88,8 +88,13 @@ public static class RespireFailoverSwitchReasons
 }
 
 /// <summary>Describes an active endpoint change.</summary>
-/// <param name="PreviousEndpoint">The endpoint selected before the change, if any.</param>
-/// <param name="CurrentEndpoint">The endpoint selected after the change, if any.</param>
+/// <param name="PreviousEndpoint">
+/// The endpoint selected before the change, if any. For a Sentinel candidate this is the primary observed when
+/// that candidate was selected, even if Sentinel has since moved the deployment to another primary.
+/// </param>
+/// <param name="CurrentEndpoint">
+/// The endpoint selected after the change, if any. For a Sentinel candidate this is its current validated primary.
+/// </param>
 /// <param name="Reason">One of the <see cref="RespireFailoverSwitchReasons"/> values.</param>
 /// <param name="ChangedAt">When the group made the change.</param>
 public sealed record RespireFailoverSwitch(
@@ -122,6 +127,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private Task? _monitor;
     private Task? _disposal;
     private CandidateState? _active;
+    // Guarded by _gate: the endpoint observed when _active was selected.
+    private RespireEndpoint? _activeEndpoint;
     private bool _hasSelected;
     private volatile bool _disposed;
 
@@ -200,8 +207,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         settings.Validate();
 
         var states = new List<CandidateState>();
-        var endpoints = new List<RespireEndpoint>();
-        var sentinelDeployments = new List<(string PrimaryName, RespireEndpoint[] Endpoints)>();
+        var configured = new ConfiguredEndpointRegistry();
         ILogger? logger = null;
         RespireFailoverGroup? group = null;
         try
@@ -224,42 +230,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                         "Failover candidates require one endpoint in standalone mode, one or more Sentinel endpoints with a primary service name, or one or more Cluster seeds.");
                 }
                 var fallbackEndpoint = snapshot.Endpoints[0];
-                if (isSentinel)
-                {
-                    var normalizedEndpoints = NormalizeEndpoints(snapshot.Endpoints);
-                    if (endpoints.Any(endpoint => normalizedEndpoints.Any(
-                        sentinelEndpoint => SameEndpoint(endpoint, sentinelEndpoint))))
-                    {
-                        throw new RespireConfigurationException(
-                            "Failover candidates cannot reuse a Sentinel seed as a standalone or Cluster data endpoint.");
-                    }
-                    var overlappingSentinelSeeds = sentinelDeployments.Any(existing =>
-                        string.Equals(existing.PrimaryName, snapshot.SentinelPrimaryName, StringComparison.Ordinal)
-                        && existing.Endpoints.Any(endpoint => normalizedEndpoints.Any(
-                            candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
-                    if (overlappingSentinelSeeds)
-                        throw new RespireConfigurationException("Failover candidates for the same Sentinel service cannot use overlapping seed endpoints.");
-                    sentinelDeployments.Add((snapshot.SentinelPrimaryName!, normalizedEndpoints));
-                }
-                else
-                {
-                    // Standalone candidates use one endpoint; Cluster candidates use every seed.
-                    foreach (var endpoint in snapshot.Endpoints)
-                    {
-                        if (sentinelDeployments.Any(deployment => deployment.Endpoints.Any(
-                            sentinelEndpoint => SameEndpoint(endpoint, sentinelEndpoint))))
-                        {
-                            throw new RespireConfigurationException(
-                                $"Failover candidates cannot reuse Sentinel seed '{endpoint}' as a standalone or Cluster data endpoint.");
-                        }
-                        if (endpoints.Any(existing => SameEndpoint(existing, endpoint)))
-                        {
-                            throw new RespireConfigurationException(
-                                $"Failover candidates must use distinct configured endpoints; '{endpoint}' is listed more than once.");
-                        }
-                        endpoints.Add(endpoint);
-                    }
-                }
+                if (isSentinel) configured.AddSentinel(snapshot.SentinelPrimaryName!, snapshot.Endpoints);
+                else configured.AddData(snapshot.Endpoints);
                 if (snapshot.ClientSideCache is not null)
                 {
                     throw new RespireConfigurationException(
@@ -269,14 +241,19 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 logger ??= snapshot.CreateLogger("Respire.FailoverGroup");
                 var client = RespireClient.Create(snapshot);
                 states.Add(new CandidateState(client, candidate.Priority, states.Count, fallbackEndpoint,
-                    snapshot.SentinelPrimaryName, snapshot.Endpoints.ToArray()));
+                    snapshot.SentinelPrimaryName, snapshot.Endpoints));
             }
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
 
             var created = group = new RespireFailoverGroup(states.ToArray(), settings, clock, logger);
             await Task.WhenAll(states.Select(state => created.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
-            foreach (var state in states) ValidateSentinelIdentity(state, states);
+            // Discovery has now run once. Reject a configuration whose candidates already share a deployment;
+            // later convergence is handled by each probe instead (see FindDeploymentConflict).
+            foreach (var state in states)
+            {
+                if (FindDeploymentConflict(state, states) is { } conflict) throw new RespireConfigurationException(conflict);
+            }
             await group.SelectActiveAsync().ConfigureAwait(false);
             if (Volatile.Read(ref group._active) is null)
             {
@@ -310,59 +287,66 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
     }
 
-    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
-        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Decides which of two candidates that resolve to one deployment loses. A healthy incumbent keeps
+    /// serving while a recovering duplicate stays failed. When both have the same health, the candidate
+    /// with lower precedence (priority, then input order) fails, so concurrent probes never fail both.
+    /// </summary>
+    internal static bool ShouldFailCandidateForDeploymentConflict(bool candidateIsHealthy, bool otherIsHealthy, bool otherPrecedes)
+        => candidateIsHealthy == otherIsHealthy ? otherPrecedes : otherIsHealthy;
 
-    internal static bool ShouldFailCandidateForSentinelIdentityConflict(bool candidateIsHealthy, bool otherIsHealthy)
-        => !candidateIsHealthy || otherIsHealthy;
-
-    private static void ValidateSentinelIdentity(CandidateState candidate, IReadOnlyList<CandidateState> candidates)
+    /// <summary>
+    /// Returns why <paramref name="candidate"/> duplicates another candidate's deployment, or null.
+    /// Discovery can change after connection (a recovered candidate, a learned Sentinel peer, or a
+    /// Sentinel failover), so probes repeat this check against the latest discovered state.
+    /// </summary>
+    private static string? FindDeploymentConflict(CandidateState candidate, IReadOnlyList<CandidateState> candidates)
     {
-        if (candidate.SentinelPrimaryName is not { Length: > 0 } primaryName
-            || candidate.Client.Core.Sentinel is not { } sentinel)
-            return;
-
-        var discoveredEndpoints = sentinel.DiscoveredEndpoints;
-        var discoveredPrimary = candidate.Endpoint;
+        var comparer = RespireEndpointComparer.Instance;
+        var primary = candidate.Endpoint;
+        var discoveredSentinels = candidate.DiscoveredSentinels;
         foreach (var other in candidates)
         {
             if (ReferenceEquals(candidate, other)) continue;
-            if (other.SentinelPrimaryName is { Length: > 0 } otherPrimaryName)
+            var otherPrimary = other.Endpoint;
+            if (candidate.IsSentinel && other.IsSentinel)
             {
-                var otherSentinel = other.Client.Core.Sentinel;
-                var samePrimary = discoveredPrimary is { } primary && other.Endpoint is { } existingPrimary
-                    && SameEndpoint(primary, existingPrimary);
-                var sameServiceOverlaps = string.Equals(primaryName, otherPrimaryName, StringComparison.Ordinal)
-                    && otherSentinel is not null
-                    && otherSentinel.DiscoveredEndpoints.Any(endpoint =>
-                        discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered)));
-                if (samePrimary || sameServiceOverlaps)
+                var samePrimary = primary is { } current && otherPrimary is { } existing && comparer.Equals(current, existing);
+                var otherSentinels = other.DiscoveredSentinels;
+                var sameServiceOverlaps = string.Equals(candidate.SentinelPrimaryName, other.SentinelPrimaryName, StringComparison.Ordinal)
+                    && discoveredSentinels.Any(endpoint => otherSentinels.Contains(endpoint, comparer));
+                if ((samePrimary || sameServiceOverlaps) && ShouldFail(candidate, other))
                 {
-                    if (!ShouldFailCandidateForSentinelIdentityConflict(candidate.IsHealthy, other.IsHealthy)) continue;
-                    throw new RespireConfigurationException(
-                        $"Failover candidates for Sentinel service '{primaryName}' discovered the same primary or overlapping Sentinel endpoints.");
+                    return $"Failover candidates for Sentinel service '{candidate.SentinelPrimaryName}' discovered the same primary or overlapping Sentinel endpoints.";
                 }
-
-                continue;
             }
-
-            if (other.ConfiguredEndpoints.Any(endpoint =>
-                discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered))
-                || discoveredPrimary is { } primary && SameEndpoint(endpoint, primary)))
+            else if (candidate.IsSentinel)
             {
-                if (!ShouldFailCandidateForSentinelIdentityConflict(candidate.IsHealthy, other.IsHealthy)) continue;
-                throw new RespireConfigurationException(
-                    $"Sentinel candidate '{primaryName}' discovered an endpoint configured as another failover candidate's data endpoint.");
+                // A data endpoint that is a learned Sentinel peer is reported by that data candidate's own check.
+                if (primary is { } current && other.DataEndpoints.Contains(current) && ShouldFail(candidate, other))
+                {
+                    return $"Sentinel candidate '{candidate.SentinelPrimaryName}' discovered primary '{current}', which another failover candidate uses as its data endpoint.";
+                }
             }
+            else if (other.IsSentinel)
+            {
+                // A Sentinel is a control-plane server: it answers PING but cannot serve application commands.
+                foreach (var sentinel in other.DiscoveredSentinels)
+                {
+                    if (candidate.DataEndpoints.Contains(sentinel))
+                        return $"Failover candidate data endpoint '{sentinel}' is a Sentinel discovered for service '{other.SentinelPrimaryName}'.";
+                }
+                if (otherPrimary is { } existing && candidate.DataEndpoints.Contains(existing) && ShouldFail(candidate, other))
+                {
+                    return $"Failover candidate data endpoint '{existing}' is the primary discovered for Sentinel service '{other.SentinelPrimaryName}'.";
+                }
+            }
+            // Standalone and Cluster data endpoints were checked for duplicates during configuration.
         }
-    }
+        return null;
 
-    private static RespireEndpoint[] NormalizeEndpoints(IEnumerable<RespireEndpoint> endpoints)
-    {
-        var normalized = new List<RespireEndpoint>();
-        foreach (var endpoint in endpoints)
-            if (!normalized.Any(existing => SameEndpoint(existing, endpoint))) normalized.Add(endpoint);
-        return normalized.ToArray();
+        static bool ShouldFail(CandidateState candidate, CandidateState other)
+            => ShouldFailCandidateForDeploymentConflict(candidate.IsHealthy, other.IsHealthy, other.Precedes(candidate));
     }
 
     private async Task MonitorAsync()
@@ -400,32 +384,21 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_options.ProbeTimeout);
         var started = Stopwatch.GetTimestamp();
+        string conflict;
         try
         {
-            if (candidate.Client.Core.Cluster is null)
+            await candidate.ProbeAsync(timeout.Token).ConfigureAwait(false);
+            var found = FindDeploymentConflict(candidate, _candidates);
+            if (found is null)
             {
-                if (candidate.Client.Core.Sentinel is { } sentinel)
-                {
-                    if (!await sentinel.ProbePrimaryAsync(timeout.Token).ConfigureAwait(false))
-                        throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
-                    ValidateSentinelIdentity(candidate, _candidates);
-                }
-                await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
+                candidate.MarkHealthy(_clock.GetTimestamp());
+                RespireTelemetry.RecordFailoverProbe(
+                    candidate.TelemetryEndpoint,
+                    succeeded: true,
+                    Stopwatch.GetElapsedTime(started).TotalSeconds);
+                return;
             }
-            else
-            {
-                // A keyless PING reaches one arbitrary node, which can answer while slots are unserved.
-                var info = await candidate.Client.Server.ClusterInfoAsync(timeout.Token).ConfigureAwait(false);
-                if (!string.Equals(info.State, "ok", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new RespireConnectionException($"Cluster reports cluster_state:{info.State}.");
-                }
-            }
-            candidate.MarkHealthy(_clock.GetTimestamp());
-            RespireTelemetry.RecordFailoverProbe(
-                candidate.TelemetryEndpoint,
-                succeeded: true,
-                Stopwatch.GetElapsedTime(started).TotalSeconds);
+            conflict = found;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -438,7 +411,23 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 candidate.TelemetryEndpoint,
                 succeeded: false,
                 Stopwatch.GetElapsedTime(started).TotalSeconds);
+            return;
         }
+
+        // A duplicate deployment adds no redundancy, so it is unhealthy at once instead of after FailureThreshold
+        // probes. It is checked again whenever its circuit allows the next probe.
+        candidate.MarkFailed(new RespireConfigurationException(conflict), _clock.GetUtcNow(), _clock.GetTimestamp(),
+            _options, openCircuit: true);
+        RespireTelemetry.RecordFailoverProbe(
+            candidate.TelemetryEndpoint,
+            succeeded: false,
+            Stopwatch.GetElapsedTime(started).TotalSeconds);
+        try
+        {
+            _logger?.LogWarning("Failover candidate {Endpoint} was marked unhealthy because it duplicates another candidate's deployment: {Reason}",
+                candidate.TelemetryEndpoint.ToString(), conflict);
+        }
+        catch { /* Logging must not stop health monitoring. */ }
     }
 
     private async ValueTask SelectActiveAsync()
@@ -496,11 +485,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             {
                 _hasSelected |= selected is not null;
                 Volatile.Write(ref _active, selected);
+                // A Sentinel candidate's live endpoint can already show its new primary, or null while
+                // rediscovering, so report the endpoint captured when the previous candidate was selected.
+                var selectedEndpoint = selected?.Endpoint;
                 change = new RespireFailoverSwitch(
-                    active?.Endpoint,
-                    selected?.Endpoint,
+                    _activeEndpoint,
+                    selectedEndpoint,
                     reason ?? RespireFailoverSwitchReasons.NoHealthyEndpoint,
                     now);
+                _activeEndpoint = selectedEndpoint;
             }
         }
         finally
@@ -558,6 +551,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             _disposed = true;
             Volatile.Write(ref _active, null);
+            _activeEndpoint = null;
             _stop.Cancel();
         }
         finally
@@ -589,10 +583,59 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         if (failures is { Count: > 1 }) throw new AggregateException(failures);
     }
 
+    /// <summary>Rejects configured endpoints that make two candidates share one deployment.</summary>
+    private sealed class ConfiguredEndpointRegistry
+    {
+        private readonly HashSet<RespireEndpoint> _dataEndpoints = new(RespireEndpointComparer.Instance);
+        private readonly HashSet<RespireEndpoint> _sentinelSeeds = new(RespireEndpointComparer.Instance);
+        private readonly Dictionary<string, HashSet<RespireEndpoint>> _seedsByService = new(StringComparer.Ordinal);
+
+        public void AddSentinel(string service, IEnumerable<RespireEndpoint> seeds)
+        {
+            var normalized = new HashSet<RespireEndpoint>(seeds, RespireEndpointComparer.Instance);
+            if (normalized.Overlaps(_dataEndpoints))
+            {
+                throw new RespireConfigurationException(
+                    "Failover candidates cannot reuse a Sentinel seed as a standalone or Cluster data endpoint.");
+            }
+            if (_seedsByService.TryGetValue(service, out var serviceSeeds))
+            {
+                if (serviceSeeds.Overlaps(normalized))
+                    throw new RespireConfigurationException("Failover candidates for the same Sentinel service cannot use overlapping seed endpoints.");
+                serviceSeeds.UnionWith(normalized);
+            }
+            else
+            {
+                _seedsByService.Add(service, normalized);
+            }
+            _sentinelSeeds.UnionWith(normalized);
+        }
+
+        // Standalone candidates use one endpoint; Cluster candidates use every seed.
+        public void AddData(IEnumerable<RespireEndpoint> endpoints)
+        {
+            foreach (var endpoint in endpoints)
+            {
+                if (_sentinelSeeds.Contains(endpoint))
+                {
+                    throw new RespireConfigurationException(
+                        $"Failover candidates cannot reuse Sentinel seed '{endpoint}' as a standalone or Cluster data endpoint.");
+                }
+                if (!_dataEndpoints.Add(endpoint))
+                {
+                    throw new RespireConfigurationException(
+                        $"Failover candidates must use distinct configured endpoints; '{endpoint}' is listed more than once.");
+                }
+            }
+        }
+    }
+
     private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint,
-        string? sentinelPrimaryName, RespireEndpoint[] configuredEndpoints)
+        string? sentinelPrimaryName, IEnumerable<RespireEndpoint> configuredEndpoints)
     {
         private readonly object _gate = new();
+        // Standalone and Cluster clients have a fixed endpoint; a Sentinel candidate's endpoint is its current primary.
+        private readonly RespireEndpoint? _fixedEndpoint = client.Core.Sentinel is null ? client.Endpoint : (RespireEndpoint?)null;
         private bool _isHealthy;
         private int _consecutiveFailures;
         private DateTimeOffset? _circuitOpenUntil;
@@ -603,21 +646,42 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
         public RespireClient Client { get; } = client;
         public string? SentinelPrimaryName { get; } = sentinelPrimaryName;
-        public RespireEndpoint[] ConfiguredEndpoints { get; } = configuredEndpoints;
+        public bool IsSentinel => Client.Core.Sentinel is not null;
+        /// <summary>Configured standalone endpoint or Cluster seeds; empty for a Sentinel candidate.</summary>
+        public HashSet<RespireEndpoint> DataEndpoints { get; } = client.Core.Sentinel is null
+            ? new(configuredEndpoints, RespireEndpointComparer.Instance)
+            : new(RespireEndpointComparer.Instance);
+        /// <summary>Configured and learned Sentinel endpoints; empty for a standalone or Cluster candidate.</summary>
+        public RespireEndpoint[] DiscoveredSentinels => Client.Core.Sentinel?.DiscoveredEndpoints ?? [];
         public int Priority { get; } = priority;
         public int Order { get; } = order;
-        public RespireEndpoint? Endpoint
-        {
-            get
-            {
-                if (Client.Core.Sentinel is { } sentinel)
-                    return sentinel.Current is { IsRetired: false } generation
-                        ? generation.Endpoint : (RespireEndpoint?)null;
-                try { return Client.Endpoint; }
-                catch (InvalidOperationException) { return null; }
-            }
-        }
+        public RespireEndpoint? Endpoint => Client.Core.Sentinel is { } sentinel
+            ? sentinel.Current is { IsRetired: false } generation ? (RespireEndpoint?)generation.Endpoint : null
+            : _fixedEndpoint;
         public RespireEndpoint TelemetryEndpoint => Endpoint ?? fallbackEndpoint;
+
+        /// <summary>Whether this candidate is selected before <paramref name="other"/> when both are healthy.</summary>
+        public bool Precedes(CandidateState other)
+            => Priority < other.Priority || Priority == other.Priority && Order < other.Order;
+
+        /// <summary>Runs the health check for this candidate's deployment type. Throws when it is unhealthy.</summary>
+        public async ValueTask ProbeAsync(CancellationToken cancellationToken)
+        {
+            if (Client.Core.Cluster is not null)
+            {
+                // A keyless PING reaches one arbitrary node, which can answer while slots are unserved.
+                var info = await Client.Server.ClusterInfoAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(info.State, "ok", StringComparison.OrdinalIgnoreCase))
+                    throw new RespireConnectionException($"Cluster reports cluster_state:{info.State}.");
+                return;
+            }
+            // ROLE proves the node is still the elected primary, which a demoted node answering PING does not.
+            // PING still runs afterwards so a node that reports the primary ROLE but rejects PING (for example
+            // through ACL rules or a proxy) is unhealthy, as the documented health contract says.
+            if (Client.Core.Sentinel is { } sentinel)
+                await sentinel.EnsureValidatedPrimaryAsync(cancellationToken).ConfigureAwait(false);
+            await Client.PingAsync(cancellationToken).ConfigureAwait(false);
+        }
         public bool IsHealthy { get { lock (_gate) return _isHealthy; } }
         public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
         public DateTimeOffset? CircuitOpenUntil { get { lock (_gate) return _circuitOpenUntil; } }
@@ -670,14 +734,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             }
         }
 
-        public void MarkFailed(Exception error, DateTimeOffset now, long timestamp, RespireFailoverGroupOptions options)
+        public void MarkFailed(Exception error, DateTimeOffset now, long timestamp, RespireFailoverGroupOptions options,
+            bool openCircuit = false)
         {
             lock (_gate)
             {
                 _consecutiveFailures++;
                 // Any failed probe restarts the failback grace period, even before the circuit opens.
                 _healthySince = null;
-                if (_consecutiveFailures >= options.FailureThreshold)
+                if (openCircuit || _consecutiveFailures >= options.FailureThreshold)
                 {
                     _isHealthy = false;
                     _circuitOpenedAt = timestamp;

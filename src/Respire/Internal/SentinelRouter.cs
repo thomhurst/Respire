@@ -130,31 +130,31 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     /// <summary>
-    /// Checks the published primary with <c>ROLE</c>. On a mismatch, or when the probed generation
-    /// was retired while answering, retires only that generation and rediscovers. Returns true when
-    /// a ROLE-validated primary is current afterwards; discovery failures propagate.
+    /// Ensures a <c>ROLE</c>-validated primary is current. Checks the published primary with <c>ROLE</c>.
+    /// On a mismatch, or when the probed generation was retired while answering, retires only that
+    /// generation and rediscovers; discovery validates the replacement with <c>ROLE</c> before publishing it.
+    /// Completes when a validated primary is current; otherwise throws, and discovery failures propagate.
     /// </summary>
-    internal async ValueTask<bool> ProbePrimaryAsync(CancellationToken cancellationToken)
+    internal async ValueTask EnsureValidatedPrimaryAsync(CancellationToken cancellationToken)
     {
         var generation = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
-        bool isPrimary;
         try
         {
-            isPrimary = await HasPrimaryRoleAsync(generation, cancellationToken).ConfigureAwait(false);
+            if (await HasPrimaryRoleAsync(generation, cancellationToken).ConfigureAwait(false)) return;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested && generation.IsRetired)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && generation.IsRetired)
         {
-            // A ROLE mismatch observed on the response retires the generation before this resumes.
-            isPrimary = false;
+            // Every failure on a generation that was retired while ROLE was in flight means "not the
+            // current primary". A ROLE mismatch seen by application traffic retires the generation
+            // before this resumes, and a socket or timeout fault on a retired generation needs the same
+            // rediscovery. A failed rediscovery below becomes the probe error, so keep this cause in the log.
+            try { core.Logger?.LogDebug(error, "Sentinel primary probe failed on a retired generation; rediscovering"); }
+            catch { /* Logging must not stop health probes. */ }
         }
-        if (isPrimary) return true;
 
         // Application traffic may already have published a replacement; never retire that one.
         Invalidate(generation);
-        // Discovery validates the replacement with ROLE before publishing it.
-        var replacement = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
-        _ = replacement;
-        return true;
+        await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<bool> HasPrimaryRoleAsync(Generation generation, CancellationToken cancellationToken)

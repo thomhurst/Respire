@@ -86,15 +86,38 @@ validation and provide no deployment redundancy.
 
 For a Sentinel deployment, set `SentinelPrimaryName` to that deployment's service name and
 provide one or more Sentinel endpoints. Configure data and Sentinel credentials and TLS settings
-on each candidate's `RespireOptions`. The client validates the discovered primary with `ROLE`
-before routing `PING` or application commands. Each probe also sends `ROLE` to the current primary.
+on each candidate's `RespireOptions`. Sentinel candidates also need the unlimited reconnect policy
+described above. The client validates the discovered primary with `ROLE`
+before routing `PING` or application commands. Each probe also sends `ROLE` to the current primary,
+because a demoted node still answers `PING`. The probe then sends `PING` as well, so a node that
+reports the primary role but rejects `PING` (for example through ACL rules) is unhealthy.
 When that node has been demoted, the probe rediscovers the primary through Sentinel and stays
 healthy if a validated replacement answers `PING` within `ProbeTimeout`; it fails only when
-rediscovery or the replacement fails. Endpoint status and switch events report the
-validated current primary; when discovery has not produced a primary, failed-probe telemetry uses
-the first configured Sentinel endpoint.
-Candidates for the same service must use separate Sentinel deployments. The group rejects
-overlapping discovered Sentinel peers or the same validated primary endpoint.
+rediscovery or the replacement fails. Endpoint status reports the validated current primary, or
+null while discovery has no primary. A switch event reports the previous candidate's primary as it
+was when that candidate was selected. When discovery has not produced a primary, probe telemetry
+uses the first configured Sentinel endpoint.
+
+Candidates must be separate deployments. Configuration validation rejects a Sentinel seed that is
+also a standalone or Cluster data endpoint, and overlapping seeds for the same Sentinel service.
+After discovery, the group also rejects:
+
+- two Sentinel candidates that discover the same primary;
+- two candidates for the same service whose discovered Sentinel peers overlap;
+- a standalone or Cluster data endpoint that is a Sentinel candidate's discovered primary;
+- a standalone or Cluster data endpoint that is a learned Sentinel peer. Sentinels answer `PING`
+  but cannot serve application commands.
+
+`ConnectAsync` throws `RespireConfigurationException` when these checks fail after the initial
+probes. Discovery can change later, for example when a candidate that failed its first probe
+recovers, or when Sentinel learns a new peer or fails over. Every probe repeats the checks, and a
+duplicate candidate is marked unhealthy at once with `LastErrorType` set to
+`RespireConfigurationException`. A warning is logged as well. A healthy candidate keeps serving
+while a recovering duplicate stays unhealthy. When both have the same health, the candidate with
+the lower priority, or the later one in input order, is marked unhealthy. A learned Sentinel peer
+used as a data endpoint always fails the data candidate. As with Cluster seeds, two Sentinel
+deployments that reach the same data nodes through endpoints that differ (for example DNS aliases)
+cannot be detected.
 
 ```csharp
 new RespireFailoverCandidate(new RespireOptions
@@ -103,6 +126,7 @@ new RespireFailoverCandidate(new RespireOptions
     Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
 }, Priority: 0);
 
+// The credentials below are placeholders. Load real values from configuration or a secret store.
 new RespireFailoverCandidate(new RespireOptions
 {
     Endpoints = ["sentinel-a:26379", "sentinel-b:26379"],
