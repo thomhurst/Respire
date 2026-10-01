@@ -51,13 +51,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private sealed class StreamDeadlineCancellation : IDisposable
     {
+        private readonly RespireConnection _connection;
         private readonly long _deadline;
         private readonly CancellationTokenSource _source = new();
         private readonly Timer _timer;
         private int _disposed;
 
-        internal StreamDeadlineCancellation(long deadline)
+        internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
         {
+            _connection = connection;
             _deadline = deadline;
             _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
                 this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -70,7 +72,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         private void Schedule()
         {
             if (Volatile.Read(ref _disposed) != 0) return;
-            var remaining = _deadline - Environment.TickCount64;
+            var now = Environment.TickCount64;
+            var remaining = _deadline - now;
+            long window = 0;
+            if (_connection._maintenanceOptions is not null && _connection._commandTimeout is { } normal)
+            {
+                // Like the capacity wait and deadline sweep, an active maintenance window relaxes
+                // the deadline measured from the command's original start; its end restores it.
+                var timeout = _connection.MaintenanceTimeout(normal, now, out window, out _, _deadline);
+                remaining += (long)(timeout - normal).TotalMilliseconds;
+            }
             if (remaining <= 0)
             {
                 try { _source.Cancel(); }
@@ -79,7 +90,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return;
             }
 
-            var delay = TimeSpan.FromMilliseconds(Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds));
+            var sleep = Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds);
+            // Recheck when the window closes so a restored, shorter deadline is enforced.
+            if (window > 0) sleep = Math.Min(sleep, window);
+            var delay = TimeSpan.FromMilliseconds(sleep);
             try { _timer.Change(delay, Timeout.InfiniteTimeSpan); }
             catch (ObjectDisposedException) { }
         }
@@ -1292,7 +1306,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
             ? Environment.TickCount64 + _commandTimeoutMilliseconds
             : 0;
-        using var timeoutCancellation = deadline == 0 ? null : new StreamDeadlineCancellation(deadline);
+        using var timeoutCancellation = deadline == 0 ? null : new StreamDeadlineCancellation(this, deadline);
         timeoutCancellation?.Start();
         // Streamed SETs are rare and large, so one linked source per call is cheap. It observes the
         // caller, the command deadline and a connection abort; the reply is not yet published to

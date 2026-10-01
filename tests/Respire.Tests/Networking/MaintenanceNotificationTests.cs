@@ -1055,6 +1055,31 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task StreamedSetUploadUsesRelaxedDeadlineDuringMaintenance()
+    {
+        await using var server = Server();
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        // Outlast the normal 150 ms command timeout mid-upload; the relaxed 5 s deadline applies.
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+        await Task.Delay(400);
+        await Assert.That(set.IsCompleted).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        await pipe.Writer.WriteAsync("ta"u8.ToArray());
+
+        using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.IsError).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("SET key data")).IsTrue();
+    }
+
+    [Test]
     public async Task FullRingWaitUsesRelaxedDeadlineAndNeverAdmitsExpiredWaiter()
     {
         await using var server = Server();
