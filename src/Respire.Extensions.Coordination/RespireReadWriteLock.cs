@@ -159,10 +159,15 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     private async Task<bool> ReleaseCoreAsync()
     {
         await Task.Yield();
+        using var unboundedCommandTimeout = _client is not RespireClient client
+            || client.Core.Options.CommandTimeout is null
+                ? new CancellationTokenSource(TimeSpan.FromSeconds(2))
+                : null;
         try
         {
             using var response = await _client.Scripts.ExecuteAsync(
-                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], CancellationToken.None).ConfigureAwait(false);
+                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role],
+                unboundedCommandTimeout?.Token ?? CancellationToken.None).ConfigureAwait(false);
             lock (_ownershipSync)
             {
                 _releaseCompleted = true;
