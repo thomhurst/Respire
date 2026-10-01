@@ -1099,7 +1099,9 @@ public class MaintenanceNotificationTests
         await server.SendRawAsync(Finish("MIGRATED", 1));
         await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
             .Throws<RespireTimeoutException>();
-        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+        // The deadline fired while the first chunk was still being read, before any header bytes
+        // were queued, so the connection stays usable.
+        await Assert.That(connection.IsConnected).IsTrue();
     }
 
     [Test]
@@ -1120,7 +1122,8 @@ public class MaintenanceNotificationTests
         var error = await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(500));
-        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+        // Only the first chunk was being read, so no partial frame needed the connection closed.
+        await Assert.That(connection.IsConnected).IsTrue();
     }
 
     [Test]

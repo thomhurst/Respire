@@ -27,6 +27,13 @@ internal sealed partial class RespireConnection
         /// <summary>Nothing written: the request and the caller's source are untouched and retryable.</summary>
         NotStarted,
 
+        /// <summary>
+        /// Reading the first chunk of a stream source before the header is queued. Nothing is on the
+        /// wire, so a failure (including early EOF) reclaims the request without closing the
+        /// connection, but the source has been consumed and the command is no longer retryable.
+        /// </summary>
+        ReadingFirstChunk,
+
         /// <summary>The frame is open on the wire; a failure must abort the connection.</summary>
         HeaderQueued,
 
@@ -75,6 +82,8 @@ internal sealed partial class RespireConnection
         }
 
         internal CancellationToken Token => _source.Token;
+
+        internal bool IsCancellationRequested => _source.IsCancellationRequested;
 
         /// <summary>The timeout that applied when the deadline fired, including any maintenance relaxation.</summary>
         internal TimeSpan EffectiveTimeout
@@ -213,7 +222,7 @@ internal sealed partial class RespireConnection
             await WaitForStreamingGateAsync(effectiveCancellation).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (TranslateStreamedSetCancellation(
-            error, effectiveCancellation, cancellationToken, timeoutCancellation, StreamedSetPhase.NotStarted) is { } translated)
+            error, cancellationToken, timeoutCancellation, StreamedSetPhase.NotStarted) is { } translated)
         {
             // A deadline here means another streamed SET held the frame for the whole timeout.
             throw translated;
@@ -232,6 +241,7 @@ internal sealed partial class RespireConnection
 
         var phase = StreamedSetPhase.NotStarted;
         var ownsWritePath = false;
+        StreamPayloadReader? payloadReader = null;
         try
         {
             // Respect the credential-renewal fence like ordinary commands: AUTH must be admitted
@@ -250,22 +260,39 @@ internal sealed partial class RespireConnection
                 effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
-            // AppendStreamingStart rejects a retired or closed connection before writing any
-            // bytes, so the request (and the caller's stream) stays untouched and retryable.
-            var write = AppendStreamingStart(command, out var startedBatch, out var requestWriteStart);
+            ReadOnlyMemory<byte> firstChunk = default;
+            if (command.SourceStream is { } stream && command.Length > 0)
+            {
+                // Read the first chunk before the header goes out. A source that fails, is
+                // cancelled or ends within it (the common short-stream mistake) then surfaces as a
+                // plain exception without closing the shared connection. Only later failures,
+                // after the frame is open on the wire, have to abort it.
+                payloadReader = new StreamPayloadReader(stream, command.Length);
+                phase = StreamedSetPhase.ReadingFirstChunk;
+                firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
+            }
+
+            // Until the source is touched, AppendStreamingStart rejects a retired connection so
+            // the untouched request can be retried on the replacement. Once the first chunk has
+            // been consumed the command cannot be replayed, so it is accepted and the retirement
+            // drain (which waits for _streamingActive) lets it finish. A closed connection is
+            // always rejected before any bytes are written.
+            var write = AppendStreamingStart(command, rejectRetired: phase == StreamedSetPhase.NotStarted,
+                out var startedBatch, out var requestWriteStart);
             phase = StreamedSetPhase.HeaderQueued;
             ScheduleFlush(startedBatch);
             // A peer that stops reading stalls the socket write; bound every wait by the caller,
             // the deadline and connection abort so the failure path can close the partial frame.
             await write.WaitAsync(effectiveCancellation).ConfigureAwait(false);
 
-            await WriteStreamedPayloadAsync(command, effectiveCancellation).ConfigureAwait(false);
+            await WriteStreamedPayloadAsync(command, payloadReader, firstChunk, effectiveCancellation)
+                .ConfigureAwait(false);
 
             var finalWrite = AppendStreamingEnd(command, source, requestWriteStart, out startedBatch);
             phase = StreamedSetPhase.ResponseQueued;
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(startedBatch);
-            await finalWrite.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+            await WaitForFinalFrameWriteAsync(finalWrite, effectiveCancellation).ConfigureAwait(false);
             phase = StreamedSetPhase.FrameWritten;
         }
         catch (Exception error)
@@ -273,8 +300,7 @@ internal sealed partial class RespireConnection
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
             var translated = error is OperationCanceledException canceled
-                ? TranslateStreamedSetCancellation(
-                    canceled, effectiveCancellation, cancellationToken, timeoutCancellation, phase)
+                ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
                 : null;
             await FailStreamedSetAsync(source, phase, error, translated is RespireTimeoutException)
                 .ConfigureAwait(false);
@@ -283,6 +309,8 @@ internal sealed partial class RespireConnection
         }
         finally
         {
+            // Returns the pooled chunk unless a cancelled read still owns it.
+            payloadReader?.Dispose();
             if (ownsWritePath)
             {
                 lock (_writeGate) _streamingActive = false;
@@ -299,16 +327,24 @@ internal sealed partial class RespireConnection
     /// the command timeout, or the caller's own token. Returns <see langword="null"/> when the
     /// cancellation came from elsewhere and should propagate unchanged.
     /// </summary>
+    /// <remarks>
+    /// The classification reads the linked sources' own state, not the exception's token. A
+    /// caller's <see cref="Stream"/> that observes the linked token may still throw an
+    /// <see cref="OperationCanceledException"/> carrying <see cref="CancellationToken.None"/> or a
+    /// token of its own, and that must not turn a close or timeout into a raw cancellation.
+    /// Caller cancellation is checked first so the caller always sees its own token.
+    /// </remarks>
     private Exception? TranslateStreamedSetCancellation(
         OperationCanceledException error,
-        CancellationToken effectiveCancellation,
         CancellationToken callerToken,
         StreamDeadlineCancellation? timeoutCancellation,
         StreamedSetPhase phase)
     {
-        if (IsClosedCancellation(error, effectiveCancellation, callerToken))
+        if (callerToken.IsCancellationRequested)
+            return new OperationCanceledException(error.Message, error, callerToken);
+        if (_closedCancellation.IsCancellationRequested)
             return ClosedDuringStreamedSet(error);
-        if (timeoutCancellation is not null && IsDeadlineCancellation(error, effectiveCancellation, callerToken))
+        if (timeoutCancellation is { IsCancellationRequested: true })
         {
             return new RespireTimeoutException("SET", timeoutCancellation.EffectiveTimeout, error,
                 CaptureTimeoutDiagnostics(stage: phase == StreamedSetPhase.NotStarted
@@ -316,9 +352,25 @@ internal sealed partial class RespireConnection
                     : RespireCommandStage.Writing));
         }
 
-        return callerToken.IsCancellationRequested
-            ? new OperationCanceledException(error.Message, error, callerToken)
-            : null;
+        return null;
+    }
+
+    /// <summary>
+    /// Waits for the write that completes the streamed frame. <see cref="Task.WaitAsync(CancellationToken)"/>
+    /// completes from an asynchronous continuation, so cancellation can be observed after the
+    /// write has already finished. The frame is then complete on the socket, so the failure path
+    /// must not abort the connection: the reply is already published and its caller token,
+    /// deadline and the connection abort settle it like any other in-flight command.
+    /// </summary>
+    internal static async ValueTask WaitForFinalFrameWriteAsync(Task finalWrite, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await finalWrite.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (finalWrite.IsCompletedSuccessfully)
+        {
+        }
     }
 
     private async ValueTask FailStreamedSetAsync(
@@ -417,10 +469,15 @@ internal sealed partial class RespireConnection
         }
     }
 
-    private ValueTask WriteStreamedPayloadAsync(StreamedSetCommand command, CancellationToken cancellationToken)
-        => command.SourceStream is { } stream
-            ? CopyStreamPayloadAsync(stream, command.Length, cancellationToken)
-            : CopySequencePayloadAsync(command.Sequence, cancellationToken);
+    private ValueTask WriteStreamedPayloadAsync(StreamedSetCommand command, StreamPayloadReader? payloadReader,
+        ReadOnlyMemory<byte> firstChunk, CancellationToken cancellationToken)
+    {
+        if (payloadReader is not null) return CopyStreamPayloadAsync(payloadReader, firstChunk, cancellationToken);
+        // A zero-length stream source has no payload; a sequence source never has a reader.
+        return command.SourceStream is null
+            ? CopySequencePayloadAsync(command.Sequence, cancellationToken)
+            : ValueTask.CompletedTask;
+    }
 
     private async ValueTask CopySequencePayloadAsync(ReadOnlySequence<byte> payload, CancellationToken cancellationToken)
     {
@@ -438,63 +495,78 @@ internal sealed partial class RespireConnection
         }
     }
 
-    private async ValueTask CopyStreamPayloadAsync(Stream source, long length, CancellationToken cancellationToken)
+    private async ValueTask CopyStreamPayloadAsync(
+        StreamPayloadReader reader, ReadOnlyMemory<byte> chunk, CancellationToken cancellationToken)
     {
-        byte[]? chunk = ArrayPool<byte>.Shared.Rent(StreamChunkSize);
-        try
+        // The first chunk was read before the header was queued; append it, then keep reading.
+        while (true)
         {
-            var remaining = length;
-            while (remaining > 0)
-            {
-                // Fill the chunk before appending so sources that return small reads (network
-                // streams, for example) do not cost one socket write and flush wait per read.
-                var target = (int)Math.Min(StreamChunkSize, remaining);
-                var filled = 0;
-                while (filled < target)
-                {
-                    var pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
-                    int read;
-                    try
-                    {
-                        // WaitAsync also bounds streams that ignore their cancellation token.
-                        read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        // The read may still be writing into this pooled memory. Retain it until
-                        // that read finishes instead of returning it while the source can mutate it.
-                        _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
-                        chunk = null;
-                        throw;
-                    }
+            var write = AppendStreamingBytes(chunk.Span);
+            ScheduleFlush(startedBatch: false);
+            await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (reader.IsComplete) return;
+            chunk = await reader.ReadChunkAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-                    if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
-                    filled += read;
+    /// <summary>
+    /// Reads a stream source in filled chunks of at most <see cref="StreamChunkSize"/> bytes into
+    /// one pooled buffer. Each returned chunk is valid until the next read or <see cref="Dispose"/>.
+    /// </summary>
+    private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
+    {
+        private byte[]? _chunk;
+        private long _remaining = length;
+
+        internal bool IsComplete => _remaining == 0;
+
+        internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
+        {
+            var chunk = _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
+            // Fill the chunk before returning it so sources that return small reads (network
+            // streams, for example) do not cost one socket write and flush wait per read.
+            var target = (int)Math.Min(StreamChunkSize, _remaining);
+            var filled = 0;
+            while (filled < target)
+            {
+                var pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
+                int read;
+                try
+                {
+                    // WaitAsync also bounds streams that ignore their cancellation token.
+                    read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The read may still be writing into this pooled memory. Retain it until
+                    // that read finishes instead of returning it while the source can mutate it.
+                    _chunk = null;
+                    _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
+                    throw;
                 }
 
-                remaining -= filled;
-                var write = AppendStreamingBytes(chunk.AsSpan(0, filled));
-                ScheduleFlush(startedBatch: false);
-                await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
+                filled += read;
             }
+
+            _remaining -= filled;
+            return chunk.AsMemory(0, filled);
         }
-        finally
+
+        public void Dispose()
         {
-            if (chunk is not null) ArrayPool<byte>.Shared.Return(chunk);
+            if (_chunk is not { } chunk) return;
+            _chunk = null;
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
+
+        private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
+        {
+            try { _ = await pendingRead.ConfigureAwait(false); }
+            catch { /* The original streamed SET owns its failure. */ }
+            finally { ArrayPool<byte>.Shared.Return(chunk); }
         }
     }
-
-    private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
-    {
-        try { _ = await pendingRead.ConfigureAwait(false); }
-        catch { /* The original streamed SET owns its failure. */ }
-        finally { ArrayPool<byte>.Shared.Return(chunk); }
-    }
-
-    private bool IsClosedCancellation(
-        OperationCanceledException error, CancellationToken effectiveCancellation, CancellationToken callerToken)
-        => _closedCancellation.IsCancellationRequested && !callerToken.IsCancellationRequested
-            && error.CancellationToken == effectiveCancellation;
 
     private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
         => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",
@@ -517,9 +589,15 @@ internal sealed partial class RespireConnection
                 else if (Volatile.Read(ref _sending))
                 {
                     write = _spareBuffer.WriteCompletion;
-                    // The flush loop clears _sending outside this lock before completing the
-                    // buffer. If it did so while this waiter was created, its completion may
-                    // already have run; re-check instead of waiting for the buffer's next send.
+                    // The race this closes: the flush loop swaps the buffers under _writeGate,
+                    // writes the old active buffer (now _spareBuffer) to the socket outside the
+                    // lock, then clears _sending and completes and resets that buffer's
+                    // WriteCompletion, also outside the lock. If that happens between the
+                    // _sending read above and the WriteCompletion read here, this waiter belongs
+                    // to the buffer's *next* send and would park until an unrelated later flush.
+                    // _sending is cleared before the completion is reset, and the full fence keeps
+                    // the WriteCompletion read ahead of the second _sending read, so a stale
+                    // waiter is always paired with a cleared flag here and the loop re-evaluates.
                     Interlocked.MemoryBarrier();
                     if (!Volatile.Read(ref _sending)) continue;
                 }
@@ -546,11 +624,11 @@ internal sealed partial class RespireConnection
     }
 
     private Task AppendStreamingStart(
-        StreamedSetCommand command, out bool startedBatch, out long requestWriteStart)
+        StreamedSetCommand command, bool rejectRetired, out bool startedBatch, out long requestWriteStart)
     {
         lock (_writeGate)
         {
-            ThrowIfStreamingUnavailable(rejectRetired: true);
+            ThrowIfStreamingUnavailable(rejectRetired);
             var start = _activeBuffer.Count;
             // An earlier reply may still be pending after its frame has been sent and the
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.
@@ -584,6 +662,9 @@ internal sealed partial class RespireConnection
         }
     }
 
+    // Copies the segments under _writeGate. Callers slice to at most StreamChunkSize bytes, and
+    // that bound is what keeps the lock hold (and the write-buffer growth) short; raising the
+    // chunk size lengthens every producer's wait for this lock.
     private Task AppendStreamingBytes(in ReadOnlySequence<byte> bytes)
     {
         lock (_writeGate)

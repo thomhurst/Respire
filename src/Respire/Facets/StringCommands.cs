@@ -83,9 +83,11 @@ public partial interface IStringCommands
     /// <para>
     /// The stream remains open and is not seeked. Respire reads no more than
     /// <paramref name="length"/> bytes; any surplus bytes are left unread in the stream. A seekable
-    /// stream with fewer remaining bytes is rejected before anything is sent. Any other source that
-    /// ends early throws <see cref="EndOfStreamException"/> after the frame has started, which closes
-    /// the connection.
+    /// stream with fewer remaining bytes is rejected before anything is sent. Respire reads the first
+    /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early
+    /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
+    /// without affecting the connection. The source has still been read, so the call is not
+    /// retryable with the same stream. A failure after the first chunk closes the connection.
     /// </para>
     /// <para>
     /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
@@ -93,9 +95,10 @@ public partial interface IStringCommands
     /// unrelated traffic. Use a separate client for slow sources.
     /// </para>
     /// <para>
-    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Cancellation,
-    /// a source read failure or a timeout before the complete RESP frame has been written to the
-    /// socket closes the connection to preserve framing, even if the frame terminator is already
+    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the first
+    /// chunk has been sent, cancellation, a source read failure or a timeout before the complete
+    /// RESP frame has been written to the socket closes the connection to preserve framing, even if
+    /// the frame terminator is already
     /// queued. That fails every other command pipelined on the connection. After the frame is
     /// written, cancellation only abandons the reply wait and the command may still execute.
     /// </para>

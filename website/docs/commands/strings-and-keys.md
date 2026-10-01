@@ -28,14 +28,17 @@ The stream overload requires an exact, non-negative byte length. Respire reads n
 that length, leaves the stream open, and does not seek it; any surplus bytes stay unread in the
 stream. A seekable stream with fewer remaining bytes than the declared length is rejected with
 `ArgumentOutOfRangeException` before anything is sent; any other source that ends early throws
-`EndOfStreamException`. The `ReadOnlySequence<byte>` overload copies its segments straight into
+`EndOfStreamException`. Respire reads the first chunk (up to 32 KiB) before it sends anything, so a
+source that fails, ends, is cancelled or times out within that chunk throws without affecting the
+connection. The stream has still been read, so retry with a fresh or rewound source. The
+`ReadOnlySequence<byte>` overload copies its segments straight into
 the write buffer in 32 KiB chunks without combining them first; keep its memory unchanged until the
 returned task completes. Both overloads always take the streaming path, which costs a few small
 allocations per call, so use the ordinary `SetAsync` overloads for small values.
 
 Respire holds that connection's write path for the complete RESP frame, so later commands on
-the connection follow the streamed `SET`, and a slow source delays them. Cancellation, a read
-failure or a timeout before the complete frame has been written to the socket closes the
+the connection follow the streamed `SET`, and a slow source delays them. After the first chunk,
+cancellation, a read failure or a timeout before the complete frame has been written to the socket closes the
 connection to prevent later bytes from being parsed as another command. That also fails other
 commands pipelined on it, even when only the frame terminator was still waiting to be written.
 Prefer seekable or in-memory sources, and use a separate client for slow sources such as network

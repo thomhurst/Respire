@@ -288,7 +288,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task EarlyEndOfStreamClosesConnectionBeforeAnotherFrameCanFollow()
+    public async Task EarlyEndOfStreamAfterFirstChunkClosesConnectionBeforeAnotherFrameCanFollow()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -300,12 +300,35 @@ public sealed class StreamedSetTests
             LoggerFactory = NullLoggerFactory.Instance,
         });
 
-        var source = new GeneratedStream(50);
-        await Assert.That(async () => await client.Strings.SetAsync("partial", source, 100))
+        // The first chunk is sent, so the frame is open on the wire when the source ends.
+        var source = new GeneratedStream(RespireConnection.StreamChunkSize + 50);
+        await Assert.That(async () => await client.Strings.SetAsync("partial", source, RespireConnection.StreamChunkSize + 100))
             .Throws<EndOfStreamException>();
         await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(source.CanRead).IsTrue();
         await Assert.That(server.Commands.Contains("SET")).IsFalse();
+    }
+
+    [Test]
+    public async Task EarlyEndOfStreamWithinFirstChunkLeavesConnectionOpen()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+
+        // The first chunk is read before the header is queued, so nothing reaches the wire.
+        var source = new GeneratedStream(50);
+        await Assert.That(async () => await client.Strings.SetAsync("partial", source, 100))
+            .Throws<EndOfStreamException>();
+        await client.PingAsync();
+        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
     [Test]
@@ -472,14 +495,118 @@ public sealed class StreamedSetTests
         });
 
         using var cancellation = new CancellationTokenSource();
-        var source = new PausedStream();
-        var set = client.Strings.SetAsync("cancel", source, 4, cancellationToken: cancellation.Token).AsTask();
+        // The first chunk is sent before the source pauses, so the frame is open on the wire.
+        var source = new PausedStream(prefix: RespireConnection.StreamChunkSize);
+        var set = client.Strings.SetAsync("cancel", source, source.Length, cancellationToken: cancellation.Token).AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.Commands.Contains("SET")).IsFalse();
+    }
+
+    [Test]
+    public async Task CancellationDuringFirstChunkReadLeavesConnectionOpen()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+
+        using var cancellation = new CancellationTokenSource();
+        var source = new PausedStream();
+        var set = client.Strings.SetAsync("cancel", source, 4, cancellationToken: cancellation.Token).AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+
+        await client.PingAsync();
+        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TokenlessSourceCancellationIsClassifiedFromLinkedSources(bool timeout)
+    {
+        CountingSetServer? server = new();
+        try
+        {
+            await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+            {
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = timeout ? TimeSpan.FromMilliseconds(200) : null,
+            });
+            // The source sees the linked token cancelled between its own reads and reports it with
+            // an exception that carries CancellationToken.None, which streams are allowed to do.
+            var source = new TokenlessCancellationStream();
+            var command = new StreamedSetCommand((RespireValue)"tokenless", source, 4, default, SetWhen.Always);
+            var set = Task.Run(async () =>
+            {
+                using var _ = await connection.SendCheckedAsync(in command, commandName: "SET");
+            });
+            await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (!timeout)
+            {
+                await server.DisposeAsync();
+                server = null;
+            }
+
+            if (timeout)
+            {
+                var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+                    .Throws<RespireTimeoutException>();
+                await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
+                // Nothing was written, so the timeout did not need to close the connection.
+                await Assert.That(connection.IsConnected).IsTrue();
+            }
+            else
+            {
+                await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+                    .Throws<RespireConnectionException>();
+            }
+
+            await Assert.That(source.ThrewTokenless).IsTrue();
+        }
+        finally
+        {
+            if (server is not null) await server.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task FinalFrameWriteCompletedBeforeObservedCancellationIsNotAFailure()
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            // Completing the write queues WaitAsync's continuation; the inline cancellation then
+            // usually wins, which is the race where the frame is already on the socket.
+            var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var cancellation = new CancellationTokenSource();
+            var wait = RespireConnection.WaitForFinalFrameWriteAsync(write.Task, cancellation.Token).AsTask();
+            write.SetResult();
+            cancellation.Cancel();
+            await wait.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task FinalFrameWriteStillPendingAtCancellationThrows()
+    {
+        var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        var wait = RespireConnection.WaitForFinalFrameWriteAsync(write.Task, cancellation.Token).AsTask();
+        cancellation.Cancel();
+        await Assert.That(async () => await wait.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
     }
 
     [Test]
@@ -573,7 +700,9 @@ public sealed class StreamedSetTests
         var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
-        await Assert.That(client.IsConnected).IsFalse();
+        // The stalled read was the first chunk, so no header was queued and the connection survives.
+        await Assert.That(client.IsConnected).IsTrue();
+        await client.PingAsync();
 
         // Finish the ignored read so its rented buffer can be returned safely.
         source.CompleteRead.TrySetResult();
@@ -660,7 +789,9 @@ public sealed class StreamedSetTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Strings.SetAsync("broken", new ThrowingStream(), 4))
+        // The source fails after the first chunk is on the wire, so the frame must be abandoned.
+        var source = new ThrowingStream(RespireConnection.StreamChunkSize);
+        await Assert.That(async () => await client.Strings.SetAsync("broken", source, RespireConnection.StreamChunkSize + 4))
             .Throws<IOException>();
         await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -668,6 +799,24 @@ public sealed class StreamedSetTests
         using var reconnected = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.Core.Multiplexer.GetHealthyConnectionAsync(reconnected.Token);
         await client.PingAsync(reconnected.Token);
+        await Assert.That(server.ReceivedCommands.Contains("PING")).IsTrue();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
+    }
+
+    [Test]
+    public async Task ThrowingSourceWithinFirstChunkLeavesConnectionOpen()
+    {
+        await using var server = new FakeRespServer(1, "+OK\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "PING" ? "+PONG\r\n"u8.ToArray() : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Strings.SetAsync("broken", new ThrowingStream(), 4))
+            .Throws<IOException>();
+
+        await client.PingAsync();
+        await Assert.That(server.PeerClosed.IsCompleted).IsFalse();
         await Assert.That(server.ReceivedCommands.Contains("PING")).IsTrue();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
     }
@@ -696,15 +845,23 @@ public sealed class StreamedSetTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed class ThrowingStream : Stream
+    private sealed class ThrowingStream(int bytesBeforeFailure = 0) : Stream
     {
+        private int _read;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-            => ValueTask.FromException<int>(new IOException("Source failed mid-frame."));
+        {
+            if (_read >= bytesBeforeFailure)
+                return ValueTask.FromException<int>(new IOException("Source failed mid-frame."));
+            var count = Math.Min(buffer.Length, bytesBeforeFailure - _read);
+            buffer.Span[..count].Fill((byte)'x');
+            _read += count;
+            return ValueTask.FromResult(count);
+        }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override void Flush() => throw new NotSupportedException();
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
@@ -752,7 +909,8 @@ public sealed class StreamedSetTests
         }
     }
 
-    private sealed class PausedStream : Stream
+    // Serves `prefix` generated bytes immediately, then pauses before the final four bytes.
+    private sealed class PausedStream(int prefix = 0) : Stream
     {
         private int _read;
         internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -760,17 +918,60 @@ public sealed class StreamedSetTests
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
-        public override long Length => 4;
+        public override long Length => prefix + 4;
         public override long Position { get => _read; set => throw new NotSupportedException(); }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (_read != 0) return 0;
+            if (_read < prefix)
+            {
+                var count = Math.Min(buffer.Length, prefix - _read);
+                for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_read + index) % 251);
+                _read += count;
+                return count;
+            }
+
+            if (_read != prefix) return 0;
             ReadStarted.TrySetResult();
             await ContinueReading.Task.WaitAsync(cancellationToken);
             "data"u8.CopyTo(buffer.Span);
-            _read = 4;
+            _read += 4;
             return 4;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    // First read waits (blocking) until its token is cancelled and still returns a byte; the next
+    // read reports the cancellation with a token-less exception.
+    private sealed class TokenlessCancellationStream : Stream
+    {
+        private int _reads;
+        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool ThrewTokenless { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => 4;
+        public override long Position { get => _reads; set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_reads++ == 0)
+            {
+                ReadStarted.TrySetResult();
+                SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested, TimeSpan.FromSeconds(5));
+                buffer.Span[0] = 1;
+                return ValueTask.FromResult(1);
+            }
+
+            if (!cancellationToken.IsCancellationRequested) throw new InvalidOperationException("Token was not cancelled.");
+            ThrewTokenless = true;
+            return ValueTask.FromException<int>(new OperationCanceledException("Source observed cancellation."));
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
