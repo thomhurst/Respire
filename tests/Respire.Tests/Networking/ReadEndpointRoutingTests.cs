@@ -229,7 +229,10 @@ public class ReadEndpointRoutingTests
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
 
-        await Assert.That(async () => await client.Scripts.ExecuteAsync(RespireScript.Create("return 1")))
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.That(async () => await client.Scripts.ExecuteAsync(
+            RespireScript.Create("return 1"), cancellationToken: cancellation.Token))
             .Throws<OperationCanceledException>();
 
         var activity = activities.Single();
