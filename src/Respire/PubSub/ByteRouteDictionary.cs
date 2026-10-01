@@ -95,6 +95,7 @@ internal sealed class ByteRouteDictionary<TValue>
     }
 
     public bool ContainsKey(RespireChannel name) => TryGetValue(name, out _);
+    public bool IsEmpty => _entries.Count == 0;
     public void Clear() => _entries.Clear();
 
     private sealed class Entry(RespireChannel name, TValue value, Entry? next)

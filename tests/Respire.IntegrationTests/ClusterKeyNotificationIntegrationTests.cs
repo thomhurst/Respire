@@ -178,9 +178,11 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
 
     internal async Task RestartPrimaryAsync(int node)
     {
+        // SHUTDOWN drops the connection before redis-cli reads a reply, so its exit code is
+        // not meaningful. The restart below is checked instead.
         _ = await _container.ExecAsync(["redis-cli", "--raw", "-p", (7000 + node).ToString(CultureInfo.InvariantCulture), "SHUTDOWN", "NOSAVE"]);
         var internalPort = 7000 + node;
-        _ = await _container.ExecAsync([
+        _ = await ExecAsync([
             "redis-server", "--port", internalPort.ToString(CultureInfo.InvariantCulture),
             "--dir", $"/data/{internalPort}", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
             "--cluster-node-timeout", "1000", "--cluster-announce-ip", "127.0.0.1",
@@ -190,14 +192,21 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
             "--pidfile", $"/tmp/redis-{internalPort}.pid", "--logfile", $"/tmp/redis-{internalPort}.log",
         ]);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        InvalidOperationException? lastPingError = null;
         while (true)
         {
             try
             {
                 if ((await CommandAsync(node, "PING")).Trim() == "PONG") break;
             }
-            catch (InvalidOperationException) { }
-            await Task.Delay(100, deadline.Token);
+            catch (InvalidOperationException error)
+            {
+                // Expected while the restarted server is still starting; kept for the timeout.
+                lastPingError = error;
+            }
+            if (deadline.IsCancellationRequested)
+                throw new TimeoutException($"Restarted primary {node} did not answer PING.", lastPingError);
+            await Task.Delay(100, CancellationToken.None);
         }
         while (!(await CommandAsync(node, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
             await Task.Delay(100, deadline.Token);

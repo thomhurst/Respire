@@ -211,6 +211,24 @@ internal sealed class ClientCore : IAsyncDisposable
         ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
     }
 
+    // Forgets the cluster notification state of an endpoint whose notification connection was
+    // retired, or that left the topology. This does not claim a new connection: an event is
+    // queued only when the endpoint had recorded notification state, and the aggregated state
+    // it carries is Connected only if no command or Pub/Sub source still reports it degraded.
+    internal void ClearClusterSubscriptionState(RespireEndpoint endpoint)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed || !_clusterSubscriptionStates.Remove(endpoint)) return;
+            QueueEndpointStateLocked(new RespireConnectionStateChange(endpoint, RespireConnectionState.Connected, null)
+            {
+                ReconnectSource = RespireReconnectSource.PubSub,
+                SourceState = RespireConnectionState.Connected,
+            });
+        }
+        ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
+    }
+
     internal void NotifyCommandStateChanged(
         int slot,
         RespireConnectionState state,

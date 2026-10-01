@@ -99,12 +99,47 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         int slot, CancellationToken cancellationToken)
     {
         if ((uint)slot >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
-        var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
-        var owner = Volatile.Read(ref _slots[slot]);
-        if (owner is null || owner.IsRetired || !owner.IsConnected
-            || owner.Host != connection.Host || owner.Port != connection.Port)
-            throw new RespireConnectionException("Redis Cluster did not provide a connected owner for the notification slot.");
-        return new RespireEndpoint(connection.Host, connection.Port);
+        // A concurrent topology change can replace the owner between routing and the check
+        // below. That is transient, so resolve again a few times before reporting a failure.
+        for (var attempt = 1; ; attempt++)
+        {
+            var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            var owner = Volatile.Read(ref _slots[slot]);
+            if (owner is { IsRetired: false, IsConnected: true }
+                && owner.Host == connection.Host && owner.Port == connection.Port)
+                return new RespireEndpoint(connection.Host, connection.Port);
+            if (attempt >= SlotOwnerResolveAttempts)
+                throw new RespireConnectionException("Redis Cluster did not provide a connected owner for the notification slot.");
+        }
+    }
+
+    private const int SlotOwnerResolveAttempts = 3;
+
+    // Primaries that own slots in the cached complete map, read without opening connections.
+    // Falls back to discovery when the map is incomplete or names a retired primary.
+    internal async ValueTask<RespireEndpoint[]> GetPrimaryEndpointsAsync(CancellationToken cancellationToken)
+    {
+        lock (_nodesGate)
+        {
+            if (HasCompleteTopology())
+            {
+                var masters = _masters;
+                var counts = _masterSlotCounts;
+                List<RespireEndpoint> endpoints = new(masters.Length);
+                var usable = true;
+                for (var index = 0; index < masters.Length && usable; index++)
+                {
+                    if (counts[index] == 0) continue;
+                    usable = !masters[index].IsRetired;
+                    var endpoint = Endpoint(masters[index]);
+                    if (!endpoints.Contains(endpoint)) endpoints.Add(endpoint);
+                }
+                if (usable && endpoints.Count != 0) return [.. endpoints];
+            }
+        }
+        var connections = await GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        return connections.Select(static connection => new RespireEndpoint(connection.Host, connection.Port))
+            .Distinct().ToArray();
     }
 
     // Read the published generation without connecting or taking _nodesGate. Subscription
@@ -1568,7 +1603,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
     }
 
-    private void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
+    internal void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
         long topologyVersion;
@@ -1701,17 +1736,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         if (!complete)
         {
-            // An incomplete slot map cannot prove that an omitted primary owns no
-            // slots. Keep prior primaries in the published set until full discovery.
-            var priorMasters = Volatile.Read(ref _masters);
-            foreach (var prior in priorMasters)
+            // An incomplete slot map cannot prove that an omitted primary has left the
+            // cluster, so keep prior primaries as active identities (with no slots) until full
+            // discovery instead of retiring their transports. They are not published to
+            // TopologyChanged, which lists only slot owners; see ApplyTopology.
+            var retainedMasters = new List<RespireConnectionMultiplexer>(masters);
+            foreach (var prior in Volatile.Read(ref _masters))
             {
-                if (activeNodes.Add(prior))
-                {
-                    Array.Resize(ref masters, masters.Length + 1);
-                    Array.Resize(ref masterSlotCounts, masterSlotCounts.Length + 1);
-                    masters[^1] = prior;
-                }
+                if (activeNodes.Add(prior)) retainedMasters.Add(prior);
+            }
+            if (retainedMasters.Count != masters.Length)
+            {
+                Array.Resize(ref masterSlotCounts, retainedMasters.Count);
+                masters = [.. retainedMasters];
             }
         }
         _masterSlotCounts = masterSlotCounts;

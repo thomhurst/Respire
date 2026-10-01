@@ -391,12 +391,15 @@ public class ClusterNotificationRoutingTests
         await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(5)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(Volatile.Read(ref exhaustionMeasurements)).IsEqualTo(1);
+
+        // Reconciliation leaves an exhausted primary alone, but an explicit subscription
+        // connects to it again once it is reachable.
         server.SuppressReply = null;
-        await Assert.That(async () => await client.SubscribeAsync(
-            RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0)).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<RespireConnectionException>();
+        await using var retry = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)))
-            .IsEqualTo(2);
+            .IsEqualTo(3);
+        await Assert.That(retry.Completion.IsCompleted).IsFalse();
     }
 
     [Test]
@@ -470,6 +473,8 @@ public class ClusterNotificationRoutingTests
         await using var client = CreateClusterClient(first.Port, resp3: false);
         var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
         await using var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var stableGap = new TaskCompletionSource<RespireSubscriptionGap>(TaskCreationOptions.RunContinuationsAsynchronously);
+        stable.DeliveryGap += gap => stableGap.TrySetResult(gap);
         var pendingAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         third.SuppressReply = command =>
         {
@@ -490,6 +495,10 @@ public class ClusterNotificationRoutingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (third.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {stableDescriptor}") < 2)
             await Task.Delay(10, deadline.Token);
+        // Closing the shared socket interrupts the surviving subscription, which must learn of it.
+        var gap = await stableGap.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(gap.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect);
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
     }
 
     [Test]
@@ -505,10 +514,11 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         var router = client.Core.Cluster!;
-        var clearSlotOwner = router.GetType().GetMethod("ClearSlotOwner",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        clearSlotOwner.Invoke(router, [0, router.GetMultiplexer(new("127.0.0.1", first.Port))]);
-        await Task.Delay(250);
+        router.ClearSlotOwner(0, router.GetMultiplexer(new("127.0.0.1", first.Port)));
+        // The topology callback queues its reconciliation on the control gate synchronously.
+        // A later subscription waits behind it, so once that returns the pass has finished.
+        await using var barrier = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         foreach (var server in new[] { first, second })
             await Assert.That(server.ReceivedCommands).DoesNotContain($"PUNSUBSCRIBE {descriptor}");
@@ -885,6 +895,183 @@ public class ClusterNotificationRoutingTests
 
         await using var subscription = await activation.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(third.ReceivedCommands).Contains($"PSUBSCRIBE {descriptor}");
+    }
+
+    [Test]
+    public async Task RecoveredEndpointStaysReconnectingUntilFailedReconciliationRouteIsAcknowledged()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
+        var tenantDescriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var stableSubscribes = 0;
+        var tenantSubscribes = 0;
+        var stableReplayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tenantRetried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Configure(second, () => topology, resp3: false, command =>
+        {
+            if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableSubscribes) == 2)
+                stableReplayed.TrySetResult();
+            if (command == $"PSUBSCRIBE {tenantDescriptor}" && Interlocked.Increment(ref tenantSubscribes) == 3)
+                tenantRetried.TrySetResult();
+        });
+        var suppress = true;
+        second.SuppressReply = command => Volatile.Read(ref suppress) && command == $"PSUBSCRIBE {tenantDescriptor}";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        await using var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await using var tenant = await client.SubscribeAsync(tenantDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var reconnecting = 0;
+        var connectedWhileRouteMissing = 0;
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Reconnecting) Interlocked.Exchange(ref reconnecting, 1);
+            else if (change.State == RespireConnectionState.Connected && Volatile.Read(ref reconnecting) != 0)
+            {
+                if (Volatile.Read(ref suppress)) Interlocked.Exchange(ref connectedWhileRouteMissing, 1);
+                else recovered.TrySetResult();
+            }
+        };
+
+        // Both subscriptions gain the second primary. The tenant SUBSCRIBE times out on the
+        // socket the stable route shares, so that socket is closed and replays stable only.
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await stableReplayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await tenantRetried.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(Volatile.Read(ref reconnecting)).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref connectedWhileRouteMissing)).IsEqualTo(0);
+
+        Volatile.Write(ref suppress, false);
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(tenant.Completion.IsCompleted).IsFalse();
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    public async Task ReplayRejectionStillReportsGapForReplayedRoutes()
+    {
+        await using var server = new FakeRespServer(20);
+        var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
+        var tenantDescriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
+        var configured = server.ReplyOverride!;
+        var reject = false;
+        server.ReplyOverride = (connectionId, command) =>
+            Volatile.Read(ref reject) && command == $"PSUBSCRIBE {tenantDescriptor}"
+                ? "-NOPERM denied\r\n"u8.ToArray()
+                : configured(connectionId, command);
+        // The default policy retries the rejected route without limit, so the gap for the
+        // replayed route must not wait for it.
+        await using var client = CreateClusterClient(server.Port, resp3: false);
+        await using var subscription = await client.SubscribeAsync(
+                new RespireChannel[] { stableDescriptor, tenantDescriptor }, CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var gapPublished = new TaskCompletionSource<RespireSubscriptionGap>(TaskCreationOptions.RunContinuationsAsynchronously);
+        subscription.DeliveryGap += gap => gapPublished.TrySetResult(gap);
+
+        Volatile.Write(ref reject, true);
+        var index = server.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {stableDescriptor}");
+        server.CloseConnection(server.ReceivedConnectionIds[index]);
+
+        var gap = await gapPublished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(gap.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect);
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    public async Task AllPrimaryActivationReusesCompleteCachedTopology()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        var topologyQueries = 0;
+        Configure(first, () => topology, resp3: false, command =>
+        {
+            if (command == "CLUSTER SLOTS") Interlocked.Increment(ref topologyQueries);
+        });
+        Configure(second, () => topology, resp3: false, command =>
+        {
+            if (command == "CLUSTER SLOTS") Interlocked.Increment(ref topologyQueries);
+        });
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        await using var firstSubscription = await client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var queriesAfterFirst = Volatile.Read(ref topologyQueries);
+
+        var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        await using var secondSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(Volatile.Read(ref topologyQueries)).IsEqualTo(queriesAfterFirst);
+        foreach (var server in new[] { first, second })
+            await Assert.That(server.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+    }
+
+    [Test]
+    public async Task ConcurrentSubscriptionsAndTopologyFlipsReleaseEveryRoute()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => Volatile.Read(ref topology), resp3: false);
+        Configure(second, () => Volatile.Read(ref topology), resp3: false);
+        Configure(third, () => Volatile.Read(ref topology), resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        var key = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .First(static value => ClusterHash.GetSlot(value) <= 8191);
+        RespireChannel[] descriptors =
+        [
+            RespireChannel.KeySpacePrefix("tenant:", 0),
+            RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0),
+            RespireChannel.KeySpaceSingleKey(key, 0),
+        ];
+        List<RespireSubscription> live = [];
+        try
+        {
+            for (var iteration = 0; iteration < 6; iteration++)
+            {
+                var subscribing = Enumerable.Range(0, 4)
+                    .Select(index => client.SubscribeAsync(descriptors[(iteration + index) % descriptors.Length]).AsTask())
+                    .ToArray();
+                Volatile.Write(ref topology, iteration % 2 == 0
+                    ? Topology(second.Port, third.Port)
+                    : Topology(first.Port, second.Port));
+                var refresh = client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
+                live.AddRange(await Task.WhenAll(subscribing).WaitAsync(TimeSpan.FromSeconds(20)));
+                _ = await refresh.WaitAsync(TimeSpan.FromSeconds(10));
+                // Drop half of the subscriptions while later topology passes may still run.
+                foreach (var subscription in live.Take(live.Count / 2).ToArray())
+                {
+                    await subscription.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+                    live.Remove(subscription);
+                }
+            }
+            foreach (var subscription in live)
+                await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            foreach (var subscription in live)
+                await subscription.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        // Every route, node and coverage entry is released once the last subscription ends.
+        var hub = client.Core.Hub!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (hub.ClusterNotificationNodeCount != 0 || hub.ClusterNotificationCoverageCount != 0)
+            await Task.Delay(10, deadline.Token);
     }
 
     private static void Configure(FakeRespServer server, byte[] topology, bool resp3)

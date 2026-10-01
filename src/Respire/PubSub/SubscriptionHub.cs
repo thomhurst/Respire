@@ -297,7 +297,10 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     internal void LogGapObserverFailure(Exception error)
     {
         try { core.Logger?.LogWarning(error, "Subscription delivery-gap observer threw"); }
-        catch { /* Observer failures must not interrupt gap delivery or recovery. */ }
+        catch (Exception logError) when (logError is not OutOfMemoryException)
+        {
+            // Logging failures must not interrupt gap delivery or recovery.
+        }
     }
 
     private async Task ObserveAbandonedConnectionAsync(Task disposal)
@@ -807,8 +810,11 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                 _notificationCoverage.Clear();
                 foreach (var node in _notificationNodes.Values)
                 {
-                    node.Retired = true;
-                    node.Epoch++;
+                    lock (node.Gate)
+                    {
+                        node.Retired = true;
+                        Interlocked.Increment(ref node.Epoch);
+                    }
                 }
                 notificationConnections = _notificationNodes.Values
                     .Select(static node => node.Connection).Where(static connection => connection is not null)
