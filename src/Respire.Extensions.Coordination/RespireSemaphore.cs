@@ -14,6 +14,7 @@ public sealed class RespireSemaphore
 {
     internal static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan DisposeReleaseRetryLimit = TimeSpan.FromMinutes(1);
+    internal static readonly TimeSpan FenceRetryInitialDelay = TimeSpan.FromMilliseconds(100);
     private readonly IRespireClient _client;
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
@@ -49,8 +50,10 @@ public sealed class RespireSemaphore
         long milliseconds, CancellationToken cancellationToken)
     {
         var owner = RespireLock.NewToken();
-        var started = Stopwatch.GetTimestamp();
         var trackedWire = await GetTrackedWireAsync(_client, cancellationToken).ConfigureAwait(false);
+        // Sampled after connection preflight: the permit cannot exist before the script is sent,
+        // so only the acquisition itself counts against a short expiry.
+        var started = Stopwatch.GetTimestamp();
         RespireClient.TrackedScriptExecution? trackedExecution = null;
         bool acquired;
         try
@@ -118,13 +121,37 @@ public sealed class RespireSemaphore
     private async Task FenceThenReleaseAsync(
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
     {
-        try
+        var started = Stopwatch.GetTimestamp();
+        var delay = FenceRetryInitialDelay;
+        while (true)
         {
-            await FenceCorrectionAsync(wire, execution).ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // Without the barrier the release may still win; finite expiry remains the fallback.
+            try
+            {
+                await FenceCorrectionAsync(wire, execution).ConfigureAwait(false);
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The client is gone, so no release can be sent either.
+                return;
+            }
+            catch (RespireServerException error) when (!error.IsTransient)
+            {
+                // Deterministic refusal, such as a client that is already gone; retrying cannot help.
+                break;
+            }
+            catch (Exception) when (Stopwatch.GetElapsedTime(started) < DisposeReleaseRetryLimit)
+            {
+                // A release sent before the barrier could overtake the delayed acquire, so a
+                // transient control-connection failure is retried before cleanup.
+                await Task.Delay(delay).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+            }
+            catch (Exception)
+            {
+                // Retries exhausted: the release may still win; finite expiry remains the fallback.
+                break;
+            }
         }
 
         await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
@@ -350,6 +377,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     }
 
     /// <summary>Renews this permit or changes it between expiring and owner-released modes.</summary>
+    /// <remarks>
+    /// Unlike <see cref="VerifyStillHeldAsync"/>, a failed or canceled renewal leaves the permit's
+    /// expiry uncertain, so it attempts a bounded owner-token release before the exception
+    /// propagates. Returns false, after attempting release, when Redis confirms the renewal only
+    /// after the requested expiry has already elapsed locally.
+    /// </remarks>
     /// <param name="expiry">Expiry of at least one millisecond, truncated to whole milliseconds, or null for owner-only release.</param>
     /// <param name="cancellationToken">Cancels waiting and the Redis command.</param>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)

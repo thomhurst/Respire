@@ -116,6 +116,50 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task TransientFenceFailureIsRetriedBeforeCleanup()
+    {
+        static bool IsFence(string command)
+            => command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
+                && !command.Contains("SKIPME", StringComparison.OrdinalIgnoreCase);
+
+        var evalCount = 0;
+        var fenceCount = 0;
+        await using var server = new FakeRespServer(4, ":1\r\n"u8.ToArray())
+        {
+            // Parks the acquire; every later script (the cleanup release) is answered.
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 1,
+            ReplyOverride = (_, command) => IsFence(command) && Interlocked.Increment(ref fenceCount) == 1
+                ? "-BUSY Redis is busy running a script\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var semaphore = new RespireSemaphore(client, "{retry}:transient-fence", capacity: 1);
+
+        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
+            .Throws<OperationCanceledException>();
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (EvalCommands(server).Length < 2) await Task.Delay(10, deadline.Token);
+        var commands = server.ReceivedCommands.ToList();
+        var fences = commands.Select((command, index) => (command, index))
+            .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToList();
+        var release = commands.FindLastIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+        // The refused barrier is retried, and the release is sent only after it is acknowledged.
+        await Assert.That(fences.Count).IsEqualTo(2);
+        await Assert.That(release).IsGreaterThan(fences[1]);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UncertainAcquisitionCleanupHasIndependentBound()
     {
         await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
