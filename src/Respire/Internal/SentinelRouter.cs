@@ -40,6 +40,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private readonly HashSet<Task> _switchSourceResolutions = []; // Guarded by _gate.
     private int _queuedNotifications;
     private int _successfulMonitorSubscriptions;
+    // Distinct Sentinels whose monitor has subscribed at least once. Reconnects do not add to it.
+    private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance); // Guarded by _gate.
     // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
     // budget wait on it, because a published generation proves Sentinel discovery works again.
     private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -57,6 +59,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     /// <summary>Counts failover hints passed to rediscovery coalescing. Tests use it to order events.</summary>
     internal int QueuedNotificationCount => Volatile.Read(ref _queuedNotifications);
     internal int SuccessfulMonitorSubscriptions => Volatile.Read(ref _successfulMonitorSubscriptions);
+    /// <summary>Counts distinct Sentinels with an established monitor subscription. Tests use it as readiness.</summary>
+    internal int SubscribedSentinelCount
+    {
+        get { lock (_gate) return _subscribedSentinels.Count; }
+    }
     /// <summary>Resolves a switch source host name. Tests replace it to hold resolution open.</summary>
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
     internal int PendingSwitchSourceResolutions
@@ -306,6 +313,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
                 Interlocked.Increment(ref _successfulMonitorSubscriptions);
+                if (!subscribedBefore)
+                    lock (_gate) _subscribedSentinels.Add(endpoint);
                 subscribedBefore = true;
                 await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
                     await ObserveSentinelNotificationAsync(endpoint, message, cancellationToken).ConfigureAwait(false);
@@ -451,7 +460,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 QueueNotificationRediscovery(in hint);
                 if (sentinelEvent.OldPrimary is { } source && arrivedDuring is { IsRetired: false }
                     && !SameEndpoint(arrivedDuring.Endpoint, source))
-                    TrackSwitchSourceResolution(ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken));
+                    StartSwitchSourceResolution(hint, arrivedDuring, cancellationToken);
                 return ValueTask.CompletedTask;
         }
         return ValueTask.CompletedTask;
@@ -485,11 +494,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private void TrackSwitchSourceResolution(Task resolution)
+    // Starts and registers the resolution in one step under the gate. Disposal sets _disposed before
+    // it snapshots this set under the same gate, so every started resolution is either joined by
+    // disposal or never started. Task.Run keeps the resolver from running while the gate is held.
+    private void StartSwitchSourceResolution(SentinelHint hint, Generation arrivedDuring, CancellationToken cancellationToken)
     {
+        Task resolution;
         lock (_gate)
         {
-            if (resolution.IsCompleted) return;
+            if (_disposed) return;
+            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken), CancellationToken.None);
             _switchSourceResolutions.Add(resolution);
         }
         _ = resolution.ContinueWith(static (completed, state) =>

@@ -137,6 +137,32 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task DelayedEarlierSwitchCannotSatisfyAPendingLaterSwitchByTarget()
+    {
+        // A→B→C. B→C is pending when another Sentinel's delayed A→B copy arrives.
+        var c = new RespireEndpoint("10.0.0.3", 6381);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary), targetIsCurrent: false);
+
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+
+        // B may still report ROLE master briefly, so the target shortcut must not consume C's hint.
+        await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
+    }
+
+    [Test]
+    public async Task MatchingPendingAndLaterTargetsDoNotForceRediscovery()
+    {
+        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
+        var later = new SentinelHint("b", NewPrimary, new RespireEndpoint("10.0.0.9", 6379));
+
+        var merged = SentinelNotificationCoalescer.Merge(pending, in later);
+
+        await Assert.That(merged.MustRediscover).IsFalse();
+    }
+
+    [Test]
     public async Task LaterSwitchAwayFromThePendingTargetDoesNotInheritIt()
     {
         var pending = new SentinelHint("a", NewPrimary, OldPrimary);

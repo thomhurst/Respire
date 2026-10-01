@@ -360,12 +360,7 @@ public class HashFieldLeaseWireTests
                 : null,
         };
         var primaryPort = oldPrimary.Port;
-        await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
-        {
-            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
-                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort.ToString().Length}\r\n{primaryPort}\r\n")
-                : "*0\r\n"u8.ToArray(),
-        };
+        await using var sentinel = SentinelServer(() => primaryPort);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -375,6 +370,7 @@ public class HashFieldLeaseWireTests
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
 
+        await WaitForSentinelMonitorAsync(client);
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
         using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
@@ -535,12 +531,7 @@ public class HashFieldLeaseWireTests
                 : null,
         };
         var primaryPort = oldPrimary.Port;
-        await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
-        {
-            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
-                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${Volatile.Read(ref primaryPort).ToString().Length}\r\n{Volatile.Read(ref primaryPort)}\r\n")
-                : "*0\r\n"u8.ToArray(),
-        };
+        await using var sentinel = SentinelServer(() => Volatile.Read(ref primaryPort));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -551,6 +542,7 @@ public class HashFieldLeaseWireTests
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
 
+        await WaitForSentinelMonitorAsync(client);
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
         using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
@@ -617,5 +609,26 @@ public class HashFieldLeaseWireTests
             RespireKey.Empty, "worker", TimeSpan.FromSeconds(1))).Throws<ArgumentException>();
         await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
             "registry", RespireKey.Empty, TimeSpan.FromSeconds(1))).Throws<ArgumentException>();
+    }
+
+    // Publishing a primary starts a Sentinel event monitor, which holds one Sentinel connection
+    // and reconnects with backoff. Answer its SUBSCRIBE and leave room for discovery connections.
+    private static FakeRespServer SentinelServer(Func<int> primaryPort) => new(64, "*0\r\n"u8.ToArray())
+    {
+        ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+            ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort().ToString().Length}\r\n{primaryPort()}\r\n")
+            : command == "SUBSCRIBE +switch-master +sdown +odown"
+                ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
+                : "*0\r\n"u8.ToArray(),
+    };
+
+    // The monitor revalidates the primary after it subscribes. Wait for that, so it cannot race
+    // the test's own primary changes.
+    private static async Task WaitForSentinelMonitorAsync(RespireClient client)
+    {
+        var router = client.Core.Sentinel!;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (router.SuccessfulMonitorSubscriptions == 0) await Task.Delay(5, timeout.Token);
+        if (router.NotificationRediscovery is { } rediscovery) await rediscovery.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }

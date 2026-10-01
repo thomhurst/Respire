@@ -34,7 +34,8 @@ public class SentinelFailoverIntegrationTests
         (await client.SetAsync("sentinel-failover:before", "written", cancellationToken: deadline.Token)).Should().BeTrue();
 
         var sentinelRouter = client.Core.Sentinel!;
-        while (sentinelRouter.SuccessfulMonitorSubscriptions < fixture.SentinelEndpoints.Count)
+        // Count distinct Sentinels: a monitor that reconnects during startup must not stand in for another.
+        while (sentinelRouter.SubscribedSentinelCount < fixture.SentinelEndpoints.Count)
             await Task.Delay(20, deadline.Token);
 
         await fixture.StopDataNodeAsync(0, deadline.Token);

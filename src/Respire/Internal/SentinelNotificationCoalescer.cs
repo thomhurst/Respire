@@ -67,12 +67,17 @@ internal sealed class SentinelNotificationCoalescer
     /// hint without one, keeping the earlier target when it has none, unless the later hint names
     /// that target as its own switch source. A pending switch is never
     /// replaced by a hint without a source, so a later down event cannot erase its retirement.
-    /// Fault flags accumulate.
+    /// Fault flags accumulate, and two different targets always require fresh discovery.
     /// </summary>
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
     {
         if (pending is not { } previous) return hint;
-        var mustRediscover = previous.MustRediscover || hint.MustRediscover
+        // Two Sentinels can deliver one failover sequence in different orders, so arrival order
+        // cannot say which of two different targets is newer. Neither may end the worker early
+        // through the target-is-current shortcut; fresh discovery decides between them.
+        var conflictingTargets = previous.Target is { } previousTarget && hint.Target is { } hintTarget
+            && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(previousTarget, hintTarget);
+        var mustRediscover = previous.MustRediscover || hint.MustRediscover || conflictingTargets
             || hint.OldPrimary is not null && hint.Target is null;
         return hint.OldPrimary is not null || previous.OldPrimary is null
             ? hint with

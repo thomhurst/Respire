@@ -386,9 +386,9 @@ public class SentinelRoutingTests
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster old-primary.invalid {original.Port} 127.0.0.1 {promoted.Port}");
         await resolving.Task.WaitAsync(Limit);
-        // The resolver starts before the router records the resolution task, so wait for both.
-        using (var timeout = new CancellationTokenSource(Limit))
-            while (router.PendingSwitchSourceResolutions == 0) await Task.Delay(5, timeout.Token);
+        // The router registers the resolution under its gate before the resolver can run, so a
+        // disposal snapshot can never miss a started resolution. No wait is needed here.
+        await Assert.That(router.PendingSwitchSourceResolutions).IsEqualTo(1);
 
         var disposal = client.DisposeAsync().AsTask();
         await Task.Delay(200);
@@ -649,7 +649,12 @@ public class SentinelRoutingTests
         if (state == "failed-validation")
             await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
         else if (state == "published")
+        {
             await client.PingAsync().AsTask().WaitAsync(Limit);
+            // Publication starts the event monitor and its revalidation. Let that Sentinel traffic
+            // settle, so commands sent before disposal cannot be counted after it.
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
+        }
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
@@ -792,6 +797,9 @@ public class SentinelRoutingTests
         {
             await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
             await entered.Task.WaitAsync(Limit);
+            // The monitor's revalidation could otherwise observe a port flip below and publish an
+            // extra generation. It confirms the unchanged primary without waiting for the observer.
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
             for (var index = 1; index <= handoffs; index++)
             {
                 Volatile.Write(ref port, index % 2 == 0 ? first.Port : second.Port);
@@ -1135,7 +1143,9 @@ public class SentinelRoutingTests
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
         sentinel.SuppressReply = null;
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
-        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+        // The publication starts the event monitor, whose revalidation confirms the primary with one more ROLE.
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value", "ROLE"]);
     }
 
     [Test]
@@ -2584,6 +2594,7 @@ public class SentinelRoutingTests
         if (rediscovery)
         {
             await client.PingAsync();
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
             var generation = client.Core.Sentinel!.Current!;
             using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
