@@ -182,7 +182,10 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                     if (entered) Volatile.Write(ref _state, StateUncertain);
                 }
                 _releaseTask = null;
-                retryAfterGateRelease = !entered && _state == StateReleasing;
+                // If the gate owner has already released before we cleared the task, its
+                // ResumeQueuedRelease call observed the old task and could not restart it.
+                // Retry only in that race. Otherwise the gate owner's finally resumes release.
+                retryAfterGateRelease = !entered && _state == StateReleasing && _operationGate.CurrentCount != 0;
             }
             if (retryAfterGateRelease) ResumeQueuedRelease();
             throw;
