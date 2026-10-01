@@ -80,6 +80,57 @@ internal static class RespireTelemetry
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 
+    public static readonly Counter<long> FailoverProbes = Meter.CreateCounter<long>(
+        "respire.failover.probes", unit: "{probe}", description: "Standalone failover endpoint health probes.");
+
+    public static readonly Counter<long> FailoverSwitches = Meter.CreateCounter<long>(
+        "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected endpoint changes in standalone failover groups.");
+
+    public static readonly Counter<long> FailoverMonitorErrors = Meter.CreateCounter<long>(
+        "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating standalone failover health.");
+
+    public static readonly Histogram<double> FailoverProbeDuration = Meter.CreateHistogram<double>(
+        "respire.failover.probe.duration", unit: "s", description: "Standalone failover endpoint health probe duration.");
+
+    internal static void RecordFailoverProbe(RespireEndpoint endpoint, bool succeeded, double durationSeconds)
+    {
+        try
+        {
+            FailoverProbes.Add(1,
+                new KeyValuePair<string, object?>("server.address", endpoint.Host),
+                new KeyValuePair<string, object?>("server.port", endpoint.Port),
+                new KeyValuePair<string, object?>("respire.failover.probe.result", succeeded ? "success" : "failure"));
+            FailoverProbeDuration.Record(durationSeconds,
+                new KeyValuePair<string, object?>("server.address", endpoint.Host),
+                new KeyValuePair<string, object?>("server.port", endpoint.Port),
+                new KeyValuePair<string, object?>("respire.failover.probe.result", succeeded ? "success" : "failure"));
+        }
+        catch { /* Metrics listeners must not change health decisions. */ }
+    }
+
+    internal static void RecordFailoverSwitch(RespireEndpoint? previous, RespireEndpoint? current, string reason)
+    {
+        try
+        {
+            FailoverSwitches.Add(1,
+                new KeyValuePair<string, object?>("respire.failover.switch.reason", reason),
+                new KeyValuePair<string, object?>("respire.failover.endpoint.previous", previous?.ToString() ?? "none"),
+                new KeyValuePair<string, object?>("respire.failover.endpoint.current", current?.ToString() ?? "none"));
+        }
+        catch { /* Metrics listeners must not change health decisions. */ }
+    }
+
+    internal static void RecordFailoverMonitorError(string source, Exception error)
+    {
+        try
+        {
+            FailoverMonitorErrors.Add(1,
+                new KeyValuePair<string, object?>("respire.failover.error.source", source),
+                new KeyValuePair<string, object?>("error.type", error.GetType().FullName));
+        }
+        catch { /* Metrics listeners must not stop health monitoring. */ }
+    }
+
     internal static void RecordReconnectExhaustion(string host, int port, RespireReconnectSource source = RespireReconnectSource.Command)
         => ReconnectExhaustions.Add(1, new KeyValuePair<string, object?>("server.address", host),
             new KeyValuePair<string, object?>("server.port", port),
