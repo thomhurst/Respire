@@ -780,7 +780,7 @@ public class TimeoutDiagnosticsTests
         var ring = new InflightRing(2);
         var first = pool.Rent(commandName: "GET");
         var second = pool.Rent(commandName: "PING");
-        first.Deadline = second.Deadline = 1;
+        first.Deadline = second.Deadline = CommandDeadline.At(1);
         ring.TryEnqueue(first);
         ring.TryEnqueue(second);
 

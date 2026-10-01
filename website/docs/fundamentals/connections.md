@@ -99,13 +99,28 @@ with the announced endpoint before publishing replacement sockets. A null target
 to the configured logical host; that host remains the reconnect name so DNS can change later.
 Accepted commands drain on the old sockets, while commands selected just before retirement
 move to a current socket only when the old socket had not accepted their frame, keeping the
-command timeout that started on the old socket. The advertised grace period starts when the
-notification arrives: a target that cannot be reached is retried until it ends, after which the
-current connections stay in place and normal reconnect applies, and old sockets still draining
-when it ends are closed. Sequence IDs are tracked per announcing server, so the replacement
-server can announce a later `MOVING` with its own numbering. Blocking,
-pub/sub, Sentinel discovery, and correction-control connections do not negotiate maintenance
-notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
+command timeout that started on the old socket. Connection-scoped commands (`CLIENT ID`,
+correction barriers, and credential-renewal `AUTH`) never move to another socket.
+
+The advertised grace period starts when the notification is parsed, and it is a drain budget,
+not a promise that accepted commands finish:
+
+- A target that cannot be reached is retried until the grace period ends. Nothing has been
+  published at that point, so the current connections stay in place and normal reconnect
+  applies when the server closes them.
+- A target handshake that completes after the grace period is still published, because the
+  source is about to close and the target is the only endpoint left. The old sockets are then
+  closed at once, so commands they had accepted fail with a connection error. Respire logs a
+  warning when this happens.
+- Old sockets still draining when the grace period ends are closed the same way.
+
+Sequence IDs are tracked per announcing server, so the replacement server can announce a later
+`MOVING` with its own numbering. A sequence ID suppresses repeats only until the grace period it
+announced ends, so a server that restarts at the same address and numbers from 1 again is
+followed after that.
+
+Blocking, pub/sub, Sentinel discovery, and correction-control connections do not negotiate
+maintenance notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
 topology recovery budgets, and explicit operation-level cancellation deadlines also retain
 their limits. Cluster ownership updates from `SMIGRATED` remain unsupported
 ([#635](https://github.com/thomhurst/Respire/issues/635)).

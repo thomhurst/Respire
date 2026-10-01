@@ -27,10 +27,11 @@ internal abstract class PendingResponse
     private int _refs;
 
     /// <summary>
-    /// Absolute <see cref="Environment.TickCount64"/> deadline stamped at enqueue; 0 means
-    /// none. Written before the ring slot is published, read afterwards by the deadline sweep.
+    /// Absolute <see cref="Environment.TickCount64"/> deadline stamped at enqueue, or
+    /// <see cref="CommandDeadline.None"/>. Written before the ring slot is published, read
+    /// afterwards by the deadline sweep (its only reader).
     /// </summary>
-    internal long Deadline;
+    internal CommandDeadline Deadline;
     internal long WriteStart;
     internal long WriteEnd;
 
@@ -156,7 +157,7 @@ internal abstract class PendingResponse
         // sweep reads State before Deadline, so the release/acquire pairing on _state
         // guarantees that a sweep observing the new epoch can no longer read the previous
         // command's expired deadline and time out the next incarnation.
-        Deadline = 0;
+        Deadline = CommandDeadline.None;
 
         // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
         // any state the deadline sweep captured for this incarnation.

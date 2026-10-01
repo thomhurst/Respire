@@ -17,11 +17,10 @@ internal sealed partial class RespireConnection
     private const int MaintenanceNegotiating = 1;
     private const int MaintenanceEnabled = 2;
     private int _maintenanceStatus;
-    private MaintenanceNotification? _lastMovingNotification;
-    private long _lastMovingPublicationGeneration = -1;
-    private long _lastMovingReceivedTimestamp;
+    // One immutable reference, so a reader never pairs a notification with another's origin.
+    private Respire.Infrastructure.MovingAnnouncement? _lastMovingAnnouncement;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
-    internal MaintenanceNotification? LastMovingNotification => Volatile.Read(ref _lastMovingNotification);
+    internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
     private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespProtocol protocol,
         CancellationToken cancellationToken, bool armCommandDeadline)
@@ -94,15 +93,15 @@ internal sealed partial class RespireConnection
             state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
             Volatile.Write(ref _maintenanceState, state);
         }
-        var receivedTimestamp = Environment.TickCount64;
-        state.Apply(notification, receivedTimestamp);
+        state.Apply(notification, Environment.TickCount64);
         if (notification.Kind == "MOVING")
         {
-            var publicationGeneration = Multiplexer?.GetMovingPublicationGeneration(MultiplexerSlot, this) ?? -1;
-            Volatile.Write(ref _lastMovingPublicationGeneration, publicationGeneration);
-            Volatile.Write(ref _lastMovingReceivedTimestamp, receivedTimestamp);
-            Volatile.Write(ref _lastMovingNotification, notification);
-            MovingNotification?.Invoke(notification, publicationGeneration, receivedTimestamp);
+            // Eligibility and receipt time are captured here, when the push is parsed, because the
+            // multiplexer may handle it later (after a replay or behind its handoff gate).
+            var announcement = Multiplexer?.CaptureMovingAnnouncement(MultiplexerSlot, this, notification)
+                ?? new Respire.Infrastructure.MovingAnnouncement(notification, -1, -1, Environment.TickCount64);
+            Volatile.Write(ref _lastMovingAnnouncement, announcement);
+            MovingNotification?.Invoke(announcement);
         }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
@@ -113,9 +112,7 @@ internal sealed partial class RespireConnection
         return true;
     }
 
-    internal long LastMovingPublicationGeneration => Volatile.Read(ref _lastMovingPublicationGeneration);
-    internal long LastMovingReceivedTimestamp => Volatile.Read(ref _lastMovingReceivedTimestamp);
-    internal event Action<MaintenanceNotification, long, long>? MovingNotification;
+    internal event Action<Respire.Infrastructure.MovingAnnouncement>? MovingNotification;
 
     private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
         long deadline = long.MaxValue)
@@ -127,42 +124,49 @@ internal sealed partial class RespireConnection
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
 
-    // Marks a deadline that a reroute already extended by the relaxed-timeout allowance, so a
-    // later MOVING handoff in the same send cannot add it again. TickCount64 never reaches this bit;
-    // deadline consumers strip it before tick arithmetic.
-    private const long RelaxedRerouteDeadline = 1L << 62;
-
-    internal static long PlainDeadline(long deadline) => deadline & ~RelaxedRerouteDeadline;
-    internal static bool IsRelaxedRerouteDeadline(long deadline) => (deadline & RelaxedRerouteDeadline) != 0;
-
-    private long GetReroutedCommandDeadline(long deadline)
+    /// <summary>
+    /// The deadline a send rejected by this retired socket carries to its replacement. When this
+    /// socket's maintenance window was relaxing it, the relaxed allowance is added once and
+    /// marked, so the replacement socket's own window cannot add it again.
+    /// </summary>
+    private CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
     {
-        if (deadline == 0 || (deadline & RelaxedRerouteDeadline) != 0
+        if (!deadline.IsSet || deadline.IsRelaxed
             || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
         var window = Volatile.Read(ref _maintenanceState)?.GetWindow(Environment.TickCount64);
-        return window is not null && deadline > window.Started
+        return window is not null && deadline.Ticks > window.Started
             && _maintenanceOptions.MaintenanceRelaxedTimeout > normal
-            ? (deadline + (long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds)
-                | RelaxedRerouteDeadline
+            ? deadline.Relax((long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds)
             : deadline;
     }
 
-    private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, long deadline,
+    /// <summary>
+    /// The timeout that applies to a parked producer at <paramref name="now"/>, and how far it
+    /// extends the stamped deadline. An already relaxed rerouted deadline keeps its allowance
+    /// and gets no second extension from this socket's window.
+    /// </summary>
+    private TimeSpan CapacityTimeout(CommandDeadline deadline, long now, out long extension, out long window)
+    {
+        var normal = _commandTimeout!.Value;
+        var windowTimeout = MaintenanceTimeout(normal, now, out window, out _, deadline.Ticks);
+        if (deadline.IsRelaxed)
+        {
+            extension = 0;
+            return Max(normal, _maintenanceOptions!.MaintenanceRelaxedTimeout);
+        }
+        extension = (long)(windowTimeout - normal).TotalMilliseconds;
+        return windowTimeout;
+    }
+
+    private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, CommandDeadline deadline,
         string? commandName, CancellationToken cancellationToken)
     {
-        // An already relaxed rerouted deadline must not be relaxed again by this socket's window.
-        var alreadyRelaxed = (deadline & RelaxedRerouteDeadline) != 0;
-        deadline = PlainDeadline(deadline);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
-            var windowTimeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
-            var timeout = alreadyRelaxed
-                ? Max(_commandTimeout.Value, _maintenanceOptions!.MaintenanceRelaxedTimeout)
-                : windowTimeout;
-            var extension = alreadyRelaxed ? 0 : (long)(timeout - _commandTimeout.Value).TotalMilliseconds;
-            var remaining = deadline + extension - now;
+            var timeout = CapacityTimeout(deadline, now, out var extension, out var window);
+            var remaining = deadline.Ticks + extension - now;
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
                     CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
@@ -172,13 +176,8 @@ internal sealed partial class RespireConnection
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
-                var resumedTimeout = alreadyRelaxed
-                    ? Max(_commandTimeout!.Value, _maintenanceOptions!.MaintenanceRelaxedTimeout)
-                    : MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
-                var resumedExtension = alreadyRelaxed
-                    ? 0 : (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds;
-                var resumedRemaining = deadline + resumedExtension - resumedAt;
-                if (resumedRemaining <= 0)
+                var resumedTimeout = CapacityTimeout(deadline, resumedAt, out var resumedExtension, out _);
+                if (deadline.Ticks + resumedExtension - resumedAt <= 0)
                     throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
                         CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
                 return;

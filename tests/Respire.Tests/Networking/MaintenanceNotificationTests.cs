@@ -361,33 +361,56 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task MovingFromRestartedServerAtSameAddressIsHonouredDespiteLowerSequence()
+    public async Task MovingFromRestartedServerAtSameAddressIsHonouredOnceItsFenceLapses()
     {
         await using var source = Server(maxConnections: 4);
         await using var target = Server(maxConnections: 2);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
         var announcingConnection = multiplexer.GetConnection();
-        var peer = (announcingConnection.NetworkPeerAddress ?? announcingConnection.Host,
-            announcingConnection.NetworkPeerPort ?? announcingConnection.Port);
         var movingSequences = (System.Collections.IDictionary)typeof(RespireConnectionMultiplexer)
             .GetField("_movingSequences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(multiplexer)!;
-        movingSequences[peer] = (announcingConnection.MovingSequenceGeneration, 7L);
-        var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var notification = new MaintenanceNotification("MOVING", 1, 10,
             new RespireEndpoint("127.0.0.1", target.Port));
 
-        queueHandoff.Invoke(multiplexer,
-            [announcingConnection, notification, announcingConnection.MovingPublicationGeneration, Environment.TickCount64]);
+        // Sequence 7's grace period is still running, so a lower sequence is a repeat.
+        movingSequences[announcingConnection.PeerKey] = (7L, Environment.TickCount64 + 60_000);
+        QueueMovingHandoff(multiplexer, 0, announcingConnection, new MovingAnnouncement(notification,
+            announcingConnection.MovingPublicationGeneration, 0, Environment.TickCount64));
+        await Task.Delay(100);
         await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
 
-        // A replacement socket from the restarted peer has a newer sequence generation.
-        announcingConnection.MovingSequenceGeneration++;
-        queueHandoff.Invoke(multiplexer,
-            [announcingConnection, notification, announcingConnection.MovingPublicationGeneration, Environment.TickCount64]);
+        // Once that grace period has ended, the restarted server's own numbering is followed.
+        movingSequences[announcingConnection.PeerKey] = (7L, Environment.TickCount64 - 1);
+        announcingConnection.LastQueuedMovingSequence = long.MinValue; // A fresh socket to the restarted peer.
+        QueueMovingHandoff(multiplexer, 0, announcingConnection, new MovingAnnouncement(notification,
+            announcingConnection.MovingPublicationGeneration, 0, Environment.TickCount64));
         await WaitForPort(multiplexer, target.Port);
+    }
+
+    [Test]
+    public async Task MovingParsedBeforePublicationIsHonouredWhenCallbackRunsAfterPublication()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var firstTarget = Server(maxConnections: 2);
+        await using var delayedTarget = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var announcingConnection = multiplexer.GetConnection();
+        // Parsed while published and before the first handoff, but handled after it.
+        var delayed = multiplexer.CaptureMovingAnnouncement(0, announcingConnection,
+            new MaintenanceNotification("MOVING", 2, 10, new RespireEndpoint("127.0.0.1", delayedTarget.Port)));
+
+        await source.SendRawAsync(Moving(1, firstTarget.Port));
+        await WaitForPort(multiplexer, firstTarget.Port);
+        QueueMovingHandoff(multiplexer, 0, announcingConnection, delayed);
+        await WaitForPort(multiplexer, delayedTarget.Port);
+
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
     }
 
     [Test]
@@ -414,44 +437,16 @@ public class MaintenanceNotificationTests
             new RespireEndpoint("127.0.0.1", delayedTarget.Port));
         var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        queueHandoff.Invoke(multiplexer,
-            [announcingConnection, delayedNotification,
-                multiplexer.GetMovingPublicationGeneration(0, announcingConnection), Environment.TickCount64]);
+        // Parsed while published, before either handoff (epoch 0) published.
+        queueHandoff.Invoke(multiplexer, [0, announcingConnection,
+            new MovingAnnouncement(delayedNotification, announcingConnection.MovingPublicationGeneration, 0,
+                Environment.TickCount64)]);
         await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(secondTarget.Port);
 
         using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task MovingParsedBeforePublicationIsHonouredWhenCallbackRunsAfterPublication()
-    {
-        await using var source = Server(maxConnections: 2);
-        await using var firstTarget = Server(maxConnections: 2);
-        await using var delayedTarget = Server(maxConnections: 2);
-        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
-            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
-        var announcingConnection = multiplexer.GetConnection();
-        var receiptGeneration = multiplexer.GetMovingPublicationGeneration(0, announcingConnection);
-        var receiptTimestamp = Environment.TickCount64;
-
-        await source.SendRawAsync(Moving(1, firstTarget.Port));
-        await WaitForPort(multiplexer, firstTarget.Port);
-
-        var delayedNotification = new MaintenanceNotification("MOVING", 2, 10,
-            new RespireEndpoint("127.0.0.1", delayedTarget.Port));
-        var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        queueHandoff.Invoke(multiplexer,
-            [announcingConnection, delayedNotification, receiptGeneration, receiptTimestamp]);
-        await WaitForPort(multiplexer, delayedTarget.Port);
-
-        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(pong.AsString()).IsEqualTo("PONG");
-        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
     }
 
     [Test]
@@ -564,6 +559,216 @@ public class MaintenanceNotificationTests
         await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
     }
 
+    [Test]
+    public async Task MovingParsedBeforeReconnectReplacesAnnouncingSocketIsStillFollowed()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var announcingConnection = multiplexer.GetConnection();
+        // Captured as the receive loop would, while the socket is still published.
+        var announcement = multiplexer.CaptureMovingAnnouncement(0, announcingConnection,
+            new MaintenanceNotification("MOVING", 1, 10, new RespireEndpoint("127.0.0.1", target.Port)));
+
+        // A reconnect (not a handoff) replaces the socket before the callback runs.
+        source.CloseConnections();
+        await WaitForReplacement(multiplexer, announcingConnection);
+        QueueMovingHandoff(multiplexer, 0, announcingConnection, announcement);
+
+        await WaitForPort(multiplexer, target.Port);
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
+    public async Task MovingGracePeriodStartsWhenThePushWasParsed()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server("-ERR maintenance subsystem unavailable\r\n"u8.ToArray(), maxConnections: 64);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var connection = multiplexer.GetConnection();
+        // Parsed 20 seconds ago with a 10 second grace, for example behind a slow sibling
+        // handshake. Replaying it must not restart the grace period.
+        var announcement = new MovingAnnouncement(
+            new MaintenanceNotification("MOVING", 1, 10, new RespireEndpoint("127.0.0.1", target.Port)),
+            connection.MovingPublicationGeneration, 0, Environment.TickCount64 - 20_000);
+
+        QueueMovingHandoff(multiplexer, 0, connection, announcement);
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while (!target.ReceivedCommands.Contains("CLIENT MAINT_NOTIFICATIONS ON"))
+                await Task.Delay(5, timeout.Token);
+        }
+        await Task.Delay(500);
+
+        // The expired grace period allows the one setup attempt and no retries.
+        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT MAINT_NOTIFICATIONS ON")).IsEqualTo(1);
+        await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
+    }
+
+    [Test]
+    public async Task SequenceFenceLapsesAfterItsGracePeriodForTheSamePeer()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var unavailable = Server("-ERR maintenance subsystem unavailable\r\n"u8.ToArray(), maxConnections: 64);
+        await using var target = Server(maxConnections: 4);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            connectionCount: 2, options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await source.SendRawAsync(Moving(5, unavailable.Port, seconds: 1), connectionId: 0);
+        await Task.Delay(1300); // The handoff gives up and the sequence-5 fence lapses.
+        // The same address now numbers from 1, as a restarted server would. Both old sockets
+        // are still connected, so only the lapse lets this through.
+        await source.SendRawAsync(Moving(1, target.Port), connectionId: 1);
+
+        await WaitForPort(multiplexer, target.Port);
+    }
+
+    [Test]
+    public async Task DuplicateMovingOnSiblingSocketsHandsOffOnce()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 4);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            connectionCount: 2, options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await source.SendRawAsync(Moving(3, target.Port), connectionId: 0);
+        await source.SendRawAsync(Moving(3, target.Port), connectionId: 1);
+        await WaitForPort(multiplexer, target.Port);
+        await Task.Delay(300);
+
+        // One handoff connects two replacements: two HELLOs, not four.
+        await Assert.That(target.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MovingReroutesMultiReplyAndBulkStreamSendsRejectedBeforeAdmission()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (connectionId, command) => command == "GET key"
+            ? "$5\r\nvalue\r\n"u8.ToArray()
+            : targetReply(connectionId, command);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var staleSelection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForRetirement(staleSelection);
+        using var validated = await staleSelection.SendValidatedPrefixedAsync(
+                new RawCommand(FakeRespServer.PingFrame), new RawCommand(FakeRespServer.PingFrame), commandName: "PING")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await using var stream = await staleSelection.SendBulkStreamAsync(
+                new RawCommand("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"u8.ToArray()), commandName: "GET")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        using var reader = new StreamReader(stream!);
+        var value = await reader.ReadToEndAsync();
+
+        await Assert.That(validated.AsString()).IsEqualTo("PONG");
+        await Assert.That(value).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(2);
+        await Assert.That(source.ReceivedCommands.Contains("GET key")).IsFalse();
+    }
+
+    [Test]
+    public async Task MovingPublishedAfterGracePeriodAbortsOldSocketWork()
+    {
+        await using var source = Server(maxConnections: 2);
+        source.SuppressReply = command => command == "PING";
+        await using var target = Server(maxConnections: 2);
+        target.DelayReply(0, 1500); // The target handshake outlasts the one-second grace.
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                ConnectTimeout = TimeSpan.FromSeconds(10),
+                CommandTimeout = TimeSpan.FromSeconds(30),
+            });
+        var accepted = multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(source, 3);
+
+        await source.SendRawAsync(Moving(1, target.Port, seconds: 1));
+        await WaitForPort(multiplexer, target.Port);
+
+        // The source never answers, and the old socket is aborted as soon as the late handoff publishes.
+        await Assert.That(async () => await accepted.WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireException>();
+    }
+
+    [Test]
+    public async Task DisposingDuringMovingHandoffCompletesPromptly()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        target.DelayReply(0, 30_000);
+        var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                ConnectTimeout = TimeSpan.FromSeconds(60),
+            });
+
+        await source.SendRawAsync(Moving(1, target.Port, seconds: 60));
+        await WaitForCommands(target, 1); // The replacement handshake is in progress.
+        await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(multiplexer.IsRetired).IsTrue();
+    }
+
+    [Test]
+    public async Task RapidMovingBurstEndsOnTheNewestTarget()
+    {
+        await using var source = Server(maxConnections: 2);
+        var obsoleteTargets = new FakeRespServer[3];
+        for (var i = 0; i < obsoleteTargets.Length; i++)
+        {
+            obsoleteTargets[i] = Server(maxConnections: 16);
+            obsoleteTargets[i].DelayReply(0, 200);
+        }
+        await using var final = Server(maxConnections: 2);
+        try
+        {
+            await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+                options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+
+            for (var sequence = 1; sequence <= 12; sequence++)
+                await source.SendRawAsync(Moving(sequence, obsoleteTargets[sequence % obsoleteTargets.Length].Port));
+            await source.SendRawAsync(Moving(13, final.Port));
+
+            await WaitForPort(multiplexer, final.Port);
+            using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(pong.AsString()).IsEqualTo("PONG");
+            await Assert.That(final.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+        }
+        finally
+        {
+            foreach (var obsolete in obsoleteTargets) await obsolete.DisposeAsync();
+        }
+    }
+
+    private static void QueueMovingHandoff(RespireConnectionMultiplexer multiplexer, int slot,
+        RespireConnection connection, MovingAnnouncement announcement)
+        => typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(multiplexer, [slot, connection, announcement]);
+
+    private static async Task WaitForReplacement(RespireConnectionMultiplexer multiplexer, RespireConnection replaced)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            try
+            {
+                if (multiplexer.GetConnection() is { IsAcceptingCommands: true } current
+                    && !ReferenceEquals(current, replaced)) return;
+            }
+            catch (RespireException) { }
+            await Task.Delay(5, timeout.Token);
+        }
+    }
+
     private static byte[] Moving(long sequence, int port, int seconds = 10)
         => Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:{sequence}\r\n:{seconds}\r\n+127.0.0.1:{port}\r\n");
 
@@ -590,7 +795,7 @@ public class MaintenanceNotificationTests
         var pool = new PendingResponsePool(1);
         var ring = new InflightRing(1);
         var source = pool.Rent(commandName: "PING");
-        source.Deadline = deadline;
+        source.Deadline = CommandDeadline.At(deadline);
         ring.TryEnqueue(source);
         var window = state.GetWindow(1100)!;
         var remaining = ring.SweepExpired(1100, TimeSpan.FromMilliseconds(200), null,
@@ -618,7 +823,7 @@ public class MaintenanceNotificationTests
         var pool = new PendingResponsePool(1);
         var ring = new InflightRing(1);
         var source = pool.Rent(commandName: "PING");
-        source.Deadline = deadline | (1L << 62);
+        source.Deadline = CommandDeadline.At(deadline).Relax(0);
         ring.TryEnqueue(source);
 
         var remaining = ring.SweepExpired(deadline - 1, TimeSpan.FromMilliseconds(100), null,
@@ -636,7 +841,7 @@ public class MaintenanceNotificationTests
         var pool = new PendingResponsePool(1);
         var ring = new InflightRing(1);
         var source = pool.Rent(commandName: "PING");
-        source.Deadline = deadline | (1L << 62);
+        source.Deadline = CommandDeadline.At(deadline).Relax(0);
         ring.TryEnqueue(source);
 
         await Assert.That(ring.SweepExpired(deadline, TimeSpan.FromSeconds(10), null,

@@ -106,7 +106,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
     internal int MultiplexerSlot { get; set; }
     internal long MovingPublicationGeneration;
-    internal long MovingSequenceGeneration;
     internal long LastQueuedMovingSequence = long.MinValue;
 
     public string Host { get; }
@@ -116,24 +115,38 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 
     /// <summary>
-    /// The multiplexer that can accept a send this socket rejected before admission because a
-    /// handoff retired it. A retired Sentinel generation or multiplexer returns null so its
-    /// owner routes the command instead.
+    /// Picks the socket that takes a send this socket rejected before admission because a MOVING
+    /// handoff retired it, and the deadline the send carries there. Returns false, so the
+    /// retirement surfaces to the caller, when the send is pinned to this socket, when a retired
+    /// Sentinel generation or multiplexer routes the command instead, or when the multiplexer has
+    /// no other unretired socket to offer.
     /// </summary>
-    private Respire.Infrastructure.RespireConnectionMultiplexer? RetiredSendReroute
-        => !s_pinnedSends.Value && _generation?.IsRetired != true && Multiplexer is { IsRetired: false } multiplexer
-            ? multiplexer : null;
+    /// <remarks>
+    /// <para>Only sends that were never admitted get here. <see cref="RespireConnectionRetiredException"/>
+    /// is thrown only by the pre-admission check, and every caller catches it around enqueue and
+    /// capacity waits only, never around an admitted command's reply, so nothing is sent twice.</para>
+    /// <para>Pinned sends are connection-scoped: CLIENT ID, CLIENT KILL probes, FIFO ordering
+    /// barriers and credential renewal AUTH mean nothing on another socket.</para>
+    /// <para>Each hop goes to a different socket that was not retired when it was selected. A
+    /// further hop therefore needs another handoff to retire that socket before the send is
+    /// admitted, so the chain is bounded by handoff publications and cannot loop.</para>
+    /// </remarks>
+    private bool TryReroute(bool pinToConnection, CommandDeadline deadline, out RespireConnection target,
+        out CommandDeadline reroutedDeadline)
+    {
+        target = null!;
+        reroutedDeadline = default;
+        if (pinToConnection || _generation?.IsRetired == true || Multiplexer is not { IsRetired: false } multiplexer)
+            return false;
+        var selected = multiplexer.GetConnection();
+        if (ReferenceEquals(selected, this) || Volatile.Read(ref selected._retired)) return false;
+        target = selected;
+        reroutedDeadline = GetReroutedCommandDeadline(deadline);
+        return true;
+    }
 
-    // Read only on the rare retirement path, so ordinary sends pay nothing for it.
-    private static readonly AsyncLocal<bool> s_pinnedSends = new();
-
-    /// <summary>
-    /// Makes sends in the calling async method (and its callees) surface retirement instead of
-    /// moving to another socket. Connection-scoped commands such as CLIENT ID, CLIENT KILL
-    /// probes and FIFO ordering barriers are meaningless on a different connection. Call it
-    /// first in an async method; the async method boundary restores the previous value.
-    /// </summary>
-    internal static void PinSendsToSelectedConnection() => s_pinnedSends.Value = true;
+    /// <summary>The physical peer, which MOVING sequence IDs belong to.</summary>
+    internal (string Host, int Port) PeerKey => (NetworkPeerAddress ?? Host, NetworkPeerPort ?? Port);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
 
@@ -683,7 +696,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     internal async ValueTask<long> EnsureServerClientIdAsync(CancellationToken cancellationToken = default)
     {
-        PinSendsToSelectedConnection(); // The ID belongs to this socket.
         var existing = ServerClientId;
         if (existing != 0)
         {
@@ -694,7 +706,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // "CLIENT ID / CLIENT KILL"), not the per-command deadline.
         var reply = await SendCoreAsync(
                 new Commands.ClientIdCommand(), discardRepliesBefore: 0, throwOnError: false,
-                cancellationToken, commandName: "CLIENT ID", armCommandDeadline: false)
+                cancellationToken, commandName: "CLIENT ID", armCommandDeadline: false,
+                pinToConnection: true) // The ID belongs to this socket.
             .ConfigureAwait(false);
         if (reply.IsError)
         {
@@ -711,17 +724,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     /// <summary>
     /// Serializes the command into the coalescing write buffer and returns a task that
-    /// completes with its response.
+    /// completes with its response. With <paramref name="pinToConnection"/>, a send rejected
+    /// because a MOVING handoff retired this socket surfaces that retirement instead of moving
+    /// to another socket.
     /// </summary>
     public ValueTask<RespValue> SendAsync<TCommand>(
         in TCommand command,
         CancellationToken cancellationToken = default,
         bool armCommandDeadline = true,
-        string? commandName = null)
+        string? commandName = null,
+        bool pinToConnection = false)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
-            commandName, armCommandDeadline);
+            commandName, armCommandDeadline, pinToConnection: pinToConnection);
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
@@ -787,11 +803,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool transferOwnership,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
-        if (commandDeadline == 0 && _commandTimeoutMilliseconds != 0)
-            commandDeadline = Environment.TickCount64 + _commandTimeoutMilliseconds;
+        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
             state, converter, transferOwnership, commandName);
         bool enqueued;
@@ -800,11 +815,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueue(in command, source, out startedBatch);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source);
-            return multiplexer.GetConnection().SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName, GetReroutedCommandDeadline(commandDeadline));
+            return target.SendConvertedAsync(in command, state, converter,
+                transferOwnership, cancellationToken, commandName, rerouted);
         }
         catch
         {
@@ -834,11 +849,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
-        if (commandDeadline == 0 && _commandTimeoutMilliseconds != 0)
-            commandDeadline = Environment.TickCount64 + _commandTimeoutMilliseconds;
+        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = StringPendingResponseSource.Rent(commandName);
         bool enqueued;
         bool startedBatch;
@@ -846,11 +860,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueue(in command, source, out startedBatch);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source);
-            return multiplexer.GetConnection().SendStringAsync(in command, cancellationToken, commandName,
-                GetReroutedCommandDeadline(commandDeadline));
+            return target.SendStringAsync(in command, cancellationToken, commandName,
+                rerouted);
         }
         catch
         {
@@ -900,11 +914,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         bool retainRepliesBefore,
         CancellationToken cancellationToken,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
-        if (commandDeadline == 0 && _commandTimeoutMilliseconds != 0)
-            commandDeadline = Environment.TickCount64 + _commandTimeoutMilliseconds;
+        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         bool enqueued;
         bool startedBatch;
         try
@@ -912,12 +925,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             enqueued = TryEnqueue(in command, source, out startedBatch,
                 discardRepliesBefore, retainRepliesBefore);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source, discardRepliesBefore + 2);
-            return multiplexer.GetConnection().SendBulkStreamCoreAsync(command,
+            return target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken, GetReroutedCommandDeadline(commandDeadline));
+                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted);
         }
         catch
         {
@@ -946,25 +959,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         bool retainRepliesBefore,
         CancellationToken cancellationToken,
-        long commandDeadline)
+        CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
     {
+        bool startedBatch;
         try
         {
-            var startedBatch = await WaitForInflightCapacityAsync(
+            startedBatch = await WaitForInflightCapacityAsync(
                 command, source, discardRepliesBefore, cancellationToken,
                 retainRepliesBefore: retainRepliesBefore, commandDeadline: commandDeadline).ConfigureAwait(false);
-            source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
-            return await source.Task.ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
-            return await multiplexer.GetConnection().SendBulkStreamCoreAsync(command,
+            // The capacity wait reclaimed the unadmitted source; the target needs a fresh one.
+            return await target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken,
-                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
+                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted).ConfigureAwait(false);
         }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
+        return await source.Task.ConfigureAwait(false);
     }
 
 #if NET
@@ -972,22 +987,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 #endif
     private async ValueTask<string?> SendStringSlowAsync<TCommand>(
         TCommand command, StringPendingResponseSource source, CancellationToken cancellationToken,
-        string? commandName, long commandDeadline)
+        string? commandName, CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
     {
+        bool startedBatch;
         try
         {
-            var startedBatch = await WaitForInflightCapacityAsync(
+            startedBatch = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
-            source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
-            return await source.Task.ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
-            return await multiplexer.GetConnection().SendStringAsync(
-                in command, cancellationToken, commandName, GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
+            return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted).ConfigureAwait(false);
         }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
+        return await source.Task.ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1039,7 +1055,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool throwOnError,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        bool pinToConnection = false)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -1055,7 +1072,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throwOnError,
             cancellationToken,
             commandName,
-            armCommandDeadline);
+            armCommandDeadline,
+            pinToConnection: pinToConnection);
     }
 
     /// <summary>
@@ -1117,11 +1135,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
-        if (commandDeadline == 0 && _commandTimeoutMilliseconds != 0)
-            commandDeadline = Environment.TickCount64 + _commandTimeoutMilliseconds;
+        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
         source.ConfigureTimeout(this, cancellationTimeout, callerCancellationToken, cancellationToken);
@@ -1133,12 +1150,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             enqueued = TryEnqueue(
                 in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            return multiplexer.GetConnection().SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
+            return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                GetReroutedCommandDeadline(commandDeadline));
+                rerouted);
         }
         catch
         {
@@ -1171,11 +1188,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string? commandName = null,
         bool armCommandDeadline = true,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default,
+        bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (commandDeadline == 0 && armCommandDeadline && _commandTimeoutMilliseconds != 0)
-            commandDeadline = Environment.TickCount64 + _commandTimeoutMilliseconds;
+        if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = _sourcePool.Rent(throwOnError, commandName);
         bool enqueued;
         bool startedBatch;
@@ -1185,11 +1202,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 in command, source, out startedBatch, discardRepliesBefore,
                 retainRepliesBefore: false, armCommandDeadline);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer && IsReroutable<TCommand>())
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source);
-            return multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, GetReroutedCommandDeadline(commandDeadline));
+            return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
+                cancellationToken, commandName, armCommandDeadline, rerouted);
         }
         catch
         {
@@ -1206,7 +1223,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
-            commandName, armCommandDeadline, commandDeadline);
+            commandName, armCommandDeadline, commandDeadline, pinToConnection);
     }
 
     /// <summary>
@@ -1214,22 +1231,26 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// command has been written to the socket.
     /// </summary>
     public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default,
-        string? commandName = null, long capacityDeadline = 0)
+        string? commandName = null, CommandDeadline capacityDeadline = default)
         where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
+        bool enqueued;
+        bool startedBatch;
+        Task writeTask;
         try
         {
-            if (TryEnqueueForWrite(in command, commandName, out var startedBatch, out var writeTask))
-            {
-                ScheduleFlush(startedBatch);
-                return WaitForWriteAsync(writeTask, cancellationToken);
-            }
+            enqueued = TryEnqueueForWrite(in command, commandName, out startedBatch, out writeTask);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, capacityDeadline, out var target, out var rerouted))
         {
-            return multiplexer.GetConnection().SendFireAndForgetAsync(in command, cancellationToken, commandName,
-                GetReroutedCommandDeadline(capacityDeadline));
+            return target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted);
+        }
+
+        if (enqueued)
+        {
+            ScheduleFlush(startedBatch);
+            return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
         return SendFireAndForgetSlowAsync(command, cancellationToken, commandName, capacityDeadline);
@@ -1550,9 +1571,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        source.Deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
-            ? Environment.TickCount64 + _commandTimeoutMilliseconds
-            : 0;
+        source.Deadline = armCommandDeadline
+            ? CommandDeadline.After(_commandTimeoutMilliseconds)
+            : CommandDeadline.None;
     }
 
 #if NET
@@ -1566,25 +1587,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool throwOnError,
         string? commandName,
         bool armCommandDeadline,
-        long commandDeadline)
+        CommandDeadline commandDeadline,
+        bool pinToConnection)
         where TCommand : struct, IRespCommand
     {
+        bool startedBatch;
         try
         {
-            var startedBatch = await WaitForInflightCapacityAsync(
+            startedBatch = await WaitForInflightCapacityAsync(
                     command, source, discardRepliesBefore, cancellationToken, armCommandDeadline,
                     commandDeadline: commandDeadline)
                 .ConfigureAwait(false);
-            source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
-            return await source.Task.ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer && IsReroutable<TCommand>())
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
         {
-            return await multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline,
-                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
+            return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
+                cancellationToken, commandName, armCommandDeadline, rerouted).ConfigureAwait(false);
         }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
+        return await source.Task.ConfigureAwait(false);
     }
 
 #if NET
@@ -1599,7 +1622,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName,
         TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
-        long commandDeadline)
+        CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1629,12 +1652,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,
                 CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            return await multiplexer.GetConnection().SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
+            return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
+                rerouted).ConfigureAwait(false);
         }
         catch
         {
@@ -1658,40 +1681,39 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool transferOwnership,
         CancellationToken cancellationToken,
         string? commandName,
-        long commandDeadline)
+        CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
     {
+        bool startedBatch;
         try
         {
-            var startedBatch = await WaitForInflightCapacityAsync(
+            startedBatch = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
-            source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
-            return await source.Task.ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
         {
-            return await multiplexer.GetConnection().SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName,
-                GetReroutedCommandDeadline(commandDeadline)).ConfigureAwait(false);
+            return await target.SendConvertedAsync(in command, state, converter,
+                transferOwnership, cancellationToken, commandName, rerouted).ConfigureAwait(false);
         }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
+        return await source.Task.ConfigureAwait(false);
     }
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken,
-        string? commandName, long capacityDeadline)
+        string? commandName, CommandDeadline capacityDeadline)
         where TCommand : struct, IRespCommand
     {
         // A rerouted send keeps the capacity budget that started on the retired socket.
-        var deadline = capacityDeadline != 0 ? capacityDeadline
-            : _commandTimeoutMilliseconds == 0 ? 0
-            : Environment.TickCount64 + _commandTimeoutMilliseconds;
+        var deadline = capacityDeadline.IsSet ? capacityDeadline : CommandDeadline.After(_commandTimeoutMilliseconds);
+        bool startedBatch;
+        Task writeTask;
         try
         {
-            bool startedBatch;
-            Task writeTask;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1705,15 +1727,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await WaitForCapacityAsync(capacityAvailable, deadline, commandName: null, cancellationToken)
                     .ConfigureAwait(false);
             }
-
-            ScheduleFlush(startedBatch);
-            await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, deadline, out var target, out var rerouted))
         {
-            await multiplexer.GetConnection().SendFireAndForgetAsync(in command, cancellationToken, commandName,
-                GetReroutedCommandDeadline(deadline)).ConfigureAwait(false);
+            await target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted).ConfigureAwait(false);
+            return;
         }
+
+        ScheduleFlush(startedBatch);
+        await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1730,16 +1752,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         bool armCommandDeadline = true,
         bool retainRepliesBefore = false,
-        long commandDeadline = 0)
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
         try
         {
-            var deadline = commandDeadline != 0
+            var deadline = commandDeadline.IsSet || !armCommandDeadline
                 ? commandDeadline
-                : armCommandDeadline && _commandTimeoutMilliseconds != 0
-                    ? Environment.TickCount64 + _commandTimeoutMilliseconds
-                    : 0;
+                : CommandDeadline.After(_commandTimeoutMilliseconds);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1767,20 +1787,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    // Credential renewal AUTH belongs to the socket whose session it renews; its worker stops on
-    // retirement. Rerouting it would change a replacement socket's authentication silently.
-    private static bool IsReroutable<TCommand>() where TCommand : struct, IRespCommand
-        => typeof(TCommand) != typeof(CredentialRenewalAuthCommand);
-
     /// <summary>
     /// Re-stamps a source enqueued after a capacity wait with the effective deadline computed
     /// when the send began. This also carries a maintenance-relaxed deadline across reroutes.
     /// The store may race a sweep that already read the fresher stamp; that only delays the
     /// timeout, by at most one sweep granularity interval.
     /// </summary>
-    private static void ClampDeadline(PendingResponse source, long deadline)
+    private static void ClampDeadline(PendingResponse source, CommandDeadline deadline)
     {
-        if (deadline != 0) source.Deadline = deadline;
+        if (deadline.IsSet) source.Deadline = deadline;
     }
 
     /// <summary>
@@ -1788,9 +1803,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// ring on a stalled connection must not park a caller past its command timeout.
     /// </summary>
     private async Task WaitForCapacityAsync(
-        Task capacityAvailable, long deadline, string? commandName, CancellationToken cancellationToken)
+        Task capacityAvailable, CommandDeadline deadline, string? commandName, CancellationToken cancellationToken)
     {
-        if (deadline == 0)
+        if (!deadline.IsSet)
         {
             await capacityAvailable.ConfigureAwait(false);
             return;
@@ -1801,8 +1816,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             await WaitForMaintenanceCapacityAsync(capacityAvailable, deadline, commandName, cancellationToken).ConfigureAwait(false);
             return;
         }
-        deadline = PlainDeadline(deadline);
-        var remaining = deadline - Environment.TickCount64;
+        var remaining = deadline.Ticks - Environment.TickCount64;
         if (remaining <= 0)
         {
             throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
