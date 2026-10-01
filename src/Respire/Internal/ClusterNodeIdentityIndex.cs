@@ -95,6 +95,15 @@ internal sealed class ClusterNodeIdentityIndex
         return node;
     }
 
+    internal bool TryGetExisting(RespireEndpoint endpoint, out RespireConnectionMultiplexer node)
+    {
+        AssertAccess();
+        return _nodes.TryGetValue(endpoint, out node!);
+    }
+
+    internal static bool EndpointsEqual(RespireEndpoint left, RespireEndpoint right)
+        => EndpointComparer.Instance.Equals(left, right);
+
     internal RespireConnectionMultiplexer GetCurrent(RespireConnectionMultiplexer node)
     {
         AssertAccess();

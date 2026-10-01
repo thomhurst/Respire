@@ -119,11 +119,12 @@ Sequence IDs are tracked per announcing server, so the replacement server can an
 announced ends, so a server that restarts at the same address and numbers from 1 again is
 followed after that.
 
-Blocking, pub/sub, Sentinel discovery, and correction-control connections do not negotiate
-maintenance notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
-topology recovery budgets, and explicit operation-level cancellation deadlines also retain
-their limits. Cluster ownership updates from `SMIGRATED` remain unsupported
-([#635](https://github.com/thomhurst/Respire/issues/635)).
+This release implements notifications, diagnostics, timeout relaxation, and proactive Cluster
+slot updates from `SMIGRATED`. The receive loop queues parsed notifications for a bounded topology
+worker. The worker accepts only slots still owned by the advertised source, ignores stale or
+duplicate sequence IDs, and publishes changed ownership through the normal topology event. If a
+notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
+and topology discovery remain the fallback.
 
 Server support and deployment restrictions are described in the
 [Redis smart client handoff documentation](https://redis.io/docs/latest/develop/clients/sch/).

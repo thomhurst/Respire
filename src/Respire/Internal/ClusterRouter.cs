@@ -66,6 +66,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _discoveryClock = options.ClusterDiscoveryClock;
         _sharedRefreshCoordinator = new SharedRefreshCoordinator(_topologyRefreshClock, TopologyRefreshCoalescingWindow);
         ObserveNode(primary);
+        StartSmigratedWorker();
     }
 
     internal bool IsConnected
@@ -1570,6 +1571,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         Action<int, RespireConnectionStateChange> handler =
             (slot, change) =>
             {
+                if (change.State == RespireConnectionState.Reconnecting)
+                {
+                    lock (_nodesGate) _lastSmigratedSequences.Remove(node);
+                }
                 SlotStateChanged?.Invoke(node, slot, change);
                 // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
                 // Once a forced refresh is queued, skip the master scan for the rest of the burst.
@@ -1579,6 +1584,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
+        Action<RespireConnectionMultiplexer, MaintenanceNotification> maintenanceHandler = QueueSmigratedNotification;
+        _nodeMaintenanceHandlers.Add(node, maintenanceHandler);
+        node.MaintenanceNotificationReceived += maintenanceHandler;
     }
 
     internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
@@ -1698,6 +1706,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             node.SlotStateChanged -= handler;
         }
+        if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+        {
+            node.MaintenanceNotificationReceived -= maintenanceHandler;
+            _lastSmigratedSequences.Remove(node);
+        }
 
         return true;
     }
@@ -1781,6 +1794,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 node.SlotStateChanged -= _nodeStateHandlers[node];
                 _nodeStateHandlers.Remove(node);
+                if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+                    node.MaintenanceNotificationReceived -= maintenanceHandler;
+                _lastSmigratedSequences.Remove(node);
             }
         }
         return retiredNodes;
@@ -2004,15 +2020,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
+        KeyValuePair<RespireConnectionMultiplexer, Action<RespireConnectionMultiplexer, MaintenanceNotification>>[] maintenanceHandlers;
         DedicatedConnectionPool[] dedicatedPools;
         Task retirements;
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
             stateHandlers = [.. _nodeStateHandlers, .. _correctionStateHandlers];
+            maintenanceHandlers = [.. _nodeMaintenanceHandlers];
             dedicatedPools = _ownedPools.ToArray();
             retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
             _nodeStateHandlers.Clear();
+            _nodeMaintenanceHandlers.Clear();
             _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
             _correctionPools.Clear();
@@ -2020,6 +2039,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         _stopRetirement.Cancel();
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
+        _smigratedNotifications.Writer.TryComplete();
         Task? refreshWorker;
         lock (_topologyRefreshWorkerGate) refreshWorker = Volatile.Read(ref _topologyRefreshWorker);
         if (refreshWorker is not null)
@@ -2031,10 +2051,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             catch (OperationCanceledException) { }
         }
         foreach (var (node, handler) in stateHandlers) node.SlotStateChanged -= handler;
+        foreach (var (node, handler) in maintenanceHandlers) node.MaintenanceNotificationReceived -= handler;
         // Abort all owned work before awaiting either drain. The primary may itself be a
         // superseded generation; ClientCore's later disposal of it is idempotent.
         await Task.WhenAll(dedicatedPools.Select(pool => pool.DisposeAsync().AsTask())
             .Concat(nodes.Select(node => node.DisposeAsync().AsTask()))).ConfigureAwait(false);
+        await _smigratedWorker.ConfigureAwait(false);
         await retirements.ConfigureAwait(false);
     }
 }
