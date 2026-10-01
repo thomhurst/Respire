@@ -23,6 +23,7 @@ Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, 
 - Raw and interpolated command execution
 - Automatic reconnect and pub/sub resubscription
 - TLS connections through `rediss://` or `RespireOptions.UseTls`
+- [Renewable credential providers](guides/renewable-credentials.md) for live AUTH and independent Sentinel credentials; cloud adapters remain separate work
 - Bounded RESP3 server-assisted client-side caching for eligible Redis reads, with OPTIN or BCAST/prefix tracking
 - Dependency injection, distributed caching, `HybridCache`, and OpenTelemetry
 - An in-memory testing server with controlled expiry/faults, Redis/Valkey container fixtures,

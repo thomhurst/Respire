@@ -28,6 +28,16 @@ public class RespireConnectionException : RespireException
     }
 }
 
+/// <summary>Credential acquisition, renewal, or authentication failed.</summary>
+public sealed class RespireAuthenticationException : RespireConnectionException
+{
+    /// <summary>Creates a credential acquisition, renewal, or authentication failure.</summary>
+    public RespireAuthenticationException(string message) : base(message) { }
+
+    /// <summary>Creates an authentication failure with its underlying cause.</summary>
+    public RespireAuthenticationException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 /// <summary>A connection recovery episode exhausted its configured replacement attempts.</summary>
 public sealed class RespireReconnectLimitException : RespireConnectionException
 {

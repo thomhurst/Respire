@@ -15,6 +15,17 @@ public class ClusterShardedPubSubTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
 
     [Test]
+    public async Task ShardedSubscriptionRequiresResp3ForRenewableCredentials()
+    {
+        await using var cluster = new Cluster(2);
+        await using var client = cluster.CreateClient(credentialProvider: new FixedCredentialProvider());
+
+        await Assert.That(async () => await client.SubscribeShardedAsync("foo"))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(cluster.First.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task DifferentSlotsUseOneDedicatedConnectionPerPrimary(int protocol)
@@ -708,11 +719,12 @@ public class ClusterShardedPubSubTests
             Second.ReplyOverride = (id, command) => SecondOverride?.Invoke(id, command) ?? Reply(command);
         }
         internal RespireClient CreateClient(
-            RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null, int maxInflightCommands = 16 * 1024)
+            RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null,
+            int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null)
             => RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
-            LoggerFactory = logger, MaxInflightCommands = maxInflightCommands,
+            LoggerFactory = logger, MaxInflightCommands = maxInflightCommands, CredentialProvider = credentialProvider,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
         });
         private byte[] Reply(string command)
@@ -752,5 +764,11 @@ public class ClusterShardedPubSubTests
             await First.DisposeAsync();
             await Second.DisposeAsync();
         }
+    }
+
+    private sealed class FixedCredentialProvider : IRespireCredentialProvider
+    {
+        public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new RespireCredentials(null, "secret"));
     }
 }

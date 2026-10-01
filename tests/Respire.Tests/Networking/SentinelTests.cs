@@ -348,7 +348,9 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task ConnectAsync_UsesSentinelCredentialsForDiscovery()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectAsync_UsesSentinelCredentialsForDiscovery(bool useProviders)
     {
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
@@ -367,6 +369,8 @@ public class SentinelTests
             Password = "redis-secret",
             SentinelUsername = "sentinel-user",
             SentinelPassword = "sentinel-secret",
+            CredentialProvider = useProviders ? new FixedCredentials("redis-user", "redis-secret") : null,
+            SentinelCredentialProvider = useProviders ? new FixedCredentials("sentinel-user", "sentinel-secret") : null,
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -384,6 +388,12 @@ public class SentinelTests
             "ROLE",
             "PING",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    }
+
+    private sealed class FixedCredentials(string username, string password) : IRespireCredentialProvider
+    {
+        public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new RespireCredentials(username, password));
     }
 
     [Test]

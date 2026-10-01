@@ -144,6 +144,20 @@ public sealed record RespireOptions
     /// <summary>Password sent by AUTH or HELLO during connection setup.</summary>
     public string? Password { get; init; }
 
+    /// <summary>Optional caller-owned credentials for data connections; overrides static username/password.</summary>
+    public IRespireCredentialProvider? CredentialProvider { get; init; }
+
+    /// <summary>Optional independent Sentinel credentials; null uses Sentinel static credentials or the data provider.</summary>
+    public IRespireCredentialProvider? SentinelCredentialProvider { get; init; }
+
+    /// <summary>Time before credential expiry at which renewal starts. Defaults to five minutes.</summary>
+    public TimeSpan CredentialRefreshBeforeExpiry { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Delay before retrying failed acquisition or unchanged credentials. Defaults to five seconds.</summary>
+    public TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
+
+    internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
+
     /// <summary>Optional ACL username for Sentinel endpoints; falls back to <see cref="Username"/>.</summary>
     public string? SentinelUsername { get; init; }
 
@@ -322,6 +336,8 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
+        Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
         Require(
@@ -426,6 +442,10 @@ public sealed record RespireOptions
             TlsOptions = TlsOptions,
             Username = Username,
             Password = Password,
+            CredentialProvider = CredentialProvider,
+            CredentialRefreshBeforeExpiry = CredentialRefreshBeforeExpiry,
+            CredentialRefreshRetryDelay = CredentialRefreshRetryDelay,
+            CredentialTimeProvider = CredentialTimeProvider,
             ClientName = ClientName,
             Database = Database,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,

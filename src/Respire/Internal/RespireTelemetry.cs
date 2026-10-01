@@ -31,6 +31,29 @@ internal static class RespireTelemetry
         "respire.sentinel.generations.retired", () => SentinelRouter.RetiredGenerationCount, "{generation}",
         "Process-wide retired Sentinel generations still owned while commands, leases, or correction fences drain.");
 
+    public static readonly Counter<long> CredentialRefreshes = Meter.CreateCounter<long>(
+        "respire.authentication.refresh", "{attempt}", "Credential renewal outcomes, without credential material.");
+
+    internal static void RecordCredentialRefresh(string host, int port, bool? succeeded, string stage, ILogger? logger)
+    {
+        try
+        {
+            CredentialRefreshes.Add(1,
+                new KeyValuePair<string, object?>("server.address", host),
+                new KeyValuePair<string, object?>("server.port", port),
+                new KeyValuePair<string, object?>("respire.authentication.stage", stage),
+                new KeyValuePair<string, object?>("respire.authentication.outcome", succeeded switch { true => "success", false => "failure", null => "retry" }));
+        }
+        catch { /* Instrumentation must not change authentication or transport state. */ }
+        try
+        {
+            if (succeeded == false)
+                logger?.LogWarning(new EventId(4001, "CredentialRefreshFailed"),
+                    "Credential renewal failed at {Stage} for {Host}:{Port}", stage, host, port);
+        }
+        catch { /* User loggers must not terminate renewal. */ }
+    }
+
     public static readonly ObservableGauge<double> ThreadPoolSchedulingDelay = Meter.CreateObservableGauge(
         "respire.thread_pool.scheduling.delay", ThreadPoolMonitor.ObserveDelay, "s",
         "Latest process-wide probe scheduling delay; a lower bound while the probe is pending.");

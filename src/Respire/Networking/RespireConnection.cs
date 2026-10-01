@@ -200,6 +200,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         ValidateTcpKeepAlive(options);
 
+        options = await ResolveCredentialsAsync(host, port, options, cancellationToken).ConfigureAwait(false);
+
         if (options.TestingStreamFactory is not null)
             return await ConnectTestingStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
@@ -269,6 +271,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
+            connection.StartCredentialRefresh(options);
         }
         catch
         {
@@ -311,6 +314,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
+            connection.StartCredentialRefresh(options);
             return connection;
         }
         catch
@@ -425,6 +429,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var kind = ClassifyHelloError(message.AsSpan());
             if (kind != HelloErrorKind.Unsupported)
             {
+                // Provider-backed HELLO includes a secret; server text may echo it.
+                if (options.CredentialProvider is not null)
+                    throw new RespireAuthenticationException($"HELLO authentication failed for {Host}:{Port}.");
                 var hint = kind == HelloErrorKind.Other && message.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)
                     ? " If this endpoint does not support HELLO, explicitly set protocol=2."
                     : null;
@@ -507,7 +514,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     if (failure is null && reply.IsError)
                     {
-                        failure = CreateHandshakeException(in reply, step);
+                        // Provider credentials may be echoed by arbitrary proxy/server error codes.
+                        failure = options.CredentialProvider is not null && step is ("AUTH" or "HELLO")
+                            ? new RespireAuthenticationException($"Credential authentication failed for {Host}:{Port}.")
+                            : CreateHandshakeException(in reply, step);
                     }
                     else if (failure is null && step == "HELLO")
                     {
@@ -1232,10 +1242,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ThrowIfRetired();
                 if (_dead)
                 {
-                    throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    throw Volatile.Read(ref _abortReason)
+                        ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
                 }
 
-                if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                    || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
                 {
                     return false;
                 }
@@ -1305,10 +1317,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ThrowIfRetired();
             if (_dead)
             {
-                throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                throw Volatile.Read(ref _abortReason)
+                    ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             }
 
-            if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+            if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
             {
                 return false;
             }
@@ -1522,6 +1536,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         bool startedBatch;
         Task writeTask;
+        var deadline = _commandTimeoutMilliseconds == 0
+            ? 0
+            : Environment.TickCount64 + _commandTimeoutMilliseconds;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1532,7 +1549,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             ScheduleFlush(startedBatch: false);
-            await capacityAvailable.ConfigureAwait(false);
+            await WaitForCapacityAsync(capacityAvailable, deadline, commandName: null, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         ScheduleFlush(startedBatch);
@@ -2637,6 +2655,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void Abort(Exception? reason = null)
     {
+        _credentialSession?.RequestStop();
         _watchdogCancellation?.Cancel();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
@@ -2722,6 +2741,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
+        // Stop refresh deadlines and provider work while accepted transport frames drain.
+        _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
@@ -2787,6 +2808,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await _watchdogTask.ConfigureAwait(false);
             if (_deadlineSweepTask is not null)
                 await _deadlineSweepTask.ConfigureAwait(false);
+            if (_credentialSession is not null)
+                await _credentialSession.DisposeAsync().ConfigureAwait(false);
 
             lock (_writeGate)
             {
@@ -2878,6 +2901,13 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Password for AUTH (RESP2) or HELLO AUTH (RESP3). Null skips authentication.</summary>
     public string? Password { get; init; }
+
+    internal IRespireCredentialProvider? CredentialProvider { get; init; }
+    internal RespireCredentials? InitialCredentials { get; init; }
+    internal TimeSpan CredentialRefreshBeforeExpiry { get; init; } = TimeSpan.FromMinutes(5);
+    internal TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
+    internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
+    internal Func<int>? CredentialCacheInvalidation { get; init; }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }

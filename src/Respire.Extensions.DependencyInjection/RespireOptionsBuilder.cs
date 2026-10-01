@@ -44,6 +44,18 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.Password"/>
     public string? Password { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.CredentialProvider"/>
+    public IRespireCredentialProvider? CredentialProvider { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SentinelCredentialProvider"/>
+    public IRespireCredentialProvider? SentinelCredentialProvider { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.CredentialRefreshBeforeExpiry"/>
+    public TimeSpan CredentialRefreshBeforeExpiry { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <inheritdoc cref="RespireOptions.CredentialRefreshRetryDelay"/>
+    public TimeSpan CredentialRefreshRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
     /// <inheritdoc cref="RespireOptions.SentinelUsername"/>
     public string? SentinelUsername { get; set; }
 
@@ -146,6 +158,10 @@ public sealed class RespireOptionsBuilder
         SentinelPrimaryName = SentinelPrimaryName,
         Username = Username,
         Password = Password,
+        CredentialProvider = CredentialProvider,
+        SentinelCredentialProvider = SentinelCredentialProvider,
+        CredentialRefreshBeforeExpiry = CredentialRefreshBeforeExpiry,
+        CredentialRefreshRetryDelay = CredentialRefreshRetryDelay,
         SentinelUsername = SentinelUsername,
         SentinelPassword = SentinelPassword,
         SentinelUseTls = SentinelUseTls,

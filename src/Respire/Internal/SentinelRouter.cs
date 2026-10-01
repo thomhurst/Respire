@@ -325,7 +325,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             ConnectionOptions = options.ToConnectionOptions() with { Generation = this };
             RespirePushHandler? pushHandler = core.ClientCache is { } cache ? cache.HandlePush : null;
             var commandOptions = options.ToConnectionOptions(pushHandler,
-                enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true) with { Generation = this };
+                enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true) with
+            {
+                Generation = this,
+                CredentialCacheInvalidation = core.ClientCache is { } clientCache
+                    ? clientCache.FlushForContinuityLossWithoutMetrics
+                    : null,
+            };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
             Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged);
         }
