@@ -19,6 +19,8 @@ internal sealed partial class RespireConnection
     private int _maintenanceStatus;
     // One immutable reference, so a reader never pairs a notification with another's origin.
     private Respire.Infrastructure.MovingAnnouncement? _lastMovingAnnouncement;
+    // Raised on the receive loop after every applied notification; handlers must not block.
+    private event Action? MaintenanceStateChanged;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
     internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
@@ -104,6 +106,7 @@ internal sealed partial class RespireConnection
             MovingNotification?.Invoke(announcement);
         }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
+        MaintenanceStateChanged?.Invoke(); // Streamed SET timers recompute theirs too.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
         {
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))

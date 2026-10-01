@@ -1080,6 +1080,29 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task StreamedSetUploadRestoresNormalDeadlineWhenMaintenanceCompletes()
+    {
+        await using var server = Server();
+        // MaintenanceRelaxedTimeout is 5 s and the window lasts 10 s; completion must end both early.
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+        await Task.Delay(400);
+        await Assert.That(set.IsCompleted).IsFalse();
+
+        await server.SendRawAsync(Finish("MIGRATED", 1));
+        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+            .Throws<RespireTimeoutException>();
+        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [Test]
     public async Task FullRingWaitUsesRelaxedDeadlineAndNeverAdmitsExpiredWaiter()
     {
         await using var server = Server();

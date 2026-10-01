@@ -55,6 +55,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         private readonly long _deadline;
         private readonly CancellationTokenSource _source = new();
         private readonly Timer _timer;
+        private readonly Action? _maintenanceChanged;
         private int _disposed;
 
         internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
@@ -63,11 +64,25 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _deadline = deadline;
             _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
                 this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            if (connection._maintenanceOptions is not null) _maintenanceChanged = Recheck;
         }
 
         internal CancellationToken Token => _source.Token;
 
-        internal void Start() => Schedule();
+        internal void Start()
+        {
+            // A maintenance start or completion changes the effective deadline immediately.
+            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged += _maintenanceChanged;
+            Schedule();
+        }
+
+        // Runs on the receive loop: never cancel inline (that would run caller continuations
+        // there); fire the timer so Schedule recomputes the deadline on a pool thread.
+        private void Recheck()
+        {
+            try { _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
+        }
 
         private void Schedule()
         {
@@ -101,6 +116,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged -= _maintenanceChanged;
             _timer.Dispose();
             _source.Dispose();
         }
