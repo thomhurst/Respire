@@ -83,6 +83,25 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task StreamedSetSupportsCommandTimeoutsLongerThanTimerRange()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromDays(60),
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        using var source = new MemoryStream(new byte[] { 1, 2, 3 });
+
+        await Assert.That(await client.Strings.SetAsync("long-timeout", source, 3)).IsTrue();
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
+    }
+
+    [Test]
     public async Task EarlyEndOfStreamClosesConnectionBeforeAnotherFrameCanFollow()
     {
         await using var server = new CountingSetServer();
