@@ -840,6 +840,8 @@ public class ClusterNotificationRoutingTests
             JitterRatio = 0,
         });
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var gapPublished = new TaskCompletionSource<RespireSubscriptionGap>(TaskCreationOptions.RunContinuationsAsynchronously);
+        subscription.DeliveryGap += gap => gapPublished.TrySetResult(gap);
 
         Volatile.Write(ref reject, true);
         var index = server.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
@@ -847,6 +849,8 @@ public class ClusterNotificationRoutingTests
 
         // The subscription's only route was rejected, yet reconciliation must still retry it.
         await accepted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var gap = await gapPublished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(gap.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect);
         await Assert.That(subscription.Completion.IsCompleted).IsFalse();
     }
 

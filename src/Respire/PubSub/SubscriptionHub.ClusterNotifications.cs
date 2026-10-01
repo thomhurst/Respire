@@ -27,6 +27,7 @@ internal sealed partial class SubscriptionHub
     // Both dictionaries and node route tables use _gate. Never await while holding it.
     private readonly Dictionary<RespireEndpoint, ClusterNotificationNode> _notificationNodes = [];
     private readonly Dictionary<RespireSubscription, HashSet<RespireEndpoint>> _notificationCoverage = [];
+    private readonly Dictionary<RespireSubscription, DateTimeOffset> _notificationReplayRejectedAt = [];
     // Reconciliation failures per subscription, counted against the endpoint that failed.
     private readonly Dictionary<RespireSubscription, (RespireEndpoint? Endpoint, int Count)> _notificationReconciliationAttempts = [];
     private readonly HashSet<RespireEndpoint> _notificationDisconnectedEndpoints = [];
@@ -127,6 +128,7 @@ internal sealed partial class SubscriptionHub
     {
         _notificationCoverage.Remove(subscription);
         _notificationReconciliationAttempts.Remove(subscription);
+        _notificationReplayRejectedAt.Remove(subscription);
     }
 
     private async ValueTask RollbackNotificationActivationAsync(
@@ -305,7 +307,19 @@ internal sealed partial class SubscriptionHub
             // reconnect policy and ends only those subscriptions if the limit is reached.
             lock (_gate)
             {
-                foreach (var (kind, name) in rejected) node.Routes[(int)kind].Remove(name);
+                var interruptedAt = node.InterruptedAt ?? DateTimeOffset.UtcNow;
+                foreach (var (kind, name) in rejected)
+                {
+                    var routes = node.Routes[(int)kind];
+                    if (!routes.TryGetValue(name, out var consumers)) continue;
+                    foreach (var subscription in consumers)
+                    {
+                        if (!_notificationReplayRejectedAt.TryGetValue(subscription, out var started)
+                            || interruptedAt < started)
+                            _notificationReplayRejectedAt[subscription] = interruptedAt;
+                    }
+                    routes.Remove(name);
+                }
             }
             ScheduleNotificationReconciliation();
         }
@@ -556,6 +570,7 @@ internal sealed partial class SubscriptionHub
                     subscriptions.UnionWith(targets);
             foreach (var subscription in subscriptions)
             {
+                if (_notificationReplayRejectedAt.ContainsKey(subscription)) continue;
                 var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
                 if (subscription.Buffer.WriteGap(gap)) gaps.Add((subscription, gap));
             }
@@ -974,7 +989,22 @@ internal sealed partial class SubscriptionHub
             else if (subscription.Names.Where(Removable).ToArray() is { Length: > 0 } names)
                 await ReleaseNotificationRoutesAsync(node, subscription, names, removeCoverage: false).ConfigureAwait(false);
         }
+        PublishRejectedReplayGap(subscription);
         return true;
+    }
+
+    private void PublishRejectedReplayGap(RespireSubscription subscription)
+    {
+        RespireSubscriptionGap? gap = null;
+        lock (_gate)
+        {
+            if (!_notificationReplayRejectedAt.Remove(subscription, out var started)) return;
+            var ended = DateTimeOffset.UtcNow;
+            if (ended < started) ended = started;
+            var candidate = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
+            if (subscription.Buffer.WriteGap(candidate)) gap = candidate;
+        }
+        if (gap is { } published) subscription.NotifyGap(published);
     }
 
     // Topology reconciliation reached the reconnect policy's limit for a subscription. End
