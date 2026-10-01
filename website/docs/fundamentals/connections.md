@@ -125,7 +125,9 @@ worker. The worker moves only slots still owned by the advertised source and not
 `MOVED` redirect or discovery since the notification arrived. It ignores sequence IDs already seen
 on the same connection and publishes changed ownership through the normal topology event. When
 notifications from different connections arrive out of order (for example `B→C` before `A→B`),
-the later move waits in a small bounded list and applies once the earlier one has. If a
+the later move waits in a small bounded list and applies once the earlier one has, whichever
+notification arrived first. A waiting move is dropped after 30 seconds, or when a `MOVED` redirect
+or discovery reassigns its slots after it arrived. If a
 notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
 and topology discovery remain the fallback. Drops and other skipped notifications are counted
 in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).

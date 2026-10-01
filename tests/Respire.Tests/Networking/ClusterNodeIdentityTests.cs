@@ -307,6 +307,100 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task DeferredMigrationChainResolvesWhenItsFirstLinkArrives(bool receivedInChainOrder)
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        const int links = 64;
+        var endpoints = Enumerable.Range(0, links + 1).Select(i => new RespireEndpoint($"n{i}", 7000 + i)).ToArray();
+        var first = router.GetMultiplexer(endpoints[0]);
+        router.SetSlotOwner(0, first);
+        router.SetSlotOwner(1, first);
+
+        var order = receivedInChainOrder ? Enumerable.Range(0, links) : Enumerable.Range(0, links).Reverse();
+        var captured = new ClusterRouter.QueuedSmigratedNotification[links];
+        foreach (var i in order)
+            captured[i] = router.CaptureSmigratedNotification(first, new object(),
+                new("SMIGRATED", 1, Migrations: [new(endpoints[i], endpoints[i + 1], "0-1")]));
+
+        // Every link but the first waits; the full deferral list (63 entries) then resolves in
+        // one call when the first link applies.
+        for (var i = links - 1; i >= 1; i--) router.ApplySmigratedNotification(captured[i]);
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), first)).IsTrue();
+        router.ApplySmigratedNotification(captured[0]);
+
+        await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(7000 + links);
+        await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(7000 + links);
+    }
+
+    [Test]
+    public async Task DeferredMigrationExpiresWhenItsDependencyArrivesTooLate()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var now = 1_000L;
+        router.SmigratedClock = () => now;
+        var aEndpoint = new RespireEndpoint("a", 7000);
+        var bEndpoint = new RespireEndpoint("b", 7001);
+        var cEndpoint = new RespireEndpoint("c", 7002);
+        var a = router.GetMultiplexer(aEndpoint);
+        router.SetSlotOwner(0, a);
+        router.SetSlotOwner(1, a);
+
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+            new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")])));
+        now += 29_999;
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+            new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "1")])));
+        now += 1;
+        // The first B->C entry is now 30 seconds old and expires; the second still applies.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+            new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0-1")])));
+
+        await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(bEndpoint.Port);
+        await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(cEndpoint.Port);
+    }
+
+    [Test]
+    public async Task ResentSequenceIdIsIgnoredEvenAfterItsFirstCopyWasFenced()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var other = router.GetMultiplexer(new RespireEndpoint("other", 7002));
+        router.SetSlotOwner(0, source);
+        var connection = new object();
+
+        // The first copy is fenced by redirects made after it was received.
+        var fenced = router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
+        router.SetSlotOwner(0, other);
+        router.SetSlotOwner(0, source);
+        router.ApplySmigratedNotification(fenced);
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+
+        // A resend with the same ID on the same connection is a replay and is not re-evaluated,
+        // even though it would now apply.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 6, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+        await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(targetEndpoint.Port);
+    }
+
+    [Test]
     public async Task MalformedEntryDoesNotDiscardTheOtherEntries()
     {
         var options = Options(6379);

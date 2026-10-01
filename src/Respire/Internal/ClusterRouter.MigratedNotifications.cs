@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -13,6 +14,9 @@ internal sealed partial class ClusterRouter
     private const int SmigratedQueueCapacity = 128;
     private const int DeferredSmigratedMigrationLimit = 64;
     private const long SmigratedDropWarningIntervalMilliseconds = 30_000;
+    // A dependency normally arrives within milliseconds. An entry still waiting after this long
+    // is stale: applying it if its source later regains the slots would be wrong.
+    private const long DeferredSmigratedLifetimeMilliseconds = 30_000;
 
     // SequenceScope is the physical connection that received the push. Sequence IDs restart
     // with each connection, so deduplication never spans a reconnect, and items queued by an
@@ -39,16 +43,21 @@ internal sealed partial class ClusterRouter
 
     // A migration entry whose slots were not yet owned by its advertised source when it ran.
     // Receive loops on different connections can enqueue dependent notifications out of order
-    // (B->C before A->B). The entry is retried after later migrations apply, under its original
-    // fence token, so a MOVED, discovery change or newer migration still rejects it.
+    // (B->C before A->B). The entry is retried when a migration moves its slots to its source,
+    // under its original fence token, so a MOVED, discovery change or newer migration still
+    // rejects it. Entries expire after DeferredSmigratedLifetimeMilliseconds. Slots are sorted.
     private sealed class DeferredSmigratedMigration(
-        RespireEndpoint source, RespireEndpoint target, int[] slots, long token)
+        RespireEndpoint source, RespireEndpoint target, int[] slots, long token, long deferredAt)
     {
         internal readonly RespireEndpoint Source = source;
         internal readonly RespireEndpoint Target = target;
         internal readonly long Token = token;
+        internal readonly long DeferredAt = deferredAt;
         internal int[] Slots = slots;
     }
+
+    // A migration that just moved Slots (sorted ascending) to Target.
+    private readonly record struct AppliedSmigratedMove(RespireConnectionMultiplexer Target, int[] Slots);
 
     private readonly Channel<QueuedSmigratedNotification> _smigratedNotifications;
     private readonly Dictionary<RespireConnectionMultiplexer, MaintenanceNotificationHandler> _nodeMaintenanceHandlers = [];
@@ -57,6 +66,8 @@ internal sealed partial class ClusterRouter
     // Accessed only under _nodesGate. Oldest first; bounded by entry count and total slots.
     private readonly List<DeferredSmigratedMigration> _deferredSmigratedMigrations = [];
     private int _deferredSmigratedSlots;
+    // Test seam: the millisecond clock that ages deferred entries.
+    internal Func<long> SmigratedClock { get; set; } = static () => Environment.TickCount64;
     // Zero means the latest owner mutation was not SMIGRATED; otherwise this stores the
     // receive-time fence immediately before the dependent SMIGRATED chain began, plus one.
     private readonly long[] _smigratedSlotLineageStarts = new long[ClusterHash.SlotCount];
@@ -159,6 +170,10 @@ internal sealed partial class ClusterRouter
             try
             {
                 ApplySmigratedNotification(item);
+                // Fails if ApplySmigratedNotification or a callback ever resumes on another
+                // thread (an await crept in): disposal from that callback would then self-join.
+                Debug.Assert(ReferenceEquals(_smigratedWorkerContext, this),
+                    "ApplySmigratedNotification must stay synchronous to keep the worker marker.");
             }
             catch (Exception error)
             {
@@ -201,14 +216,21 @@ internal sealed partial class ClusterRouter
             // A notification may list several sources, and the server does not have to send it
             // from the source itself, so the sender is not checked against each source. Each
             // slot moves only if its advertised source owns it now.
+            ExpireDeferredMigrationsLocked(item.Sender);
+            Queue<AppliedSmigratedMove>? applied = null;
             foreach (var (migration, slots) in parsed)
             {
-                topologyChanged |= TryApplyMigrationLocked(
-                    migration.Source, migration.Target, slots, item.SlotMutationVersion, ref retiredNodes, out var waiting);
+                if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
+                        ref retiredNodes, out var waiting) is { } move)
+                {
+                    topologyChanged = true;
+                    (applied ??= new()).Enqueue(move);
+                }
                 if (waiting is not null)
-                    DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion), item.Sender);
+                    DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
+                        SmigratedClock()), item.Sender);
             }
-            if (topologyChanged) RetryDeferredMigrationsLocked(ref retiredNodes);
+            if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
 
             if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
         }
@@ -254,14 +276,14 @@ internal sealed partial class ClusterRouter
     }
 
     // Caller holds _nodesGate. Moves the slots that the advertised source owns now and that no
-    // later owner change has fenced. Returns true when any slot moved. waiting receives the
-    // unfenced slots that the source does not own yet (and the target does not already own),
-    // or null when there are none.
-    private bool TryApplyMigrationLocked(RespireEndpoint sourceEndpoint, RespireEndpoint targetEndpoint, int[] slots,
-        long token, ref List<RespireConnectionMultiplexer>? retiredNodes, out int[]? waiting)
+    // later owner change has fenced, and returns the move, or null when no slot moved. waiting
+    // receives the unfenced slots that the source does not own yet (and the target does not
+    // already own), in ascending order, or null when there are none.
+    private AppliedSmigratedMove? TryApplyMigrationLocked(RespireEndpoint sourceEndpoint, RespireEndpoint targetEndpoint,
+        int[] slots, long token, ref List<RespireConnectionMultiplexer>? retiredNodes, out int[]? waiting)
     {
         waiting = null;
-        if (ClusterNodeIdentityIndex.EndpointsEqual(sourceEndpoint, targetEndpoint)) return false;
+        if (ClusterNodeIdentityIndex.EndpointsEqual(sourceEndpoint, targetEndpoint)) return null;
         var source = _identities.TryGetExisting(sourceEndpoint, out var existingSource)
             && _identities.IsActive(existingSource) && !existingSource.IsRetired ? existingSource : null;
         var knownTarget = _identities.TryGetExisting(targetEndpoint, out var existingTarget) ? existingTarget : null;
@@ -287,13 +309,13 @@ internal sealed partial class ClusterRouter
             else if (owner is null || !ReferenceEquals(owner, knownTarget)) (pending ??= []).Add(slot);
         }
         waiting = pending?.ToArray();
-        if (movable is null) return false;
+        if (movable is null) return null;
 
         var target = _identities.GetOrCreate(targetEndpoint);
         if (ReferenceEquals(source, target) || target.IsRetired)
         {
             waiting = null;
-            return false;
+            return null;
         }
         ObserveNode(target);
 
@@ -314,7 +336,7 @@ internal sealed partial class ClusterRouter
         }
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count)) (retiredNodes ??= []).Add(source!);
-        return true;
+        return new AppliedSmigratedMove(target, [.. movable]);
     }
 
     private void DeferMigrationLocked(DeferredSmigratedMigration deferred, RespireConnectionMultiplexer sender)
@@ -330,25 +352,74 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    // Retries waiting entries after a migration applied, until a pass makes no progress. Each
-    // pass that progresses moves at least one deferred slot, and the list holds at most
-    // SlotCount slots, so passes are also capped by the entry limit.
-    private void RetryDeferredMigrationsLocked(ref List<RespireConnectionMultiplexer>? retiredNodes)
+    // Drops entries whose dependency has not arrived within DeferredSmigratedLifetimeMilliseconds.
+    // The list is oldest first, so expiry stops at the first entry that is still young.
+    private void ExpireDeferredMigrationsLocked(RespireConnectionMultiplexer sender)
     {
-        for (var pass = 0; pass < DeferredSmigratedMigrationLimit && _deferredSmigratedMigrations.Count > 0; pass++)
+        if (_deferredSmigratedMigrations.Count == 0) return;
+        var now = SmigratedClock();
+        var expired = 0;
+        while (expired < _deferredSmigratedMigrations.Count
+               && now - _deferredSmigratedMigrations[expired].DeferredAt >= DeferredSmigratedLifetimeMilliseconds)
+            _deferredSmigratedSlots -= _deferredSmigratedMigrations[expired++].Slots.Length;
+        if (expired == 0) return;
+        _deferredSmigratedMigrations.RemoveRange(0, expired);
+        RecordSmigratedSkipped("deferral_expired", sender, expired);
+    }
+
+    // Retries only the entries a move made runnable: those whose source is the node that just
+    // received some of their slots. Only an SMIGRATED move can unblock an entry, because MOVED,
+    // slot clears and discovery reset the slot's chain and fence it. Moves made here are queued
+    // in turn, so chains resolve in one call. Each retry removes slots from the list, so the
+    // work under _nodesGate is bounded by the list size rather than by repeated full passes.
+    private void RetryDependentMigrationsLocked(Queue<AppliedSmigratedMove> applied,
+        ref List<RespireConnectionMultiplexer>? retiredNodes)
+    {
+        while (_deferredSmigratedMigrations.Count > 0 && applied.TryDequeue(out var move))
         {
-            var progressed = false;
             for (var i = 0; i < _deferredSmigratedMigrations.Count; i++)
             {
                 var deferred = _deferredSmigratedMigrations[i];
-                progressed |= TryApplyMigrationLocked(
-                    deferred.Source, deferred.Target, deferred.Slots, deferred.Token, ref retiredNodes, out var waiting);
-                _deferredSmigratedSlots -= deferred.Slots.Length - (waiting?.Length ?? 0);
-                if (waiting is null) _deferredSmigratedMigrations.RemoveAt(i--);
-                else deferred.Slots = waiting;
+                if (!_identities.TryGetExisting(deferred.Source, out var source) || !ReferenceEquals(source, move.Target))
+                    continue;
+                var ready = SplitSortedSlots(deferred.Slots, move.Slots, out var remaining);
+                if (ready is null) continue;
+
+                if (TryApplyMigrationLocked(deferred.Source, deferred.Target, ready, deferred.Token,
+                        ref retiredNodes, out var waiting) is { } next)
+                    applied.Enqueue(next);
+                // Slots that another entry moved first keep waiting.
+                if (waiting is not null) remaining = MergeSortedSlots(remaining, waiting);
+                _deferredSmigratedSlots -= deferred.Slots.Length - remaining.Length;
+                if (remaining.Length == 0) _deferredSmigratedMigrations.RemoveAt(i--);
+                else deferred.Slots = remaining;
             }
-            if (!progressed) return;
         }
+    }
+
+    // Splits sorted slots into those also in sorted moved (returned, or null when none) and the rest.
+    private static int[]? SplitSortedSlots(int[] slots, int[] moved, out int[] rest)
+    {
+        List<int>? common = null;
+        var others = new List<int>(slots.Length);
+        var j = 0;
+        foreach (var slot in slots)
+        {
+            while (j < moved.Length && moved[j] < slot) j++;
+            if (j < moved.Length && moved[j] == slot) (common ??= []).Add(slot);
+            else others.Add(slot);
+        }
+        rest = common is null ? slots : [.. others];
+        return common?.ToArray();
+    }
+
+    private static int[] MergeSortedSlots(int[] first, int[] second)
+    {
+        var merged = new int[first.Length + second.Length];
+        first.CopyTo(merged, 0);
+        second.CopyTo(merged, first.Length);
+        Array.Sort(merged);
+        return merged;
     }
 
     // Parses "a-b,c,..." into distinct slots. Every range spends its full length from budget,
