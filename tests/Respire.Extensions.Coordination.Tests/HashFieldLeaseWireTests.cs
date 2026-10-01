@@ -359,6 +359,60 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task UncertainCleanupRechecksSentinelWhileOldPrimaryCorrectionIsPending()
+    {
+        await using var oldPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
+                : null,
+        };
+        await using var promotedPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
+                : null,
+        };
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${Volatile.Read(ref primaryPort).ToString().Length}\r\n{Volatile.Read(ref primaryPort)}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
+        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        oldPrimary.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
+
+        var cleanup = new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
+            "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!oldPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            await Task.Delay(5, timeout.Token);
+
+        Volatile.Write(ref primaryPort, promotedPrimary.Port);
+        var generation = client.Core.Sentinel!.Current!;
+        using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
+        generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(promotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(cleanup.IsCompleted).IsTrue();
+    }
+
+    [Test]
     public async Task BestEffortAcquireCleanupIsBoundedWhenRedisDoesNotReply()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray())

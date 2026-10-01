@@ -465,8 +465,38 @@ public sealed class RespireCoordination
 
             if (originalCorrection is not null)
             {
-                try { await originalCorrection.ConfigureAwait(false); }
-                catch (Exception error) { originalFailure ??= error; }
+                var probeDelay = TimeSpan.FromMilliseconds(100);
+                while (!originalCorrection.IsCompleted && !promotedGenerationCorrected)
+                {
+                    await Task.WhenAny(originalCorrection, Task.Delay(probeDelay)).ConfigureAwait(false);
+                    if (originalCorrection.IsCompleted) break;
+                    try
+                    {
+                        if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
+                        {
+                            await client.ExecuteOnAllConnectionsAsync(
+                                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+                            promotedGenerationCorrected = true;
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        originalFailure ??= error;
+                    }
+                    probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
+                }
+
+                if (promotedGenerationCorrected)
+                {
+                    // The owner-checked release completed on the current primary. The old
+                    // generation task may remain stuck; observe it without blocking cleanup.
+                    ObserveCorrectionFailure(originalCorrection);
+                }
+                else
+                {
+                    try { await originalCorrection.ConfigureAwait(false); }
+                    catch (Exception error) { originalFailure ??= error; }
+                }
             }
 
             try
