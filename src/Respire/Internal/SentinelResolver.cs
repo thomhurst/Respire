@@ -74,6 +74,7 @@ internal static class SentinelResolver
                         && preferredSentinel is { } reportingSentinel && SameEndpoint(endpoint, reportingSentinel)))
                     throw new RespireConnectionException(
                         $"Sentinel at {endpoint} still reports previous primary {rejected} after a switch event.");
+                discoveryCompleted = true;
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -126,6 +127,7 @@ internal static class SentinelResolver
                 lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                     && (ex is RespireTimeoutException || ContainsCancellation(ex));
                 lastError = lastErrorIsDiscoveryTimeout
+
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
