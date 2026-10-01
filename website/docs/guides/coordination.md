@@ -172,8 +172,9 @@ cleanup, the lease expires after its server-side duration. A reply arriving afte
 lease estimate elapses is not returned as acquired. Fenced-lock acquisitions retain their
 separate expiry behavior. There is no acquisition-owned keep-alive loop in this API; explicitly
 renew within a valid lease when needed. When renewal or release outcome is uncertain, the handle
-fails closed for its local estimate, but a later explicit renewal or release can ask Redis to
-settle ownership.
+fails closed for its local estimate. Renewal returns `false` while ownership is uncertain.
+A later owner-checked release can ask Redis to settle ownership. There is no acquisition-owned
+keep-alive loop in this API; explicitly renew within a valid lease when needed.
 
 ## Multi-node Redlock
 

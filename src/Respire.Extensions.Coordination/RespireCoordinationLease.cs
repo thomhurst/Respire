@@ -16,7 +16,6 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private int _state;
     private Task<LockReleaseOutcome>? _releaseTask;
     private int _releasePreviousState;
-    private int _uncertainOperationFenced;
 
     private const int StateHeld = 0;
     private const int StateReleasing = 1;
@@ -65,7 +64,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
         => _coordination.VerifyHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken);
 
-    /// <summary>Renews only this owner and preserves the hash field's independent expiry.</summary>
+    /// <summary>Renews only this owner and preserves the hash field's independent expiry; uncertain renewal fails closed.</summary>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
@@ -74,9 +73,9 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             var state = Volatile.Read(ref _state);
             if (state is StateReleasing or StateReleased or StateNotOwned) return false;
-            // An earlier timed-out renewal may still execute on Redis after this call returns.
-            // A completed queued release fences it; otherwise fail closed.
-            if (state == StateUncertain && Volatile.Read(ref _uncertainOperationFenced) == 0) return false;
+            // An earlier timed-out renewal may still execute on another Redis connection.
+            // Only a known-held lease can be renewed safely; uncertain state stays fail-closed.
+            if (state == StateUncertain) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
@@ -93,14 +92,16 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             }
             catch
             {
-                Volatile.Write(ref _uncertainOperationFenced, 0);
-                Volatile.Write(ref _state, StateUncertain);
+                lock (_releaseSync)
+                {
+                    if (_state == StateReleasing) _releasePreviousState = StateUncertain;
+                    else Volatile.Write(ref _state, StateUncertain);
+                }
                 throw;
             }
 
             var appliedTicks = checked(milliseconds * TimeSpan.TicksPerMillisecond);
             Volatile.Write(ref _snapshot, new LeaseSnapshot(appliedTicks, started));
-            Volatile.Write(ref _uncertainOperationFenced, 0);
             _ = Interlocked.CompareExchange(ref _state, StateHeld, StateUncertain);
             return true;
         }
@@ -110,7 +111,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases only this owner, leaving unrelated hash fields untouched.</summary>
+    /// <summary>Releases only this owner, leaving unrelated hash fields untouched. The shared operation has a two-second bound.</summary>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -140,11 +141,12 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            await _operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            await _operationGate.WaitAsync(deadline.Token).ConfigureAwait(false);
             entered = true;
-            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, CancellationToken.None)
+            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, deadline.Token)
                 .ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
@@ -155,19 +157,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             {
                 if (_state == StateReleasing)
                 {
-                    if (_releasePreviousState == StateUncertain)
-                    {
-                        // Redis replied to this later command on the same ordered connection.
-                        // The earlier renewal has settled, so a new owner-checked renewal is safe.
-                        Volatile.Write(ref _uncertainOperationFenced, 1);
-                    }
                     Volatile.Write(ref _state, _releasePreviousState);
-                }
-                else if (_state == StateUncertain)
-                {
-                    // Renewal can mark itself uncertain after release starts. The release
-                    // reply still follows that renewal on the same ordered connection.
-                    Volatile.Write(ref _uncertainOperationFenced, 1);
                 }
                 _releaseTask = null;
             }
@@ -177,7 +167,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateUncertain);
+                if (_state == StateReleasing) Volatile.Write(ref _state, StateUncertain);
                 _releaseTask = null;
             }
             throw;

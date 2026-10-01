@@ -130,10 +130,35 @@ public class HashFieldLeaseWireTests
         await Assert.That(async () => await release).Throws<RespireServerException>();
         await Assert.That(lease.IsReleased).IsTrue();
         await Assert.That(lease.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
-        await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(lease.IsReleased).IsFalse();
+        await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(lease.IsReleased).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            .IsEqualTo(4);
+            .IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task SharedReleaseIsBoundedWhenCommandTimeoutIsDisabled()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        await using var lease = await new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+        server.SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal);
+
+        var started = Stopwatch.GetTimestamp();
+        await Assert.That(async () => await lease.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(4)))
+            .Throws<OperationCanceledException>();
+
+        await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(4)).IsTrue();
+        await Assert.That(lease.IsReleased).IsTrue();
+        server.SuppressReply = null;
     }
 
     [Test]
