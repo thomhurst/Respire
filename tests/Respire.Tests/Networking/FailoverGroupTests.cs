@@ -216,6 +216,40 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task FailbackGraceUsesMonotonicTimeAcrossWallClockCorrections()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryUnavailable = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryUnavailable) != 0
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
+                : null;
+
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        var options = FastOptions() with { FailbackGracePeriod = TimeSpan.FromSeconds(5) };
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)], options, clock);
+        Volatile.Write(ref primaryUnavailable, 1);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
+
+        Volatile.Write(ref primaryUnavailable, 0);
+        var commandsBeforeWallClockJump = primary.CommandsSeen;
+        clock.AdvanceUtc(TimeSpan.FromDays(365));
+        await Task.Delay(50);
+        await Assert.That(primary.CommandsSeen).IsEqualTo(commandsBeforeWallClockJump);
+
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        await WaitUntilAsync(() => group.GetEndpointStatuses().Single(status => status.Endpoint == Endpoint(primary)).IsHealthy);
+        clock.AdvanceUtc(TimeSpan.FromDays(365));
+        await Task.Delay(50);
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(secondary));
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(primary));
+    }
+
+    [Test]
     public async Task EndpointSwitchedReportsDocumentedReasons()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
@@ -366,5 +400,18 @@ public class FailoverGroupTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!condition()) await Task.Delay(10, timeout.Token);
+    }
+
+    private sealed class ManualClock(DateTimeOffset utcNow) : TimeProvider
+    {
+        private long _timestamp;
+        private long _utcTicks = utcNow.UtcTicks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+        public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, duration.Ticks);
+        public void AdvanceUtc(TimeSpan duration) => Interlocked.Add(ref _utcTicks, duration.Ticks);
     }
 }
