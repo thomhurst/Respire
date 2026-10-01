@@ -44,9 +44,9 @@ internal static class SentinelResolver
             {
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
-            var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
-            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
-            var discoveryCompleted = false;
+            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
+                cancellationToken,
+                options.CommandTimeout ?? options.ConnectTimeout);
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -58,8 +58,6 @@ internal static class SentinelResolver
                         cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
-                discoveryCompleted = true;
-                discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -90,13 +88,9 @@ internal static class SentinelResolver
             catch (Exception ex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                lastError = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
-                    ? new RespireTimeoutException(
-                        "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
-                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
-                    : ex;
+                lastError = ex;
                 logger?.LogWarning(
-                    lastError,
+                    ex,
                     "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
@@ -108,7 +102,6 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (lastError is RespireTimeoutException timeoutError) throw timeoutError;
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
