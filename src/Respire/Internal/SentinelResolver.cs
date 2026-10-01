@@ -34,6 +34,7 @@ internal static class SentinelResolver
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
+        var lastErrorIsDiscoveryTimeout = false;
         var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
         for (var index = 0; index < sentinelEndpoints.Count; index++)
@@ -44,9 +45,9 @@ internal static class SentinelResolver
             {
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
-            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
-                cancellationToken,
-                options.CommandTimeout ?? options.ConnectTimeout);
+            var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
+            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
+            var discoveryCompleted = false;
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -58,6 +59,7 @@ internal static class SentinelResolver
                         cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
+                discoveryCompleted = true;
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -79,6 +81,8 @@ internal static class SentinelResolver
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, discoveryTimeoutSource.Token))
             {
+                // Preserve the upstream token identity for callers that distinguish their own
+                // deadline from Sentinel's candidate-discovery deadline.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -88,9 +92,17 @@ internal static class SentinelResolver
             catch (Exception ex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                lastError = ex;
+                // The discovery deadline usually equals the caller's command timeout. When it
+                // fires first, report the same timeout the caller's deadline would have raised.
+                lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
+                    && (ex is RespireTimeoutException || ContainsCancellation(ex));
+                lastError = lastErrorIsDiscoveryTimeout
+                    ? new RespireTimeoutException(
+                        "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+                    : ex;
                 logger?.LogWarning(
-                    ex,
+                    lastError,
                     "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
@@ -102,6 +114,7 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        if (lastErrorIsDiscoveryTimeout && lastError is RespireTimeoutException timeoutError) throw timeoutError;
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
@@ -113,6 +126,13 @@ internal static class SentinelResolver
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
         }
+    }
+
+    private static bool ContainsCancellation(Exception error)
+    {
+        for (Exception? cause = error; cause is not null; cause = cause.InnerException)
+            if (cause is OperationCanceledException) return true;
+        return false;
     }
 
     private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
@@ -153,6 +173,9 @@ internal static class SentinelResolver
             ClientName = null,
             Database = 0,
             Protocol = RespProtocol.Resp2,
+            // The discovery deadline already bounds GET-MASTER-ADDR-BY-NAME. A second
+            // command timer can win the same deadline and hide its timeout classification.
+            CommandTimeout = null,
             UseTls = options.SentinelUseTls ?? options.UseTls,
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
             PushHandler = null,

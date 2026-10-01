@@ -1901,6 +1901,25 @@ public class SentinelRoutingTests
         await Assert.That(primary.ReceivedCommands.Any(command => command is "CLIENT ID" or "MULTI")).IsFalse();
     }
 
+    [Test]
+    public async Task PrimaryRoleTimeoutKeepsSentinelConnectionFailureContext()
+    {
+        await using var primary = Primary();
+        primary.SuppressReply = command => command == "ROLE";
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(150),
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        var error = await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit))
+            .ThrowsExactly<RespireConnectionException>();
+
+        await Assert.That(error!.InnerException).IsNotNull();
+        await Assert.That(error.Message).Contains("Unable to discover and connect to Redis Sentinel service");
+    }
+
     private sealed class FenceClock : TimeProvider
     {
         internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
