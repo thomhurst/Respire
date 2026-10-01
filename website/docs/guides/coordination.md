@@ -234,6 +234,8 @@ if (await completed) Console.WriteLine("All workers finished");
 
 Other processes can join the current generation by key with
 `JoinCountdownLatchAsync("{batch:42}:latch")`. It returns `null` when no latch state exists.
+`ResetCountdownLatchAsync` is create-or-replace: when the key is missing or expired, it starts a
+new latch rather than failing.
 
 The caller chooses the key lifetime and cleanup policy. Keep the key until every participant
 has finished using its generation; deletion loses the current generation. A reset creates a
@@ -242,8 +244,9 @@ Client prefixes apply to the key, and binary keys are copied before asynchronous
 single-key scripts work in Cluster without cross-slot operations.
 
 Waiters subscribe before checking Redis, then re-read the authoritative generation and count
-after every notification. Pub/Sub is only a wake-up hint: reconnects or dropped messages do
-not decide completion. Cancellation stops that waiter's local subscription and does not
+after every notification and every few seconds without one. Pub/Sub is only a wake-up hint:
+a notification lost across a reconnect delays completion but does not block it. A waiter
+returns `false` when its generation was replaced or the key was deleted. Cancellation stops that waiter's local subscription and does not
 change the Redis count. A canceled signal may still have executed if Redis accepted it before
 the cancellation was observed; callers should treat that result as uncertain.
 

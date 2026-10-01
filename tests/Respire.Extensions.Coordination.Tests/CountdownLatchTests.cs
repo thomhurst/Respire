@@ -199,6 +199,47 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         await Assert.That(async () => await latch.WaitAsync()).Throws<RespireProtocolException>();
     }
 
+    [Test]
+    public async Task WaitResyncsWhenNotificationIsMissed()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var latch = await new RespireCoordination(admin).CreateCountdownLatchAsync(key, 1);
+        latch.ResyncInterval = TimeSpan.FromMilliseconds(100);
+        var waiting = latch.WaitAsync().AsTask();
+        // Completes the generation without publishing, as if the notification were lost.
+        (await admin.ExecuteAsync("HSET", key, "remaining", "0")).Dispose();
+
+        await Assert.That(await waiting.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+    }
+
+    [Test]
+    public async Task WaitReturnsFalseWhenKeyIsDeletedWithoutNotification()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var latch = await new RespireCoordination(admin).CreateCountdownLatchAsync(key, 1);
+        latch.ResyncInterval = TimeSpan.FromMilliseconds(100);
+        var waiting = latch.WaitAsync().AsTask();
+        (await admin.ExecuteAsync("DEL", key)).Dispose();
+
+        await Assert.That(await waiting.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+    }
+
+    [Test]
+    public async Task ChannelMismatchForCurrentGenerationIsRejected()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var latch = await new RespireCoordination(admin).CreateCountdownLatchAsync(key, 1);
+        (await admin.ExecuteAsync("HSET", key, "channel", "respire:latch:other")).Dispose();
+
+        await Assert.That(async () => await latch.WaitAsync()).Throws<RespireProtocolException>();
+        await Assert.That(async () => await latch.CountDownAsync()).Throws<RespireServerException>();
+        using var remaining = await admin.ExecuteAsync("HGET", key, "remaining");
+        await Assert.That(remaining.AsString()).IsEqualTo("1");
+    }
+
     private static ActivityListener SubscribeConfirmationListener(
         HashSet<int> ports, TaskCompletionSource confirmed)
     {
@@ -239,7 +280,7 @@ public class CountdownLatchCompatibilityTests
         const string generation = "0123456789abcdef0123456789abcdef";
         const string channel = "respire:latch:compat";
         var state = Encoding.ASCII.GetBytes(
-            $"*3\r\n$32\r\n{generation}\r\n$1\r\n1\r\n${channel.Length}\r\n{channel}\r\n");
+            $"*4\r\n$1\r\n1\r\n$32\r\n{generation}\r\n$1\r\n1\r\n${channel.Length}\r\n{channel}\r\n");
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal)

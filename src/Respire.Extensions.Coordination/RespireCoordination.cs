@@ -27,6 +27,9 @@ public sealed class RespireCoordination
 
     internal static readonly RespireScript CountDownLatch = RespireScript.Create("""
         if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then return '-1' end
+        if redis.call('HGET', KEYS[1], 'channel') ~= ARGV[2] then
+            return redis.error_reply('ERR latch channel does not match generation')
+        end
         local remaining = redis.call('HGET', KEYS[1], 'remaining')
         if not remaining or not string.match(remaining, '^%d+$')
             or (#remaining > 1 and string.sub(remaining, 1, 1) == '0') then
