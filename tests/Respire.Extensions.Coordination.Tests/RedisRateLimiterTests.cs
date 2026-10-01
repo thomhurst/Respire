@@ -202,10 +202,13 @@ public class RedisRateLimiterTests
         using var second = await limiter.AcquireAsync(1);
         await Assert.That(second.IsAcquired).IsTrue();
 
+        var deniedAt = (await client.Server.TimeAsync()).ToUnixTimeMilliseconds();
+        var expectedRetryMs = (firstSegment + 2) * segmentMs + 2L * segmentMs - deniedAt;
         using var denied = await limiter.AcquireAsync(2);
         await Assert.That(denied.IsAcquired).IsFalse();
         await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
-        await Assert.That(retry > TimeSpan.FromSeconds(5)).IsTrue();
+        var expectedRetry = TimeSpan.FromMilliseconds(expectedRetryMs);
+        await Assert.That((retry - expectedRetry).Duration() < TimeSpan.FromSeconds(1)).IsTrue();
     }
 
     [Test]
