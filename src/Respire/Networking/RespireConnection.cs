@@ -741,10 +741,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string? commandName = null)
+        string? commandName = null,
+        bool distinguishUnsubmittedCancellation = false)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
-            in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName);
+            in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
+            distinguishUnsubmittedCancellation: distinguishUnsubmittedCancellation);
 
     /// <summary>
     /// Sends a command through a typed in-flight source, avoiding intermediate async state
@@ -944,11 +946,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TPrefix prefix,
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string? commandName = null)
+        string? commandName = null,
+        bool distinguishUnsubmittedCancellation = false)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendPrefixedAsync(
-            in prefix, in command, throwOnError: true, cancellationToken, commandName);
+            in prefix, in command, throwOnError: true, cancellationToken, commandName,
+            distinguishUnsubmittedCancellation: distinguishUnsubmittedCancellation);
 
     internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(
         in TPrefix prefix,
@@ -956,7 +960,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool throwOnError,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        bool distinguishUnsubmittedCancellation = false)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -972,7 +977,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throwOnError,
             cancellationToken,
             commandName,
-            armCommandDeadline);
+            armCommandDeadline,
+            distinguishUnsubmittedCancellation);
     }
 
     /// <summary>
@@ -1075,7 +1081,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool throwOnError,
         CancellationToken cancellationToken,
         string? commandName = null,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        bool distinguishUnsubmittedCancellation = false)
         where TCommand : struct, IRespCommand
     {
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -1100,7 +1107,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return source.Task;
         }
 
-        return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, armCommandDeadline);
+        return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, armCommandDeadline,
+            distinguishUnsubmittedCancellation);
     }
 
     /// <summary>
@@ -1449,11 +1457,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         PendingResponseSource source,
         int discardRepliesBefore,
         CancellationToken cancellationToken,
-        bool armCommandDeadline)
+        bool armCommandDeadline,
+        bool distinguishUnsubmittedCancellation)
         where TCommand : struct, IRespCommand
     {
         var startedBatch = await WaitForInflightCapacityAsync(
-                command, source, discardRepliesBefore, cancellationToken, armCommandDeadline)
+                command, source, discardRepliesBefore, cancellationToken, armCommandDeadline,
+                distinguishUnsubmittedCancellation: distinguishUnsubmittedCancellation)
             .ConfigureAwait(false);
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
@@ -1570,7 +1580,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         CancellationToken cancellationToken,
         bool armCommandDeadline = true,
-        bool retainRepliesBefore = false)
+        bool retainRepliesBefore = false,
+        bool distinguishUnsubmittedCancellation = false)
         where TCommand : struct, IRespCommand
     {
         try
@@ -1597,6 +1608,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
+        }
+        catch (OperationCanceledException error) when (distinguishUnsubmittedCancellation)
+        {
+            ReclaimUnpublished(source, retainRepliesBefore ? discardRepliesBefore + 2 : 2);
+            throw new RespireCommandNotSubmittedException(error);
         }
         catch
         {

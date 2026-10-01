@@ -157,6 +157,15 @@ public sealed class RespireLock : IAsyncDisposable
 
     internal CancellationToken LeaseChanged => Volatile.Read(ref _leaseChanged).Token;
 
+    internal TimeSpan RemainingUntilLeaseExpiry
+    {
+        get
+        {
+            var remaining = Duration - Clock.GetElapsedTime(Interlocked.Read(ref _renewedTimestamp));
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+    }
+
     private async ValueTask<bool> ExtendCoreAsync(
         TimeSpan? expiry,
         bool signalLeaseChanged,
@@ -515,20 +524,35 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                 _lifetime.Token.ThrowIfCancellationRequested();
                 if (_lock.IsReleasing)
                 {
-                    // RemainingEstimate is zero while a release is pending, but a release cancelled
-                    // before submission restores ownership. Wait for its outcome instead.
+                    // A release can outlast the lease. Keep the caller's cancellation token
+                    // bounded by the last known lease deadline while waiting for its outcome.
+                    var releaseRemaining = _lock.RemainingUntilLeaseExpiry;
+                    if (releaseRemaining <= TimeSpan.Zero)
+                    {
+                        MarkOwnershipUncertain();
+                        return;
+                    }
+
                     using var releaseOutcome = CancellationTokenSource.CreateLinkedTokenSource(
                         _lifetime.Token, leaseChanged);
                     try
                     {
-                        await Task.Delay(Timeout.InfiniteTimeSpan, releaseOutcome.Token).ConfigureAwait(false);
+                        await DelayInChunksAsync(releaseRemaining, releaseOutcome.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (
                         leaseChanged.IsCancellationRequested && !_lifetime.IsCancellationRequested)
                     {
+                        continue;
                     }
 
-                    continue;
+                    _lifetime.Token.ThrowIfCancellationRequested();
+                    if (leaseChanged.IsCancellationRequested)
+                    {
+                        continue;
+                    }
+
+                    MarkOwnershipUncertain();
+                    return;
                 }
 
                 var remaining = _lock.RemainingEstimate;

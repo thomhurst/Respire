@@ -176,7 +176,8 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELEX", connection,
-                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking, cancellationToken)
+                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking,
+                            cancellationToken, distinguishUnsubmittedCancellation: true)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELEX"))
@@ -190,7 +191,8 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELIFEQ", connection,
-                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking, cancellationToken)
+                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking,
+                            cancellationToken, distinguishUnsubmittedCancellation: true)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELIFEQ"))
@@ -205,24 +207,27 @@ public sealed partial class RespireClient
         try
         {
             return await SendLockIntegerAsync(script.EvalShaOperation, connection,
-                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking, cancellationToken, script.Sha1)
+                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking,
+                    cancellationToken, script.Sha1, milliseconds is null)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
             return await SendLockIntegerAsync(script.EvalOperation, connection,
-                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking, cancellationToken, script.Sha1)
+                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking,
+                    cancellationToken, script.Sha1, milliseconds is null)
                 .ConfigureAwait(false);
         }
     }
 
     private async ValueTask<bool> SendLockIntegerAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, bool sendAsking,
-        CancellationToken cancellationToken, string? storedProcedureName = null)
+        CancellationToken cancellationToken, string? storedProcedureName = null,
+        bool distinguishUnsubmittedCancellation = false)
         where TCommand : struct, IRespCommand
     {
         var reply = await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-                storedProcedureName, sendAsking)
+                storedProcedureName, sendAsking, distinguishUnsubmittedCancellation)
             .ConfigureAwait(false);
         try { return reply.AsInteger() >= 1; }
         finally { reply.Dispose(); }

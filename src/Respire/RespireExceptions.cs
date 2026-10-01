@@ -237,3 +237,6 @@ public sealed class RespireTimeoutException : RespireException
                : "The command may still execute on the server; only the wait was abandoned. ") +
            diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
 }
+
+internal sealed class RespireCommandNotSubmittedException(OperationCanceledException error)
+    : OperationCanceledException(error.Message, error, error.CancellationToken);

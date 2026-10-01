@@ -316,7 +316,8 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         {
             return await execution.Response.ConfigureAwait(false);
         }
-        catch (Exception error) when (error is not RespireServerException)
+        catch (Exception error) when (
+            error is not RespireServerException and not RespireCommandNotSubmittedException)
         {
             // The delete may have reached Redis. Report that before fencing so ownership loss is
             // visible while the fence waits for its control connection.
