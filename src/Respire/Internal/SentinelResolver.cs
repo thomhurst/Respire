@@ -60,6 +60,7 @@ internal static class SentinelResolver
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
+                discoveryTimeoutSource.Dispose();
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -75,7 +76,9 @@ internal static class SentinelResolver
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                     error, cancellationToken, connectTimeoutSource.Token))
                 {
-                    throw new OperationCanceledException(error.Message, error, cancellationToken);
+                    throw new RespireTimeoutException(
+                        "CONNECT", options.ConnectTimeout, error,
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
                 }
             }
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
