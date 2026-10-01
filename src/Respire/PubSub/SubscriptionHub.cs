@@ -36,6 +36,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespProtocol.Resp3)
             throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
         ArgumentNullException.ThrowIfNull(names);
+        if (core.Cluster is not null && names.Any(static name => name.IsNotification)
+            && names.Any(static name => !name.IsNotification))
+            throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(names));
         foreach (var name in names)
         {
             if (!name.IsNotification || core.Cluster is null) continue;

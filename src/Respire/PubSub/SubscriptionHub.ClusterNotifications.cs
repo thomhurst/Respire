@@ -277,8 +277,15 @@ internal sealed partial class SubscriptionHub
             var nextDelay = policy?.GetDelay(attempt) ?? delay;
             try
             {
-                RespireTelemetry.RecordReconnectAttempt(node.Endpoint.Host, node.Endpoint.Port,
-                    attempt, nextDelay, RespireReconnectSource.PubSub);
+                try
+                {
+                    RespireTelemetry.RecordReconnectAttempt(node.Endpoint.Host, node.Endpoint.Port,
+                        attempt, nextDelay, RespireReconnectSource.PubSub);
+                }
+                catch (Exception telemetryError)
+                {
+                    core.Logger?.LogWarning(telemetryError, "Cluster notification reconnect telemetry listener threw");
+                }
                 core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                     node.Endpoint, RespireConnectionState.Reconnecting, connection.CloseError)
                 {
@@ -316,6 +323,7 @@ internal sealed partial class SubscriptionHub
         RespireSubscription[] subscriptions;
         List<RespireConnection> close = [];
         List<(RespireConnection Connection, SubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
+        List<RespireEndpoint> collateralEndpoints = [];
         await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
         try
         {
@@ -358,6 +366,7 @@ internal sealed partial class SubscriptionHub
                         other.Retired = true;
                         Interlocked.Increment(ref other.Epoch);
                         _notificationNodes.Remove(other.Endpoint);
+                        collateralEndpoints.Add(other.Endpoint);
                         if (other.Connection is { } otherConnection) close.Add(otherConnection);
                     }
                 }
@@ -370,6 +379,15 @@ internal sealed partial class SubscriptionHub
             ReconnectAttempt = attempt,
             ReconnectExhausted = true,
         });
+        foreach (var endpoint in collateralEndpoints)
+            core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
+                endpoint, RespireConnectionState.Connected, null));
+        try { RespireTelemetry.RecordReconnectExhaustion(
+            node.Endpoint.Host, node.Endpoint.Port, RespireReconnectSource.PubSub); }
+        catch (Exception telemetryError)
+        {
+            core.Logger?.LogWarning(telemetryError, "Cluster notification reconnect exhaustion telemetry listener threw");
+        }
         foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
         foreach (var (connection, kind, name) in unsubscribe)
         {
@@ -564,6 +582,14 @@ internal sealed partial class SubscriptionHub
                                         if (routes.TryGetValue(name, out var consumers) && consumers.Remove(subscription)
                                             && consumers.Count == 0)
                                             routes.Remove(name);
+                                    }
+                                    // The command may have reached Redis before its reply timed
+                                    // out. Retire this socket so local and server route state cannot diverge.
+                                    try { await node.Connection!.DisposeAsync().ConfigureAwait(false); }
+                                    catch (Exception disposeError)
+                                    {
+                                        core.Logger?.LogDebug(disposeError,
+                                            "Closing a cluster notification connection after a failed subscribe failed");
                                     }
                                     throw;
                                 }

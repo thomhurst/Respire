@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -222,6 +223,20 @@ public class ClusterNotificationRoutingTests
     [Test]
     public async Task OnePrimaryReconnectsWithoutStoppingHealthyPrimaryDelivery()
     {
+        using var telemetryListener = new MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Name == "respire.connection.reconnect.attempt")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        telemetryListener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
+                throw new InvalidOperationException("Injected reconnect telemetry failure.");
+        });
+        telemetryListener.Start();
         await using var first = new FakeRespServer(20);
         await using var second = new FakeRespServer(20);
         await using var third = new FakeRespServer(20);
@@ -236,7 +251,13 @@ public class ClusterNotificationRoutingTests
                 && Interlocked.Increment(ref thirdSubscribeCount) == 2)
                 reconnectSubscribed.TrySetResult();
         });
-        await using var client = CreateClusterClient(first.Port, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false, reconnectPolicy: new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(1),
+            MaxDelay = TimeSpan.FromMilliseconds(1),
+            JitterRatio = 0,
+            MaxAttempts = 1,
+        });
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var initialIndex = third.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
@@ -269,6 +290,21 @@ public class ClusterNotificationRoutingTests
     [Test]
     public async Task ClusterNotificationRecoveryHonorsReconnectAttemptLimit()
     {
+        var exhaustionMeasurements = 0;
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Name == "respire.connection.reconnect.exhausted")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+        {
+            if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
+                Interlocked.Increment(ref exhaustionMeasurements);
+        });
+        listener.Start();
         await using var server = new FakeRespServer(20);
         Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
         await using var client = RespireClient.Create(new RespireOptions
@@ -293,6 +329,7 @@ public class ClusterNotificationRoutingTests
 
         await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(5)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await Assert.That(Volatile.Read(ref exhaustionMeasurements)).IsEqualTo(1);
     }
 
     [Test]
@@ -423,12 +460,14 @@ public class ClusterNotificationRoutingTests
     private static byte[] SinglePrimaryTopology(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
 
-    private static RespireClient CreateClusterClient(int port, bool resp3)
+    private static RespireClient CreateClusterClient(
+        int port, bool resp3, RespireReconnectPolicy? reconnectPolicy = null)
         => RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
             Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2,
             Connections = 1,
+            ReconnectPolicy = reconnectPolicy,
             Endpoints = [new("127.0.0.1", port)],
         });
 
