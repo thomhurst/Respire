@@ -39,6 +39,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly DedicatedConnectionPool _dedicatedPool;
     public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
     internal readonly SentinelRouter? Sentinel;
+    internal readonly ReadEndpointRouter ReadRouter;
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
@@ -62,6 +63,7 @@ internal sealed class ClientCore : IAsyncDisposable
         };
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
+        ReadRouter = new ReadEndpointRouter(this);
         _dedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
         Cluster = options.UseCluster
@@ -478,6 +480,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
+        await ReadRouter.DisposeAsync().ConfigureAwait(false);
         await _dedicatedPool.DisposeAsync().ConfigureAwait(false);
         if (Cluster is { } cluster)
         {

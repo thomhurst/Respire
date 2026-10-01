@@ -33,6 +33,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    internal async ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(CancellationToken cancellationToken)
+    {
+        await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+        return await SentinelResolver.DiscoverReplicaEndpointsAsync(
+            core.Options, _discovery.Snapshot(), cancellationToken).ConfigureAwait(false);
+    }
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
 
     internal sealed class CorrectionLease(SentinelRouter owner, DedicatedConnectionPool pool) : IAsyncDisposable

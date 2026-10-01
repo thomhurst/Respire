@@ -171,6 +171,47 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         };
     }
 
+    /// <summary>Stops one data node in an owned Sentinel fixture.</summary>
+    public async Task StopDataNodeAsync(int index, CancellationToken cancellationToken = default)
+    {
+        ValidateSentinelDataNode(index);
+        var port = _ports[index];
+        _ = await _container.ExecAsync([_cli, "-p", Number(port), "SHUTDOWN", "NOSAVE"], cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            var ping = await _container.ExecAsync([_cli, "-p", Number(port), "PING"], deadline.Token).ConfigureAwait(false);
+            if (ping.ExitCode != 0 || ping.Stdout.Trim() != "PONG") return;
+            await Task.Delay(50, deadline.Token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Restarts one stopped data node in an owned Sentinel fixture.</summary>
+    public async Task StartDataNodeAsync(int index, CancellationToken cancellationToken = default)
+    {
+        ValidateSentinelDataNode(index);
+        await ExecuteAsync([_server, $"/tmp/respire-fixture/{index}.conf"], cancellationToken).ConfigureAwait(false);
+        await WaitForAsync(_ports[index], ["PING"], text => text.Trim() == "PONG", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Waits until one Sentinel data node reports itself as a replica.</summary>
+    public async Task WaitForDataNodeReplicaAsync(int index, CancellationToken cancellationToken = default)
+    {
+        ValidateSentinelDataNode(index);
+        await WaitForAsync(_ports[index], ["INFO", "replication"],
+            text => text.Contains("role:slave", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+    }
+
+    private void ValidateSentinelDataNode(int index)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (_options.Topology != RespireContainerTopology.Sentinel)
+            throw new InvalidOperationException("Data-node controls require a Sentinel fixture.");
+        if ((uint)index >= (uint)DataEndpoints.Count) throw new ArgumentOutOfRangeException(nameof(index));
+    }
+
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
         // Container startup does not await entrypoint shell commands. Keep directory

@@ -329,4 +329,7 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
+
+    /// <summary>Creates a view with a different read routing policy.</summary>
+    IRespireClient WithReadFrom(RespireReadFrom readFrom);
 }

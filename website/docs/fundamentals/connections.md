@@ -417,6 +417,24 @@ This is reactive discovery. Sentinel event subscriptions and the real-server fai
 remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
 monitor proactively moves an otherwise healthy connection before a failure is observed.
 
+## Read from replicas
+
+Set `RespireOptions.ReplicaEndpoints` for a standalone primary/replica deployment. Sentinel
+clients discover replica endpoints with `SENTINEL REPLICAS`. Respire validates each candidate
+with `ROLE` before sending reads to it. Existing multi-endpoint standalone configuration keeps
+its current validation and connection-time fallback behavior.
+
+`RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
+it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
+them read-only. Caller-defined commands, writes, blocking operations, subscriptions, batches, and
+transactions stay on the primary. `Replica` fails when no validated replica is available.
+`PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
+uses the primary when replica selection fails. Respire never retries a command after sending it.
+
+Replica reads can be stale and do not provide read-your-writes consistency. Read views bypass
+client-side cache reads to avoid mixing primary-tracked cache entries with replica data. Cluster
+replica reads are not supported yet.
+
 ## Cancellation and timeouts
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.

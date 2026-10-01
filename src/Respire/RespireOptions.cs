@@ -115,6 +115,12 @@ public sealed record RespireOptions
     /// </summary>
     public IList<RespireEndpoint> Endpoints { get; init; } = [];
 
+    /// <summary>Explicit read replicas for standalone primary/replica deployments. Sentinel ignores this list.</summary>
+    public IList<RespireEndpoint> ReplicaEndpoints { get; init; } = [];
+
+    /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
+    public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
+
     /// <summary>
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
     /// learned hash slots are routed directly on later commands.
@@ -313,9 +319,22 @@ public sealed record RespireOptions
         {
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
+        if (ReplicaEndpoints is null)
+            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints cannot be null.");
 
         if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
+
+        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, or ReplicaPreferred");
+        if (ReadFrom != RespireReadFrom.Primary && UseCluster)
+            throw new RespireConfigurationException("RespireOptions.ReadFrom is not supported with Redis Cluster yet.");
+        if (UseCluster && ReplicaEndpoints.Count != 0)
+            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Redis Cluster discovers its own topology.");
+        if (ReadFrom != RespireReadFrom.Primary && string.IsNullOrWhiteSpace(SentinelPrimaryName)
+            && ReplicaEndpoints.Count == 0)
+            throw new RespireConfigurationException("RespireOptions.ReadFrom requires Sentinel discovery or at least one ReplicaEndpoints entry.");
+        if (!string.IsNullOrWhiteSpace(SentinelPrimaryName) && ReplicaEndpoints.Count != 0)
+            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Sentinel discovers replicas automatically.");
 
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
@@ -406,9 +425,16 @@ public sealed record RespireOptions
             }
         }
 
+        foreach (var endpoint in ReplicaEndpoints)
+        {
+            if (endpoint.Port is < 1 or > 65535)
+                throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
+        }
+
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
+            ReplicaEndpoints = new List<RespireEndpoint>(ReplicaEndpoints),
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };

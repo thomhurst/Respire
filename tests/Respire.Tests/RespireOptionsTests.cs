@@ -7,6 +7,29 @@ namespace Respire.Tests;
 public class RespireOptionsTests
 {
     [Test]
+    public async Task ReadRoutingRequiresReplicaTopologyAndKeepsStandaloneEndpointRules()
+    {
+        await Assert.That(() => RespireClient.Create(ValidOptions() with { ReadFrom = RespireReadFrom.Replica }))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(() => RespireClient.Create(ValidOptions() with
+        {
+            UseCluster = true,
+            ReadFrom = RespireReadFrom.Replica,
+        })).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(() => RespireClient.Create(ValidOptions() with
+        {
+            Endpoints = [new("primary"), new("replica")],
+        })).ThrowsExactly<RespireConfigurationException>();
+
+        await using var client = RespireClient.Create(ValidOptions() with
+        {
+            ReplicaEndpoints = [new("replica")],
+            ReadFrom = RespireReadFrom.Replica,
+        });
+        await Assert.That(client.WithReadFrom(RespireReadFrom.Primary)).IsNotNull();
+    }
+
+    [Test]
     public async Task StructuredOptionsRejectClusterAndSentinelBeforeConnecting()
     {
         var options = ValidOptions() with { UseCluster = true, SentinelPrimaryName = "mymaster" };

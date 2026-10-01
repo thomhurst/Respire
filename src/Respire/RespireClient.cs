@@ -23,13 +23,15 @@ public sealed partial class RespireClient : IRespireClient
     private readonly byte[]? _keyPrefixBytes;
     private readonly bool _ownsCore;
     private readonly bool _broadcastTracking;
+    private readonly RespireReadFrom _readFrom;
 
-    private RespireClient(ClientCore core, string? keyPrefix, bool ownsCore)
+    private RespireClient(ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null)
     {
         _core = core;
         _keyPrefix = keyPrefix;
         _keyPrefixBytes = keyPrefix is null ? null : System.Text.Encoding.UTF8.GetBytes(keyPrefix);
         _ownsCore = ownsCore;
+        _readFrom = readFrom ?? core.Options.ReadFrom;
         _broadcastTracking = core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast;
         Strings = new StringCommands(this);
         Keys = new KeyCommands(this);
@@ -244,7 +246,20 @@ public sealed partial class RespireClient : IRespireClient
     public IRespireClient WithKeyPrefix(string prefix)
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
-        return new RespireClient(_core, _keyPrefix is null ? prefix : _keyPrefix + prefix, ownsCore: false);
+        return new RespireClient(_core, _keyPrefix is null ? prefix : _keyPrefix + prefix,
+            ownsCore: false, readFrom: _readFrom);
+    }
+
+    /// <summary>Creates a view that routes eligible read-only commands using <paramref name="readFrom"/>.</summary>
+    public IRespireClient WithReadFrom(RespireReadFrom readFrom)
+    {
+        if (!Enum.IsDefined(readFrom)) throw new ArgumentOutOfRangeException(nameof(readFrom));
+        if (readFrom != RespireReadFrom.Primary && _core.Options.UseCluster)
+            throw new NotSupportedException("Replica read routing is not supported with Redis Cluster yet.");
+        if (readFrom != RespireReadFrom.Primary && _core.Options.ReplicaEndpoints.Count == 0
+            && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
+            throw new InvalidOperationException("Replica read routing requires Sentinel discovery or configured ReplicaEndpoints.");
+        return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: readFrom);
     }
 
     /// <summary>Sends PING and returns the measured round-trip time. Redis: PING.</summary>
@@ -1443,6 +1458,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         var cache = _core.ClientCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
+        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains("GET"))
+            return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
         if (cache is null)
         {
             return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
@@ -1464,6 +1481,25 @@ public sealed partial class RespireClient : IRespireClient
         bool keysResolved = false)
     {
         var cache = _core.ClientCache;
+        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains("MGET"))
+        {
+            var arguments = new RespireValue[keys.Length];
+            int? clusterSlot = null;
+            for (var i = 0; i < keys.Length; i++)
+            {
+                var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
+                arguments[i] = resolvedKey.AsValue();
+                ValidateMGetClusterSlot(in resolvedKey, ref clusterSlot);
+            }
+            return ConvertResponseAsync("MGET", new CmdN(Verbs.MGet, arguments), cancellationToken, this,
+                (RespireClient client, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    var converted = new TResult[values.Length];
+                    for (var i = 0; i < values.Length; i++) converted[i] = converter(client, in values[i]);
+                    return converted;
+                });
+        }
         if (keys.Length == 0)
         {
             return ConvertResponseAsync(
@@ -2034,7 +2070,8 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        if (flags == RespireCommandFlags.None
+        var routeRead = _readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains(operation);
+        if (!routeRead && flags == RespireCommandFlags.None
             && cache is not null
             && cache.TryCreateQuery(operation, in command, out var query))
         {
@@ -2063,7 +2100,11 @@ public sealed partial class RespireClient : IRespireClient
 
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         ValueTask<RespValue> response;
-        if (core.Cluster is { } cluster)
+        if (routeRead)
+        {
+            response = SendReadFromAsync(operation, command, cancellationToken);
+        }
+        else if (core.Cluster is { } cluster)
         {
             response = SendClusterAsync(
                 operation,
@@ -2085,6 +2126,14 @@ public sealed partial class RespireClient : IRespireClient
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
             : response;
+    }
+
+    private async ValueTask<RespValue> SendReadFromAsync<TCommand>(
+        string operation, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
     }
 
 #if NET
@@ -4141,6 +4190,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
+            && (_readFrom == RespireReadFrom.Primary || !ReadOnlyCommandCatalog.Contains(operation))
             && core.Cluster is null
             && core.Sentinel is null
             && core.Multiplexer.IsInitialized

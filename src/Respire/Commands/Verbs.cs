@@ -257,6 +257,7 @@ internal static class Verbs
 
     // Sentinel
     public static readonly Verb SentinelGetMasterAddressByName = new(-1, "SENTINEL", "GET-MASTER-ADDR-BY-NAME");
+    public static readonly Verb SentinelReplicas = new(-1, "SENTINEL", "REPLICAS");
 
     // Pub/sub
     public static readonly Verb Publish = new("PUBLISH");

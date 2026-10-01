@@ -9,6 +9,58 @@ namespace Respire.Internal;
 internal static class SentinelResolver
 {
     private static readonly Verb SentinelPeers = new(-1, "SENTINEL", "SENTINELS");
+
+    internal static async ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(
+        RespireOptions options, IEnumerable<RespireEndpoint> sentinels, CancellationToken cancellationToken)
+    {
+        var discovered = new HashSet<RespireEndpoint>();
+        var connectionOptions = CreateSentinelConnectionOptions(options);
+        var logger = options.CreateLogger("Respire.Sentinel");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
+        foreach (var sentinel in sentinels)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await using var connection = await RespireConnection.ConnectAsync(
+                    sentinel.Host, sentinel.Port, connectionOptions, logger, deadline.Token).ConfigureAwait(false);
+                using var reply = await connection.SendAsync(
+                    new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
+                if (reply.IsError || reply.Type != RespDataType.Array) continue;
+                foreach (ref readonly var row in reply.AsArray())
+                {
+                    if (row.Type != RespDataType.Array) continue;
+                    var fields = row.AsArray();
+                    if (fields.Length % 2 != 0) continue;
+                    string? host = null, port = null, flags = null;
+                    for (var index = 0; index < fields.Length; index += 2)
+                    {
+                        if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
+                            || fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) continue;
+                        switch (fields[index].AsString())
+                        {
+                            case "ip": host = fields[index + 1].AsString(); break;
+                            case "port": port = fields[index + 1].AsString(); break;
+                            case "flags": flags = fields[index + 1].AsString(); break;
+                        }
+                    }
+                    if (flags is not null && (flags.Contains("s_down", StringComparison.Ordinal)
+                        || flags.Contains("o_down", StringComparison.Ordinal)
+                        || flags.Contains("disconnected", StringComparison.Ordinal))) continue;
+                    if (TryParseEndpoint(host, port, out var endpoint)) discovered.Add(endpoint);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { break; }
+            catch (Exception error)
+            {
+                try { logger?.LogDebug(error, "Optional Sentinel replica discovery failed at {Endpoint}", sentinel); }
+                catch (Exception) { }
+            }
+        }
+        return discovered.ToArray();
+    }
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
