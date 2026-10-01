@@ -486,6 +486,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate)
             {
                 if (_disposed) return;
+                _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
                 var current = Current;
                 // Do not apply an old resolution to a later generation for the same endpoint:
                 // a failback can legitimately publish that address again. A changed endpoint
@@ -693,8 +694,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         if (current is not { IsRetired: false }) return false;
         if (hint.OldPrimary is { } oldPrimary && IsCurrentPeer(current, oldPrimary, hint.OldPrimaryAddresses)) return true;
         if (hint.AdditionalOldPrimaries is { } additional)
-            foreach (var endpoint in additional)
-                if (IsCurrentPeer(current, endpoint, addresses: null)) return true;
+        {
+            for (var i = 0; i < additional.Length; i++)
+            {
+                var addresses = hint.AdditionalOldPrimaryAddresses is { } allAddresses && i < allAddresses.Length
+                    ? allAddresses[i]
+                    : null;
+                if (IsCurrentPeer(current, additional[i], addresses)) return true;
+            }
+        }
         return false;
     }
 

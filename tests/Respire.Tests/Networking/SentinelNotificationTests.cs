@@ -153,7 +153,35 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task CoalescedFailbackKeepsEveryAnnouncedTargetAliveDuringRediscovery()
+    public async Task PendingSwitchRetainsSourceAddressesResolvedBeforeItBecomesActive()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-c", new("10.0.0.3", 6381), NewPrimary), targetIsCurrent: false);
+
+        coalescer.RetainResolvedOldPrimaryAddresses(NewPrimary, ["192.0.2.2"]);
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        var pending = coalescer.TakePending();
+
+        await Assert.That(pending!.Value.AdditionalOldPrimaries).Contains(NewPrimary);
+        await Assert.That(pending.Value.AdditionalOldPrimaryAddresses![0]).IsEquivalentTo(["192.0.2.2"]);
+    }
+
+    [Test]
+    public async Task LaterSwitchRemovesEarlierTargetWhenItBecomesAFormerPrimary()
+    {
+        var c = new RespireEndpoint("10.0.0.3", 6381);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary), targetIsCurrent: false);
+
+        await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(c);
+        await Assert.That(coalescer.Pending!.Value.AdditionalTargets).IsNull();
+    }
+
+    [Test]
+    public async Task CoalescedFailbackDropsSupersededPrimaryFromAnnouncedTargets()
     {
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
@@ -162,8 +190,8 @@ public class SentinelNotificationTests
         coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary), targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
-        await Assert.That(coalescer.Pending!.Value.AdditionalTargets!).Contains(NewPrimary);
         await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(a);
+        await Assert.That(coalescer.Pending!.Value.AdditionalTargets).IsNull();
     }
 
     [Test]

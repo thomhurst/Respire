@@ -12,6 +12,7 @@ namespace Respire.Internal;
 /// </param>
 /// <param name="OldPrimaryAddresses">Resolved addresses of a hostname <paramref name="OldPrimary"/>, if any.</param>
 /// <param name="AdditionalOldPrimaries">Other switch sources retained while pending hints merge.</param>
+/// <param name="AdditionalOldPrimaryAddresses">Resolved addresses aligned with <paramref name="AdditionalOldPrimaries"/>.</param>
 /// <param name="AdditionalTargets">Other announced targets retained while pending hints merge.</param>
 /// <param name="ReportingSentinel">The Sentinel that delivered the switch hint.</param>
 internal readonly record struct SentinelHint(
@@ -22,7 +23,8 @@ internal readonly record struct SentinelHint(
     string[]? OldPrimaryAddresses = null,
     RespireEndpoint[]? AdditionalOldPrimaries = null,
     RespireEndpoint? ReportingSentinel = null,
-    RespireEndpoint[]? AdditionalTargets = null);
+    RespireEndpoint[]? AdditionalTargets = null,
+    string[]?[]? AdditionalOldPrimaryAddresses = null);
 
 /// <summary>
 /// Coalesces failover hints for the single notification rediscovery worker. At most one hint is
@@ -95,26 +97,61 @@ internal sealed class SentinelNotificationCoalescer
             }
             : previous with { MustRediscover = mustRediscover };
         var sources = EnumerateOldPrimaries(previous).Concat(EnumerateOldPrimaries(hint))
-            .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
-        var additionalSources = merged.OldPrimary is { } selected
-            ? sources.Where(source => !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source, selected)).ToArray()
+            .GroupBy(static source => source.Endpoint, SentinelDiscoveryState.EndpointComparer.Instance)
+            .Select(static group => (Endpoint: group.Key, Addresses: group.Select(static source => source.Addresses)
+                .FirstOrDefault(static addresses => addresses is not null)))
+            .ToArray();
+        var selectedAddresses = merged.OldPrimary is { } selected
+            ? sources.FirstOrDefault(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, selected)).Addresses
+            : null;
+        var additionalSources = merged.OldPrimary is { } primary
+            ? sources.Where(source => !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, primary)).ToArray()
             : sources;
+        var sourceEndpoints = sources.Select(static source => source.Endpoint)
+            .ToHashSet(SentinelDiscoveryState.EndpointComparer.Instance);
         var targets = EnumerateTargets(previous).Concat(EnumerateTargets(hint))
             .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
         return merged with
         {
-            AdditionalOldPrimaries = additionalSources.Length == 0 ? null : additionalSources,
-            OldPrimaryAddresses = merged.OldPrimary is { } old && previous.OldPrimary is { } previousOld
-                && SentinelDiscoveryState.EndpointComparer.Instance.Equals(old, previousOld)
-                ? previous.OldPrimaryAddresses
-                : hint.OldPrimaryAddresses,
+            AdditionalOldPrimaries = additionalSources.Length == 0 ? null
+                : additionalSources.Select(static source => source.Endpoint).ToArray(),
+            AdditionalOldPrimaryAddresses = additionalSources.Length == 0 ? null
+                : additionalSources.Select(static source => source.Addresses).ToArray(),
+            OldPrimaryAddresses = selectedAddresses,
             ReportingSentinel = hint.Target is not null
                 ? hint.ReportingSentinel ?? previous.ReportingSentinel
                 : previous.ReportingSentinel ?? hint.ReportingSentinel,
-            AdditionalTargets = targets.Where(target => merged.Target is not { } primary
-                || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary)).ToArray() is { Length: > 0 } extraTargets
+            AdditionalTargets = targets.Where(target => merged.Target is not { } primaryTarget
+                || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primaryTarget))
+                .Where(target => !sourceEndpoints.Contains(target))
+                .ToArray() is { Length: > 0 } extraTargets
                 ? extraTargets : null,
         };
+    }
+
+    /// <summary>Retains a completed DNS lookup for its source in active and pending hints.</summary>
+    internal void RetainResolvedOldPrimaryAddresses(RespireEndpoint oldPrimary, string[] addresses)
+    {
+        if (Active is { } active) Active = AddResolvedAddresses(active, oldPrimary, addresses);
+        if (_pending is { } pending) _pending = AddResolvedAddresses(pending, oldPrimary, addresses);
+    }
+
+    private static SentinelHint AddResolvedAddresses(SentinelHint hint, RespireEndpoint oldPrimary, string[] addresses)
+    {
+        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        if (hint.OldPrimary is { } primary && comparer.Equals(primary, oldPrimary))
+            return hint with { OldPrimaryAddresses = addresses };
+        if (hint.AdditionalOldPrimaries is not { } additional) return hint;
+        for (var i = 0; i < additional.Length; i++)
+        {
+            if (!comparer.Equals(additional[i], oldPrimary)) continue;
+            var allAddresses = hint.AdditionalOldPrimaryAddresses is { } existing
+                ? existing.ToArray()
+                : new string[]?[additional.Length];
+            allAddresses[i] = addresses;
+            return hint with { AdditionalOldPrimaryAddresses = allAddresses };
+        }
+        return hint;
     }
 
     private static IEnumerable<RespireEndpoint> EnumerateTargets(SentinelHint hint)
@@ -124,11 +161,13 @@ internal sealed class SentinelNotificationCoalescer
             foreach (var endpoint in additional) yield return endpoint;
     }
 
-    private static IEnumerable<RespireEndpoint> EnumerateOldPrimaries(SentinelHint hint)
+    private static IEnumerable<(RespireEndpoint Endpoint, string[]? Addresses)> EnumerateOldPrimaries(SentinelHint hint)
     {
-        if (hint.OldPrimary is { } oldPrimary) yield return oldPrimary;
+        if (hint.OldPrimary is { } oldPrimary) yield return (oldPrimary, hint.OldPrimaryAddresses);
         if (hint.AdditionalOldPrimaries is { } additional)
-            foreach (var endpoint in additional) yield return endpoint;
+            for (var i = 0; i < additional.Length; i++)
+                yield return (additional[i], hint.AdditionalOldPrimaryAddresses is { } addresses && i < addresses.Length
+                    ? addresses[i] : null);
     }
 
     /// <summary>Takes the pending hint and makes it active. Returns null when nothing is pending.</summary>
