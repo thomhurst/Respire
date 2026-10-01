@@ -305,6 +305,29 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task LaterMovingStartsWhileEarlierSocketsStillDrain()
+    {
+        await using var source = Server(maxConnections: 2);
+        source.DelayReply(2, 3000);
+        await using var target = Server(maxConnections: 2);
+        await using var final = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var accepted = multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(source, 3);
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+        await target.SendRawAsync(Moving(1, final.Port));
+        // The second handoff must not wait for the first one's three-second drain.
+        await WaitForPort(multiplexer, final.Port);
+        await Assert.That(accepted.IsCompleted).IsFalse();
+
+        using var reply = await accepted.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
     public async Task MovingRetriesTargetSetupWithinGracePeriod()
     {
         await using var source = Server(maxConnections: 2);

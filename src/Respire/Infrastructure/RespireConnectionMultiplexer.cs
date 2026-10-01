@@ -31,6 +31,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private MovingRequest? _pendingMoving;
     private bool _movingWorker;
     private TaskCompletionSource? _movingCompletion;
+    // Old sockets drain off the handoff worker so a later MOVING can start immediately.
+    private Task _movingDrains = Task.CompletedTask;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
@@ -600,11 +602,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port)
+    // TlsHost is the name the socket was opened with; after a MOVING handoff it can differ
+    // from the multiplexer's configured host, and the fence must validate the same identity.
+    private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port, string TlsHost)
     {
         internal static RetiredClientIdentity From(RespireConnection connection)
             => new(connection.ServerClientId, connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port);
+                connection.NetworkPeerPort ?? connection.Port, connection.Host);
     }
 
     internal bool HasCurrentPeer(string host, int port)
@@ -649,7 +653,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     Generation = null,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
-                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
+                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, identity.TlsHost) : _options.TlsOptions,
                 };
                 try
                 {
@@ -978,8 +982,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
         }
 
+        // A handshake that finishes after the grace period is still published: the source is
+        // closing, and the announced target is the only endpoint left to serve new commands.
+        // The drain below then has no time remaining and aborts the old sockets at once.
         var old = new RespireConnection?[_connections.Length];
         var published = false;
+        int? cacheEvictions = null;
         try
         {
             lock (_lifecycleGate)
@@ -987,14 +995,18 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 lock (_movingGate)
                 {
                     if (!IsOperational || _pendingMoving is not null) return;
-                    _options.CredentialCacheInvalidation?.Invoke();
+                    cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
                     Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
                     _movingSequence = -1;
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         replacements[i].Multiplexer = this;
                         old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
+                        // Failure history belongs to the previous endpoint's sockets.
+                        if (_reconnectAttempts is not null) _reconnectAttempts[i] = 0;
                     }
+                    var drain = DrainMovedConnectionsInBackgroundAsync(old, request.Deadline);
+                    _movingDrains = _movingDrains.IsCompleted ? drain : Task.WhenAll(_movingDrains, drain);
                     published = true;
                 }
                 for (var i = 0; i < replacements.Length; i++)
@@ -1010,7 +1022,29 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
         }
 
-        await DrainMovedConnectionsAsync(old, request.Deadline).ConfigureAwait(false);
+        // Metrics listeners can run user code, so publish outside the lifecycle locks.
+        if (cacheEvictions is { } removed)
+        {
+            try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }
+            catch (Exception error) { _logger?.LogDebug(error, "Continuity flush metrics observer failed"); }
+        }
+    }
+
+    private async Task DrainMovedConnectionsInBackgroundAsync(RespireConnection?[] old, long deadline)
+    {
+        await Task.Yield(); // Never run drain work under the handoff locks.
+        try
+        {
+            await DrainMovedConnectionsAsync(old, deadline).ConfigureAwait(false);
+        }
+        catch (Exception error) when (IsOperational)
+        {
+            _logger?.LogWarning(error, "Fencing old MOVING sockets failed");
+        }
+        catch (Exception error)
+        {
+            _logger?.LogDebug(error, "Old MOVING socket drain stopped by multiplexer retirement");
+        }
     }
 
     private async Task<RespireConnection[]> ConnectMovingReplacementsAsync(RespireEndpoint endpoint)
@@ -1301,6 +1335,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         Task? moving;
         lock (_movingGate) moving = _movingCompletion?.Task;
         if (moving is not null) await moving.ConfigureAwait(false);
+        // The worker has stopped, so no further drain can start after this snapshot.
+        Task drains;
+        lock (_movingGate) drains = _movingDrains;
+        await drains.ConfigureAwait(false);
     }
 
     private async Task RetireCoreAsync(TaskCompletionSource completion)
