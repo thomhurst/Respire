@@ -61,20 +61,30 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // instead of installing (or acting on) a stale deadline.
         private int _version;
         private int _disposed;
-        private TimeSpan _effectiveTimeout;
+        private long _effectiveTimeoutTicks;
+        private long _committedTimeoutTicks = long.MinValue;
 
         internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
         {
             _connection = connection;
             _deadline = deadline;
-            _effectiveTimeout = connection._commandTimeout!.Value;
+            _effectiveTimeoutTicks = connection._commandTimeout!.Value.Ticks;
             _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
                 this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             if (connection._maintenanceOptions is not null) _maintenanceChanged = Recheck;
         }
 
         internal CancellationToken Token => _source.Token;
-        internal TimeSpan EffectiveTimeout => _effectiveTimeout;
+        internal TimeSpan EffectiveTimeout
+        {
+            get
+            {
+                var committedTicks = Interlocked.Read(ref _committedTimeoutTicks);
+                return committedTicks == long.MinValue
+                    ? TimeSpan.FromTicks(Interlocked.Read(ref _effectiveTimeoutTicks))
+                    : TimeSpan.FromTicks(committedTicks);
+            }
+        }
 
         internal void Start()
         {
@@ -108,7 +118,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     if (version != _version) continue;
                     lock (_connection._maintenancePublicationGate)
                     {
-                        var delay = ComputeDelay(out _effectiveTimeout);
+                        var delay = ComputeDelay(out var effectiveTimeout);
+                        Interlocked.Exchange(ref _effectiveTimeoutTicks, effectiveTimeout.Ticks);
                         if (delay is { } next)
                         {
                             try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
@@ -116,6 +127,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             return;
                         }
                         // Commit cancellation while maintenance-state publication is excluded.
+                        Interlocked.Exchange(ref _committedTimeoutTicks, effectiveTimeout.Ticks);
                         try { cancellationCallbacks = _source.CancelAsync(); }
                         catch (ObjectDisposedException) { }
                     }
@@ -1667,8 +1679,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var start = _activeBuffer.Count;
             startedBatch = start == 0 && _inflight.Count == 0;
             requestWriteStart = _enqueuedBytes;
-            var writer = new RespWriter(_activeBuffer);
-            command.WriteStart(ref writer);
+            try
+            {
+                var writer = new RespWriter(_activeBuffer);
+                command.WriteStart(ref writer);
+            }
+            catch
+            {
+                // Header serialization can touch caller-owned memory. Roll back any bytes it
+                // appended so a later command cannot flush a partial RESP frame.
+                _activeBuffer.TruncateTo(start);
+                throw;
+            }
             Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + _activeBuffer.Count - start);
             return _activeBuffer.WriteCompletion;
         }

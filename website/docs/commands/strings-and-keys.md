@@ -40,7 +40,7 @@ streams. `CommandTimeout` covers the whole upload, including every source read a
 write, so raise it (or pass a longer-lived cancellation token with a `null` timeout) for payloads
 that take longer than the timeout to transmit. If the connection closes while Respire is reading
 the source, the call fails with `RespireConnectionException` instead of waiting for the source.
-After the complete frame is queued, cancellation only cancels the wait for its reply.
+After the complete frame has been written to the socket, cancellation only cancels the wait for its reply.
 A streamed write is not retried once its header is sent. Redirect replies such as `MOVED` and
 transport failures are returned to the caller; after a transport failure, Redis may or may not
 have applied the write.

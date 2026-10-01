@@ -83,6 +83,26 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task HeaderSerializationFailureDoesNotCorruptConnection()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        using var keyMemory = new ThrowOnAccessMemoryManager();
+        var command = new StreamedSetCommand(
+            new RespireKey(keyMemory.Memory), new MemoryStream([1]), 1, default, SetWhen.Always);
+
+        await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET"))
+            .ThrowsExactly<InvalidOperationException>();
+        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING");
+
+        await Assert.That(ping.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
+    }
+
+    [Test]
     public async Task StreamedSetSupportsCommandTimeoutsLongerThanTimerRange()
     {
         await using var server = new CountingSetServer();
@@ -417,7 +437,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task RetirementWakesStreamedSetDrainingStalledEarlierWrite()
+    public async Task RetirementDrainsStreamedSetQueuedBehindStalledEarlierWrite()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -428,8 +448,9 @@ public sealed class StreamedSetTests
                 Protocol = RespProtocol.Resp2,
                 CommandTimeout = null,
             });
-        // The peer never reads, so an earlier large frame stalls in the socket write.
+        // The peer holds an earlier large frame until retirement, then accepts both frames.
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        await using var peerStream = new NetworkStream(peer, ownsSocket: false);
         const int payload = 32 * 1024 * 1024;
         var header = Encoding.ASCII.GetBytes($"*3\r\n$3\r\nSET\r\n$7\r\nblocker\r\n${payload}\r\n");
         var frame = new byte[header.Length + payload + 2];
@@ -443,11 +464,20 @@ public sealed class StreamedSetTests
         await Task.Delay(200);
         await Assert.That(set.IsCompleted).IsFalse();
 
-        _ = connection.RetireAsync();
-        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<RespireConnectionRetiredException>();
-        await Assert.That(source.ReadStarted.Task.IsCompleted).IsFalse();
-        await Assert.That(blocker.IsCompleted).IsFalse();
+        var retirement = connection.RetireAsync();
+        await peerStream.ReadExactlyAsync(frame);
+        await peerStream.WriteAsync("+OK\r\n"u8.ToArray());
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        source.ContinueReading.TrySetResult();
+        await peerStream.ReadExactlyAsync("*3\r\n$3\r\nSET\r\n$6\r\nqueued\r\n$4\r\n"u8.ToArray());
+        await peerStream.ReadExactlyAsync(new byte[6]); // "data\r\n"
+        await peerStream.WriteAsync("+OK\r\n"u8.ToArray());
+
+        using var blockerReply = await blocker.WaitAsync(TimeSpan.FromSeconds(5));
+        using var streamedReply = await set.WaitAsync(TimeSpan.FromSeconds(5));
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(blockerReply.AsString()).IsEqualTo("OK");
+        await Assert.That(streamedReply.AsString()).IsEqualTo("OK");
     }
 
     [Test]
@@ -638,6 +668,20 @@ public sealed class StreamedSetTests
         }
 
         internal BufferSegment(byte[] memory) : this((ReadOnlyMemory<byte>)memory) { }
+    }
+
+    private sealed class ThrowOnAccessMemoryManager : MemoryManager<byte>
+    {
+        private readonly byte[] _bytes = new byte[4];
+        private int _accessCount;
+
+        public override Span<byte> GetSpan()
+            => Interlocked.Increment(ref _accessCount) == 1
+                ? _bytes
+                : throw new InvalidOperationException("Test memory access failure.");
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
+        public override void Unpin() { }
+        protected override void Dispose(bool disposing) { }
     }
 
     private sealed class CountingSetServer : IAsyncDisposable
