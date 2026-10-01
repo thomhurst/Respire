@@ -126,6 +126,32 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task ShorteningReadWriteRenewalPublishesShorterBoundBeforeReply()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromHours(1))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(1)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+
+        await Assert.That(renewal.IsCompleted).IsFalse();
+        await Assert.That(attempt.Lock.RemainingEstimate <= TimeSpan.FromSeconds(1)).IsTrue();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        await renewal.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Lock.RemainingEstimate <= TimeSpan.FromSeconds(1)).IsTrue();
+    }
+
+    [Test]
     public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());

@@ -156,6 +156,7 @@ public sealed class RespireCoordination
         local function refreshExpiry()
             local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')[2]
             if latest then
+                -- Scores are epoch milliseconds, exact in a double. '%.0f' avoids Lua exponent notation.
                 redis.call('PEXPIREAT', KEYS[1], string.format('%.0f', math.ceil(tonumber(latest))))
             else
                 redis.call('DEL', KEYS[1])

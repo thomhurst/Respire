@@ -195,8 +195,31 @@ owners atomically before each acquisition and expires the key at its latest owne
 Use a dedicated key for this primitive. Client prefixes and binary keys work as for other
 Respire commands. Redis Cluster needs no multi-key slot coordination. Asynchronous Redis
 failover can restore older lock state, so this primitive does not provide consensus safety.
-If cancellation or connection loss follows an accepted acquisition, its owner entry expires
-after the requested duration; the client does not replay or guess whether it acquired.
+If the caller cancels after Redis accepted an acquisition, or the reply arrives after the local
+estimate elapsed, the client sends an owner-checked release for the unreturned lease. If the
+reply itself is lost, the owner entry expires after the requested duration; the client does not
+replay or guess whether it acquired.
+
+Readers keep being admitted while any reader is live, so a steady stream of overlapping readers
+can starve writers. Bound writer retries with backoff:
+
+```csharp
+using Respire.Extensions.Coordination;
+
+var coordination = new RespireCoordination(redis);
+for (var delay = TimeSpan.FromMilliseconds(50); ; delay *= 2)
+{
+    await using var write = await coordination.TryAcquireWriteLockAsync(
+        "{account:42}:rw", TimeSpan.FromSeconds(30), cancellationToken);
+    if (write.Acquired)
+    {
+        // Exclusive work here.
+        break;
+    }
+    if (delay > TimeSpan.FromSeconds(2)) throw new TimeoutException("Write lease unavailable.");
+    await Task.Delay(delay, cancellationToken);
+}
+```
 
 ## Multi-node Redlock
 

@@ -68,7 +68,9 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             // time from the duration cannot overflow, unlike adding a long duration to a timestamp.
             var snapshot = Volatile.Read(ref _snapshot);
             var remaining = TimeSpan.FromTicks(snapshot.DurationTicks) - Stopwatch.GetElapsedTime(snapshot.RenewedTimestamp);
-            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+            // Ownership may have closed while the estimate was computed.
+            if (remaining <= TimeSpan.Zero || Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+            return remaining;
         }
     }
 
@@ -99,7 +101,11 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     /// <summary>Renews this owner lease; renewal fails if the Redis lease already expired.</summary>
-    /// <remarks>The duration is truncated to whole milliseconds.</remarks>
+    /// <remarks>
+    /// The duration is truncated to whole milliseconds. Any failure, including caller cancellation,
+    /// gives up local ownership and sends a best-effort release, because Redis may or may not have
+    /// applied the renewal.
+    /// </remarks>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
@@ -109,6 +115,11 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         {
             if (IsReleased) return false;
             var started = Stopwatch.GetTimestamp();
+            var renewedTicks = milliseconds * TimeSpan.TicksPerMillisecond;
+            // Redis may apply a shorter deadline before its reply arrives, so publish the shorter
+            // bound before sending. A failed renewal closes ownership regardless.
+            if (TimeSpan.FromTicks(renewedTicks) < RemainingEstimate)
+                Volatile.Write(ref _snapshot, new LeaseSnapshot(renewedTicks, started));
             try
             {
                 using var response = await _client.Scripts.ExecuteAsync(
@@ -117,8 +128,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
                 if (response.AsInteger() == 1 && validity > TimeSpan.Zero)
                 {
-                    Volatile.Write(ref _snapshot, new LeaseSnapshot(
-                        milliseconds * TimeSpan.TicksPerMillisecond, started));
+                    Volatile.Write(ref _snapshot, new LeaseSnapshot(renewedTicks, started));
                     return Volatile.Read(ref _released) == 0;
                 }
             }
@@ -140,45 +150,60 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     /// <summary>Releases only this owner lease. Repeated calls return false.</summary>
-    /// <remarks>Local ownership closes before the owner-checked Redis command is sent. A lost reply keeps the handle closed and leaves release retryable.</remarks>
+    /// <remarks>
+    /// Local ownership closes and the owner-checked Redis command is dispatched before this method
+    /// first yields. A lost reply keeps the handle closed and leaves release retryable.
+    /// </remarks>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
         Task<bool> releaseTask;
+        TaskCompletionSource<bool>? started = null;
         lock (_ownershipSync)
         {
             if (_releaseCompleted) return false;
             Volatile.Write(ref _released, 1);
-            _releaseTask ??= ReleaseCoreAsync();
+            if (_releaseTask is null)
+            {
+                started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _releaseTask = started.Task;
+            }
             releaseTask = _releaseTask;
         }
+        // Sending outside the lock keeps an inline reply from publishing state under the caller's lock,
+        // while sending before the first await means a fire-and-forget cleanup still reaches the wire.
+        if (started is not null) _ = RunReleaseAsync(started);
         return await releaseTask.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> ReleaseCoreAsync()
+    private async Task RunReleaseAsync(TaskCompletionSource<bool> completion)
     {
-        await Task.Yield();
-        using var fallbackTimeout = _client is RespireClient client
-            && client.Core.Options.CommandTimeout is null
-                ? new CancellationTokenSource(TimeSpan.FromSeconds(2))
-                : null;
+        CancellationTokenSource? fallbackTimeout = null;
         try
         {
+            fallbackTimeout = _client is RespireClient client && client.Core.Options.CommandTimeout is null
+                ? new CancellationTokenSource(TimeSpan.FromSeconds(2))
+                : null;
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role],
                 fallbackTimeout?.Token ?? CancellationToken.None).ConfigureAwait(false);
+            var released = response.AsInteger() == 1;
             lock (_ownershipSync)
             {
                 _releaseCompleted = true;
                 _releaseTask = null;
             }
-            return response.AsInteger() == 1;
+            completion.SetResult(released);
         }
-        catch
+        catch (Exception error)
         {
             lock (_ownershipSync) _releaseTask = null;
-            throw;
+            completion.SetException(error);
+        }
+        finally
+        {
+            fallbackTimeout?.Dispose();
         }
     }
 

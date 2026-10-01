@@ -131,6 +131,27 @@ public class SentinelTests
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
     }
 
+    [Test]
+    public async Task Discovery_PrimaryConnectDeadlineReportsConnectTimeout()
+    {
+        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromMilliseconds(200),
+        };
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return 0;
+        }, CancellationToken.None).AsTask();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
+        await Assert.That(error.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(200));
+    }
+
     private static byte[] PeersReply(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 
