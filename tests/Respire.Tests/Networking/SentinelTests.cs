@@ -867,6 +867,63 @@ public class SentinelTests
 
     [Test]
     [NotInParallel]
+    public async Task NoncontiguousSwitchReconcileDoesNotAcceptLaggingConfirmationOfCurrentPrimary()
+    {
+        await using var current = CreatePrimary();
+        await using var promoted = CreatePrimary();
+        var reportingPort = current.Port;
+        var reportingFailures = 0;
+        await using var reporting = new FakeRespServer(16, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")
+                {
+                    return Interlocked.Decrement(ref reportingFailures) >= 0
+                        ? "-ERR busy\r\n"u8.ToArray()
+                        : PrimaryReply(Volatile.Read(ref reportingPort));
+                }
+                if (command == "SENTINEL SENTINELS mymaster") return "*0\r\n"u8.ToArray();
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    var channel = command["SUBSCRIBE ".Length..];
+                    return Encoding.ASCII.GetBytes($"*3\r\n$9\r\nsubscribe\r\n${channel.Length}\r\n{channel}\r\n:1\r\n");
+                }
+                return null;
+            },
+        };
+        await using var lagging = CreateSentinel(() => current.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", reporting.Port), new("127.0.0.1", lagging.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => reporting.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1
+            && lagging.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => reporting.ReceivedCommands.Count + lagging.ReceivedCommands.Count + current.ReceivedCommands.Count);
+        var monitor = reporting.ReceivedConnectionIds[reporting.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+        var laggingLookups = lagging.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+
+        // The client missed current -> 6390. While the reporting Sentinel fails, the lagging one
+        // still names the current primary, which must not end the reconciliation.
+        Volatile.Write(ref reportingPort, promoted.Port);
+        Volatile.Write(ref reportingFailures, 1);
+        await reporting.SendRawAsync(SwitchMasterMessage("mymaster", 6390, promoted.Port), monitor);
+
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } generation
+            && generation.Endpoint.Port == promoted.Port);
+        await Assert.That(lagging.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"))
+            .IsGreaterThan(laggingLookups);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(promoted.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task SwitchEventSupersedesCompetingCommandDiscovery()
     {
         await using var first = CreatePrimary();
@@ -892,7 +949,7 @@ public class SentinelTests
             CancellationToken.None,
             new RespireEndpoint("127.0.0.1", sentinel.Port),
             new RespireEndpoint("127.0.0.1", replacement.Port),
-            new RespireEndpoint("127.0.0.1", first.Port)));
+            [new RespireEndpoint("127.0.0.1", first.Port)]));
         await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > discoveryCount);
 
         sentinel.DelayReply(0, 0);

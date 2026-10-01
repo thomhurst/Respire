@@ -15,8 +15,7 @@ internal static class SentinelResolver
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
-        RespireEndpoint? expectedPrimary = null,
-        RespireEndpoint? rejectedPrimary = null)
+        IReadOnlyList<RespireEndpoint>? rejectedPrimaries = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -69,7 +68,7 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (IsRejectedAfterSwitch(primary, endpoint, preferredSentinel, expectedPrimary, rejectedPrimary))
+                if (IsRejectedAfterSwitch(primary, endpoint, preferredSentinel, rejectedPrimaries))
                     throw new RespireConnectionException(
                         $"Sentinel at {endpoint} reports rejected primary {primary} after a switch event.");
                 var primaryOptions = options with
@@ -173,13 +172,17 @@ internal static class SentinelResolver
         return false;
     }
 
-    // A switch event names the primary it retires, and lagging Sentinels may still report it.
-    // The rejected endpoint is accepted only when the reporting Sentinel also announced it.
+    // Switch events name primaries they retire, and lagging Sentinels may still report them.
+    // Only the Sentinel that reported the switch (the preferred one) may confirm such an endpoint.
     private static bool IsRejectedAfterSwitch(RespireEndpoint primary, RespireEndpoint sentinel,
-        RespireEndpoint? preferredSentinel, RespireEndpoint? expectedPrimary, RespireEndpoint? rejectedPrimary)
-        => rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
-            && !(expectedPrimary is { } expected && SameEndpoint(primary, expected)
-                && preferredSentinel is { } reporting && SameEndpoint(sentinel, reporting));
+        RespireEndpoint? preferredSentinel, IReadOnlyList<RespireEndpoint>? rejectedPrimaries)
+    {
+        if (rejectedPrimaries is null || preferredSentinel is { } reporting && SameEndpoint(sentinel, reporting))
+            return false;
+        foreach (var rejected in rejectedPrimaries)
+            if (SameEndpoint(primary, rejected)) return true;
+        return false;
+    }
 
     internal static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);

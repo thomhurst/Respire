@@ -344,9 +344,10 @@ After publishing the first validated primary, Respire subscribes to `+switch-mas
 retires the current generation and starts bounded Sentinel discovery in the background.
 The replacement still must pass `ROLE`; accepted commands drain on their original sockets,
 and Respire never replays an ambiguous write. A `+switch-master` event whose former primary is
-not the current one (a lagging event, or a missed transition) and each new or resumed monitor
-subscription only reconcile: Respire asks the reporting Sentinel first and keeps the current
-generation while it still reports that primary. `+sdown` and `+odown` events go to Debug logs.
+not the current one (a lagging event, or a missed transition) only reconciles: the current
+generation stays in service, and only the reporting Sentinel may confirm it or a primary retired
+by the event, so the refresh retries until that Sentinel answers or a newer event supersedes it.
+Each new or resumed monitor subscription also reconciles once through its Sentinel. `+sdown` and `+odown` events go to Debug logs.
 A monitor that exhausts `ReconnectPolicy` stops with a warning and restarts after the next
 primary discovery.
 Sentinel monitor connections use `SentinelUsername`, `SentinelPassword`, `SentinelUseTls`,
