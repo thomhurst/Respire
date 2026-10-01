@@ -9,8 +9,8 @@ namespace Respire.Extensions.Coordination;
 /// </remarks>
 public sealed class RespireSemaphore
 {
-    private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan DisposeReleaseRetryLimit = TimeSpan.FromMinutes(1);
+    internal static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan DisposeReleaseRetryLimit = TimeSpan.FromMinutes(1);
     private readonly IRespireClient _client;
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
