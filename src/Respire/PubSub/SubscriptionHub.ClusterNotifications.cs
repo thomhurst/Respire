@@ -677,10 +677,11 @@ internal sealed partial class SubscriptionHub
     }
 
     private async Task ReconcileNotificationsAsync(
-        long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt = 0)
+        long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt = 0,
+        RespireSubscription? onlySubscription = null)
     {
-        var retry = false;
-        TimeSpan? retryDelay = null;
+        var retryFullPass = false;
+        List<(RespireSubscription Subscription, TimeSpan Delay)>? subscriptionRetries = null;
         try
         {
             await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
@@ -688,7 +689,13 @@ internal sealed partial class SubscriptionHub
             {
                 if (_disposed || version != Volatile.Read(ref _notificationTopologyVersion)) return;
                 RespireSubscription[] subscriptions;
-                lock (_gate) subscriptions = [.. _notificationCoverage.Keys];
+                lock (_gate)
+                {
+                    if (onlySubscription is { } selected)
+                        subscriptions = _notificationCoverage.ContainsKey(selected) ? [selected] : [];
+                    else
+                        subscriptions = [.. _notificationCoverage.Keys];
+                }
                 List<(RespireSubscription Subscription, RespireEndpoint? Endpoint, Exception Error, int Attempt)>? failures = null;
                 foreach (var subscription in subscriptions)
                 {
@@ -720,12 +727,9 @@ internal sealed partial class SubscriptionHub
                         (failures ??= []).Add((subscription, failingEndpoint.Value, error, subscriptionAttempt));
                     }
                 }
-                HashSet<RespireEndpoint> stillRetrying = [];
                 if (failures is not null)
                 {
-                    // The first pass counts as the first attempt to reach a new route owner.
                     var policy = core.Options.ReconnectPolicy;
-                    retryDelay = NotificationReconciliationDelay(attempt + 1);
                     foreach (var (subscription, endpoint, error, subscriptionAttempt) in failures)
                     {
                         if (policy?.IsExhausted(subscriptionAttempt) == true)
@@ -733,14 +737,18 @@ internal sealed partial class SubscriptionHub
                                 .ConfigureAwait(false);
                         else
                         {
-                            retry = true;
-                            if (ReportNotificationReconciliationRetry(endpoint, error, subscriptionAttempt, retryDelay.Value)
-                                && endpoint is { } retrying)
-                                stillRetrying.Add(retrying);
+                            var delay = NotificationReconciliationDelay(subscriptionAttempt);
+                            (subscriptionRetries ??= []).Add((subscription, delay));
+                            _ = ReportNotificationReconciliationRetry(endpoint, error, subscriptionAttempt, delay);
                         }
                     }
                 }
-                // Endpoints that this pass reached, or no longer needs, have recovered.
+                HashSet<RespireEndpoint> stillRetrying;
+                lock (_gate)
+                    stillRetrying = _notificationReconciliationAttempts.Values
+                        .Where(static attempt => attempt.Endpoint is not null)
+                        .Select(static attempt => attempt.Endpoint!.Value).ToHashSet();
+                // Endpoint state stays retrying while any subscription still needs that route.
                 ClearNotificationReconciliationRetries(stillRetrying);
             }
             finally { _controlGate.Release(); }
@@ -749,11 +757,17 @@ internal sealed partial class SubscriptionHub
         catch (Exception error)
         {
             TryLogWarning(error, "Cluster notification topology reconciliation failed");
-            retry = true;
+            retryFullPass = true;
         }
-        if (retry && !_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
-            _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative, attempt + 1,
-                retryDelay ?? NotificationReconciliationDelay(attempt + 1));
+        if (!_disposed && version == Volatile.Read(ref _notificationTopologyVersion)
+            && subscriptionRetries is { } retries)
+        {
+            foreach (var (subscription, delay) in retries)
+                _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative, delay, subscription);
+        }
+        if (retryFullPass && !_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
+            _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative,
+                NotificationReconciliationDelay(attempt + 1), onlySubscription: null, attempt: attempt + 1);
     }
 
     private TimeSpan NotificationReconciliationDelay(int attempt)
@@ -1011,12 +1025,14 @@ internal sealed partial class SubscriptionHub
     }
 
     private async Task RetryNotificationReconciliationAsync(
-        long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt, TimeSpan delay)
+        long version, RespireEndpoint[]? endpoints, bool authoritative, TimeSpan delay,
+        RespireSubscription? onlySubscription, int attempt = 0)
     {
         try { await Task.Delay(delay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
         if (!_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
-            await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt).ConfigureAwait(false);
+            await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt, onlySubscription)
+                .ConfigureAwait(false);
     }
 
     // A topology route that cannot reach its endpoint has no node watcher to report the outage,
