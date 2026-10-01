@@ -234,13 +234,14 @@ internal sealed class RedisRateLimiter : RateLimiter
             ObjectDisposedException.ThrowIf(_disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
             if (permitCount > _queueLimit || (_queueOrder == QueueProcessingOrder.OldestFirst
-                && permitCount > _queueLimit - _queuedPermits)) return denied;
+                && permitCount > _queueLimit - _queuedPermits)) return new RedisRateLimitLease(false, null);
             if (_queueOrder == QueueProcessingOrder.NewestFirst && permitCount > _queueLimit - _queuedPermits)
             {
                 var removablePermits = 0;
                 for (var node = _queue.Last; node is not null && !node.Value.IsProcessing; node = node.Previous)
                     removablePermits += node.Value.PermitCount;
-                if (permitCount > _queueLimit - _queuedPermits + removablePermits) return denied;
+                if (permitCount > _queueLimit - _queuedPermits + removablePermits)
+                    return new RedisRateLimitLease(false, null);
                 while (permitCount > _queueLimit - _queuedPermits)
                 {
                     var removed = _queue.Last!;
