@@ -98,7 +98,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private BulkStreamPendingResponseSource? _activeBulkStreamSource;
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
-    internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
+    private Respire.Infrastructure.RespireConnectionMultiplexer? _multiplexer;
+    internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer
+    {
+        get => Volatile.Read(ref _multiplexer);
+        set => Volatile.Write(ref _multiplexer, value);
+    }
+    internal int MultiplexerSlot { get; set; }
+    internal long MovingPublicationGeneration;
+    internal long LastQueuedMovingSequence = long.MinValue;
 
     public string Host { get; }
     public int Port { get; }

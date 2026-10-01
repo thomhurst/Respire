@@ -18,6 +18,7 @@ internal sealed partial class RespireConnection
     private const int MaintenanceEnabled = 2;
     private int _maintenanceStatus;
     private MaintenanceNotification? _lastMovingNotification;
+    private long _lastMovingPublicationGeneration = -1;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
     internal MaintenanceNotification? LastMovingNotification => Volatile.Read(ref _lastMovingNotification);
 
@@ -95,8 +96,10 @@ internal sealed partial class RespireConnection
         state.Apply(notification, Environment.TickCount64);
         if (notification.Kind == "MOVING")
         {
+            var publicationGeneration = Multiplexer?.GetMovingPublicationGeneration(MultiplexerSlot) ?? -1;
+            Volatile.Write(ref _lastMovingPublicationGeneration, publicationGeneration);
             Volatile.Write(ref _lastMovingNotification, notification);
-            MovingNotification?.Invoke(notification);
+            MovingNotification?.Invoke(notification, publicationGeneration);
         }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
@@ -107,7 +110,8 @@ internal sealed partial class RespireConnection
         return true;
     }
 
-    internal event Action<MaintenanceNotification>? MovingNotification;
+    internal long LastMovingPublicationGeneration => Volatile.Read(ref _lastMovingPublicationGeneration);
+    internal event Action<MaintenanceNotification, long>? MovingNotification;
 
     private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
         long deadline = long.MaxValue)
@@ -125,6 +129,7 @@ internal sealed partial class RespireConnection
     private const long RelaxedRerouteDeadline = 1L << 62;
 
     internal static long PlainDeadline(long deadline) => deadline & ~RelaxedRerouteDeadline;
+    internal static bool IsRelaxedRerouteDeadline(long deadline) => (deadline & RelaxedRerouteDeadline) != 0;
 
     private long GetReroutedCommandDeadline(long deadline)
     {

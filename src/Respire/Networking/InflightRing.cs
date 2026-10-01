@@ -140,14 +140,16 @@ internal sealed class InflightRing
                 continue;
             }
 
-            var deadline = RespireConnection.PlainDeadline(source.Deadline);
+            var rawDeadline = source.Deadline;
+            var alreadyRelaxed = RespireConnection.IsRelaxedRerouteDeadline(rawDeadline);
+            var deadline = RespireConnection.PlainDeadline(rawDeadline);
             if (deadline == 0)
             {
                 continue;
             }
 
             // A late notification cannot revive a deadline that elapsed before maintenance.
-            var extension = deadline > maintenanceStarted ? deadlineExtension : 0;
+            var extension = !alreadyRelaxed && deadline > maintenanceStarted ? deadlineExtension : 0;
             var remaining = deadline + extension - nowMilliseconds;
             if (remaining > 0)
             {

@@ -361,6 +361,36 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingParsedBeforePublicationRemainsEligibleAfterCallbackDelay()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var firstTarget = Server(maxConnections: 2);
+        await using var delayedTarget = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var announcingConnection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, firstTarget.Port));
+        await WaitForPort(multiplexer, firstTarget.Port);
+        var waitForPublication = typeof(RespireConnectionMultiplexer).GetMethod("WaitForPublicationAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await ((Task)waitForPublication.Invoke(multiplexer, null)!).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var delayedNotification = new MaintenanceNotification("MOVING", 2, 10,
+            new RespireEndpoint("127.0.0.1", delayedTarget.Port));
+        var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        queueHandoff.Invoke(multiplexer,
+            [0, announcingConnection, delayedNotification, announcingConnection.MovingPublicationGeneration]);
+        await WaitForPort(multiplexer, delayedTarget.Port);
+
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task MovingDoesNotRerouteConnectionScopedIdentityCommands()
     {
         await using var source = Server(maxConnections: 2);
@@ -492,7 +522,7 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task DeadlineSweepIgnoresRerouteMarkerForTickArithmetic()
+    public async Task DeadlineSweepHonorsRerouteMarkerWithoutReextending()
     {
         const long deadline = 2000;
         var pool = new PendingResponsePool(1);
@@ -501,9 +531,11 @@ public class MaintenanceNotificationTests
         source.Deadline = deadline | (1L << 62);
         ring.TryEnqueue(source);
 
-        var remaining = ring.SweepExpired(deadline - 1, TimeSpan.FromMilliseconds(100), null);
+        var remaining = ring.SweepExpired(deadline - 1, TimeSpan.FromMilliseconds(100), null,
+            deadlineExtension: 500, maintenanceStarted: deadline - 500);
         await Assert.That(remaining).IsEqualTo(1);
-        remaining = ring.SweepExpired(deadline, TimeSpan.FromMilliseconds(100), null);
+        remaining = ring.SweepExpired(deadline, TimeSpan.FromMilliseconds(100), null,
+            deadlineExtension: 500, maintenanceStarted: deadline - 500);
         await Assert.That(remaining).IsEqualTo(-1);
     }
 
