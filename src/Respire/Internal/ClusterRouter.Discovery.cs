@@ -55,6 +55,12 @@ internal sealed partial class ClusterRouter
         ReadOnlyRefreshFlight? flight;
         lock (_sharedRefreshGate)
         {
+            if (_readOnlyRefreshFlight is { Completed: true } completedFlight
+                && ReferenceEquals(_sharedRefreshTask, completedFlight.SharedTask))
+            {
+                _sharedRefreshTask = null;
+                _readOnlyRefreshFlight = null;
+            }
             if (_sharedRefreshTask is null)
             {
                 var discoveryLease = discovery?.Hold();
@@ -238,6 +244,11 @@ internal sealed partial class ClusterRouter
             {
                 if (!master.IsRetired && seen.Add(master)) candidates.Add(master);
             }
+            foreach (var replica in Volatile.Read(ref _replicas))
+            {
+                var replicaNode = GetOrCreateNode(replica.Endpoint);
+                if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
+            }
             foreach (var endpoint in _seeds)
             {
                 var seedNode = GetOrCreateNode(endpoint);
@@ -253,17 +264,18 @@ internal sealed partial class ClusterRouter
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
             var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
                 maxTotalTicks / boundedCandidateCount));
-            var totalTimeoutTicks = candidateTimeout.Ticks * boundedCandidateCount;
-            using var deadline = new CancellationTokenSource(TimeSpan.FromTicks(totalTimeoutTicks));
+            using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
             foreach (var candidate in candidates)
             {
                 linked.Token.ThrowIfCancellationRequested();
+                if (round is not null)
+                    await round.BeforeCandidateAsync(Endpoint(candidate), linked.Token).ConfigureAwait(false);
                 using var candidateDeadline = new CancellationTokenSource(candidateTimeout);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
                 try
                 {
-                    await EnsureRouteNodeConnectedAsync(candidate, candidateToken.Token, round).ConfigureAwait(false);
+                    await EnsureRouteNodeConnectedAsync(candidate, candidateToken.Token, discovery: null).ConfigureAwait(false);
                     if (await TryLoadSlotsAsync(candidate, candidateToken.Token, requireComplete: true).ConfigureAwait(false)
                         && HasCompleteTopology())
                     {
