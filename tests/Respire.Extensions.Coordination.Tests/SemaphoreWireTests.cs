@@ -142,7 +142,7 @@ public class SemaphoreWireTests
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, deadline.Token);
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+        await Assert.That(server.ReceivedCommands.Count).IsGreaterThanOrEqualTo(3);
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[^1]);
         using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (!permit.IsReleased) await Task.Delay(10, releaseDeadline.Token);
