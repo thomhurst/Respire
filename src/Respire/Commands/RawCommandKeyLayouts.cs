@@ -19,7 +19,8 @@ internal static class RawCommandKeyLayouts
         None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
         AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
-    private readonly record struct Definition(LayoutKind Kind, bool Deferred);
+    // Prefixable marks layouts that name every key position, so key-prefixed views may rewrite them.
+    private readonly record struct Definition(LayoutKind Kind, bool Deferred, bool Prefixable = false);
 
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
     // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
@@ -84,6 +85,14 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
+        AddPrefixable(LayoutKind.First,
+            "TS.CREATE", "TS.ALTER", "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.GET", "TS.RANGE", "TS.REVRANGE",
+            "TS.DEL", "TS.INFO");
+        AddPrefixable(LayoutKind.FirstTwo, "TS.CREATERULE", "TS.DELETERULE");
+        AddPrefixable(LayoutKind.Triples, "TS.MADD");
+        // Label-filter queries name no keys and return series from every key namespace, so they are
+        // routed keylessly and are not prefixable.
+        AddImmediate(LayoutKind.None, "TS.MGET", "TS.MRANGE", "TS.MREVRANGE", "TS.QUERYINDEX");
         AddImmediate(LayoutKind.First,
             "BF.RESERVE", "BF.ADD", "BF.EXISTS", "BF.MADD", "BF.MEXISTS", "BF.INSERT", "BF.INFO", "BF.CARD", "BF.SCANDUMP", "BF.LOADCHUNK",
             "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO", "CF.SCANDUMP", "CF.LOADCHUNK",
@@ -101,6 +110,10 @@ internal static class RawCommandKeyLayouts
         void AddImmediate(LayoutKind kind, params string[] operations)
         {
             foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false));
+        }
+        void AddPrefixable(LayoutKind kind, params string[] operations)
+        {
+            foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false, Prefixable: true));
         }
     }
 
@@ -199,6 +212,21 @@ internal static class RawCommandKeyLayouts
         var count = length > countIndex && args.GetArgument(countIndex).TryGetInt64(out var value)
             ? value : (long?)null;
         return TryCounted(length, countIndex, count, allowZero, stride, out layout);
+    }
+
+    /// <summary>
+    /// Gets the layout of a command whose every key position is described, so a key-prefixed view
+    /// can rewrite its keys. Commands without such a layout must be rejected by prefixed views.
+    /// </summary>
+    internal static bool TryGetPrefixableLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
+    {
+        if (Layouts.TryGetValue(operation, out var definition) && definition.Prefixable)
+        {
+            layout = Parse(definition.Kind, args);
+            return true;
+        }
+        layout = default;
+        return false;
     }
 
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)

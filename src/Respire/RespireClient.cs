@@ -415,6 +415,33 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
+    /// Applies a key-prefixed view's prefix to a catalog command whose key layout names every key.
+    /// Other commands are rejected because their keys cannot be located reliably.
+    /// </summary>
+    private RespireValue[] PrefixCatalogKeys(string operation, RespireValue[] arguments)
+    {
+        if (_keyPrefix is not { } prefix) return arguments;
+        if (!RawCommandKeyLayouts.TryGetPrefixableLayout(operation, arguments, out var layout))
+            throw KeyPrefixNotSupported();
+
+        var prefixed = arguments.ToArray();
+        for (var index = 0; index < layout.Count; index++)
+        {
+            var keyIndex = layout.Start + index * layout.Stride;
+            prefixed[keyIndex] = PrefixKey(arguments[keyIndex], prefix);
+        }
+        if (layout.Extra >= 0)
+            prefixed[layout.Extra] = PrefixKey(arguments[layout.Extra], prefix);
+        return prefixed;
+
+        static RespireValue PrefixKey(RespireValue key, string prefix)
+        {
+            RespireValue.ThrowIfNull(key, "args");
+            return key.AsKey().Prepend(prefix).AsValue();
+        }
+    }
+
+    /// <summary>
     /// Rewrites the keys of a known module command for this key-prefixed view. The caller's array is
     /// copied, never mutated. Returns false for core commands, which must use the typed facets, and for
     /// module commands without a registered key layout.
@@ -500,6 +527,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         ValidateResultFlags(flags);
         ValidateCatalogCommand(command);
+        args = PrefixCatalogKeys(command.Name, args);
 
         var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
@@ -544,6 +572,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ValidateCatalogCommand(command);
+        args = PrefixCatalogKeys(command.Name, args);
         if (command.IsBlocking(args))
         {
             throw new NotSupportedException(
@@ -754,8 +783,6 @@ public sealed partial class RespireClient : IRespireClient
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
         }
 
-        ValidateCatalogKeyPrefix();
-
         if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
         {
             throw new NotSupportedException(
@@ -764,17 +791,9 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private void ValidateCatalogKeyPrefix()
-    {
-        if (_keyPrefix is not null)
-        {
-            throw KeyPrefixNotSupported();
-        }
-    }
-
     private static NotSupportedException KeyPrefixNotSupported()
         => new(
-            "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
+            "This command cannot run through a key-prefixed view because its key positions are not known. " +
             "Use the typed command facets instead.");
 
     private static void ValidateResultFlags(RespireCommandFlags flags)

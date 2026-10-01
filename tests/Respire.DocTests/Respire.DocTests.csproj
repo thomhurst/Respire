@@ -23,6 +23,7 @@
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />

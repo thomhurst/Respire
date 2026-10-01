@@ -30,6 +30,9 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("MIGRATE")]
     [Arguments("JSON.MGET")]
     [Arguments("JSON.MSET")]
+    [Arguments("TS.MADD")]
+    [Arguments("TS.CREATERULE")]
+    [Arguments("TS.DELETERULE")]
     [Arguments("CMS.MERGE")]
     [Arguments("TDIGEST.MERGE")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
@@ -214,6 +217,8 @@ public class ImmediateRawKeyLayoutTests
         "MIGRATE" => ["destination", 6379, "", 0, 1000, "AUTH2", "user", "KEYS", "KEYS", first, second],
         "JSON.MGET" => [first, second, "$.{not-a-key}"],
         "JSON.MSET" => [first, "$.field", "{value-one}", second, "$.field", "{value-two}"],
+        "TS.MADD" => [first, 1, 1.5, second, 2, 2.5],
+        "TS.CREATERULE" => [first, second, "AGGREGATION", "AVG", 1000],
         "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
         _ => [first, second],
     };

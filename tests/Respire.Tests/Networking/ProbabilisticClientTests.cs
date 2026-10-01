@@ -44,7 +44,7 @@ public class ProbabilisticClientTests
         await using var client = RespireClient.Create(DisconnectedOptions());
         var prefixed = client.WithKeyPrefix("tenant:");
 
-        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.GET"), "series"))
+        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.MGET"), "FILTER", "sensor=1"))
             .Throws<NotSupportedException>();
     }
 
