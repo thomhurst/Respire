@@ -175,7 +175,7 @@ public class SentinelReconnectPolicyTests
     {
         Protocol = RespProtocol.Resp2,
         Endpoints = [new("127.0.0.1", first), new("127.0.0.1", second)],
-        SentinelPrimaryName = "mymaster", Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2),
+        SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2),
         ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
     };
 

@@ -339,6 +339,16 @@ its existing bounded deadline; primary setup and role validation receive a fresh
 deadline. Caller cancellation applies throughout. These checks follow the
 [Redis Sentinel client specification](https://redis.io/docs/latest/develop/reference/sentinel-clients/).
 
+After publishing the first validated primary, Respire subscribes to `+switch-master`,
+`+sdown`, and `+odown` on configured and discovered Sentinels. A `+switch-master` event
+retires the current generation and starts bounded Sentinel discovery in the background.
+The replacement still must pass `ROLE`; accepted commands drain on their original sockets,
+and Respire never replays an ambiguous write. `+sdown` and `+odown` events go to Debug logs.
+Sentinel monitor connections use `SentinelUsername`, `SentinelPassword`, `SentinelUseTls`,
+and `SentinelTlsOptions`; Sentinel ACLs must allow `SUBSCRIBE` for these channels.
+Disconnects, `READONLY`, and replica `ROLE` replies continue to trigger discovery when no
+Sentinel event arrives.
+
 Sentinel discovery always uses RESP2, so older Sentinel nodes can discover a RESP3 primary.
 Transport settings inherit from the primary by default. Set `SentinelUseTls` independently when
 Sentinel and the primary use different TLS modes, and set `SentinelTlsOptions` when Sentinel needs

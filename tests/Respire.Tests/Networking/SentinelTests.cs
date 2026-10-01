@@ -29,7 +29,7 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)],
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             ConnectTimeout = TimeSpan.FromSeconds(5),
         });
         await client.PingAsync();
@@ -50,7 +50,7 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
         });
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
@@ -71,7 +71,7 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await client.PingAsync();
@@ -96,7 +96,7 @@ public class SentinelTests
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
         await peersRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -117,7 +117,7 @@ public class SentinelTests
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
         {
@@ -230,7 +230,7 @@ public class SentinelTests
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
         await roleRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -251,7 +251,7 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            SentinelPrimaryName = "mymaster", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true, CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await client.PingAsync();
         await stalled.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
@@ -387,7 +387,7 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -415,7 +415,7 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             Username = "redis-user",
             Password = "redis-secret",
             SentinelUsername = "sentinel-user",
@@ -488,7 +488,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", invalidSentinel.Port),
                 new RespireEndpoint("127.0.0.1", validSentinel.Port),
             },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             ConnectTimeout = TimeSpan.FromSeconds(1),
         };
         if (useConnectionString)
@@ -524,7 +524,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", unresponsiveSentinel.Port),
                 new RespireEndpoint("127.0.0.1", responsiveSentinel.Port),
             },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             // Exercise the discovery timeout itself, without a competing command watchdog.
             // Healthy fallback connections need scheduling headroom on parallel CI runners.
             CommandTimeout = null,
@@ -556,7 +556,7 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             Password = "redis-secret",
             SentinelPassword = string.Empty,
             // Each phase fits, but their combined 2.4 seconds exceeds the 2-second discovery budget.
@@ -596,7 +596,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", staleSentinel.Port),
                 new RespireEndpoint("127.0.0.1", currentSentinel.Port),
             },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -616,10 +616,64 @@ public class SentinelTests
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
-            SentinelPrimaryName = "mymaster",
+            SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
         });
 
         await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task SwitchMasterEventDiscoversAndPublishesValidatedPrimary()
+    {
+        await using var first = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var replacement = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        var switched = 0;
+        await using var sentinel = new FakeRespServer(16, PrimaryReply(first.Port), "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal))
+                    return PrimaryReply(Volatile.Read(ref switched) == 0 ? first.Port : replacement.Port);
+                if (command == "SENTINEL SENTINELS mymaster") return "*0\r\n"u8.ToArray();
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    var channel = command["SUBSCRIBE ".Length..];
+                    return Encoding.ASCII.GetBytes($"*3\r\n$9\r\nsubscribe\r\n${channel.Length}\r\n{channel}\r\n:1\r\n");
+                }
+                return null;
+            },
+        };
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            DisableSentinelEventMonitoring = false,
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) == 3);
+        await Task.Delay(50);
+        var subscribeIndex = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[subscribeIndex];
+        Volatile.Write(ref switched, 1);
+        await sentinel.SendRawAsync("*3\r\n$7\r\nmessage\r\n$14\r\n+switch-master\r\n$38\r\nmymaster 127.0.0.1 6379 127.0.0.1 6380\r\n"u8.ToArray(), monitorConnection);
+
+        await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            if (condition()) return;
+            await Task.Delay(25);
+        }
+        throw new TimeoutException("The expected Sentinel monitor state was not reached.");
     }
 
     private static byte[] PrimaryReply(int port)

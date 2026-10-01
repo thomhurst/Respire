@@ -25,6 +25,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         ? [new RespireEndpoint("localhost", 26379)] : core.Options.Endpoints);
     private readonly HashSet<Generation> _owned = [];
     private readonly HashSet<DedicatedConnectionPool> _correctionPools = [];
+    private readonly HashSet<RespireEndpoint> _monitoredSentinels = [];
+    private readonly List<Task> _sentinelMonitors = [];
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
@@ -107,6 +109,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
             }
+            StartSentinelMonitors();
             return replacement;
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -125,6 +128,98 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 }
             }
             finally { if (acquired) _discoveryGate.Release(); }
+        }
+    }
+
+    private void StartSentinelMonitors()
+    {
+        if (core.Options.DisableSentinelEventMonitoring) return;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            foreach (var endpoint in _discovery.Snapshot())
+                if (_monitoredSentinels.Add(endpoint))
+                    _sentinelMonitors.Add(Task.Run(() => MonitorSentinelAsync(endpoint)));
+        }
+    }
+
+    private async Task MonitorSentinelAsync(RespireEndpoint endpoint)
+    {
+        var attempts = 0;
+        var options = core.Options with
+        {
+            Endpoints = new List<RespireEndpoint> { endpoint },
+            UseCluster = false,
+            SentinelPrimaryName = null,
+            Username = core.Options.SentinelPassword is { Length: 0 } ? null
+                : core.Options.SentinelUsername ?? core.Options.Username,
+            Password = core.Options.SentinelPassword is { Length: 0 } ? null
+                : core.Options.SentinelPassword ?? core.Options.Password,
+            UseTls = core.Options.SentinelUseTls ?? core.Options.UseTls,
+            TlsOptions = core.Options.SentinelTlsOptions ?? core.Options.TlsOptions,
+            Protocol = RespProtocol.Resp2,
+            ClientName = null,
+            Database = 0,
+            ClientSideCache = null,
+        };
+
+        while (!_lifetime.IsCancellationRequested)
+        {
+            try
+            {
+                await using var client = await RespireClient.ConnectAsync(options, _lifetime.Token).ConfigureAwait(false);
+                await using var subscription = await client.SubscribeAsync(
+                    ["+switch-master", "+sdown", "+odown"], _lifetime.Token).ConfigureAwait(false);
+                attempts = 0;
+                await foreach (var message in subscription.WithCancellation(_lifetime.Token).ConfigureAwait(false))
+                {
+                    if (message.Kind == RespireMessageKind.Gap) continue;
+                    if (message.Channel.ToString() == "+switch-master")
+                        OnSentinelPrimaryChanged(endpoint);
+                    else
+                    {
+                        var eventName = message.Channel.ToString();
+                        var details = message.Text;
+                        QueueSentinelDiagnostic(() => core.Logger?.LogDebug(
+                            "Redis Sentinel {Event} at {Host}:{Port}: {Details}",
+                            eventName, endpoint.Host, endpoint.Port, details));
+                    }
+                }
+                if (!_lifetime.IsCancellationRequested)
+                    throw new RespireConnectionException($"Sentinel event subscription ended at {endpoint}.");
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                if (_lifetime.IsCancellationRequested) return;
+                attempts++;
+                QueueSentinelDiagnostic(() => core.Logger?.LogWarning(error,
+                    "Sentinel event monitor failed at {Endpoint}", endpoint));
+                var policy = core.Options.ReconnectPolicy;
+                if (policy?.IsExhausted(attempts) == true) return;
+                var delay = policy?.GetDelay(attempts) ?? TimeSpan.FromSeconds(Math.Min(attempts, 30));
+                try { await Task.Delay(delay, Clock, _lifetime.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            }
+        }
+    }
+
+    private void OnSentinelPrimaryChanged(RespireEndpoint sentinel)
+    {
+        var current = Current;
+        if (current is null) return;
+        Invalidate(current);
+        _ = RefreshAfterSentinelEventAsync(sentinel);
+    }
+
+    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel)
+    {
+        try { await GetGenerationAsync(_lifetime.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            QueueSentinelDiagnostic(() => core.Logger?.LogDebug(error,
+                "Sentinel primary refresh failed after an event from {Endpoint}", sentinel));
         }
     }
 
@@ -198,6 +293,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         });
     }
 
+    private void QueueSentinelDiagnostic(Action diagnostic)
+    {
+        lock (_gate)
+            if (!_disposed) QueueNotificationLocked(diagnostic);
+    }
+
     private async Task DrainAsync(Generation generation)
     {
         var connectionsDrained = generation.StopConnections();
@@ -264,6 +365,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         try
         {
             await _lifetime.CancelAsync().ConfigureAwait(false);
+            Task[] monitors;
+            lock (_gate) monitors = _sentinelMonitors.ToArray();
+            await Task.WhenAll(monitors).ConfigureAwait(false);
             await _discoveryGate.WaitAsync().ConfigureAwait(false);
             _discoveryGate.Release();
             Generation[] owned;

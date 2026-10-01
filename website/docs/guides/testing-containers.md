@@ -61,7 +61,8 @@ installed by the fixture; Testcontainers pulls them when needed.
 `DataEndpoints`, `SentinelEndpoints`, and `ContainerId` support diagnostics and direct node
 connections. In Sentinel mode, the first data endpoint identifies the **initial** primary;
 it is not updated after failover. Native Sentinel discovery selects the current primary at
-connection time. This fixture does not add automatic Sentinel failover to the client.
+connection time, and Respire's Sentinel event monitor discovers and validates promoted
+primaries after `+switch-master` notifications.
 
 ## Docker networking and limits
 

@@ -1952,7 +1952,7 @@ public class SentinelRoutingTests
 
     private static RespireOptions Options(int sentinelPort) => new()
     {
-        Endpoints = [new("127.0.0.1", sentinelPort)], SentinelPrimaryName = "mymaster",
+        Endpoints = [new("127.0.0.1", sentinelPort)], SentinelPrimaryName = "mymaster", DisableSentinelEventMonitoring = true,
         Connections = 1, ConnectTimeout = Limit, CommandTimeout = Limit, Protocol = RespProtocol.Resp2,
     };
 
@@ -1967,7 +1967,10 @@ public class SentinelRoutingTests
         => new(8, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
-                ? AddressReply(primaryPort()) : "*0\r\n"u8.ToArray(),
+                ? AddressReply(primaryPort())
+                : command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)
+                    ? Encoding.ASCII.GetBytes($"*3\r\n$9\r\nsubscribe\r\n${command["SUBSCRIBE ".Length..].Length}\r\n{command["SUBSCRIBE ".Length..]}\r\n:1\r\n")
+                    : "*0\r\n"u8.ToArray(),
         };
 
     private static byte[] AddressReply(int port)
