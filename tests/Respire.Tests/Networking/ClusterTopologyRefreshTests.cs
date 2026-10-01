@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Channels;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -69,6 +70,74 @@ public class ClusterTopologyRefreshTests
         await Task.Delay(50);
         router.SignalTopologyRefresh(force: true);
         await fourthRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task ForceSignalRacingWithDelayDoesNotLeakIntoNextSignal()
+    {
+        var refreshes = 0;
+        var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS")
+            {
+                var count = Interlocked.Increment(ref refreshes);
+                if (count == 2) secondRefresh.TrySetResult();
+                return Topology(seed.Port, seed.Port);
+            }
+            return null;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var clock = new ManualTopologyRefreshClock();
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        var firstDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        firstDelay.Fire();
+        router.SignalTopologyRefresh(force: true);
+        await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        var secondDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
+        await Assert.That(Volatile.Read(ref refreshes)).IsEqualTo(2);
+        secondDelay.Fire();
+        await Task.Delay(100);
+        await Assert.That(Volatile.Read(ref refreshes)).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task DisposeCancelsInflightTopologyRefresh()
+    {
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        seed.SuppressReply = command =>
+        {
+            if (command == "CLUSTER SLOTS") refreshStarted.TrySetResult();
+            return command == "CLUSTER SLOTS";
+        };
+
+        router.SignalTopologyRefresh();
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -165,19 +234,31 @@ public class ClusterTopologyRefreshTests
 
     private sealed class ManualTopologyRefreshClock : TimeProvider
     {
+        private readonly Channel<ManualTimer> _timers = Channel.CreateUnbounded<ManualTimer>();
         internal TaskCompletionSource<ManualTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal async Task<ManualTimer> NextTimerAsync(TimeSpan dueTime)
+        {
+            while (true)
+            {
+                var timer = await _timers.Reader.ReadAsync();
+                if (timer.DueTime == dueTime) return timer;
+            }
+        }
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            var timer = new ManualTimer(callback, state);
+            var timer = new ManualTimer(callback, state, dueTime);
             Created.TrySetResult(timer);
+            _timers.Writer.TryWrite(timer);
             return timer;
         }
     }
 
-    private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+    private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private int _fired;
+        internal TimeSpan DueTime { get; } = dueTime;
         internal void Fire()
         {
             if (Interlocked.Exchange(ref _fired, 1) == 0) callback(state);

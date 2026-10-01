@@ -1790,7 +1790,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         _stopRetirement.Cancel();
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
-        if (_topologyRefreshWorker is { } refreshWorker)
+        Task? refreshWorker;
+        lock (_topologyRefreshWorkerGate) refreshWorker = Volatile.Read(ref _topologyRefreshWorker);
+        if (refreshWorker is not null)
         {
             try { await refreshWorker.ConfigureAwait(false); }
             catch (OperationCanceledException) { }

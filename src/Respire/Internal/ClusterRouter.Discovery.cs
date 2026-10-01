@@ -20,6 +20,7 @@ internal sealed partial class ClusterRouter
     private static readonly TimeSpan MaximumTopologyRefreshDeadline = TimeSpan.FromSeconds(60);
     private const int MovedTopologyRefreshDelayMilliseconds = 5_000;
     private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
+    private readonly object _topologyRefreshWorkerGate = new();
     private Task? _topologyRefreshWorker;
     private int _topologyRefreshDelayMilliseconds;
     private readonly object _sharedRefreshGate = new();
@@ -261,40 +262,44 @@ internal sealed partial class ClusterRouter
 
     private void StartTopologyRefreshWorker()
     {
-        if (Interlocked.CompareExchange(ref _topologyRefreshStarted, 1, 0) != 0) return;
-        var interval = _options.ClusterTopologyRefreshInterval;
-        _topologyRefreshWorker = Task.Run(async () =>
+        lock (_topologyRefreshWorkerGate)
         {
-            while (!_stopDiscovery.IsCancellationRequested)
+            if (_topologyRefreshStarted != 0 || _stopDiscovery.IsCancellationRequested) return;
+            _topologyRefreshStarted = 1;
+            var interval = _options.ClusterTopologyRefreshInterval;
+            Volatile.Write(ref _topologyRefreshWorker, Task.Run(async () =>
             {
-                using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-                var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
-                var timer = interval is { } delay && delay > TimeSpan.Zero
-                    ? Task.Delay(delay, TopologyRefreshClock, waitCancellation.Token)
-                    : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
-                var completed = await Task.WhenAny(timer, signal).ConfigureAwait(false);
-                await waitCancellation.CancelAsync().ConfigureAwait(false);
-                try { await Task.WhenAll(timer, signal).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
-                if (_stopDiscovery.IsCancellationRequested) return;
-                var wasSignaled = ReferenceEquals(completed, signal);
-                var delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
-                var force = wasSignaled && Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0;
-                if (wasSignaled && delayMilliseconds > 0 && !force)
-                    force = await WaitForTopologyRefreshDelayAsync(delayMilliseconds).ConfigureAwait(false);
-                if (_stopDiscovery.IsCancellationRequested) return;
-                try
+                while (!_stopDiscovery.IsCancellationRequested)
                 {
-                    await RefreshTopologySharedAsync(_stopDiscovery.Token,
-                        allowRecentSuccessfulResult: wasSignaled && !force).ConfigureAwait(false);
+                    using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
+                    var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
+                    var timer = interval is { } delay && delay > TimeSpan.Zero
+                        ? Task.Delay(delay, TopologyRefreshClock, waitCancellation.Token)
+                        : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
+                    var completed = await Task.WhenAny(timer, signal).ConfigureAwait(false);
+                    await waitCancellation.CancelAsync().ConfigureAwait(false);
+                    try { await Task.WhenAll(timer, signal).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
+                    if (_stopDiscovery.IsCancellationRequested) return;
+                    var wasSignaled = ReferenceEquals(completed, signal) || signal.IsCompletedSuccessfully;
+                    var delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
+                    var force = wasSignaled && Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0;
+                    if (wasSignaled && delayMilliseconds > 0 && !force)
+                        force = await WaitForTopologyRefreshDelayAsync(delayMilliseconds).ConfigureAwait(false);
+                    if (_stopDiscovery.IsCancellationRequested) return;
+                    try
+                    {
+                        await RefreshTopologySharedAsync(_stopDiscovery.Token,
+                            allowRecentSuccessfulResult: wasSignaled && !force).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    {
+                        try { _logger?.LogDebug(error, "Periodic Redis Cluster topology refresh failed"); }
+                        catch (Exception) { }
+                    }
                 }
-                catch (Exception error) when (error is not OperationCanceledException)
-                {
-                    try { _logger?.LogDebug(error, "Periodic Redis Cluster topology refresh failed"); }
-                    catch (Exception) { }
-                }
-            }
-        });
+            }));
+        }
     }
 
     private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds)
@@ -309,7 +314,8 @@ internal sealed partial class ClusterRouter
             try { await Task.WhenAll(delay, signal).ConfigureAwait(false); }
             catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
             if (_stopDiscovery.IsCancellationRequested) return false;
-            if (ReferenceEquals(completed, delay)) return false;
+            var wasSignaled = ReferenceEquals(completed, signal) || signal.IsCompletedSuccessfully;
+            if (!wasSignaled) return false;
             if (Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0) return true;
             delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
         }
