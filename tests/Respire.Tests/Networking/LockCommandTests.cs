@@ -476,6 +476,44 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task CommandCancelledWhileWaitingForCapacityStillSurfacesCallerCancellation()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => LockReply(command),
+        };
+        server.DelayCommand("PING", 1000);
+        await using var client = await ConnectWithSingleInflightSlotAsync(server);
+        var ping = client.PingAsync().AsTask();
+        await WaitForCommandAsync(server, "PING");
+        using var cancellation = new CancellationTokenSource();
+
+        // A non-lock command parked on the full in-flight ring sees an ordinary cancellation:
+        // catch (OperationCanceledException) matches and the caller's token is preserved.
+        var get = client.Strings.GetAsync<string>("resource", cancellation.Token).AsTask();
+        await Task.Delay(50);
+        await Assert.That(get.IsCompleted).IsFalse();
+        await cancellation.CancelAsync();
+
+        OperationCanceledException? caught = null;
+        try
+        {
+            await get.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException error)
+        {
+            caught = error;
+        }
+
+        await Assert.That(caught).IsNotNull();
+        await Assert.That(caught!.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(get.IsCanceled).IsTrue();
+        await ping;
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("GET ", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
     public async Task RespireLock_ReleaseTimeoutWhileWaitingForInflightCapacityRemainsRetryable()
     {
         await using var server = new FakeRespServer(
@@ -748,6 +786,78 @@ public class LockCommandTests
         await Assert.That(await mutex.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
             .IsEqualTo(LockReleaseOutcome.Released);
     }
+
+    [Test]
+    public async Task RespireLock_ReleaseFallsBackUnfencedWhenAskTargetDeniesClientId()
+    {
+        var logger = new CapturingLoggerFactory();
+        await using var target = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID"
+                ? "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray()
+                : LockReply(command),
+        };
+        await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+        ConfigureAskingSeed(seed, target);
+        await using var client = await ConnectClusterAsync(seed, logger);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        // The cancellable token makes the release fenceable. The seed answers its delete with
+        // ASK, and the target denies CLIENT ID, so the delete continues there unfenced.
+        await Assert.That(await mutex.ReleaseAsync(cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(DelexCount(seed)).IsEqualTo(1);
+        await Assert.That(DelexCount(target)).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands).Contains("ASKING");
+        await Assert.That(logger.Warnings.Count(warning => warning is RespireServerException)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_ReleaseDoesNotFallBackWhenAskTargetFailsClientIdUnexpectedly()
+    {
+        await using var target = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID"
+                ? "-ERR CLIENT ID failed\r\n"u8.ToArray()
+                : LockReply(command),
+        };
+        await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+        ConfigureAskingSeed(seed, target);
+        await using var client = await ConnectClusterAsync(seed, null);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        // Only a definitive denial selects the unfenced delete. Any other failure surfaces with
+        // nothing sent to the target, so the release stays retryable.
+        await Assert.That(async () => await mutex.ReleaseAsync(cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+            .Throws<RespireServerException>();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(DelexCount(target)).IsEqualTo(0);
+    }
+
+    private static void ConfigureAskingSeed(FakeRespServer seed, FakeRespServer target)
+    {
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
+        var ask = Encoding.ASCII.GetBytes(
+            $"-ASK {Respire.Internal.ClusterHash.GetSlot("resource")} 127.0.0.1:{target.Port}\r\n");
+        seed.ReplyOverride = (_, command) =>
+            command.StartsWith("CLUSTER ", StringComparison.Ordinal) ? topology
+            : command.StartsWith("DELEX ", StringComparison.Ordinal) ? ask
+            : LockReply(command);
+    }
+
+    private static ValueTask<RespireClient> ConnectClusterAsync(FakeRespServer seed, ILoggerFactory? logger)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            LoggerFactory = logger,
+        });
 
     [Test]
     public async Task RespireLock_ResetExpiryRecordsDurationAndStopsAfterOwnershipLoss()

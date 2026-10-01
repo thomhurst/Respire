@@ -63,6 +63,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal bool IsReliableCorrectionOrderingUnavailable =>
         Volatile.Read(ref _correctionOrderingFailure) is not null;
 
+    /// <summary>The definitive CLIENT ID / CLIENT KILL denial recorded for this node, if any.</summary>
+    internal string? CorrectionOrderingFailure => Volatile.Read(ref _correctionOrderingFailure);
+
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
 

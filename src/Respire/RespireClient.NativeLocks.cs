@@ -34,10 +34,12 @@ public sealed partial class RespireClient
         /// still unanswered. The routing loop sets it before each send and clears it on proof that
         /// the attempt never ran: MOVED, ASK, a retired connection, or a transport report that the
         /// command was not enqueued (see <see cref="LockCommands.IsUnsubmitted"/>). A failure
-        /// while obtaining the next connection therefore keeps it cleared. Read only after
+        /// while obtaining the next connection therefore keeps it cleared. It starts as
+        /// <see langword="true"/> so that a failure on any path that never reaches the routing
+        /// loop stays uncertain and fails closed; only proof clears it. Read only after
         /// <see cref="Response"/> completes.
         /// </summary>
-        internal bool CommandMayBeOutstanding { get; set; }
+        internal bool CommandMayBeOutstanding { get; set; } = true;
     }
 
     private int _unfencedLockReleaseLogged;
@@ -81,14 +83,15 @@ public sealed partial class RespireClient
     internal async ValueTask<bool> ExecuteLockAsync(
         RespireKey key, RespireLockToken token, long? milliseconds, CancellationToken cancellationToken)
     {
-        var execution = await StartLockExecutionAsync(key, token, milliseconds, false, cancellationToken)
+        var execution = await StartLockExecutionAsync(
+                key, token, milliseconds, requireIdentity: false, allowUnfencedFallback: false, cancellationToken)
             .ConfigureAwait(false);
         return await execution.Response.ConfigureAwait(false);
     }
 
     internal async ValueTask<TrackedLockExecution> StartLockExecutionAsync(
         RespireKey key, RespireLockToken token, long? milliseconds,
-        bool requireIdentity, CancellationToken cancellationToken)
+        bool requireIdentity, bool allowUnfencedFallback, CancellationToken cancellationToken)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -126,7 +129,8 @@ public sealed partial class RespireClient
             // turn a cancellation after the delete was written into a retryable release;
             // RespireLock_CancelledReleaseConservativelyStopsProtectedWork fails if that happens.
             var response = ExecuteRoutedLockAsync(
-                execution, connection, wireKey, token.AsValue(), milliseconds, slot, requireIdentity, cancellationToken);
+                execution, connection, wireKey, token.AsValue(), milliseconds, slot, requireIdentity,
+                allowUnfencedFallback, cancellationToken);
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
                 : response;
@@ -144,7 +148,7 @@ public sealed partial class RespireClient
 
     private async ValueTask<bool> ExecuteRoutedLockAsync(
         TrackedLockExecution execution, RespireConnection connection, RespireValue key,
-        RespireValue token, long? milliseconds, int? slot, bool requireIdentity,
+        RespireValue token, long? milliseconds, int? slot, bool requireIdentity, bool allowUnfencedFallback,
         CancellationToken cancellationToken)
     {
         ClusterRouter.DiscoveryRound? discovery = null;
@@ -167,13 +171,26 @@ public sealed partial class RespireClient
                     execution.CommandMayBeOutstanding = false;
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = requireIdentity
-                        ? await GetTrackedReplacementConnectionAsync(
-                            cluster, sendAsking ? connection : null, slot, true, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReplacementConnectionAsync(
-                            sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    var source = sendAsking ? connection : null;
+                    if (!requireIdentity)
+                    {
+                        connection = await cluster.GetReplacementConnectionAsync(
+                            source, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        connection = await GetTrackedReplacementConnectionAsync(
+                            cluster, source, slot, !allowUnfencedFallback, cancellationToken, discovery).ConfigureAwait(false);
+                        if (RequiresStrictIdentityRetry(cluster, connection, allowUnfencedFallback))
+                        {
+                            connection = await GetTrackedReplacementConnectionAsync(
+                                cluster, source, slot, true, cancellationToken, discovery).ConfigureAwait(false);
+                        }
+                    }
+
                     discoveryPending = false;
-                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(
+                        connection, IsFenceable(cluster, connection, requireIdentity, allowUnfencedFallback), sendAsking);
                 }
                 catch (RespireServerException error) when (
                     _core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
@@ -182,15 +199,30 @@ public sealed partial class RespireClient
                     execution.CommandMayBeOutstanding = false;
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = requireIdentity
-                        ? await GetTrackedRedirectConnectionAsync(
-                                _core.Cluster, error, connection, true, cancellationToken, slot, discovery).ConfigureAwait(false)
-                        : await _core.Cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                    var source = connection;
+                    if (!requireIdentity)
+                    {
+                        connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery)
                             .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        connection = await GetTrackedRedirectConnectionAsync(
+                                cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery)
+                            .ConfigureAwait(false);
+                        if (RequiresStrictIdentityRetry(cluster, connection, allowUnfencedFallback))
+                        {
+                            connection = await GetTrackedRedirectConnectionAsync(
+                                    cluster, error, source, true, cancellationToken, slot, discovery)
+                                .ConfigureAwait(false);
+                        }
+                    }
+
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     // Publish the identity before any write on the redirected connection can be sent.
-                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(
+                        connection, IsFenceable(cluster, connection, requireIdentity, allowUnfencedFallback), sendAsking);
                 }
                 catch (Exception error) when (LockCommands.IsUnsubmitted(error))
                 {
@@ -207,6 +239,35 @@ public sealed partial class RespireClient
         }
         finally { discovery?.Finish(); }
     }
+
+    /// <summary>
+    /// A release may continue unfenced on a redirect or replacement target only when that node
+    /// definitively denied <c>CLIENT ID</c> or <c>CLIENT KILL</c> (missing ACL permission or an
+    /// unknown command), matching the fallback <see cref="LockCommands"/> applies before routing.
+    /// The caller opens the target with identity optional. If the target still lacks identity
+    /// for any other reason, this returns <see langword="true"/> and the caller reopens it with
+    /// identity required, so that failure surfaces exactly as it did before.
+    /// </summary>
+    private bool RequiresStrictIdentityRetry(
+        ClusterRouter cluster, RespireConnection connection, bool allowUnfencedFallback)
+    {
+        if (!allowUnfencedFallback || cluster.HasReliableCorrectionOrdering(connection))
+        {
+            return false;
+        }
+
+        if (connection.Multiplexer is { CorrectionOrderingFailure: { } failure })
+        {
+            LogUnfencedLockReleaseOnce(new RespireServerException(failure, "CLIENT KILL"));
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsFenceable(
+        ClusterRouter cluster, RespireConnection connection, bool requireIdentity, bool allowUnfencedFallback)
+        => requireIdentity && (!allowUnfencedFallback || cluster.HasReliableCorrectionOrdering(connection));
 
     private async ValueTask<bool> ExecuteCompatibleLockAsync(
         RespireConnection connection, RespireValue key, RespireValue token, long? milliseconds,

@@ -371,7 +371,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             {
                 await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
                 return (await client.StartLockExecutionAsync(
-                        key, token, milliseconds: null, requireIdentity: true, cancellationToken)
+                        key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true, cancellationToken)
                     .ConfigureAwait(false), true);
             }
             catch (RespireServerException error) when (
@@ -380,13 +380,14 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
                 // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
                 // Other server errors propagate. An uncertain outcome still fails closed, and a
                 // latent compare-and-delete cannot match another owner's token. Operators are told
-                // once that the fence is unavailable.
+                // once that the fence is unavailable. A cluster redirect or replacement target
+                // that denies them later gets the same fallback inside the routing loop.
                 client.LogUnfencedLockReleaseOnce(error);
             }
         }
 
         return (await client.StartLockExecutionAsync(
-                key, token, milliseconds: null, requireIdentity: false, cancellationToken)
+                key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false, cancellationToken)
             .ConfigureAwait(false), false);
     }
 
@@ -424,7 +425,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         try
         {
             execution = await client.StartLockExecutionAsync(
-                    key, token, milliseconds, requireIdentity: true, cancellationToken)
+                    key, token, milliseconds, requireIdentity: true, allowUnfencedFallback: false, cancellationToken)
                 .ConfigureAwait(false);
             return await execution.Response.ConfigureAwait(false);
         }
