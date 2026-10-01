@@ -175,6 +175,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         settings.Validate();
 
         var states = new List<CandidateState>();
+        var endpoints = new List<RespireEndpoint>();
         RespireFailoverGroup? group = null;
         try
         {
@@ -193,6 +194,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     throw new RespireConfigurationException(
                         "Standalone failover candidates require exactly one endpoint and cannot enable Cluster or Sentinel mode.");
                 }
+                var endpoint = snapshot.Endpoints[0];
+                if (endpoints.Any(existing => existing.Port == endpoint.Port
+                    && string.Equals(existing.Host, endpoint.Host, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new RespireConfigurationException(
+                        $"Standalone failover candidates must use distinct endpoints; '{endpoint}' is listed more than once.");
+                }
+                endpoints.Add(endpoint);
                 if (snapshot.ClientSideCache is not null)
                 {
                     throw new RespireConfigurationException(
@@ -323,7 +332,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 // Fail back to the highest-priority candidate that has completed its grace period, so an
                 // unstable top-priority endpoint cannot block failback to a stable intermediate one.
                 var recovered = healthy.FirstOrDefault(candidate =>
-                    candidate.Priority < active.Priority
+                    (candidate.Priority < active.Priority
+                        || candidate.Priority == active.Priority && candidate.Order < active.Order)
                     && candidate.HasCompletedFailbackGrace(_clock, nowTimestamp, _options.FailbackGracePeriod));
                 if (recovered is not null)
                 {

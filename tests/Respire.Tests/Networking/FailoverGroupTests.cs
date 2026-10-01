@@ -86,6 +86,26 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task RecoveredEarlierCandidateWithEqualPriorityFailsBack()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryFailed = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryFailed) != 0
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
+                : null;
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [Candidate(primary, priority: 0), Candidate(secondary, priority: 0)], FastOptions());
+        Volatile.Write(ref primaryFailed, 1);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
+
+        Volatile.Write(ref primaryFailed, 0);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(primary));
+    }
+
+    [Test]
     public async Task FailedProbeBelowThresholdRestartsFailbackGracePeriod()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
@@ -334,6 +354,24 @@ public class FailoverGroupTests
         var exception = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([candidate]))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(exception!.Message).Contains("MaxAttempts = null");
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsDuplicateEndpointsIgnoringHostCase()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var primary = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [$"LOCALHOST:{server.Port}"],
+        });
+        var duplicate = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [$"localhost:{server.Port}"],
+        });
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([primary, duplicate]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
     [Test]
