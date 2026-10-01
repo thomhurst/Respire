@@ -16,6 +16,7 @@
     <PackageReference Include="Respire.Testing.Containers" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Coordination" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Extensions.Aws" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
