@@ -155,6 +155,38 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task CancellationWhileWaitingForRenewalGateLeavesPermitUsable()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 300);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{renew}:gate-cancel", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromSeconds(30))).Permit;
+
+        var firstRenewal = permit.ResetExpiryAsync(TimeSpan.FromSeconds(60)).AsTask();
+        using (var started = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while (EvalCommands(server).Length < 2) await Task.Delay(10, started.Token);
+        }
+
+        using var waitingCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.That(async () => await permit.ResetExpiryAsync(TimeSpan.FromSeconds(90), waitingCancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(permit.IsReleased).IsFalse();
+        await Assert.That(permit.RemainingEstimate.GetValueOrDefault()).IsGreaterThan(TimeSpan.Zero);
+
+        await Assert.That(await firstRenewal).IsTrue();
+        await Assert.That(permit.IsReleased).IsFalse();
+        await Assert.That(await permit.VerifyStillHeldAsync()).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UncertainRenewalRefusesLaterRenewals()
     {
         await using var server = new FakeRespServer(

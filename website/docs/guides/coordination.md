@@ -448,7 +448,8 @@ Failures are handled differently by each operation:
 - A failed or canceled verification throws and leaves the permit held, so you can retry it.
   Verification is a point-in-time check. It prunes expired permits, so it runs on the primary and
   needs write permission for the key.
-- A failed or canceled renewal surrenders the permit. The renewal may still run on Redis, so
+- Cancellation while waiting for another permit operation to finish leaves it unchanged. Once a
+  renewal starts, a failed or canceled renewal surrenders the permit. The renewal may still run on Redis, so
   Respire attempts an owner-token release with a separate one-second bound before the exception
   propagates. After any failed renewal, `IsReleased` is true, `RemainingEstimate` is zero, and later
   renewals return `false` without contacting Redis. A canceled renewal could still overwrite a newer

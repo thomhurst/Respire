@@ -574,6 +574,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// bounded owner-token release before the exception propagates.
     /// </para>
     /// <para>
+    /// Cancellation while waiting for another permit operation to finish does not start this renewal
+    /// and leaves the permit unchanged. The surrender behavior applies after this call enters the gate.
+    /// </para>
+    /// <para>
     /// After any failed renewal, including a Redis error reply, <see cref="IsReleased"/> is true and
     /// every later call returns false without contacting Redis, even when that cleanup failed. A
     /// canceled or timed-out renewal could still execute and overwrite any newer expiry, and a script
