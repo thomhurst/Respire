@@ -672,6 +672,52 @@ public class SentinelTests
         await Assert.That(replacement.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task SwitchMasterEventQueriesItsSentinelAndValidatesAnnouncedPrimary()
+    {
+        await using var previous = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var replacement = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var staleSentinel = CreateSentinel(() => previous.Port);
+        await using var reportingSentinel = CreateSentinel(() => replacement.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", staleSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => staleSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1
+            && reportingSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        var commandIndex = reportingSentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master");
+        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port),
+            reportingSentinel.ReceivedConnectionIds[commandIndex]);
+
+        await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
+        await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
+    }
+
+    private static FakeRespServer CreateSentinel(Func<int> primaryPort)
+        => new FakeRespServer(16, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") return PrimaryReply(primaryPort());
+                if (command == "SENTINEL SENTINELS mymaster") return "*0\r\n"u8.ToArray();
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    var channel = command["SUBSCRIBE ".Length..];
+                    return Encoding.ASCII.GetBytes($"*3\r\n$9\r\nsubscribe\r\n${channel.Length}\r\n{channel}\r\n:1\r\n");
+                }
+                return null;
+            },
+        };
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 200; attempt++)

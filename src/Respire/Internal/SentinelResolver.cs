@@ -13,7 +13,9 @@ internal static class SentinelResolver
         RespireOptions options,
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken,
-        SentinelDiscoveryState? discoveryState = null)
+        SentinelDiscoveryState? discoveryState = null,
+        RespireEndpoint? preferredSentinel = null,
+        RespireEndpoint? expectedPrimary = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -30,6 +32,11 @@ internal static class SentinelResolver
         discoveryState ??= new SentinelDiscoveryState(options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost", 26379)] : options.Endpoints);
         var sentinelEndpoints = discoveryState.Snapshot().ToList();
+        if (preferredSentinel is { } preferred)
+        {
+            sentinelEndpoints.Remove(preferred);
+            sentinelEndpoints.Insert(0, preferred);
+        }
         var initialCount = sentinelEndpoints.Count;
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
@@ -61,6 +68,11 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (expectedPrimary is { } expected && !SameEndpoint(primary, expected))
+                {
+                    throw new RespireConnectionException(
+                        $"Sentinel {endpoint} returned stale primary {primary}; failover event announced {expected}.");
+                }
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -143,6 +155,9 @@ internal static class SentinelResolver
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
         }
     }
+
+    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
     private static bool ContainsCancellation(Exception error)
     {

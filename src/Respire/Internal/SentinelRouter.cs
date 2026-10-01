@@ -70,13 +70,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate) _correctionPools.Remove(pool);
     }
 
-    internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken)
+    internal async ValueTask<Generation> GetGenerationAsync(
+        CancellationToken cancellationToken, RespireEndpoint? preferredSentinel = null,
+        RespireEndpoint? expectedPrimary = null)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
-        if (Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
+        if (expectedPrimary is null
+            && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
@@ -87,10 +90,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             // Another discovery owner may have published while this caller awaited the gate.
             var previous = Current;
-            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
+            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
+                && (expectedPrimary is null || SameEndpoint(previous.Endpoint, expectedPrimary.Value))) return previous;
             if (previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
-                core.Options, ConnectGenerationAsync, linked.Token, _discovery).ConfigureAwait(false);
+                core.Options, ConnectGenerationAsync, linked.Token, _discovery,
+                preferredSentinel, expectedPrimary).ConfigureAwait(false);
             unpublished = replacement;
             lock (_gate)
             {
@@ -242,12 +247,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && current.Endpoint.Port == newPrimary.Port) return;
             Invalidate(current);
         }
-        _ = RefreshAfterSentinelEventAsync(sentinel);
+        _ = RefreshAfterSentinelEventAsync(sentinel, newPrimary);
     }
 
-    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel)
+    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
+
+    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel, RespireEndpoint expectedPrimary)
     {
-        try { await GetGenerationAsync(_lifetime.Token).ConfigureAwait(false); }
+        try { await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary).ConfigureAwait(false); }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception error)
         {

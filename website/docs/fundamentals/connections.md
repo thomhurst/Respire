@@ -224,8 +224,8 @@ is distinct from either standalone fallback or Sentinel discovery.
 An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
 bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
 peers, and failed primary ROLE validation share that resolution budget. Each new Sentinel
-resolution uses this policy; event-driven Sentinel monitoring is separate future work.
-Cluster uses the same option for
+resolution uses this policy. When monitoring is enabled, Sentinel switch events also trigger
+discovery through the reporting Sentinel. Cluster uses the same option for
 [node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
 with one shared budget per discovery round. Periodic Cluster refresh remains separate.
 
