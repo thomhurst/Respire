@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -408,6 +409,71 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task ClusterCandidateUsesClusterStateAndReportsFirstSeed()
+    {
+        await using var cluster = new FakeRespServer(FakeRespServer.PongReply);
+        await using var standby = new FakeRespServer(FakeRespServer.PongReply);
+        var clusterState = "ok";
+        cluster.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => ClusterSlots(cluster.Port),
+            "CLUSTER INFO" => Bulk($"cluster_state:{Volatile.Read(ref clusterState)}\r\ncluster_slots_assigned:16384\r\n"),
+            _ => null,
+        };
+        var unusedSeed = new RespireEndpoint("127.0.0.1", 1);
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [
+            new RespireFailoverCandidate(new RespireOptions
+            {
+                UseCluster = true,
+                Protocol = RespProtocol.Resp2,
+                Connections = 1,
+                ConnectTimeout = TimeSpan.FromMilliseconds(200),
+                CommandTimeout = TimeSpan.FromMilliseconds(300),
+                Endpoints = [Endpoint(cluster), unusedSeed],
+            }, Priority: 0),
+            Candidate(standby, priority: 1),
+        ], FastOptions());
+
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(cluster));
+        await Assert.That(group.GetEndpointStatuses()[0].Endpoint).IsEqualTo(Endpoint(cluster));
+        await Assert.That(cluster.ReceivedCommands.Contains("CLUSTER INFO")).IsTrue();
+        await Assert.That(cluster.ReceivedCommands.Contains("PING")).IsFalse();
+
+        // The node still answers, but Redis reports unserved slots.
+        Volatile.Write(ref clusterState, "fail");
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(standby));
+        var status = group.GetEndpointStatuses().Single(candidate => candidate.Endpoint == Endpoint(cluster));
+        await Assert.That(status.IsHealthy).IsFalse();
+        await Assert.That(status.LastErrorType).IsEqualTo(nameof(RespireConnectionException));
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsInvalidCandidateModesBeforeConnecting()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var endpoint = Endpoint(server);
+
+        var sentinel = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+            [new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint], SentinelPrimaryName = "mymaster" })]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(sentinel!.Message).Contains("Sentinel");
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+            [new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint, new RespireEndpoint("127.0.0.1", 1)] })]))
+            .ThrowsExactly<RespireConfigurationException>();
+
+        var overlapping = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+        [
+            new RespireFailoverCandidate(new RespireOptions { UseCluster = true, Endpoints = [new RespireEndpoint("127.0.0.1", 1), endpoint] }),
+            new RespireFailoverCandidate(new RespireOptions { UseCluster = true, Endpoints = [endpoint] }),
+        ])).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(overlapping!.Message).Contains(endpoint.ToString());
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ConnectAsync_RejectsFiniteReconnectBudget()
     {
         var candidate = new RespireFailoverCandidate(new RespireOptions
@@ -498,6 +564,15 @@ public class FailoverGroupTests
         };
 
     private static RespireEndpoint Endpoint(FakeRespServer server) => new("127.0.0.1", server.Port);
+
+    private static byte[] Bulk(string value)
+    {
+        var payload = Encoding.UTF8.GetBytes(value);
+        return [.. Encoding.ASCII.GetBytes($"${payload.Length}\r\n"), .. payload, 13, 10];
+    }
+
+    private static byte[] ClusterSlots(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

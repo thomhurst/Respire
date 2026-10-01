@@ -209,11 +209,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     throw new RespireConfigurationException(
                         "Failover group candidates require an unlimited reconnect policy (MaxAttempts = null) so a candidate can recover after an outage.");
                 }
-                if (snapshot.Endpoints.Count == 0 || (!snapshot.UseCluster && snapshot.Endpoints.Count != 1)
-                    || !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
+                // Options validation already requires one standalone endpoint or one or more Cluster seeds.
+                if (!string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
                 {
-                    throw new RespireConfigurationException(
-                        "Failover candidates require one endpoint in standalone mode or one or more seed endpoints in Cluster mode; Sentinel mode is not supported.");
+                    throw new RespireConfigurationException("Sentinel failover candidates are not supported yet.");
                 }
                 foreach (var endpoint in snapshot.Endpoints)
                 {
@@ -310,7 +309,19 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         var started = Stopwatch.GetTimestamp();
         try
         {
-            await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
+            if (candidate.Client.Core.Cluster is null)
+            {
+                await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                // A keyless PING reaches one arbitrary node, which can answer while slots are unserved.
+                var info = await candidate.Client.Server.ClusterInfoAsync(timeout.Token).ConfigureAwait(false);
+                if (!string.Equals(info.State, "ok", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new RespireConnectionException($"Cluster reports cluster_state:{info.State}.");
+                }
+            }
             candidate.MarkHealthy(_clock.GetTimestamp());
             RespireTelemetry.RecordFailoverProbe(
                 candidate.Endpoint,

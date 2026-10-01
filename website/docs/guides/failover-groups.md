@@ -3,11 +3,12 @@ title: Failover groups
 ---
 
 `RespireFailoverGroup` monitors independent standalone Redis or Redis Cluster deployments and selects a healthy
-deployment for new operations. Lower candidate priorities win. The group uses bounded `PING`
+deployment for new operations. Lower candidate priorities win. The group uses bounded health
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
-Health means the endpoint answers `PING` within `ProbeTimeout`. The group does not inspect
+Health means a standalone endpoint answers `PING` within `ProbeTimeout`. Cluster candidates use the
+`CLUSTER INFO` probe described below. The group does not inspect
 application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
 `-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
@@ -69,7 +70,19 @@ switch.
 
 For a Cluster deployment, set `UseCluster = true` and provide one or more seed endpoints. Each
 candidate owns a separate `RespireClient`, so slot maps and `MOVED`/`ASK` recovery stay within the
-selected Cluster. Status and switch events report that client's current connection endpoint.
+selected Cluster. Status, switch events, logs, and metrics identify a Cluster candidate by its first
+configured seed endpoint. That value stays the same when the Cluster topology changes, even when the
+client routes commands through another node.
+
+A Cluster candidate is healthy when `CLUSTER INFO` reports `cluster_state:ok` within
+`ProbeTimeout`, instead of answering `PING`. Redis reports `cluster_state:fail` when a hash slot has
+no reachable primary, so a partial Cluster outage triggers failover even while some nodes still
+respond. The probe runs on one node, so it does not detect a primary that only this client cannot
+reach. The candidate's user needs permission to run `CLUSTER INFO`.
+
+Each Cluster candidate must be a separate Cluster. Duplicate detection compares only the configured
+seed endpoints. Two candidates whose seeds differ but whose nodes belong to the same Cluster pass
+validation and provide no deployment redundancy.
 
 ```csharp
 new RespireFailoverCandidate(new RespireOptions
