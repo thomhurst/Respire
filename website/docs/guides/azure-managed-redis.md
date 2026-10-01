@@ -24,6 +24,7 @@ using Respire;
 using Respire.Extensions.Azure;
 
 var credential = new DefaultAzureCredential();
+var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
 var provider = new AzureManagedRedisCredentialProvider(credential, redisUserObjectId);
 
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -38,6 +39,17 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 For dependency injection, assign the same provider through `RespireOptionsBuilder.CredentialProvider`:
 
 ```csharp
+using Azure.Identity;
+using Microsoft.Extensions.DependencyInjection;
+using Respire;
+using Respire.Extensions.Azure;
+using Respire.Extensions.DependencyInjection;
+
+var credential = new DefaultAzureCredential();
+var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
+var provider = new AzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+var services = new ServiceCollection();
+
 services.AddRespire(options =>
 {
     options.Endpoints.Add(new RespireEndpoint("my-cache.redis.azure.net", 10000));

@@ -19,6 +19,8 @@
     <PackageReference Include="Respire.Extensions.Aws" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Extensions.Azure" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
