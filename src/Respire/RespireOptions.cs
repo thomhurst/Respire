@@ -221,7 +221,8 @@ public sealed record RespireOptions
     /// of random jitter so many clients do not refresh in step.</para>
     /// <para>Disabling the timer disables only periodic refresh. Primary disconnects (at most one refresh
     /// per second), <c>MOVED</c> redirects (debounced for 5 seconds) and failed-refresh retries (backoff
-    /// from 5 to 60 seconds) still refresh the topology. These timings are fixed. A single refresh pass
+    /// from 5 to 60 seconds) still refresh the topology. While a failed-refresh retry is pending, periodic
+    /// and redirect-driven refreshes wait for it. These timings are fixed. A single refresh pass
     /// is bounded to 60 seconds regardless of this interval, and a failed pass keeps the last published
     /// slot map.</para>
     /// </remarks>

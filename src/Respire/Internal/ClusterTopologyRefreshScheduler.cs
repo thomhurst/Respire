@@ -2,24 +2,38 @@ using Microsoft.Extensions.Logging;
 
 namespace Respire.Internal;
 
+/// <summary>What one background refresh did.</summary>
+internal enum TopologyRefreshOutcome
+{
+    /// <summary>The cluster was queried and returned a complete topology.</summary>
+    Refreshed,
+    /// <summary>No query was sent: a refresh that succeeded moments ago answered the request.</summary>
+    ReusedRecent,
+    /// <summary>No candidate returned a complete topology.</summary>
+    Failed,
+}
+
 /// <summary>Decides when the cluster router runs a background topology refresh.</summary>
 /// <remarks>
-/// <para>All scheduling state lives under one lock: the earliest due time of any pending request,
-/// whether that request is forced, the next periodic deadline and the failure-retry deadline.
-/// Triggers merge into that state (the earliest deadline wins and force is OR-ed) and then complete
-/// the current wake task. The worker re-reads the state after every wake, so a spurious or late wake
-/// can never carry stale delay or force data into a later refresh.</para>
+/// <para>All scheduling state lives under one lock: the earliest due time of any pending plain
+/// request, the earliest due time of any pending forced request, the next periodic deadline and the
+/// failure-retry deadline. Triggers merge into that state (the earliest deadline of each kind wins)
+/// and then complete the current wake task. The worker re-reads the state after every wake, so a
+/// spurious or late wake can never carry stale delay or force data into a later refresh.</para>
 /// <para>Rules:</para>
 /// <list type="bullet">
 /// <item><c>MOVED</c> requests are debounced by <see cref="MovedDebounce"/>. A later redirect keeps the
 /// first deadline, so a steady stream of redirects cannot postpone discovery.</item>
 /// <item>Primary-disconnect requests are forced but spaced by <see cref="PrimaryDisconnectSpacing"/>,
 /// because a primary that keeps failing to reconnect reports a disconnect for every slot on every
-/// attempt.</item>
-/// <item>A failed refresh schedules a retry with capped exponential backoff, and delays later
-/// non-forced requests until that retry, so a cluster that is down is not probed back to back.</item>
-/// <item>Any refresh that runs satisfies every request pending at that moment, including a
-/// debounced <c>MOVED</c> request that was not yet due.</item>
+/// attempt. Forced and plain deadlines are kept apart, so an earlier plain or periodic deadline never
+/// turns into a forced refresh that skips the spacing.</item>
+/// <item>A failed refresh schedules a retry with capped exponential backoff. Plain requests and the
+/// periodic deadline wait for that retry, so a cluster that is down is not probed back to back.
+/// Forced requests still run at their own deadline.</item>
+/// <item>A refresh satisfies every plain request pending when it starts. A forced request is
+/// satisfied by a refresh that started at or after its deadline, or by any refresh that started
+/// after the request arrived and actually queried the cluster.</item>
 /// </list>
 /// </remarks>
 internal sealed class ClusterTopologyRefreshScheduler
@@ -33,25 +47,33 @@ internal sealed class ClusterTopologyRefreshScheduler
     // Runtime timers cannot be armed for more than about 49.7 days. Longer waits re-arm.
     internal static readonly TimeSpan MaximumTimerSegment = TimeSpan.FromDays(24);
     // Many clients started together should not all send CLUSTER SLOTS in the same instant.
-    private const double PeriodicJitterRatio = 0.1;
+    internal const double PeriodicJitterRatio = 0.1;
 
     private readonly object _gate = new();
     private readonly TimeProvider _clock;
+    private readonly Func<double> _jitterSample;
     private readonly long _origin;
     private readonly TimeSpan? _interval;
     private TaskCompletionSource _wake = NewWake();
     private TimeSpan? _pendingDue;
-    private bool _pendingForce;
-    private bool _pendingDisconnect;
+    private TimeSpan? _forcedDue;
+    private bool _forcedDisconnect;
+    // Sequence number of the latest forced request; a run records the value it started with.
+    private long _forcedSequence;
     private TimeSpan? _periodicDue;
     private TimeSpan? _retryDue;
     private TimeSpan? _lastDisconnectRefresh;
     private int _consecutiveFailures;
     private volatile bool _forcedRequestPending;
 
-    internal ClusterTopologyRefreshScheduler(TimeSpan? interval, TimeProvider clock)
+    /// <param name="interval">The periodic interval; see <see cref="IsPeriodic"/>.</param>
+    /// <param name="clock">Drives every deadline.</param>
+    /// <param name="jitterSample">Returns a value in [0, 1) that scales the periodic jitter. Tests
+    /// pass a constant to assert exact deadlines.</param>
+    internal ClusterTopologyRefreshScheduler(TimeSpan? interval, TimeProvider clock, Func<double>? jitterSample = null)
     {
         _clock = clock;
+        _jitterSample = jitterSample ?? Random.Shared.NextDouble;
         _origin = clock.GetTimestamp();
         _interval = IsPeriodic(interval) ? interval : null;
     }
@@ -71,15 +93,28 @@ internal sealed class ClusterTopologyRefreshScheduler
 
     private static TaskCompletionSource NewWake() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Adds without overflowing: a deadline past <see cref="TimeSpan.MaxValue"/> means never.</summary>
+    internal static TimeSpan SaturatingAdd(TimeSpan time, TimeSpan delay)
+        => delay <= TimeSpan.Zero ? time
+            : time > TimeSpan.MaxValue - delay ? TimeSpan.MaxValue
+            : time + delay;
+
     /// <summary>Requests a refresh after <paramref name="delay"/>; a forced request bypasses the
     /// recent-success coalescing window and the failure backoff.</summary>
     internal void Request(TimeSpan delay, bool force = false)
     {
         lock (_gate)
         {
-            var due = Now + (delay > TimeSpan.Zero ? delay : TimeSpan.Zero);
-            if (!force && _retryDue is { } retry && retry > due) due = retry;
-            MergeLocked(due, force, disconnect: false);
+            var due = SaturatingAdd(Now, delay);
+            if (force)
+            {
+                MergeForcedLocked(due, disconnect: false);
+                return;
+            }
+
+            if (_retryDue is { } retry && retry > due) due = retry;
+            if (_pendingDue is not { } pending || due < pending) _pendingDue = due;
+            _wake.TrySetResult();
         }
     }
 
@@ -89,43 +124,53 @@ internal sealed class ClusterTopologyRefreshScheduler
         lock (_gate)
         {
             var due = Now;
-            if (_lastDisconnectRefresh is { } last && last + PrimaryDisconnectSpacing > due)
-                due = last + PrimaryDisconnectSpacing;
-            MergeLocked(due, force: true, disconnect: true);
+            if (_lastDisconnectRefresh is { } last && SaturatingAdd(last, PrimaryDisconnectSpacing) > due)
+                due = SaturatingAdd(last, PrimaryDisconnectSpacing);
+            MergeForcedLocked(due, disconnect: true);
         }
     }
 
-    private void MergeLocked(TimeSpan due, bool force, bool disconnect)
+    private void MergeForcedLocked(TimeSpan due, bool disconnect)
     {
-        if (_pendingDue is not { } pending || due < pending) _pendingDue = due;
-        _pendingForce |= force;
-        _pendingDisconnect |= disconnect;
-        if (force) _forcedRequestPending = true;
+        if (_forcedDue is not { } pending || due < pending) _forcedDue = due;
+        _forcedDisconnect |= disconnect;
+        _forcedSequence++;
+        _forcedRequestPending = true;
         _wake.TrySetResult();
     }
 
-    internal readonly record struct Decision(bool Run, bool AllowRecentResult, TimeSpan? Wait, Task Wake);
+    /// <summary>The worker's next step.</summary>
+    /// <param name="Run">True when a refresh should run now.</param>
+    /// <param name="AllowRecentResult">True when only plain debounced requests are due, so a refresh
+    /// that succeeded moments ago may answer them.</param>
+    /// <param name="Wait">How long to wait before asking again; null waits for a wake only.</param>
+    /// <param name="Wake">Completes when a new request arrives.</param>
+    /// <param name="StartedAt">When the run started, on the scheduler's clock.</param>
+    /// <param name="ForcedSequence">The forced-request sequence seen when the run started; pass the
+    /// decision back to <see cref="Complete"/>.</param>
+    internal readonly record struct Decision(
+        bool Run, bool AllowRecentResult, TimeSpan? Wait, Task Wake, TimeSpan StartedAt = default, long ForcedSequence = 0);
 
-    /// <summary>Takes every pending request when one is due, or returns how long to wait.</summary>
+    /// <summary>Takes every pending request that is due, or returns how long to wait.</summary>
     internal Decision Next()
     {
         lock (_gate)
         {
             var now = Now;
-            var due = Earliest(Earliest(_pendingDue, _periodicDue), _retryDue);
+            var due = Earliest(Earliest(_pendingDue, _forcedDue), Earliest(_periodicDue, _retryDue));
             if (due is { } runAt && runAt <= now)
             {
-                // A periodic or retry refresh must query the cluster; only a plain debounced
+                var forcedDue = _forcedDue <= now;
+                var periodicDue = _periodicDue <= now;
+                var retryDue = _retryDue <= now;
+                // A forced, periodic or retry refresh must query the cluster; only a plain debounced
                 // request may reuse a refresh that succeeded moments ago.
-                var allowRecent = !_pendingForce && !(_periodicDue <= now) && !(_retryDue <= now);
-                if (_pendingDisconnect) _lastDisconnectRefresh = now;
+                var allowRecent = !forcedDue && !periodicDue && !retryDue;
+                if (forcedDue) ClearForcedLocked(now);
                 _pendingDue = null;
-                _pendingForce = false;
-                _pendingDisconnect = false;
-                _forcedRequestPending = false;
-                _periodicDue = null;
+                if (periodicDue) _periodicDue = null;
                 _retryDue = null;
-                return new Decision(true, allowRecent, null, Task.CompletedTask);
+                return new Decision(true, allowRecent, null, Task.CompletedTask, now, _forcedSequence);
             }
 
             if (_wake.Task.IsCompleted) _wake = NewWake();
@@ -136,32 +181,59 @@ internal sealed class ClusterTopologyRefreshScheduler
         }
     }
 
+    private void ClearForcedLocked(TimeSpan refreshStartedAt)
+    {
+        if (_forcedDisconnect) _lastDisconnectRefresh = refreshStartedAt;
+        _forcedDue = null;
+        _forcedDisconnect = false;
+        _forcedRequestPending = false;
+    }
+
     /// <summary>Arms the first periodic deadline.</summary>
     internal void Start()
     {
         lock (_gate) _periodicDue = NextPeriodicDue(Now);
     }
 
-    /// <summary>Records a refresh outcome and returns the failure-retry delay, if any.</summary>
-    internal TimeSpan? Complete(bool success)
+    /// <summary>Records the outcome of the refresh <paramref name="run"/> started, and returns the
+    /// failure-retry delay, if any.</summary>
+    internal TimeSpan? Complete(Decision run, TopologyRefreshOutcome outcome)
     {
         lock (_gate)
         {
             var now = Now;
-            _periodicDue = NextPeriodicDue(now);
-            if (success)
+            switch (outcome)
             {
-                _consecutiveFailures = 0;
-                _retryDue = null;
-                return null;
-            }
+                case TopologyRefreshOutcome.Refreshed:
+                    // The cluster was queried after every forced request up to this sequence arrived,
+                    // so the fresh map already answers them.
+                    if (_forcedDue is not null && _forcedSequence <= run.ForcedSequence)
+                        ClearForcedLocked(run.StartedAt);
+                    _consecutiveFailures = 0;
+                    _retryDue = null;
+                    _periodicDue = NextPeriodicDue(now);
+                    return null;
 
-            if (_consecutiveFailures < int.MaxValue) _consecutiveFailures++;
-            var shift = Math.Min(_consecutiveFailures - 1, 16);
-            var retryDelay = TimeSpan.FromTicks(Math.Min(
-                InitialFailureRetryDelay.Ticks << shift, MaximumFailureRetryDelay.Ticks));
-            _retryDue = now + retryDelay;
-            return retryDelay;
+                case TopologyRefreshOutcome.ReusedRecent:
+                    // Only a plain request ran. The refresh it reused already armed the periodic
+                    // deadline, and forced requests still need a real query.
+                    return null;
+
+                default:
+                    if (_consecutiveFailures < int.MaxValue) _consecutiveFailures++;
+                    var shift = Math.Min(_consecutiveFailures - 1, 16);
+                    var retryDelay = TimeSpan.FromTicks(Math.Min(
+                        InitialFailureRetryDelay.Ticks << shift, MaximumFailureRetryDelay.Ticks));
+                    var retryDue = SaturatingAdd(now, retryDelay);
+                    _retryDue = retryDue;
+                    // The retry is the next non-forced refresh. Plain requests queued while the failed
+                    // refresh ran, and a periodic deadline shorter than the backoff, wait for it
+                    // instead of probing an unavailable cluster again straight away. The periodic
+                    // timer is re-armed when the retry completes.
+                    if (_pendingDue is { } pending && pending < retryDue) _pendingDue = retryDue;
+                    _periodicDue = null;
+                    return retryDelay;
+            }
         }
     }
 
@@ -169,8 +241,8 @@ internal sealed class ClusterTopologyRefreshScheduler
     {
         if (_interval is not { } interval) return null;
         // Jitter only shortens the interval, so a configured interval remains an upper bound.
-        var jitter = TimeSpan.FromTicks((long)(interval.Ticks * PeriodicJitterRatio * Random.Shared.NextDouble()));
-        return now + interval - jitter;
+        var jitter = TimeSpan.FromTicks((long)(interval.Ticks * PeriodicJitterRatio * _jitterSample()));
+        return SaturatingAdd(now, interval - jitter);
     }
 
     private static TimeSpan? Earliest(TimeSpan? left, TimeSpan? right)
@@ -179,7 +251,7 @@ internal sealed class ClusterTopologyRefreshScheduler
     /// <summary>Runs refreshes until <paramref name="stop"/> is cancelled. Unexpected failures are
     /// logged and retried; they never end the loop.</summary>
     internal async Task RunAsync(
-        Func<bool, CancellationToken, Task<bool>> refresh, ILogger? logger, CancellationToken stop)
+        Func<bool, CancellationToken, Task<TopologyRefreshOutcome>> refresh, ILogger? logger, CancellationToken stop)
     {
         Start();
         while (!stop.IsCancellationRequested)
@@ -193,16 +265,16 @@ internal sealed class ClusterTopologyRefreshScheduler
                     continue;
                 }
 
-                bool success;
-                try { success = await refresh(decision.AllowRecentResult, stop).ConfigureAwait(false); }
+                TopologyRefreshOutcome outcome;
+                try { outcome = await refresh(decision.AllowRecentResult, stop).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
                 catch (Exception error)
                 {
                     logger.TryLog(LogLevel.Debug, error, "Redis Cluster topology refresh failed");
-                    success = false;
+                    outcome = TopologyRefreshOutcome.Failed;
                 }
 
-                if (Complete(success) is { } retryDelay)
+                if (Complete(decision, outcome) is { } retryDelay)
                 {
                     logger.TryLog(LogLevel.Warning, null,
                         "Redis Cluster topology refresh failed {ConsecutiveFailures} consecutive time(s); retrying in {RetryDelay}",

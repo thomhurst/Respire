@@ -144,7 +144,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if (Volatile.Read(ref _seed) is { IsConnected: true } readySeed && discovery?.HasRejected(readySeed) != true)
         {
-            StartTopologyRefreshWorker();
             return;
         }
 
@@ -156,7 +155,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (Volatile.Read(ref _seed) is { IsConnected: true } seed && discovery?.HasRejected(seed) != true)
             {
-                StartTopologyRefreshWorker();
                 return;
             }
 
@@ -173,7 +171,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     SetSeed(node);
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
-                    StartTopologyRefreshWorker();
                     return;
                 }
                 catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken))
@@ -319,7 +316,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         try
         {
             await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            StartTopologyRefreshWorker();
         }
         catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
         {
@@ -1387,12 +1383,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     // Publish the current identity, even when discovery completed on a superseded transport.
+    // Every caller has just connected to, or loaded a topology from, a cluster node. The first call
+    // is the router's "connected" transition, so the background refresh worker starts here and
+    // nowhere else.
     private void SetSeed(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
         {
             SetSeedLocked(node);
         }
+        StartTopologyRefreshWorker();
     }
 
     // Caller holds _nodesGate, including topology publication.
@@ -1783,8 +1783,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
 
                 ApplyTopology(topology, topologyVersion, discoveryGeneration);
-                // A published topology proves the router has connected.
-                StartTopologyRefreshWorker();
                 return true;
             }
             finally

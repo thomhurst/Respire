@@ -108,7 +108,7 @@ public class ClusterTopologyRefreshSchedulerTests
         await Assert.That(forced.Run).IsTrue();
         await Assert.That(forced.AllowRecentResult).IsFalse();
         await Assert.That(scheduler.HasPendingForcedRequest).IsFalse();
-        scheduler.Complete(success: true);
+        scheduler.Complete(forced, TopologyRefreshOutcome.Refreshed);
 
         // A wake left over from the forced request carries no state: the next redirect is debounced
         // and may reuse a recent success.
@@ -128,8 +128,9 @@ public class ClusterTopologyRefreshSchedulerTests
         scheduler.Start();
 
         scheduler.RequestPrimaryDisconnect();
-        await Assert.That(scheduler.Next().Run).IsTrue();
-        scheduler.Complete(success: true);
+        var first = scheduler.Next();
+        await Assert.That(first.Run).IsTrue();
+        scheduler.Complete(first, TopologyRefreshOutcome.Refreshed);
 
         clock.Advance(TimeSpan.FromMilliseconds(200));
         scheduler.RequestPrimaryDisconnect();
@@ -152,8 +153,7 @@ public class ClusterTopologyRefreshSchedulerTests
         var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
         scheduler.Start();
         scheduler.RequestPrimaryDisconnect();
-        _ = scheduler.Next();
-        scheduler.Complete(success: true);
+        scheduler.Complete(scheduler.Next(), TopologyRefreshOutcome.Refreshed);
 
         scheduler.Request(ClusterTopologyRefreshScheduler.MovedDebounce);
         scheduler.RequestPrimaryDisconnect();
@@ -171,7 +171,7 @@ public class ClusterTopologyRefreshSchedulerTests
 
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            var retry = scheduler.Complete(success: false)!.Value;
+            var retry = scheduler.Complete(default, TopologyRefreshOutcome.Failed)!.Value;
             delays.Add(retry);
             await Assert.That(scheduler.Next().Wait).IsEqualTo(retry);
             clock.Advance(retry);
@@ -184,7 +184,7 @@ public class ClusterTopologyRefreshSchedulerTests
             .IsEquivalentTo(new[] { 5, 10, 20, 40, 60, 60, 60, 60 });
         await Assert.That(scheduler.ConsecutiveFailures).IsEqualTo(8);
 
-        await Assert.That(scheduler.Complete(success: true)).IsNull();
+        await Assert.That(scheduler.Complete(default, TopologyRefreshOutcome.Refreshed)).IsNull();
         await Assert.That(scheduler.ConsecutiveFailures).IsEqualTo(0);
         await Assert.That(scheduler.Next().Wait).IsNull();
     }
@@ -195,7 +195,7 @@ public class ClusterTopologyRefreshSchedulerTests
         var clock = new SteppedClock();
         var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
         scheduler.Start();
-        for (var failure = 0; failure < 4; failure++) _ = scheduler.Complete(success: false);
+        for (var failure = 0; failure < 4; failure++) _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
 
         scheduler.Request(TimeSpan.Zero);
         await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromSeconds(40));
@@ -217,7 +217,7 @@ public class ClusterTopologyRefreshSchedulerTests
         {
             if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("boom");
             secondCall.TrySetResult();
-            return Task.FromResult(true);
+            return Task.FromResult(TopologyRefreshOutcome.Refreshed);
         }, logger: null, stop.Token);
 
         scheduler.Request(TimeSpan.Zero, force: true);
@@ -230,6 +230,150 @@ public class ClusterTopologyRefreshSchedulerTests
         await worker.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(worker.IsCompletedSuccessfully).IsTrue();
         await Assert.That(scheduler.ConsecutiveFailures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PeriodicDeadlineIsExactForAFixedJitterSample()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(Interval, clock, jitterSample: () => 0.5);
+        scheduler.Start();
+
+        var jitter = TimeSpan.FromTicks((long)(Interval.Ticks * ClusterTopologyRefreshScheduler.PeriodicJitterRatio * 0.5));
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(Interval - jitter);
+    }
+
+    [Test]
+    public async Task IntervalNearMaxValueSaturatesInsteadOfOverflowing()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(TimeSpan.MaxValue, clock, jitterSample: () => 0);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        scheduler.Start();
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(ClusterTopologyRefreshScheduler.MaximumTimerSegment);
+
+        scheduler.Request(TimeSpan.Zero, force: true);
+        var run = scheduler.Next();
+        await Assert.That(run.Run).IsTrue();
+        await Assert.That(scheduler.Complete(run, TopologyRefreshOutcome.Refreshed)).IsNull();
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(ClusterTopologyRefreshScheduler.MaximumTimerSegment);
+        await Assert.That(ClusterTopologyRefreshScheduler.SaturatingAdd(TimeSpan.FromDays(1), TimeSpan.MaxValue))
+            .IsEqualTo(TimeSpan.MaxValue);
+    }
+
+    [Test]
+    public async Task FailureBackoffDelaysAShorterPeriodicInterval()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(TimeSpan.FromSeconds(1), clock, jitterSample: () => 0);
+        scheduler.Start();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var periodic = scheduler.Next();
+        await Assert.That(periodic.Run).IsTrue();
+
+        var retry = scheduler.Complete(periodic, TopologyRefreshOutcome.Failed)!.Value;
+        await Assert.That(retry).IsEqualTo(ClusterTopologyRefreshScheduler.InitialFailureRetryDelay);
+        // The 1s periodic interval must not probe the failed cluster before the 5s retry.
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(retry);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(scheduler.Next().Run).IsFalse();
+
+        clock.Advance(retry - TimeSpan.FromSeconds(1));
+        var retried = scheduler.Next();
+        await Assert.That(retried.Run).IsTrue();
+        await Assert.That(scheduler.Complete(retried, TopologyRefreshOutcome.Refreshed)).IsNull();
+        // Success re-arms the periodic timer.
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromSeconds(1));
+    }
+
+    [Test]
+    public async Task RedirectQueuedDuringAFailedRefreshWaitsForTheRetry()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        scheduler.Request(TimeSpan.Zero, force: true);
+        var run = scheduler.Next();
+        await Assert.That(run.Run).IsTrue();
+
+        // A redirect arrives while the refresh is running, before any backoff exists, and its
+        // debounce expires while a candidate stalls.
+        scheduler.Request(ClusterTopologyRefreshScheduler.MovedDebounce);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        var retry = scheduler.Complete(run, TopologyRefreshOutcome.Failed)!.Value;
+
+        var next = scheduler.Next();
+        await Assert.That(next.Run).IsFalse();
+        await Assert.That(next.Wait).IsEqualTo(retry);
+    }
+
+    [Test]
+    public async Task EarlierPlainRequestDoesNotPullASpacedDisconnectForward()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        scheduler.RequestPrimaryDisconnect();
+        scheduler.Complete(scheduler.Next(), TopologyRefreshOutcome.Refreshed);
+
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        scheduler.Request(TimeSpan.Zero);
+        scheduler.RequestPrimaryDisconnect();
+
+        // The plain request runs now, but it is not forced and may reuse the recent success.
+        var plain = scheduler.Next();
+        await Assert.That(plain.Run).IsTrue();
+        await Assert.That(plain.AllowRecentResult).IsTrue();
+        await Assert.That(scheduler.HasPendingForcedRequest).IsTrue();
+        scheduler.Complete(plain, TopologyRefreshOutcome.ReusedRecent);
+
+        // The disconnect still runs, forced, at the end of its spacing window.
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromMilliseconds(900));
+        clock.Advance(TimeSpan.FromMilliseconds(900));
+        var forced = scheduler.Next();
+        await Assert.That(forced.Run).IsTrue();
+        await Assert.That(forced.AllowRecentResult).IsFalse();
+        await Assert.That(scheduler.HasPendingForcedRequest).IsFalse();
+    }
+
+    [Test]
+    public async Task RealQueryClearsAForcedRequestThatArrivedBeforeIt()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        scheduler.RequestPrimaryDisconnect();
+        scheduler.Complete(scheduler.Next(), TopologyRefreshOutcome.Refreshed);
+
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        scheduler.RequestPrimaryDisconnect();
+        scheduler.Request(TimeSpan.Zero);
+        var plain = scheduler.Next();
+        await Assert.That(plain.Run).IsTrue();
+        scheduler.Complete(plain, TopologyRefreshOutcome.Refreshed);
+
+        await Assert.That(scheduler.HasPendingForcedRequest).IsFalse();
+        await Assert.That(scheduler.Next().Wait).IsNull();
+    }
+
+    [Test]
+    public async Task ForcedRequestArrivingDuringARunIsNotClearedByIt()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        scheduler.Request(TimeSpan.Zero);
+        var plain = scheduler.Next();
+        await Assert.That(plain.Run).IsTrue();
+
+        scheduler.Request(TimeSpan.Zero, force: true);
+        scheduler.Complete(plain, TopologyRefreshOutcome.Refreshed);
+
+        await Assert.That(scheduler.HasPendingForcedRequest).IsTrue();
+        var forced = scheduler.Next();
+        await Assert.That(forced.Run).IsTrue();
+        await Assert.That(forced.AllowRecentResult).IsFalse();
     }
 
     [Test]

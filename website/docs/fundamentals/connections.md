@@ -309,7 +309,9 @@ disable the periodic timer. This disables only the timer. The router still refre
 - a primary connection is lost (at most once per second while a primary keeps failing to reconnect);
 - a `MOVED` redirect arrives (debounced for 5 seconds from the first redirect, so a stream of
   redirects cannot postpone the refresh);
-- a refresh failed (retried with backoff from 5 to 60 seconds until one succeeds).
+- a refresh failed (retried with backoff from 5 to 60 seconds until one succeeds). While a retry
+  is pending, redirect-driven and periodic refreshes wait for it, even when the periodic interval
+  is shorter than the backoff; only primary-disconnect refreshes run sooner.
 
 These timings are fixed. A redirect-driven refresh reuses a refresh that succeeded within the last
 5 seconds. Refresh work triggered by redirects, disconnects, or concurrent `READONLY` recoveries is

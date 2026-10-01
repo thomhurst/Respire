@@ -204,7 +204,8 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private async Task<bool> RefreshTopologySharedAsync(CancellationToken waiterToken, bool allowRecentSuccessfulResult = true)
+    private async Task<TopologyRefreshOutcome> RefreshTopologySharedAsync(
+        CancellationToken waiterToken, bool allowRecentSuccessfulResult = true)
     {
         while (true)
         {
@@ -214,7 +215,7 @@ internal sealed partial class ClusterRouter
             {
                 if (allowRecentSuccessfulResult && _sharedRefresh is null && _hasTopologyRefreshTimestamp
                     && _topologyRefreshClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TopologyRefreshCoalescingWindow)
-                    return true;
+                    return TopologyRefreshOutcome.ReusedRecent;
                 if (_sharedRefresh is null)
                 {
                     _sharedRefresh = RefreshFlight.ForTopology();
@@ -226,7 +227,11 @@ internal sealed partial class ClusterRouter
 
             if (started) _ = CompleteSharedRefreshAsync(flight, RunTopologyRefreshAsync);
             if (flight.Kind == RefreshFlightKind.Topology)
-                return await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false);
+            {
+                return await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false)
+                    ? TopologyRefreshOutcome.Refreshed
+                    : TopologyRefreshOutcome.Failed;
+            }
 
             // A READONLY flight only repairs its initiating slot. Its outcome does not answer this
             // request, so wait for it to unpublish itself and then run a full refresh. This waiter
@@ -405,8 +410,8 @@ internal sealed partial class ClusterRouter
         return ordered;
     }
 
-    // Started once, after the router first connects (EnsureConnectedAsync, a route connection or a
-    // published topology). Create stays lazy. The volatile check keeps later calls lock-free.
+    // Started once, from SetSeed: every path that first connects the router publishes a connected
+    // seed there. Create stays lazy. The volatile check keeps later calls lock-free.
     private void StartTopologyRefreshWorker()
     {
         if (Volatile.Read(ref _topologyRefreshStarted) != 0 || _stopDiscovery.IsCancellationRequested) return;
