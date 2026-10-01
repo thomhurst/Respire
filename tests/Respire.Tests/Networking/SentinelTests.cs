@@ -836,8 +836,11 @@ public class SentinelTests
         await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, replacement.Port), monitor);
         await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > discoveryCount);
 
-        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390, 6391), monitor);
         sentinel.DelayReply(0, 0);
+        await client.PingAsync();
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == replacement.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390, 6391), monitor);
         Volatile.Write(ref primaryPort, first.Port);
         await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port, first.Port), monitor);
         await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current

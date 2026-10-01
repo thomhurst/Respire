@@ -105,6 +105,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
+        long? pendingSwitchVersion = null;
+        RespireEndpoint? pendingSwitchTarget = null;
         try
         {
             await _discoveryGate.WaitAsync(linked.Token).ConfigureAwait(false);
@@ -112,6 +114,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             if (switchRefreshVersion is { } activeVersion && activeVersion != _switchRefreshVersion)
                 throw new SupersededSentinelRefreshException();
+            if (switchRefreshVersion is null && _pendingSwitchPrimary is { } pendingTargetForDiscovery)
+            {
+                expectedPrimary = pendingTargetForDiscovery;
+                rejectedPrimary = _pendingSwitchPrevious;
+                pendingSwitchTarget = pendingTargetForDiscovery;
+                pendingSwitchVersion = _switchRefreshVersion;
+            }
             // Another discovery owner may have published while this caller awaited the gate.
             Generation? expectedGeneration = null;
             var previous = Current;
@@ -141,7 +150,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 return previous;
             if (expectedPrimary is { } expected && previousHealthy && SentinelResolver.SameEndpoint(previous!.Endpoint, expected))
             {
-                if (_pendingSwitchPrimary is { } pending && SentinelResolver.SameEndpoint(expected, pending))
+                if (_pendingSwitchPrimary is { } matchingPending && SentinelResolver.SameEndpoint(expected, matchingPending))
                     ClearPendingSwitchLocked();
                 return previous;
             }
@@ -167,13 +176,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // A generation that was already retired at the gap may be replaced here.
                 var supersededGap = refreshAfterSubscriptionGap && expectedGeneration is not null
                     && (!ReferenceEquals(old, expectedGeneration) || expectedGeneration.IsRetired && !expectedWasRetired);
+                var supersededSwitch = pendingSwitchVersion is { } pendingVersion
+                    && pendingVersion != _switchRefreshVersion;
                 var staleGapCandidate = refreshAfterSubscriptionGap && _hasConfirmedSentinelSwitch
                     && old is { IsRetired: false } && old.Multiplexer.IsConnected
                     && !SentinelResolver.SameEndpoint(old.Endpoint, replacement.Endpoint);
                 var staleSwitchCandidate = switchRefreshVersion is not null && expectedPrimary is { } announced
                     && old is { IsRetired: false } && old.Multiplexer.IsConnected
                     && !SentinelResolver.SameEndpoint(replacement.Endpoint, announced);
-                if (supersededGap || staleGapCandidate || staleSwitchCandidate)
+                if (supersededGap || supersededSwitch || staleGapCandidate || staleSwitchCandidate)
                 {
                     if (old is { IsRetired: false } && old.Multiplexer.IsConnected) unchanged = old;
                     else throw new SupersededSentinelRefreshException();
@@ -189,7 +200,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     if (old is not null) Invalidate(old);
                     Volatile.Write(ref _current, replacement);
                     unpublished = null;
-                    if (switchRefreshVersion is not null) _hasConfirmedSentinelSwitch = true;
+                    if (switchRefreshVersion is not null
+                        || pendingSwitchTarget is { } target && SentinelResolver.SameEndpoint(replacement.Endpoint, target))
+                        _hasConfirmedSentinelSwitch = true;
                     // Publication owns this measurement even if disposal suppresses later health
                     // callbacks. Keep meter listeners outside discovery to permit observer disposal.
                     if (old is not null && old.Endpoint != replacement.Endpoint)
@@ -198,7 +211,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                             new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                     QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
                 }
-                if (_pendingSwitchPrimary is { } pending && SentinelResolver.SameEndpoint(replacement.Endpoint, pending))
+                if (_pendingSwitchPrimary is { } publishedPending && SentinelResolver.SameEndpoint(replacement.Endpoint, publishedPending))
                     ClearPendingSwitchLocked();
                 if (switchRefreshVersion == _switchRefreshVersion)
                     ClearPendingSwitchLocked();
