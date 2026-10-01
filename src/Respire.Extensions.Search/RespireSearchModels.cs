@@ -425,26 +425,44 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
 
     private static RespireSearchResult ParseResp2Hybrid(RespireResult result)
     {
-        var total = result[0].AsInteger();
-        var documents = new List<RespireSearchDocument>(Math.Max(0, result.Count - 1));
-        for (var i = 1; i < result.Count; i++)
+        long total = 0;
+        var documents = new List<RespireSearchDocument>();
+        var warnings = new List<string>();
+        if (result[0].Type == RespDataType.Integer)
         {
-            var row = result[i];
-            string? id = null;
-            double? score = null;
-            var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
-            for (var j = 0; j + 1 < row.Count; j += 2)
-            {
-                var key = row[j].AsString();
-                var value = row[j + 1];
-                if (key is "id" or "key" or "keyid") id = value.AsString();
-                else if (key == "score") score = value.AsDouble();
-                else if (key == "extra_attributes") fields = ParseFields(value);
-                else fields[key] = value.IsNull ? null : value.AsString();
-            }
-            if (id is not null) documents.Add(new(id, fields, score));
+            total = result[0].AsInteger();
+            for (var i = 1; i < result.Count; i++) AddHybridDocument(result[i], documents);
+            return new(total, documents, warnings);
         }
-        return new(total, documents, []);
+
+        for (var i = 0; i + 1 < result.Count; i += 2)
+        {
+            var key = result[i].AsString();
+            var value = result[i + 1];
+            if (key == "total_results") total = value.AsInteger();
+            else if (key is "warnings" or "warning")
+                for (var j = 0; j < value.Count; j++) warnings.Add(value[j].AsString());
+            else if (key == "results")
+                for (var j = 0; j < value.Count; j++) AddHybridDocument(value[j], documents);
+        }
+        return new(total, documents, warnings);
+    }
+
+    private static void AddHybridDocument(RespireResult row, List<RespireSearchDocument> documents)
+    {
+        string? id = null;
+        double? score = null;
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+        for (var j = 0; j + 1 < row.Count; j += 2)
+        {
+            var key = row[j].AsString();
+            var value = row[j + 1];
+            if (key is "id" or "key" or "keyid") id = value.AsString();
+            else if (key == "score") score = value.AsDouble();
+            else if (key == "extra_attributes") fields = ParseFields(value);
+            else fields[key] = value.IsNull ? null : value.AsString();
+        }
+        if (id is not null) documents.Add(new(id, fields, score));
     }
 
     private static RespireSearchResult ParseResp3(RespireResult result, bool hybrid)
