@@ -290,9 +290,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
             ClientName = null,
             Database = 0,
-            Protocol = options.SentinelCredentialProvider is not null
+            Protocol = !authDisabled && (options.SentinelCredentialProvider is not null
                 || (!useSeparateCredentials && options.CredentialProvider is not null)
-                ? RespProtocol.Resp3 : RespProtocol.Resp2,
+                ) ? RespProtocol.Resp3 : RespProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ClientSideCache = null,
             ThreadPoolMonitoring = false,
@@ -340,10 +340,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var current = Current;
             if (target is { } targetEndpoint && current is { IsRetired: false }
                 && SameEndpoint(current.Endpoint, targetEndpoint)) return;
+            var pendingRetiresCurrent = _pendingNotificationRetiresCurrent || retireCurrent;
             _notificationPending = true;
-            _pendingNotificationKey = notificationKey;
-            _pendingNotificationTarget = target;
-            _pendingNotificationRetiresCurrent = retireCurrent;
+            _pendingNotificationKey = pendingRetiresCurrent && _pendingNotificationRetiresCurrent
+                ? _pendingNotificationKey : notificationKey;
+            _pendingNotificationTarget = target ?? _pendingNotificationTarget;
+            _pendingNotificationRetiresCurrent = pendingRetiresCurrent;
             if (_notificationRediscovery is { IsCompleted: false }) return;
             _notificationPending = false;
             _pendingNotificationKey = null;
