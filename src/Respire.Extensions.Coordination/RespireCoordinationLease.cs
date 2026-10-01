@@ -73,6 +73,9 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             var state = Volatile.Read(ref _state);
             if (state is StateReleasing or StateReleased or StateNotOwned) return false;
+            // An earlier timed-out renewal may still execute on Redis after this call returns.
+            // Do not let a later renewal restore Held unless that command was fenced.
+            if (state == StateUncertain) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {

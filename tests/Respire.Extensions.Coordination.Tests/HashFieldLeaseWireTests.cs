@@ -83,7 +83,7 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    public async Task UncertainRenewalFailsClosedAndCanBeRetriedAgainstRedis()
+    public async Task UncertainRenewalFailsClosedAndCannotBeRetried()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         server.DelayReply(1, 250);
@@ -102,8 +102,10 @@ public class HashFieldLeaseWireTests
         await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
         await Assert.That(lease.IsReleased).IsTrue();
         await Assert.That(lease.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
-        await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(lease.IsReleased).IsFalse();
+        await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(lease.IsReleased).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
     }
 
     [Test]
