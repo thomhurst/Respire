@@ -433,24 +433,38 @@ public sealed class RespireCoordination
         RespireClient.TrackedConnectionIdentity connectionIdentity)
     {
         Exception? originalFailure = null;
+        Task? originalCorrection = null;
         if (connectionIdentity.Connection is not null)
         {
             try
             {
-                await client.ExecuteOnAllConnectionsAsync(
-                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).ConfigureAwait(false);
+                originalCorrection = client.ExecuteOnAllConnectionsAsync(
+                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity);
             }
             catch (Exception error)
             {
                 originalFailure = error;
             }
 
-            if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
+            try
             {
-                // The original generation preserves FIFO ordering for its accepted acquisition.
-                // Release the same owner field on the promoted generation as well.
-                await client.ExecuteOnAllConnectionsAsync(
-                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+                if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
+                {
+                    // The original generation preserves FIFO ordering for its accepted acquisition.
+                    // Release the same owner field on the promoted generation as well.
+                    await client.ExecuteOnAllConnectionsAsync(
+                        ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
+            }
+
+            if (originalCorrection is not null)
+            {
+                try { await originalCorrection.ConfigureAwait(false); }
+                catch (Exception error) { originalFailure ??= error; }
             }
         }
         else
