@@ -361,7 +361,7 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task MovingParsedBeforePublicationRemainsEligibleAfterCallbackDelay()
+    public async Task MovingParsedFromOldSocketIsRejectedAfterMultiplePublications()
     {
         await using var source = Server(maxConnections: 2);
         await using var firstTarget = Server(maxConnections: 2);
@@ -386,12 +386,38 @@ public class MaintenanceNotificationTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         queueHandoff.Invoke(multiplexer,
             [0, announcingConnection, delayedNotification, announcingConnection.MovingPublicationGeneration]);
-        await WaitForPort(multiplexer, delayedTarget.Port);
+        await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(secondTarget.Port);
 
         using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
-        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MovingCacheFenceRunsAfterOldSocketsStopAcceptingCommands()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        RespireConnection? oldConnection = null;
+        var fenceSawRetiredSocket = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialFlushes = 0;
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                CredentialCacheInvalidation = () => { Interlocked.Increment(ref initialFlushes); return 0; },
+                CredentialCacheRetirementFence = () =>
+                {
+                    fenceSawRetiredSocket.TrySetResult(oldConnection is { IsAcceptingCommands: false });
+                },
+            });
+        oldConnection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+
+        await Assert.That(await fenceSawRetiredSocket.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(initialFlushes).IsEqualTo(1);
     }
 
     [Test]
@@ -541,6 +567,24 @@ public class MaintenanceNotificationTests
         remaining = ring.SweepExpired(deadline, TimeSpan.FromMilliseconds(100), null,
             deadlineExtension: 500, maintenanceStarted: deadline - 500);
         await Assert.That(remaining).IsEqualTo(-1);
+    }
+
+    [Test]
+    public async Task DeadlineSweepReportsRelaxedTimeoutForReroutedCommand()
+    {
+        const long deadline = 2000;
+        var pool = new PendingResponsePool(1);
+        var ring = new InflightRing(1);
+        var source = pool.Rent(commandName: "PING");
+        source.Deadline = deadline | (1L << 62);
+        ring.TryEnqueue(source);
+
+        await Assert.That(ring.SweepExpired(deadline, TimeSpan.FromSeconds(10), null,
+            alreadyRelaxedTimeout: TimeSpan.FromSeconds(30))).IsEqualTo(-1);
+        var error = await Assert.That(async () => await source.Task).ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromSeconds(30));
+        ring.TryDequeue(out var dequeued);
+        dequeued.ReleaseRef();
     }
 
     [Test]

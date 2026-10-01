@@ -154,8 +154,11 @@ internal sealed partial class RespireConnection
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
             var windowTimeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
-            var timeout = alreadyRelaxed ? _commandTimeout.Value : windowTimeout;
-            var remaining = deadline + (long)(timeout - _commandTimeout.Value).TotalMilliseconds - now;
+            var timeout = alreadyRelaxed
+                ? Max(_commandTimeout.Value, _maintenanceOptions!.MaintenanceRelaxedTimeout)
+                : windowTimeout;
+            var extension = alreadyRelaxed ? 0 : (long)(timeout - _commandTimeout.Value).TotalMilliseconds;
+            var remaining = deadline + extension - now;
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
                     CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
@@ -165,9 +168,12 @@ internal sealed partial class RespireConnection
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
-                var resumedTimeout = alreadyRelaxed ? _commandTimeout!.Value
+                var resumedTimeout = alreadyRelaxed
+                    ? Max(_commandTimeout!.Value, _maintenanceOptions!.MaintenanceRelaxedTimeout)
                     : MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
-                var resumedRemaining = deadline + (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds - resumedAt;
+                var resumedExtension = alreadyRelaxed
+                    ? 0 : (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds;
+                var resumedRemaining = deadline + resumedExtension - resumedAt;
                 if (resumedRemaining <= 0)
                     throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
                         CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
@@ -176,4 +182,6 @@ internal sealed partial class RespireConnection
             catch (TimeoutException) { /* Recheck maintenance state before declaring expiry. */ }
         }
     }
+
+    private static TimeSpan Max(TimeSpan left, TimeSpan right) => left >= right ? left : right;
 }

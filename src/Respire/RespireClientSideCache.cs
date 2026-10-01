@@ -511,6 +511,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     // Mutate state and queue observations only; callers may hold membership and health gates.
     internal int FlushForContinuityLossWithoutMetrics() => FlushState(continuityLost: true);
 
+    // A second MOVING barrier fences cache reads admitted by an old socket after the first
+    // continuity flush but before that socket stopped accepting commands.
+    internal void FlushForMovingRetirementFence()
+    {
+        var removed = FlushState(continuityLost: false, RespireClientCacheInvalidationReason.ContinuityLost);
+        PublishFlushMetrics(removed, continuityLost: false);
+    }
+
     internal static void PublishContinuityFlushMetrics(int removed)
         => PublishFlushMetrics(removed, continuityLost: true);
 

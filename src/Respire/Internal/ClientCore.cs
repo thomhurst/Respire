@@ -51,12 +51,14 @@ internal sealed class ClientCore : IAsyncDisposable
         ClientCache = options.ClientSideCache is { } cacheOptions
             ? new ClientSideCacheCoordinator(cacheOptions)
             : null;
-        RespirePushHandler? pushHandler = ClientCache is null ? null : ClientCache.HandlePush;
+        var clientCache = ClientCache;
+        RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
         var connectionOptions = options.ToConnectionOptions(
             pushHandler,
             enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true) with
         {
-            CredentialCacheInvalidation = ClientCache is { } cache ? cache.FlushForContinuityLossWithoutMetrics : null,
+            CredentialCacheInvalidation = clientCache is null ? null : clientCache.FlushForContinuityLossWithoutMetrics,
+            CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
         };
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);

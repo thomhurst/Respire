@@ -2758,7 +2758,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var now = Environment.TickCount64;
                 var effectiveTimeout = MaintenanceTimeout(timeout, now, out _, out var maintenanceStarted);
                 var next = _inflight.SweepExpired(now, timeout, this,
-                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted);
+                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted,
+                    _maintenanceOptions?.MaintenanceRelaxedTimeout);
                 var delay = next < 0 || next > granularityMilliseconds
                     ? granularity
                     : TimeSpan.FromMilliseconds(next);
@@ -3074,6 +3075,7 @@ internal sealed record RespireConnectionOptions
     internal TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
     internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
     internal Func<int>? CredentialCacheInvalidation { get; init; }
+    internal Action? CredentialCacheRetirementFence { get; init; }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }

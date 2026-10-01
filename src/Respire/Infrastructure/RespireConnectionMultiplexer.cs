@@ -952,7 +952,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // Eligibility is captured when the receive loop parses the push. The source may pass
         // through multiple publications before its callback acquires this gate.
         var receivedFromPublishedSocket = notificationGeneration >= 0
-            && notificationGeneration == connection.MovingPublicationGeneration;
+            && notificationGeneration == connection.MovingPublicationGeneration
+            && notificationGeneration == Volatile.Read(ref _movingPublicationGenerations[slot])
+            && ReferenceEquals(Volatile.Read(ref _connections[slot]), connection);
         var peer = (connection.NetworkPeerAddress ?? connection.Host, connection.NetworkPeerPort ?? connection.Port);
         if (!IsOperational || !receivedFromPublishedSocket
             || notification.SequenceId <= connection.LastQueuedMovingSequence
@@ -1116,12 +1118,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
         // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
         // each socket's write gate, so it runs after the multiplexer locks are released.
-        var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
+        var retiredConnections = old.OfType<RespireConnection>().ToArray();
+        var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
         lock (_movingGate)
         {
             var drain = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
             _movingDrains = _movingDrains.IsCompleted ? drain : Task.WhenAll(_movingDrains, drain);
         }
+        _options.CredentialCacheRetirementFence?.Invoke();
 
         // Metrics listeners can run user code, so publish outside the lifecycle locks.
         if (cacheEvictions is { } removed)
