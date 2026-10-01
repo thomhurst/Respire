@@ -70,6 +70,38 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
+    public async Task PrefixedDebugCatalogCommandsPrefixFieldsAndKeepHelpKeyless()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var prefixed = client.WithKeyPrefix("tenant:");
+
+        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_FIELDS, ["profile", "."])) { }
+        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_HELP, [])) { }
+
+        await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG FIELDS tenant:profile .");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG HELP");
+    }
+
+    [Test]
+    public async Task PrefixedJsonCommandsRejectNullKeysAndReportLayoutErrorsThroughTheTask()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var prefixed = client.WithKeyPrefix("tenant:");
+
+        // A null key must not become the bare prefix.
+        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.Json.JSON_GET, [RespireValue.Null, "."]))
+            .Throws<ArgumentNullException>();
+
+        // Malformed layouts fault the returned task instead of throwing synchronously.
+        ValueTask<RespireResult> malformed = default;
+        await Assert.That(() => { malformed = prefixed.ExecuteAsync(RespireCommands.Json.JSON_MGET, ["."]); }).ThrowsNothing();
+        await Assert.That(async () => { using var result = await malformed; }).Throws<Exception>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("JSON.", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
     public async Task MultiSetRejectsCrossSlotKeysBeforeConnecting()
     {
         await using var client = RespireClient.Create(new RespireOptions

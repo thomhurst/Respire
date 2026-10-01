@@ -69,10 +69,11 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
         AddImmediate(LayoutKind.First,
             "JSON.GET", "JSON.SET", "JSON.DEL", "JSON.FORGET", "JSON.CLEAR", "JSON.ARRAPPEND", "JSON.ARRINDEX",
-            "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY",
+            "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",
             "JSON.ARRINSERT", "JSON.ARRPOP", "JSON.ARRTRIM", "JSON.NUMINCRBY", "JSON.NUMMULTBY", "JSON.OBJKEYS",
             "JSON.OBJLEN", "JSON.STRAPPEND", "JSON.STRLEN", "JSON.TOGGLE", "JSON.TYPE", "JSON.RESP");
         AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
+        AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
         AddImmediate(LayoutKind.Triples, "JSON.MSET");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
