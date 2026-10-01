@@ -16,9 +16,16 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     private int _disposed;
     private long _lastSentinelRefreshTicks;
 
-    internal void SetEndpoints(RespireEndpoint primary, IEnumerable<RespireEndpoint> replicas)
+    private async ValueTask SetEndpointsAsync(RespireEndpoint primary, IEnumerable<RespireEndpoint> replicas)
     {
-        Volatile.Write(ref _replicas, replicas.Where(endpoint => endpoint != primary).Distinct().ToArray());
+        var endpoints = replicas.Where(endpoint => endpoint != primary).Distinct().ToArray();
+        Volatile.Write(ref _replicas, endpoints);
+        var retained = endpoints.ToHashSet();
+        foreach (var pair in _entries)
+        {
+            if (retained.Contains(pair.Key) || !_entries.TryRemove(pair.Key, out var entry)) continue;
+            await entry.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
@@ -83,9 +90,18 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         try
         {
             if (DateTime.UtcNow.Ticks - Volatile.Read(ref _lastSentinelRefreshTicks) < TimeSpan.TicksPerSecond) return;
-            var endpoints = await sentinel.DiscoverReplicaEndpointsAsync(cancellationToken).ConfigureAwait(false);
+            RespireEndpoint[] endpoints;
+            try { endpoints = await sentinel.DiscoverReplicaEndpointsAsync(cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error)
+            {
+                try { core.Logger?.LogDebug(error, "Sentinel replica refresh failed; retaining current endpoints"); }
+                catch (Exception) { }
+                Volatile.Write(ref _lastSentinelRefreshTicks, DateTime.UtcNow.Ticks);
+                return;
+            }
             var primary = sentinel.Current?.Endpoint ?? core.Options.PrimaryEndpoint;
-            SetEndpoints(primary, endpoints);
+            await SetEndpointsAsync(primary, endpoints).ConfigureAwait(false);
             Volatile.Write(ref _lastSentinelRefreshTicks, DateTime.UtcNow.Ticks);
         }
         finally { _sentinelRefreshGate.Release(); }
@@ -117,10 +133,6 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
                         owner.Options.ToConnectionOptions(), owner.Logger, cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        var connection = multiplexer.GetConnection();
-                        using var role = await connection.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-                        if (!IsReplica(in role))
-                            throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
                         multiplexer.StateChanged += owner.NotifyRecoveryStateChanged;
                         _multiplexer = multiplexer;
                         owner.NotifyRecoveryStateChanged(new RespireConnectionStateChange(
@@ -135,7 +147,11 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
                     }
                 }
 
-                return _multiplexer.GetConnection();
+                var connection = _multiplexer.GetConnection();
+                using var role = await connection.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+                if (!IsReplica(in role))
+                    throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
+                return connection;
             }
             finally { _gate.Release(); }
         }

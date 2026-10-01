@@ -2803,6 +2803,9 @@ public sealed partial class RespireClient : IRespireClient
             return SendClusterBulkStreamAsync(operation, cluster, command, cancellationToken);
         }
 
+        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains(operation))
+            return SendBulkStreamViaReadRouterAsync(operation, command, cancellationToken);
+
         if (!core.Multiplexer.IsInitialized)
         {
             return SendBulkStreamAfterConnectAsync(operation, command, cancellationToken);
@@ -2810,6 +2813,14 @@ public sealed partial class RespireClient : IRespireClient
 
         return SendBulkStreamOnConnectionAsync(
             operation, core.Multiplexer.GetConnection(), command, cancellationToken);
+    }
+
+    private async ValueTask<Stream?> SendBulkStreamViaReadRouterAsync<TCommand>(
+        string operation, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        return await SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
     }
 
 #if NET
@@ -3442,8 +3453,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection? connection = null;
         try
         {
-            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            connection = core.Multiplexer.GetConnection();
+            if (script.IsReadOnly && _readFrom != RespireReadFrom.Primary)
+                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+            else
+            {
+                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                connection = core.Multiplexer.GetConnection();
+            }
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
                     core.Options.Database, storedProcedureName: script.Sha1, started: sentinelStarted);
@@ -4293,6 +4309,7 @@ public sealed partial class RespireClient : IRespireClient
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
             && core.Sentinel is null
+            && (_readFrom == RespireReadFrom.Primary || !ReadOnlyCommandCatalog.Contains(operation))
             && core.Multiplexer.IsInitialized
             && (core.ClientCache is null
                 || !ClientSideCacheCoordinator.CanCacheOperation(operation)))

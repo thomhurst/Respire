@@ -86,6 +86,59 @@ public class ReadEndpointRoutingTests
         await Assert.That(primary.ReceivedCommands).IsEmpty();
     }
 
+    [Test]
+    public async Task ReplicaRoleIsRevalidatedBeforeEachBorrow()
+    {
+        var promoted = 0;
+        await using var primary = new FakeRespServer(Bulk("primary"));
+        await using var replica = new FakeRespServer(2, ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? Volatile.Read(ref promoted) == 0 ? ReplicaRole : PrimaryRole
+                : Bulk("replica"),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        await Assert.That(await view.GetStringAsync("first")).IsEqualTo("replica");
+        Volatile.Write(ref promoted, 1);
+        await Assert.That(async () => await view.GetStringAsync("second")).Throws<RespireConnectionException>();
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "GET first", "ROLE"]);
+    }
+
+    [Test]
+    public async Task StreamedAndReadOnlyScriptCommandsUseReplicaPolicy()
+    {
+        await using var primary = new FakeRespServer(Bulk("primary"));
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command == "EVALSHA_RO" ? ":1\r\n"u8.ToArray()
+                : command == "GET key" ? Bulk("replica") : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        await using (var stream = await view.Strings.GetStreamAsync("key"))
+        {
+            using var reader = new StreamReader(stream!);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("replica");
+        }
+        using var result = await view.Scripts.ExecuteAsync(RespireScript.Create("return 1", readOnly: true));
+        await Assert.That(replica.ReceivedCommands.Select(command => command.Split(' ')[0]))
+            .IsEquivalentTo(["ROLE", "GET", "ROLE", "EVALSHA_RO"]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
     private static byte[] Bulk(string value)
         => Encoding.ASCII.GetBytes($"${Encoding.ASCII.GetByteCount(value)}\r\n{value}\r\n");
 }

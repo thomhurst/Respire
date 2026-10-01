@@ -16,11 +16,12 @@ internal static class SentinelResolver
         var discovered = new HashSet<RespireEndpoint>();
         var connectionOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
+        var succeeded = false;
         foreach (var sentinel in sentinels)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
             try
             {
                 await using var connection = await RespireConnection.ConnectAsync(
@@ -28,6 +29,7 @@ internal static class SentinelResolver
                 using var reply = await connection.SendAsync(
                     new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
                 if (reply.IsError || reply.Type != RespDataType.Array) continue;
+                succeeded = true;
                 foreach (ref readonly var row in reply.AsArray())
                 {
                     if (row.Type != RespDataType.Array) continue;
@@ -52,13 +54,15 @@ internal static class SentinelResolver
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { break; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { continue; }
             catch (Exception error)
             {
                 try { logger?.LogDebug(error, "Optional Sentinel replica discovery failed at {Endpoint}", sentinel); }
                 catch (Exception) { }
             }
         }
+        if (!succeeded)
+            throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint.");
         return discovered.ToArray();
     }
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
