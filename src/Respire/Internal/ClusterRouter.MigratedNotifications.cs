@@ -45,9 +45,10 @@ internal sealed partial class ClusterRouter
     // Accessed only by the worker under _nodesGate. A window disappears with its connection.
     private readonly ConditionalWeakTable<object, SmigratedSequenceWindow> _smigratedSequences = new();
     private Task _smigratedWorker = Task.CompletedTask;
-    private static readonly AsyncLocal<ClusterRouter?> SmigratedWorkerContext = new();
+    [ThreadStatic]
+    private static ClusterRouter? _smigratedWorkerContext;
 
-    private bool IsOnSmigratedWorker => ReferenceEquals(SmigratedWorkerContext.Value, this);
+    private bool IsOnSmigratedWorker => ReferenceEquals(_smigratedWorkerContext, this);
 
     private void StartSmigratedWorker()
         => _smigratedWorker = Task.Run(ProcessSmigratedNotificationsAsync);
@@ -65,11 +66,11 @@ internal sealed partial class ClusterRouter
 
     internal QueuedSmigratedNotification CaptureSmigratedNotification(
         RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
-        => new(sender, sequenceScope, notification, Interlocked.Read(ref _slotMutationVersion));
+        => new(sender, sequenceScope, notification, Interlocked.Increment(ref _slotMutationVersion));
 
-    // MOVED, slot clears and discovery owner changes advance this fence. SMIGRATED moves do
-    // not: the FIFO worker applies them in arrival order, so an earlier queued notification
-    // (A->B) must not fence a later one (B->C) captured before it ran.
+    // MOVED, slot clears, discovery owner changes and SMIGRATED callback entry advance this
+    // fence. The worker writes each notification's entry token to its slots, preserving FIFO
+    // chains while rejecting a callback that was overtaken before it could enter the channel.
     private void MarkSlotMutatedLocked(int slot)
         => _slotMutationVersions[slot] = Interlocked.Increment(ref _slotMutationVersion);
 
@@ -77,11 +78,10 @@ internal sealed partial class ClusterRouter
     // token: a registration on _stopDiscovery would make disposal's CancelAsync asynchronous.
     private async Task ProcessSmigratedNotificationsAsync()
     {
-        // NodeRetired handlers run on this worker and may synchronously dispose the client.
-        // DisposeAsync reads this flag so it does not join the worker that is calling it.
-        SmigratedWorkerContext.Value = this;
         await foreach (var item in _smigratedNotifications.Reader.ReadAllAsync().ConfigureAwait(false))
         {
+            var previousWorker = _smigratedWorkerContext;
+            _smigratedWorkerContext = this;
             try
             {
                 ApplySmigratedNotification(item);
@@ -91,6 +91,10 @@ internal sealed partial class ClusterRouter
                 if (Volatile.Read(ref _disposed) == 0)
                     _logger?.LogError(error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.",
                         item.Sender.Host, item.Sender.Port);
+            }
+            finally
+            {
+                _smigratedWorkerContext = previousWorker;
             }
         }
     }
@@ -143,6 +147,7 @@ internal sealed partial class ClusterRouter
                 foreach (var slot in movable)
                 {
                     PublishSlotLocked(slot, target, migrationVersion);
+                    _slotMutationVersions[slot] = item.SlotMutationVersion;
                     AddSlot(target);
                     if (RemoveSlot(source)) (retiredNodes ??= []).Add(source);
                 }

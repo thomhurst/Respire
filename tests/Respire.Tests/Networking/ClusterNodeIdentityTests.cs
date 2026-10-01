@@ -85,6 +85,39 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task DisposalStartedOnTaskRunWaitsForSmigratedWorker()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.GetMultiplexer(targetEndpoint);
+        router.SetSlotOwner(0, source);
+        Task? disposal = null;
+        var topologyCallbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continueWorker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.NodeRetired += _ => disposal = Task.Run(async () => await router.DisposeAsync());
+        router.TopologyChanged += () =>
+        {
+            topologyCallbackEntered.TrySetResult();
+            continueWorker.Task.GetAwaiter().GetResult();
+        };
+
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]));
+
+        await topologyCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(100);
+        await Assert.That(disposal!.IsCompleted).IsFalse();
+        continueWorker.TrySetResult();
+        await disposal.WaitAsync(TimeSpan.FromSeconds(5));
+        await router.DisposeAsync();
+    }
+
+    [Test]
     public async Task SmigratedSlotListsBoundEnumeratedRanges()
     {
         var options = Options(6379);
@@ -165,6 +198,39 @@ public class ClusterNodeIdentityTests
         var owner = router.GetKnownSlotOwner(0);
         await Assert.That(owner?.Host).IsEqualTo(cEndpoint.Host);
         await Assert.That(owner?.Port).IsEqualTo(cEndpoint.Port);
+    }
+
+    [Test]
+    public async Task OvertakenSmigratedCallbackCannotOverwriteLaterOwnerChanges()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var aEndpoint = new RespireEndpoint("a", 7000);
+        var bEndpoint = new RespireEndpoint("b", 7001);
+        var cEndpoint = new RespireEndpoint("c", 7002);
+        var a = router.GetMultiplexer(aEndpoint);
+        router.GetMultiplexer(bEndpoint);
+        router.GetMultiplexer(cEndpoint);
+        router.SetSlotOwner(0, a);
+        var connection = new object();
+
+        // Capture the old callback before later callbacks, then apply those later callbacks first.
+        var overtaken = router.CaptureSmigratedNotification(a, connection,
+            new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
+        var laterOwner = router.CaptureSmigratedNotification(a, connection,
+            new("SMIGRATED", 2, Migrations: [new(aEndpoint, cEndpoint, "0")]));
+        var laterReturn = router.CaptureSmigratedNotification(a, connection,
+            new("SMIGRATED", 3, Migrations: [new(cEndpoint, aEndpoint, "0")]));
+
+        router.ApplySmigratedNotification(laterOwner);
+        router.ApplySmigratedNotification(laterReturn);
+        router.ApplySmigratedNotification(overtaken);
+
+        var owner = router.GetKnownSlotOwner(0);
+        await Assert.That(owner?.Host).IsEqualTo(aEndpoint.Host);
+        await Assert.That(owner?.Port).IsEqualTo(aEndpoint.Port);
     }
 
     [Test]
