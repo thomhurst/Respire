@@ -278,6 +278,65 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task AggregatePagesDeletesCursorWhenAReadFails()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => "*2\r\n*2\r\n:2\r\n*2\r\n$1\r\nn\r\n$1\r\n1\r\n:42\r\n"u8.ToArray(),
+                "FT.CURSOR READ idx 42" => "-ERR Timeout limit was reached\r\n"u8.ToArray(),
+                "FT.CURSOR DEL idx 42" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+        var pages = 0;
+
+        var exception = await Assert.That(async () =>
+            {
+                await foreach (var _ in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+                {
+                    pages++;
+                }
+            })
+            .Throws<RespireServerException>();
+
+        await Assert.That(exception!.Message).Contains("Timeout limit");
+        await Assert.That(pages).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).Contains("FT.CURSOR READ idx 42");
+        await Assert.That(server.ReceivedCommands).Contains("FT.CURSOR DEL idx 42");
+    }
+
+    [Test]
+    public async Task AggregateWithCursorDeletesCursorWhenTheFirstPageIsMalformed()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => "*2\r\n+OK\r\n:42\r\n"u8.ToArray(),
+                "FT.CURSOR DEL idx 42" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", "*")).Throws<InvalidOperationException>();
+        await Assert.That(async () =>
+            {
+                await foreach (var _ in search.AggregatePagesAsync("idx", "*"))
+                {
+                }
+            })
+            .Throws<InvalidOperationException>();
+
+        await Assert.That(server.ReceivedCommands.Count(command => command == "FT.CURSOR DEL idx 42")).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task CursorPageOverloadsUseThePageIndex()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
@@ -308,13 +367,18 @@ public class SearchClientTests
     }
 
     [Test]
-    public async Task HybridSearchReportsUnsupportedServerAsNotSupported()
+    [Arguments("-ERR unknown command 'FT.HYBRID', with args beginning with: 'idx' ")]
+    [Arguments("-ERR proxy: command not available")]
+    public async Task HybridSearchReportsUnsupportedServerAsNotSupported(string error)
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
-            ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID", StringComparison.Ordinal)
-                ? "-ERR unknown command 'FT.HYBRID', with args beginning with: 'idx' \r\n"u8.ToArray()
-                : null,
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => Encoding.ASCII.GetBytes(error + "\r\n"),
+                "COMMAND INFO FT.HYBRID" => "*1\r\n*-1\r\n"u8.ToArray(),
+                _ => null,
+            },
         };
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
@@ -323,15 +387,59 @@ public class SearchClientTests
             .Throws<NotSupportedException>();
         await Assert.That(exception!.Message).Contains("8.4.0");
         await Assert.That(exception.InnerException).IsTypeOf<RespireServerException>();
+        await Assert.That(server.ReceivedCommands).Contains("COMMAND INFO FT.HYBRID");
     }
 
     [Test]
-    public async Task HybridSearchKeepsOtherServerErrors()
+    public async Task HybridSearchFallsBackToErrorTextWhenCommandInfoIsDenied()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => "-ERR unknown command 'FT.HYBRID', with args beginning with: 'idx' \r\n"u8.ToArray(),
+                "COMMAND INFO FT.HYBRID" => "-NOPERM this user has no permissions to run the 'command|info' command\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+            .Throws<NotSupportedException>();
+    }
+
+    [Test]
+    public async Task HybridSearchKeepsOtherServerErrorsAndProbesOnce()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => "-ERR unknown command argument: idx\r\n"u8.ToArray(),
+                "COMMAND INFO FT.HYBRID" => "*1\r\n*1\r\n$9\r\nft.hybrid\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+                .Throws<RespireServerException>();
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(command => command == "COMMAND INFO FT.HYBRID")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task HybridSearchDoesNotProbeForNonErrCodes()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
             ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID", StringComparison.Ordinal)
-                ? "-ERR idx: no such index\r\n"u8.ToArray()
+                ? "-NOPERM this user has no permissions to run the 'ft.hybrid' command\r\n"u8.ToArray()
                 : null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
@@ -339,6 +447,7 @@ public class SearchClientTests
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<RespireServerException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("COMMAND", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]

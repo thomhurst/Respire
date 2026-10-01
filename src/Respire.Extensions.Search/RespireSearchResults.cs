@@ -282,6 +282,12 @@ public sealed record RespireSearchAggregateCursorPage(RespireSearchAggregateResu
             throw RespireSearchReply.Unexpected(command, "a reply that is not [results, cursor]");
         return new(RespireSearchAggregateResult.Parse(result[0]), result[1].AsInteger()) { Index = index };
     }
+
+    /// <summary>Reads the cursor ID from a <c>[results, cursor]</c> reply whose results may be malformed; 0 when there is none.</summary>
+    internal static long ReadCursorId(RespireResult result)
+        => result.Type == RespDataType.Array && result.Count == 2 && result[1].Type == RespDataType.Integer
+            ? result[1].AsInteger()
+            : 0;
 }
 
 /// <summary>Parsed FT.INFO response.</summary>

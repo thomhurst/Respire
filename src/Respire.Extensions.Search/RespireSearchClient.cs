@@ -1,3 +1,5 @@
+using Respire.Protocol;
+
 namespace Respire.Extensions.Search;
 
 /// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
@@ -6,7 +8,9 @@ namespace Respire.Extensions.Search;
 /// FT.* commands carry an index name rather than keys. Respire routes them like other module
 /// commands: on a cluster, a command goes to the node that owns the index name's hash slot, and
 /// cursor reads follow the same index name. Respire does not fan out queries or merge shard
-/// results; cross-shard search relies on the server's search coordinator.
+/// results; cross-shard search relies on the server's search coordinator. On a cluster without
+/// one (for example, plain Redis Open Source cluster mode), each command sees only the documents
+/// on the node that receives it, and Respire cannot detect the partial result.
 /// </para>
 /// <para>
 /// With client-side caching, read-only Search commands leave the local cache intact; FT.CREATE,
@@ -22,6 +26,9 @@ public sealed class RespireSearchClient
 
     private readonly IRespireClient _client;
     private readonly IRespireSearchCommands _commands;
+    // Set once a COMMAND INFO probe has shown that the server knows FT.HYBRID, so later
+    // FT.HYBRID errors are passed through without probing again.
+    private volatile bool _hybridConfirmed;
 
     /// <summary>Creates Search operations over a caller-owned Respire client.</summary>
     public RespireSearchClient(IRespireClient client)
@@ -94,7 +101,18 @@ public sealed class RespireSearchClient
         var name = RequireName(index);
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments(cursor ?? new RespireSearchCursorOptions());
         using var result = await _commands.AggregateAsync(name, expression, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE", name);
+        try
+        {
+            return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE", name);
+        }
+        catch
+        {
+            // The caller never receives the cursor ID when the first page cannot be parsed, so
+            // release it here instead of leaving it to MAXIDLE, then report the parse failure.
+            if (RespireSearchAggregateCursorPage.ReadCursorId(result) is var orphan and > 0)
+                await TryDeleteCursorAsync(name, orphan).ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>
@@ -122,7 +140,7 @@ public sealed class RespireSearchClient
         }
         finally
         {
-            if (!page.IsComplete) await TryDeleteCursorAsync(page).ConfigureAwait(false);
+            if (!page.IsComplete) await TryDeleteCursorAsync(RequirePageIndex(page), page.CursorId).ConfigureAwait(false);
         }
     }
 
@@ -149,9 +167,11 @@ public sealed class RespireSearchClient
         RespireValue[] args = count is { } value
             ? [name, cursorId, "COUNT", value]
             : [name, cursorId];
-        // FT.CURSOR READ/DEL go through the catalog command rather than IRespireSearchCommands: the
-        // generator accepts a single command token, and the catalog entry carries the subcommand and
-        // routes by the index name, so the read reaches the node that owns the cursor.
+        // FT.CURSOR READ/DEL use the catalog command rather than IRespireSearchCommands. The generator
+        // accepts one command token, so a generated FT.CURSOR method would send READ as its first
+        // argument, and cluster routing would hash "READ" instead of the index name and could send
+        // the read to a node that does not own the cursor. The catalog entry carries the subcommand,
+        // so routing starts at the index name, the same slot FT.AGGREGATE used.
         using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_READ, args, cancellationToken: cancellationToken).ConfigureAwait(false);
         return RespireSearchAggregateCursorPage.Parse(result, "FT.CURSOR READ", name);
     }
@@ -171,12 +191,12 @@ public sealed class RespireSearchClient
         using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_DEL, [RequireName(index), cursorId], cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask TryDeleteCursorAsync(RespireSearchAggregateCursorPage page)
+    private async ValueTask TryDeleteCursorAsync(string index, long cursorId)
     {
         try
         {
             // Cleanup runs during unwinding, possibly after the caller's token was cancelled.
-            await DeleteCursorAsync(page, CancellationToken.None).ConfigureAwait(false);
+            await DeleteCursorAsync(index, cursorId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is RespireException or ObjectDisposedException or OperationCanceledException)
         {
@@ -186,9 +206,33 @@ public sealed class RespireSearchClient
         }
     }
 
-    // Redis replies "ERR unknown command 'FT.HYBRID', with args beginning with: ..." when the command does not exist.
-    private static bool IsUnknownCommand(RespireServerException exception)
-        => exception.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Decides whether an FT.HYBRID error means the server lacks the command. A <c>COMMAND INFO</c>
+    /// probe answers this from the server's command table instead of the error text. The error text
+    /// ("ERR unknown command ...") is used only when the probe itself is unavailable, for example
+    /// when an ACL denies <c>COMMAND</c> or a proxy does not implement it.
+    /// </summary>
+    private async ValueTask<bool> IsHybridMissingAsync(RespireServerException error, CancellationToken cancellationToken)
+    {
+        if (_hybridConfirmed || error.Code != RespireErrorCodes.Err) return false;
+        try
+        {
+            using var info = await _client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO, ["FT.HYBRID"], cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (info.Type is RespDataType.Array or RespDataType.Set && info.Count == 1)
+            {
+                if (info[0].IsNull) return true;
+                _hybridConfirmed = true;
+                return false;
+            }
+        }
+        catch (RespireException)
+        {
+            // The probe was denied or failed; fall through to the error text rather than hide the FT.HYBRID error.
+        }
+
+        // Redis replies "ERR unknown command 'FT.HYBRID', with args beginning with: ..." when the command does not exist.
+        return error.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string RequirePageIndex(RespireSearchAggregateCursorPage page)
         => string.IsNullOrWhiteSpace(page.Index)
@@ -229,11 +273,16 @@ public sealed class RespireSearchClient
         {
             result = await _commands.HybridAsync(name, arguments, cancellationToken).ConfigureAwait(false);
         }
-        catch (RespireServerException ex) when (IsUnknownCommand(ex))
+        catch (RespireServerException ex)
         {
-            throw new NotSupportedException(
-                "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
-                ex);
+            if (await IsHybridMissingAsync(ex, cancellationToken).ConfigureAwait(false))
+            {
+                throw new NotSupportedException(
+                    "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
+                    ex);
+            }
+
+            throw;
         }
 
         using (result)
