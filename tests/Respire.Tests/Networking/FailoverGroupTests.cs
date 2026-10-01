@@ -345,8 +345,7 @@ public class FailoverGroupTests
         var primaryFailed = 0;
         primary.ReplyOverride = (_, command) =>
             command == "PING" && Volatile.Read(ref primaryFailed) != 0
-                ? "-ERR primary unavailable
-"u8.ToArray()
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
                 : null;
         var logger = new CapturingLogger();
         var first = Candidate(primary, priority: 0);
