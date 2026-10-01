@@ -1077,8 +1077,10 @@ public class ClusterNotificationRoutingTests
 
         await stableAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await laterAdded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // A different endpoint can schedule a fake-clock retry first. Wait for this
+        // endpoint's state publication before consuming its recovery delay.
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var retry = await clock.NextAsync();
-        await Assert.That(reconnecting.Task.IsCompleted).IsTrue();
         await Assert.That(stable.Completion.IsCompleted).IsFalse();
         await Assert.That(later.Completion.IsCompleted).IsFalse();
 
