@@ -20,24 +20,28 @@ public sealed class RespireCoordination
 
     internal static readonly RespireScript ResetCountdownLatch = RespireScript.Create("""
         local oldChannel = redis.call('HGET', KEYS[1], 'channel')
-        redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'remaining', ARGV[2], 'channel', ARGV[3])
         if oldChannel then redis.call('PUBLISH', oldChannel, ARGV[1]) end
+        redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'remaining', ARGV[2], 'channel', ARGV[3])
         return 1
         """);
 
     internal static readonly RespireScript CountDownLatch = RespireScript.Create("""
-        if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then return -1 end
-        local remaining = tonumber(redis.call('HGET', KEYS[1], 'remaining'))
-        if not remaining or remaining <= 0 then return redis.error_reply('ERR latch count is already zero') end
-        remaining = redis.call('HINCRBY', KEYS[1], 'remaining', -1)
-        if remaining == 0 then redis.call('PUBLISH', ARGV[2], ARGV[1]) end
-        return remaining
+        if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then return '-1' end
+        local remaining = redis.call('HGET', KEYS[1], 'remaining')
+        if not remaining or not string.match(remaining, '^%d+$')
+            or (#remaining > 1 and string.sub(remaining, 1, 1) == '0') then
+            return redis.error_reply('ERR latch count is invalid')
+        end
+        if remaining == '0' then return redis.error_reply('ERR latch count is already zero') end
+        if remaining == '1' then redis.call('PUBLISH', ARGV[2], ARGV[1]) end
+        redis.call('HINCRBY', KEYS[1], 'remaining', -1)
+        return redis.call('HGET', KEYS[1], 'remaining')
         """);
 
     internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create("""
-        local values = redis.call('HMGET', KEYS[1], 'generation', 'remaining')
-        return {values[1] or '', values[2] or '-1'}
-        """);
+        local values = redis.call('HMGET', KEYS[1], 'generation', 'remaining', 'channel')
+        return {values[1] or '', values[2] or '-1', values[3] or ''}
+        """, readOnly: true);
 
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
@@ -46,6 +50,28 @@ public sealed class RespireCoordination
     public ValueTask<RespireCountdownLatch> CreateCountdownLatchAsync(
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => CreateLatchAsync(key, count, reset: false, cancellationToken);
+
+    /// <summary>Joins the current countdown-latch generation stored at <paramref name="key"/>.</summary>
+    /// <param name="key">The latch key, before the client's key prefix.</param>
+    /// <param name="cancellationToken">Cancels the Redis state read.</param>
+    /// <returns>A handle for the current generation, or <see langword="null"/> when no latch exists.</returns>
+    public async ValueTask<RespireCountdownLatch?> JoinCountdownLatchAsync(
+        RespireKey key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = key.Snapshot();
+        using var result = await _client.Scripts.ExecuteAsync(
+            ReadCountdownLatch, [snapshot], cancellationToken: cancellationToken).ConfigureAwait(false);
+        var generation = result[0].AsString();
+        var remainingText = result[1].AsString();
+        var channel = result[2].AsString();
+        if (generation.Length == 0 && channel.Length == 0) return null;
+        if (generation.Length == 0 || channel.Length == 0
+            || !long.TryParse(remainingText, NumberStyles.None, CultureInfo.InvariantCulture, out var remaining)
+            || remaining < 0)
+            throw new RespireProtocolException("Redis returned invalid countdown-latch state.");
+        return new RespireCountdownLatch(_client, snapshot, generation, channel);
+    }
 
     /// <summary>Atomically replaces the latch state with a fresh generation and count.</summary>
     /// <param name="key">The latch key, before the client's key prefix.</param>

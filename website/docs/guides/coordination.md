@@ -232,6 +232,9 @@ await latch.CountDownAsync();
 if (await completed) Console.WriteLine("All workers finished");
 ```
 
+Other processes can join the current generation by key with
+`JoinCountdownLatchAsync("{batch:42}:latch")`. It returns `null` when no latch state exists.
+
 The caller chooses the key lifetime and cleanup policy. Keep the key until every participant
 has finished using its generation; deletion loses the current generation. A reset creates a
 new unique generation so late signals from earlier work cannot decrement the replacement.

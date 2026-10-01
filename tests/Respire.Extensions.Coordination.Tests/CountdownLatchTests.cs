@@ -71,6 +71,38 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task JoinedClientSharesGenerationAndPreservesInt64Precision()
+    {
+        await using var owner = await ConnectAsync();
+        await using var participant = await ConnectAsync();
+        var key = Key();
+        var ownerCoordination = new RespireCoordination(owner);
+        var participantCoordination = new RespireCoordination(participant);
+        var initialCount = 9_007_199_254_740_993L;
+        var latch = await ownerCoordination.CreateCountdownLatchAsync(key, initialCount);
+
+        var joined = await participantCoordination.JoinCountdownLatchAsync(key);
+        await Assert.That(joined).IsNotNull();
+        await Assert.That(await joined!.CountDownAsync()).IsEqualTo(initialCount - 1);
+        await Assert.That(await latch.CountDownAsync()).IsEqualTo(initialCount - 2);
+        await Assert.That(await new RespireCoordination(participant).JoinCountdownLatchAsync(Key())).IsNull();
+    }
+
+    [Test]
+    public async Task JoinedClientWaitsForSignalFromAnotherClient()
+    {
+        await using var owner = await ConnectAsync();
+        await using var participant = await ConnectAsync();
+        var key = Key();
+        var latch = await new RespireCoordination(owner).CreateCountdownLatchAsync(key, 1);
+        var joined = await new RespireCoordination(participant).JoinCountdownLatchAsync(key);
+        var waiting = joined!.WaitAsync().AsTask();
+        await latch.CountDownAsync();
+
+        await Assert.That(await waiting.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ClusterRunsLatchScriptsOnTaggedKey(int protocol)
@@ -83,9 +115,10 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         });
         var coordination = new RespireCoordination(client.WithKeyPrefix("coord:"));
         var latch = await coordination.CreateCountdownLatchAsync("{batch}:latch", 2);
+        var waiter = latch.WaitAsync().AsTask();
         await Assert.That(await latch.CountDownAsync()).IsEqualTo(1L);
         await Assert.That(await latch.CountDownAsync()).IsEqualTo(0L);
-        await Assert.That(await latch.WaitAsync()).IsTrue();
+        await Assert.That(await waiter.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
     }
 
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions

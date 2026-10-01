@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Respire.Extensions.Coordination;
 
 /// <summary>A single-use countdown generation backed by Redis.</summary>
@@ -24,7 +26,9 @@ public sealed class RespireCountdownLatch
         cancellationToken.ThrowIfCancellationRequested();
         using var result = await _client.Scripts.ExecuteAsync(RespireCoordination.CountDownLatch,
             [_key], [_generation, _channel], cancellationToken).ConfigureAwait(false);
-        return result.AsInteger();
+        return long.TryParse(result.AsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var remaining)
+            ? remaining
+            : throw new RespireProtocolException("Redis returned an invalid countdown-latch count.");
     }
 
     /// <summary>Waits until this generation reaches zero. Returns false if reset replaced it.</summary>
@@ -39,7 +43,13 @@ public sealed class RespireCountdownLatch
             if (state.Generation != _generation) return false;
             if (state.Remaining == 0) return true;
             if (!await messages.MoveNextAsync().ConfigureAwait(false))
+            {
                 cancellationToken.ThrowIfCancellationRequested();
+                var reason = await subscription.Completion.ConfigureAwait(false);
+                if (reason == RespireSubscriptionEndReason.ReconnectExhausted)
+                    throw new RespireReconnectLimitException("Countdown-latch wait ended because Pub/Sub reconnect attempts were exhausted.");
+                throw new RespireConnectionException($"Countdown-latch subscription ended: {reason}.");
+            }
         }
     }
 
@@ -47,6 +57,7 @@ public sealed class RespireCountdownLatch
     {
         using var result = await _client.Scripts.ExecuteAsync(RespireCoordination.ReadCountdownLatch,
             [_key], cancellationToken: cancellationToken).ConfigureAwait(false);
-        return (result[0].AsString(), long.TryParse(result[1].AsString(), out var count) ? count : -1);
+        return (result[0].AsString(),
+            long.TryParse(result[1].AsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) ? count : -1);
     }
 }
