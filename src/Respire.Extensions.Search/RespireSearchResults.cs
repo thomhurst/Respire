@@ -7,6 +7,9 @@ namespace Redis.Search;
 /// <summary>Search response document with identifier and projected fields.</summary>
 public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string, string?> Fields, double? Score = null)
 {
+    /// <summary>Binary-safe Redis document key. Use this when the identifier is not valid UTF-8.</summary>
+    public RespireKey DocumentKey { get; init; } = new(Id);
+
     /// <summary>Typed projected values, including binary string fields.</summary>
     public IReadOnlyDictionary<string, RespireSearchValue> StructuredFields { get; init; } = RespireSearchEmpty.SearchValues;
 }
@@ -24,7 +27,9 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         var docs = new List<RespireSearchDocument>();
         for (var i = 1; i < result.Count;)
         {
-            var id = result[i++].AsString();
+            var idValue = result[i++];
+            var id = idValue.AsString();
+            var documentKey = new RespireKey(idValue.AsBytes());
             double? score = null;
             if (withScores)
             {
@@ -34,7 +39,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
 
             if (noContent)
             {
-                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score));
+                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score) { DocumentKey = documentKey });
                 continue;
             }
 
@@ -42,12 +47,12 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             var fieldsValue = result[i++];
             if (fieldsValue.IsNull)
             {
-                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score));
+                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score) { DocumentKey = documentKey });
                 continue;
             }
 
             var fields = RespireSearchReply.ReadFields(fieldsValue, "FT.SEARCH");
-            docs.Add(new(id, fields.Fields, score) { StructuredFields = fields.Structured });
+            docs.Add(new(id, fields.Fields, score) { StructuredFields = fields.Structured, DocumentKey = documentKey });
         }
 
         return new(total, docs, []);
@@ -112,6 +117,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     {
         RespireSearchReply.RequirePairs(item, "FT.SEARCH");
         string? id = null;
+        RespireKey documentKey = default;
         double? score = null;
         IReadOnlyDictionary<string, string?> fields = RespireSearchEmpty.NullableStrings;
         IReadOnlyDictionary<string, RespireSearchValue> structured = RespireSearchEmpty.SearchValues;
@@ -123,6 +129,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             {
                 case "id" or "key" or "keyid" or "__key":
                     id = itemValue.AsString();
+                    documentKey = new RespireKey(itemValue.AsBytes());
                     break;
                 case "score" or "__score":
                     score = itemValue.AsDouble();
@@ -136,7 +143,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         }
 
         if (id is null) throw RespireSearchReply.Unexpected("FT.SEARCH", "a result row without an id");
-        docs.Add(new(id, fields, score) { StructuredFields = structured });
+        docs.Add(new(id, fields, score) { StructuredFields = structured, DocumentKey = documentKey });
     }
 
     // FT.HYBRID rows carry the reserved __key and __score names. When they are present, names such
@@ -145,6 +152,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     {
         RespireSearchReply.RequirePairs(row, "FT.HYBRID");
         string? id = null;
+        RespireKey documentKey = default;
         double? score = null;
         var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
         var structuredFields = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
@@ -156,6 +164,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             if (reserved ? key == "__key" : key is "id" or "key" or "keyid")
             {
                 id = value.AsString();
+                documentKey = new RespireKey(value.AsBytes());
             }
             else if (reserved ? key == "__score" : key == "score")
             {
@@ -175,7 +184,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         }
 
         if (id is null) throw RespireSearchReply.Unexpected("FT.HYBRID", "a result row without __key");
-        documents.Add(new(id, fields, score) { StructuredFields = structuredFields });
+        documents.Add(new(id, fields, score) { StructuredFields = structuredFields, DocumentKey = documentKey });
     }
 
     private static bool HasReservedHybridKey(RespireResult row)

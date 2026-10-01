@@ -588,7 +588,7 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3"
                 ? Hello
-                : [.. "*3\r\n:1\r\n$3\r\ndoc\r\n*2\r\n$6\r\nvector\r\n$4\r\n"u8, 0, 255, 128, 1, .. "\r\n"u8],
+                : [.. "*3\r\n:1\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n*2\r\n$6\r\nvector\r\n$4\r\n"u8, 0, 255, 128, 1, .. "\r\n"u8],
         };
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
@@ -597,6 +597,7 @@ public class SearchClientTests
 
         await Assert.That(result.Documents[0].StructuredFields["vector"].Bytes!.Value.ToArray())
             .IsEquivalentTo(new byte[] { 0, 255, 128, 1 }, CollectionOrdering.Matching);
+        await Assert.That(result.Documents[0].DocumentKey).IsEqualTo(new RespireKey(new byte[] { 0, 255, 128 }));
     }
 
     [Test]
