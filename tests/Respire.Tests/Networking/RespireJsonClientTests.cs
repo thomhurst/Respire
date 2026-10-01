@@ -45,6 +45,31 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
+    public async Task CatalogCommandsPrefixEveryKnownJsonDocumentKey()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var prefixed = client.WithKeyPrefix("tenant:");
+        (RespireCommand Command, RespireValue[] Arguments)[] commands =
+        [
+            (RespireCommands.Json.JSON_ARRLEN, ["profile", "."]),
+            (RespireCommands.Json.JSON_MERGE, ["profile", ".", "{}"]),
+            (RespireCommands.Json.JSON_NUMPOWBY, ["profile", ".", 2]),
+            (RespireCommands.Json.JSON_DEBUG_MEMORY, ["profile", "."]),
+        ];
+
+        foreach (var (command, arguments) in commands)
+        {
+            using var result = await prefixed.ExecuteAsync(command, arguments);
+        }
+
+        await Assert.That(server.ReceivedCommands).Contains("JSON.ARRLEN tenant:profile .");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:profile . {}");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.NUMPOWBY tenant:profile . 2");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG MEMORY tenant:profile .");
+    }
+
+    [Test]
     public async Task MultiSetRejectsCrossSlotKeysBeforeConnecting()
     {
         await using var client = RespireClient.Create(new RespireOptions
