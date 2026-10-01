@@ -42,7 +42,9 @@ public class RespireOptionsTests
             ReplicaEndpoints = [new("replica")],
             ReplicaRefreshInterval = TimeSpan.Zero,
         });
-        await Assert.That(client.Core.ReadRouter.RefreshInterval).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(client.Core.ReadRouter.RoleRevalidationInterval).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(client.Core.ReadRouter.SentinelRefreshInterval).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(client.Core.ReadRouter.FailedReplicaCooldown).IsEqualTo(TimeSpan.Zero);
     }
 
     [Test]

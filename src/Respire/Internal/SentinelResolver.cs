@@ -10,13 +10,19 @@ internal static class SentinelResolver
 {
     private static readonly Verb SentinelPeers = new(-1, "SENTINEL", "SENTINELS");
 
+    /// <summary>
+    /// Returns the replica set reported by the first Sentinel that answers with a well-formed
+    /// <c>SENTINEL REPLICAS</c> reply, trying Sentinels in the same order as primary discovery.
+    /// Replies are not merged: during a failover or partition, Sentinels can disagree, and a union
+    /// would keep replicas that only a stale Sentinel still lists. A reply with a malformed row is
+    /// treated as a failed Sentinel, so a broken reply cannot retire every known replica; an empty
+    /// array is an authoritative "no replicas".
+    /// </summary>
     internal static async ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(
         RespireOptions options, IEnumerable<RespireEndpoint> sentinels, CancellationToken cancellationToken)
     {
-        var discovered = new HashSet<RespireEndpoint>();
         var connectionOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
-        var succeeded = false;
         foreach (var sentinel in sentinels)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -28,30 +34,9 @@ internal static class SentinelResolver
                     sentinel.Host, sentinel.Port, connectionOptions, logger, deadline.Token).ConfigureAwait(false);
                 using var reply = await connection.SendAsync(
                     new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
-                if (reply.IsError || reply.Type != RespDataType.Array) continue;
-                succeeded = true;
-                foreach (ref readonly var row in reply.AsArray())
-                {
-                    if (row.Type != RespDataType.Array) continue;
-                    var fields = row.AsArray();
-                    if (fields.Length % 2 != 0) continue;
-                    string? host = null, port = null, flags = null;
-                    for (var index = 0; index < fields.Length; index += 2)
-                    {
-                        if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                            || fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) continue;
-                        switch (fields[index].AsString())
-                        {
-                            case "ip": host = fields[index + 1].AsString(); break;
-                            case "port": port = fields[index + 1].AsString(); break;
-                            case "flags": flags = fields[index + 1].AsString(); break;
-                        }
-                    }
-                    if (flags is not null && (flags.Contains("s_down", StringComparison.Ordinal)
-                        || flags.Contains("o_down", StringComparison.Ordinal)
-                        || flags.Contains("disconnected", StringComparison.Ordinal))) continue;
-                    if (TryParseEndpoint(host, port, out var endpoint)) discovered.Add(endpoint);
-                }
+                if (TryParseReplicaList(in reply, out var replicas)) return replicas;
+                try { logger?.LogDebug("Sentinel {Endpoint} returned a malformed SENTINEL REPLICAS reply", sentinel); }
+                catch (Exception) { }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { continue; }
@@ -61,10 +46,50 @@ internal static class SentinelResolver
                 catch (Exception) { }
             }
         }
-        if (!succeeded)
-            throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint.");
-        return discovered.ToArray();
+        throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint.");
     }
+
+    /// <summary>
+    /// Parses a <c>SENTINEL REPLICAS</c> reply. Rows flagged <c>s_down</c>, <c>o_down</c> or
+    /// <c>disconnected</c> are left out. Returns false when the reply is an error, not an array, or
+    /// has any row that is not a field/value map with a usable <c>ip</c> and <c>port</c>.
+    /// </summary>
+    internal static bool TryParseReplicaList(in RespValue reply, out RespireEndpoint[] replicas)
+    {
+        replicas = [];
+        if (reply.IsError || reply.Type != RespDataType.Array) return false;
+        var discovered = new List<RespireEndpoint>();
+        foreach (ref readonly var row in reply.AsArray())
+        {
+            if (row.Type != RespDataType.Array) return false;
+            var fields = row.AsArray();
+            if (fields.Length % 2 != 0) return false;
+            string? host = null, port = null, flags = null;
+            for (var index = 0; index < fields.Length; index += 2)
+            {
+                if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+                var name = fields[index].AsString();
+                if (name is not ("ip" or "port" or "flags")) continue;
+                // Other fields may carry any type; the ones routing depends on must be strings.
+                if (fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+                var value = fields[index + 1].AsString();
+                switch (name)
+                {
+                    case "ip": host = value; break;
+                    case "port": port = value; break;
+                    default: flags = value; break;
+                }
+            }
+            if (flags is not null && (flags.Contains("s_down", StringComparison.Ordinal)
+                || flags.Contains("o_down", StringComparison.Ordinal)
+                || flags.Contains("disconnected", StringComparison.Ordinal))) continue;
+            if (!TryParseEndpoint(host, port, out var endpoint)) return false;
+            if (!discovered.Contains(endpoint)) discovered.Add(endpoint);
+        }
+        replicas = discovered.ToArray();
+        return true;
+    }
+
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,

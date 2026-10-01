@@ -2,6 +2,7 @@ using System.Text;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -908,6 +909,181 @@ public class ReadEndpointRoutingTests
         await Assert.That(total).IsEqualTo(payloadLength);
         // Once the stream completes, the drained replica closes without waiting for client disposal.
         await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Test]
+    public async Task RemovedReplicaClosesWhenAStreamedReadStopsMakingProgress()
+    {
+        const int payloadLength = 8 * 1024 * 1024;
+        var frame = new byte[payloadLength + 32];
+        var header = Encoding.ASCII.GetBytes($"${payloadLength}\r\n");
+        header.CopyTo(frame, 0);
+        frame.AsSpan(header.Length, payloadLength).Fill((byte)'x');
+        "\r\n"u8.CopyTo(frame.AsSpan(header.Length + payloadLength));
+        frame = frame[..(header.Length + payloadLength + 2)];
+        int[] replicaPorts = [];
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? PrimaryRole : FakeRespServer.OkReply,
+        };
+        await using var first = new FakeRespServer(4, ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? frame : null,
+        };
+        await using var second = new FakeRespServer(4, ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? frame : null,
+        };
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? SentinelAddressReply(primary.Port)
+                : command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                    ? ReplicasReply(Volatile.Read(ref replicaPorts))
+                    : "*0\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref replicaPorts, [first.Port, second.Port]);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            Protocol = RespProtocol.Resp2,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromMilliseconds(300);
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        // The caller reads one chunk, then abandons the stream without disposing it.
+        var stream = await view.Strings.GetStreamAsync("big");
+        var buffer = new byte[64 * 1024];
+        var total = await stream!.ReadAsync(buffer);
+        var serving = first.ReceivedCommands.Contains("GET big") ? first : second;
+        var other = ReferenceEquals(serving, first) ? second : first;
+
+        Volatile.Write(ref replicaPorts, [other.Port]);
+        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
+
+        // The stalled stream no longer holds the removed replica open until client disposal.
+        await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(buffer)) > 0) total += read;
+        }
+        catch (Exception) { }
+        await Assert.That(total).IsLessThan(payloadLength);
+        await stream.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ClientDisposalDoesNotWaitForAReplicaRoleCheck()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole) { SuppressReply = command => command == "ROLE" };
+        var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            ConnectTimeout = TimeSpan.FromMinutes(1),
+            CommandTimeout = TimeSpan.FromMinutes(1),
+        });
+
+        var read = client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key").AsTask();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!replica.ReceivedCommands.Contains("ROLE") && DateTime.UtcNow < deadline) await Task.Delay(10);
+        await Assert.That(replica.ReceivedCommands).Contains("ROLE");
+
+        // The ROLE check holds the replica entry's gate; disposal cancels it instead of waiting
+        // for the one-minute command timeout.
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(async () => await read).Throws<Exception>();
+    }
+
+    [Test]
+    public async Task SentinelReplicaDiscoveryUsesOneSentinelsViewInsteadOfMergingThem()
+    {
+        await using var current = SentinelReplying(ReplicasReply([7001]));
+        await using var stale = SentinelReplying(ReplicasReply([7001, 7002]));
+
+        var replicas = await SentinelResolver.DiscoverReplicaEndpointsAsync(
+            DiscoveryOptions(), [new("127.0.0.1", current.Port), new("127.0.0.1", stale.Port)], CancellationToken.None);
+
+        // 7002 is listed only by the second Sentinel, which is never consulted once the first answers.
+        await Assert.That(replicas).IsEquivalentTo([new RespireEndpoint("127.0.0.1", 7001)]);
+        await Assert.That(stale.ReceivedCommands.Any(command => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
+    public async Task SentinelReplicaDiscoverySkipsAMalformedReplyAndAcceptsAnEmptyOne()
+    {
+        await using var malformed = SentinelReplying("*1\r\n:5\r\n"u8.ToArray());
+        await using var empty = SentinelReplying("*0\r\n"u8.ToArray());
+        await using var unused = SentinelReplying(ReplicasReply([7001]));
+
+        // The malformed reply counts as a failed Sentinel; the empty array is authoritative.
+        var replicas = await SentinelResolver.DiscoverReplicaEndpointsAsync(
+            DiscoveryOptions(),
+            [new("127.0.0.1", malformed.Port), new("127.0.0.1", empty.Port), new("127.0.0.1", unused.Port)],
+            CancellationToken.None);
+        await Assert.That(replicas).IsEmpty();
+        await Assert.That(unused.ReceivedCommands.Any(command => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)))
+            .IsFalse();
+
+        // Only malformed replies: discovery fails, so the router keeps its last known replicas.
+        await using var alsoMalformed = SentinelReplying("*1\r\n*2\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n"u8.ToArray());
+        await Assert.That(async () => await SentinelResolver.DiscoverReplicaEndpointsAsync(
+                DiscoveryOptions(), [new("127.0.0.1", malformed.Port), new("127.0.0.1", alsoMalformed.Port)],
+                CancellationToken.None))
+            .ThrowsExactly<RespireConnectionException>();
+    }
+
+    [Test]
+    [Arguments("*0\r\n", true, "")]
+    [Arguments("*1\r\n*6\r\n$2\r\nip\r\n$2\r\nh1\r\n$4\r\nport\r\n$4\r\n7001\r\n$5\r\nflags\r\n$5\r\nslave\r\n", true, "h1:7001")]
+    [Arguments("*1\r\n*6\r\n$2\r\nip\r\n$2\r\nh1\r\n$4\r\nport\r\n$4\r\n7001\r\n$5\r\nflags\r\n$12\r\nslave,s_down\r\n", true, "")]
+    [Arguments("*1\r\n*6\r\n$2\r\nip\r\n$2\r\nh1\r\n$4\r\nport\r\n$4\r\n7001\r\n$9\r\nlink-refc\r\n:3\r\n", true, "h1:7001")]
+    [Arguments("*1\r\n*4\r\n$2\r\nip\r\n$2\r\nh1\r\n$4\r\nport\r\n$1\r\nx\r\n", false, "")]
+    [Arguments("*1\r\n*3\r\n$2\r\nip\r\n$2\r\nh1\r\n$4\r\nport\r\n", false, "")]
+    [Arguments("*1\r\n*4\r\n$2\r\nip\r\n:1\r\n$4\r\nport\r\n$4\r\n7001\r\n", false, "")]
+    [Arguments("*1\r\n:5\r\n", false, "")]
+    [Arguments("-ERR no such master\r\n", false, "")]
+    [Arguments(":1\r\n", false, "")]
+    public async Task SentinelReplicaListParsing(string wire, bool expected, string endpoints)
+    {
+        var parsed = SentinelResolver.TryParseReplicaList(Parse(wire), out var replicas);
+
+        await Assert.That(parsed).IsEqualTo(expected);
+        await Assert.That(string.Join(",", replicas.Select(endpoint => $"{endpoint.Host}:{endpoint.Port}")))
+            .IsEqualTo(endpoints);
+    }
+
+    private static FakeRespServer SentinelReplying(byte[] replicas)
+        => new(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                ? replicas : FakeRespServer.OkReply,
+        };
+
+    private static RespireOptions DiscoveryOptions() => new()
+    {
+        SentinelPrimaryName = "mymaster",
+        Protocol = RespProtocol.Resp2,
+        ConnectTimeout = TimeSpan.FromSeconds(10),
+        CommandTimeout = TimeSpan.FromSeconds(10),
+    };
+
+    private static RespValue Parse(string wire)
+    {
+        var position = 0;
+        if (RespParser.TryParseValue(Encoding.UTF8.GetBytes(wire), ref position, out var value) != RespParseStatus.Done)
+            throw new InvalidOperationException("Invalid test frame.");
+        return value;
     }
 
     private static byte[] SentinelAddressReply(int port)

@@ -1,19 +1,19 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Networking;
-using Respire.Protocol;
 
 namespace Respire.Internal;
 
 internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 {
-    // Longest wait before a removed replica starts draining. Covers reads that borrowed a
-    // connection just before removal but have not yet written their command.
+    // Longest wait before a removed replica starts draining. Entry._closed is only set under the
+    // entry gate, so a read on the lock-free fast path can take a connection just before removal
+    // and write its command just after. The grace period lets that write land before the
+    // connection stops accepting commands; the drain then waits for its reply.
     private static readonly TimeSpan s_retirementGrace = TimeSpan.FromSeconds(1);
 
     private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new();
@@ -30,14 +30,42 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     // Stopwatch timestamp of the last discovery attempt; monotonic, so clock changes cannot stall it.
     private long _lastSentinelRefresh;
 
-    /// <summary>
-    /// Bounds topology staleness: how long a ROLE check stays valid for one physical connection,
-    /// how often Sentinel replica discovery can run, and how long a failed replica is skipped.
-    /// </summary>
-    internal TimeSpan RefreshInterval { get; set; } = core.Options.ReplicaRefreshInterval;
+    // ReplicaRefreshInterval drives three separate jobs. They are kept as separate internal knobs so
+    // a later options change can expose them individually without changing how the router works.
+
+    /// <summary>How long a ROLE check stays valid for one physical replica connection.</summary>
+    internal TimeSpan RoleRevalidationInterval { get; set; } = core.Options.ReplicaRefreshInterval;
+
+    /// <summary>Minimum delay between Sentinel replica discoveries (before outage back-off).</summary>
+    internal TimeSpan SentinelRefreshInterval { get; set; } = core.Options.ReplicaRefreshInterval;
+
+    /// <summary>How long a replica that failed is skipped before it is tried again.</summary>
+    internal TimeSpan FailedReplicaCooldown { get; set; } = core.Options.ReplicaRefreshInterval;
+
+    /// <summary>Sets every interval that <see cref="RespireOptions.ReplicaRefreshInterval"/> configures.</summary>
+    internal TimeSpan RefreshInterval
+    {
+        set
+        {
+            RoleRevalidationInterval = value;
+            SentinelRefreshInterval = value;
+            FailedReplicaCooldown = value;
+        }
+    }
 
     /// <summary>Cursor affinity for scans and raw cursor commands.</summary>
     internal ReadCursorAffinity Cursors { get; } = new();
+
+    /// <summary>
+    /// How long a removed replica waits for a streamed reply that has stopped making progress
+    /// before closing. The larger of 30 seconds and <see cref="RespireOptions.CommandTimeout"/>.
+    /// </summary>
+    internal TimeSpan RetiredStreamIdleLimit { get; set; } =
+        core.Options.CommandTimeout is { } commandTimeout && commandTimeout > s_minRetiredStreamIdleLimit
+            ? commandTimeout : s_minRetiredStreamIdleLimit;
+
+    private static readonly TimeSpan s_minRetiredStreamIdleLimit = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_stalledStreamPoll = TimeSpan.FromSeconds(1);
 
     // Upper bound for the Sentinel retry delay during a discovery outage.
     private static readonly TimeSpan s_maxSentinelRetryDelay = TimeSpan.FromSeconds(30);
@@ -81,9 +109,29 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             var grace = timeout is { } limit && limit < s_retirementGrace ? limit : s_retirementGrace;
             await Task.Delay(grace, _lifetime.Token).ConfigureAwait(false);
             // Drain everything already accepted, including a streamed reply whose consumer reads
-            // slowly; each command is still bounded by its own timeout. Only router disposal cuts
-            // the drain short, the same contract as a retired Sentinel primary generation.
-            await entry.RetireAsync(_lifetime.Token).ConfigureAwait(false);
+            // slowly; each command is still bounded by its own timeout. A stream that makes no
+            // progress for RetiredStreamIdleLimit was abandoned (its full pipe pauses the receive
+            // loop), so the replica closes instead of staying open until client disposal.
+            var drain = entry.RetireAsync(_lifetime.Token);
+            while (!drain.IsCompleted)
+            {
+                var idleLimit = RetiredStreamIdleLimit;
+                var poll = idleLimit < s_stalledStreamPoll ? idleLimit : s_stalledStreamPoll;
+                await Task.WhenAny(drain, Task.Delay(poll, _lifetime.Token)).ConfigureAwait(false);
+                if (drain.IsCompleted || _lifetime.IsCancellationRequested || !entry.HasStalledBulkStream(idleLimit))
+                    continue;
+                try
+                {
+                    core.Logger?.LogDebug(
+                        "Closing removed read replica {Endpoint}: a streamed reply made no progress for {IdleLimit}",
+                        entry.Endpoint, idleLimit);
+                }
+                catch (Exception) { }
+                // Aborting the multiplexer fails the stalled stream and completes the drain.
+                await entry.DisposeAsync().ConfigureAwait(false);
+                break;
+            }
+            await drain.ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
         catch (Exception error)
@@ -254,7 +302,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     {
         var last = Volatile.Read(ref _lastSentinelRefresh);
         return last == 0
-            || Stopwatch.GetElapsedTime(last) >= SentinelRetryDelay(RefreshInterval, Volatile.Read(ref _refreshFailures));
+            || Stopwatch.GetElapsedTime(last) >= SentinelRetryDelay(SentinelRefreshInterval, Volatile.Read(ref _refreshFailures));
     }
 
     /// <summary>
@@ -349,52 +397,47 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     {
         // Never disposed: a waiter racing with disposal must observe _closed, not a disposed gate.
         private readonly SemaphoreSlim _gate = new(1, 1);
-        // When each physical connection last passed ROLE. Reconnects publish new connection objects,
-        // which are validated before use; dead connections drop out with their weak keys.
-        private readonly ConditionalWeakTable<RespireConnection, StrongBox<long>> _validated = new();
+        private readonly ReplicaHealth<RespireConnection> _health = new();
         private RespireConnectionMultiplexer? _multiplexer;
         private Action<RespireConnectionStateChange>? _stateChanged;
         private Action<int, RespireConnectionStateChange>? _slotStateChanged;
         // Set when the entry stops serving reads (removal or disposal).
         private volatile bool _closed;
         private bool _disposed;
-        private long _failedAt;
-        private volatile bool _replicationLinkDown;
 
         internal RespireEndpoint Endpoint => endpoint;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;
 
-        internal bool IsCoolingDown
-        {
-            get
-            {
-                var failedAt = Volatile.Read(ref _failedAt);
-                return failedAt != 0 && Stopwatch.GetElapsedTime(failedAt) < router.RefreshInterval;
-            }
-        }
+        internal bool IsCoolingDown => _health.IsCoolingDown(router.FailedReplicaCooldown);
 
         /// <summary>True when the last ROLE check found the replica's link to its primary down.</summary>
-        internal bool IsReplicationLinkDown => _replicationLinkDown;
+        internal bool IsReplicationLinkDown => _health.IsReplicationLinkDown;
 
-        internal void MarkFailed() => Volatile.Write(ref _failedAt, Stopwatch.GetTimestamp());
+        internal void MarkFailed() => _health.MarkFailed();
+
+        /// <summary>True when an open streamed reply on this replica has made no progress for <paramref name="idle"/>.</summary>
+        internal bool HasStalledBulkStream(TimeSpan idle)
+            => Volatile.Read(ref _multiplexer)?.HasStalledBulkStream(idle) == true;
 
         internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
             RespireConnection? selected = null;
             RespireConnectionMultiplexer? selectedFrom = null;
-            var interval = router.RefreshInterval;
+            var interval = router.RoleRevalidationInterval;
             if (!_closed && Volatile.Read(ref _multiplexer) is { } current)
             {
                 selected = current.GetConnection();
                 selectedFrom = current;
-                if (selected.IsAcceptingCommands && IsValidatedWithin(selected, interval)) return selected;
+                if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
+                    return selected;
             }
 
             // Single-flight revalidation: while another caller revalidates, keep serving a
             // connection whose previous check is still within a second interval.
             bool entered;
-            if (selected is not null && selected.IsAcceptingCommands && IsValidatedWithin(selected, interval + interval))
+            if (selected is not null && selected.IsAcceptingCommands
+                && _health.Check(selected, interval) != ReplicaValidation.Required)
             {
                 entered = _gate.Wait(0);
                 if (!entered) return selected;
@@ -405,6 +448,9 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
                 entered = true;
             }
 
+            // Router disposal cancels a connect or ROLE check in progress, so disposal never
+            // waits behind a dead replica's connect timeout for this entry's gate.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, router._lifetime.Token);
             try
             {
                 if (_closed) throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
@@ -413,7 +459,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
                 {
                     var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
                         endpoint.Host, endpoint.Port, owner.Options.Connections,
-                        owner.Options.ToConnectionOptions(), owner.Logger, cancellationToken).ConfigureAwait(false);
+                        owner.Options.ToConnectionOptions(), owner.Logger, linked.Token).ConfigureAwait(false);
                     try
                     {
                         Action<RespireConnectionStateChange> stateChanged = change =>
@@ -441,40 +487,20 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 
                 if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands)
                     selected = _multiplexer.GetConnection();
-                if (selected.IsAcceptingCommands && IsValidatedWithin(selected, interval)) return selected;
+                if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
+                    return selected;
                 var checkedAt = Stopwatch.GetTimestamp();
-                using var role = await selected.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-                if (!IsReplica(in role, out var linkUp))
-                {
-                    _validated.Remove(selected);
+                using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token).ConfigureAwait(false);
+                if (!_health.Record(selected, checkedAt, in role))
                     throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
-                }
-                _replicationLinkDown = !linkUp;
-                _validated.AddOrUpdate(selected, new StrongBox<long>(checkedAt));
-                Volatile.Write(ref _failedAt, 0);
                 return selected;
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested
+                && router._lifetime.IsCancellationRequested)
+            {
+                throw new ObjectDisposedException(nameof(ReadEndpointRouter));
+            }
             finally { if (entered) _gate.Release(); }
-        }
-
-        private bool IsValidatedWithin(RespireConnection connection, TimeSpan window)
-            => _validated.TryGetValue(connection, out var checkedAt)
-                && Stopwatch.GetElapsedTime(Volatile.Read(ref checkedAt.Value)) < window;
-
-        // ROLE on a replica: ["slave" | "replica", primary-host, primary-port, link-state, offset].
-        // A link state other than "connected" means the replica is connecting or syncing to its
-        // primary and can serve arbitrarily stale data.
-        internal static bool IsReplica(in RespValue role, out bool linkUp)
-        {
-            linkUp = false;
-            if (role.Type != RespDataType.Array) return false;
-            var fields = role.AsArray();
-            if (fields.IsEmpty || fields[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
-            if (fields[0].AsString() is not ("slave" or "replica")) return false;
-            linkUp = fields.Length >= 4
-                && fields[3].Type is (RespDataType.BulkString or RespDataType.SimpleString)
-                && fields[3].AsString() == "connected";
-            return true;
         }
 
         /// <summary>Stops new reads, then drains accepted work before the entry is disposed.</summary>

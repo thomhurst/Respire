@@ -420,7 +420,11 @@ monitor proactively moves an otherwise healthy connection before a failure is ob
 ## Read from replicas
 
 Set `RespireOptions.ReplicaEndpoints` for a standalone primary/replica deployment. Sentinel
-clients discover replica endpoints with `SENTINEL REPLICAS`. Existing multi-endpoint standalone
+clients discover replica endpoints with `SENTINEL REPLICAS`, using the first Sentinel that gives
+a well-formed answer, in the same order as primary discovery. Replies from different Sentinels
+are not merged, because during a failover or partition a stale Sentinel can still list replicas
+that the others have dropped. A reply with a malformed entry counts as a failed Sentinel; an empty
+list is accepted and removes every replica. Existing multi-endpoint standalone
 configuration keeps its current validation and connection-time fallback behavior.
 
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
@@ -462,8 +466,11 @@ topology can be:
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain
 waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;
-each command remains bounded by its own `CommandTimeout`, so retirement never cuts a read short.
-Disposing the client closes any replica that is still draining.
+each command remains bounded by its own `CommandTimeout`, so retirement does not cut a read short
+while it makes progress. A streamed reply that receives no data for 30 seconds (or
+`CommandTimeout`, if that is longer) is treated as abandoned, for example a stream that was never
+read or disposed: the replica then closes and the stream fails. Disposing the client closes any
+replica that is still draining.
 
 ### Cursor reads
 
