@@ -128,6 +128,26 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
+    internal async ValueTask<bool> IsCurrentPrimaryAsync(CancellationToken cancellationToken)
+    {
+        var generation = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+        using var role = await generation.Multiplexer.GetConnection()
+            .SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+        if (role.Type != RespDataType.Array) return false;
+        var fields = role.AsArray();
+        return fields.Length >= 3
+            && fields[0].Type is RespDataType.BulkString or RespDataType.SimpleString
+            && fields[0].AsString() == "master"
+            && fields[1].Type == RespDataType.Integer
+            && fields[2].Type == RespDataType.Array;
+    }
+
+    internal async ValueTask RediscoverAfterRoleMismatchAsync(CancellationToken cancellationToken)
+    {
+        if (Current is { } current) Invalidate(current);
+        await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)
     {
         var generation = new Generation(this, core, options);

@@ -46,8 +46,14 @@ public sealed record RespireFailoverGroupOptions
 }
 
 /// <summary>Current endpoint health and circuit state.</summary>
+/// <param name="Endpoint">Validated Redis data endpoint, or null until Sentinel publishes a live primary.</param>
+/// <param name="Priority">Candidate priority.</param>
+/// <param name="IsHealthy">Whether latest health checks consider endpoint healthy.</param>
+/// <param name="ConsecutiveFailures">Consecutive failed health probes.</param>
+/// <param name="CircuitOpenUntil">Time when an open endpoint circuit may probe again.</param>
+/// <param name="LastErrorType">Type name of most recent probe error.</param>
 public sealed record RespireFailoverEndpointStatus(
-    RespireEndpoint Endpoint,
+    RespireEndpoint? Endpoint,
     int Priority,
     bool IsHealthy,
     int ConsecutiveFailures,
@@ -220,14 +226,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 var fallbackEndpoint = snapshot.Endpoints[0];
                 if (isSentinel)
                 {
+                    var normalizedEndpoints = NormalizeEndpoints(snapshot.Endpoints);
                     var sameSentinelDeployment = sentinelDeployments.Any(existing =>
                         string.Equals(existing.PrimaryName, snapshot.SentinelPrimaryName, StringComparison.Ordinal)
-                        && existing.Endpoints.Length == snapshot.Endpoints.Count
-                        && existing.Endpoints.All(endpoint => snapshot.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint)))
-                        && snapshot.Endpoints.All(endpoint => existing.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
+                        && existing.Endpoints.Length == normalizedEndpoints.Length
+                        && existing.Endpoints.All(endpoint => normalizedEndpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint)))
+                        && normalizedEndpoints.All(endpoint => existing.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
                     if (sameSentinelDeployment)
                         throw new RespireConfigurationException("Failover candidates cannot list the same Sentinel deployment more than once.");
-                    sentinelDeployments.Add((snapshot.SentinelPrimaryName!, snapshot.Endpoints.ToArray()));
+                    sentinelDeployments.Add((snapshot.SentinelPrimaryName!, normalizedEndpoints));
                 }
                 else
                 {
@@ -293,6 +300,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
+    private static RespireEndpoint[] NormalizeEndpoints(IEnumerable<RespireEndpoint> endpoints)
+    {
+        var normalized = new List<RespireEndpoint>();
+        foreach (var endpoint in endpoints)
+            if (!normalized.Any(existing => SameEndpoint(existing, endpoint))) normalized.Add(endpoint);
+        return normalized.ToArray();
+    }
+
     private async Task MonitorAsync()
     {
         using var timer = new PeriodicTimer(_options.ProbeInterval);
@@ -332,7 +347,22 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             if (candidate.Client.Core.Cluster is null)
             {
-                await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
+                if (candidate.Client.Core.Sentinel is { } sentinel)
+                {
+                    bool isPrimary;
+                    try { isPrimary = await sentinel.IsCurrentPrimaryAsync(timeout.Token).ConfigureAwait(false); }
+                    catch (Exception) when (!timeout.IsCancellationRequested && sentinel.Current is { IsRetired: true })
+                    {
+                        await sentinel.RediscoverAfterRoleMismatchAsync(timeout.Token).ConfigureAwait(false);
+                        throw;
+                    }
+                    if (!isPrimary)
+                    {
+                        await sentinel.RediscoverAfterRoleMismatchAsync(timeout.Token).ConfigureAwait(false);
+                        throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
+                    }
+                }
+                else await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
             }
             else
             {
@@ -345,7 +375,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             }
             candidate.MarkHealthy(_clock.GetTimestamp());
             RespireTelemetry.RecordFailoverProbe(
-                candidate.Endpoint,
+                candidate.TelemetryEndpoint,
                 succeeded: true,
                 Stopwatch.GetElapsedTime(started).TotalSeconds);
         }
@@ -357,7 +387,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             candidate.MarkFailed(error, _clock.GetUtcNow(), _clock.GetTimestamp(), _options);
             RespireTelemetry.RecordFailoverProbe(
-                candidate.Endpoint,
+                candidate.TelemetryEndpoint,
                 succeeded: false,
                 Stopwatch.GetElapsedTime(started).TotalSeconds);
         }
@@ -525,14 +555,18 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         public RespireClient Client { get; } = client;
         public int Priority { get; } = priority;
         public int Order { get; } = order;
-        public RespireEndpoint Endpoint
+        public RespireEndpoint? Endpoint
         {
             get
             {
+                if (Client.Core.Sentinel is { } sentinel)
+                    return sentinel.Current is { IsRetired: false } generation
+                        ? generation.Endpoint : (RespireEndpoint?)null;
                 try { return Client.Endpoint; }
-                catch (InvalidOperationException) when (Client.Core.Sentinel is not null) { return fallbackEndpoint; }
+                catch (InvalidOperationException) { return null; }
             }
         }
+        public RespireEndpoint TelemetryEndpoint => Endpoint ?? fallbackEndpoint;
         public bool IsHealthy { get { lock (_gate) return _isHealthy; } }
         public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
         public DateTimeOffset? CircuitOpenUntil { get { lock (_gate) return _circuitOpenUntil; } }

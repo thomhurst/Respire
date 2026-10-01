@@ -2,7 +2,7 @@
 title: Failover groups
 ---
 
-<<`RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy`r`ndeployment for new operations. Lower candidate priorities win. The group uses bounded health`r`nprobes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
+`RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy`r`ndeployment for new operations. Lower candidate priorities win. The group uses bounded health`r`nprobes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
 Health means a standalone endpoint answers `PING` within `ProbeTimeout`. Cluster candidates use the
