@@ -257,11 +257,7 @@ public class FencedLockWireTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(repliesCompleted).IsEqualTo(1);
-        var commands = server.ReceivedCommands;
-        await Assert.That(commands.Count).IsEqualTo(2);
-        await Assert.That(commands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
-        var owner = System.Text.Encoding.ASCII.GetString(server.ReceivedArguments[0][5]);
-        await Assert.That(commands[1]).IsEqualTo($"DELEX {{job}}:lease IFEQ {owner}");
+        await AssertFencedLeaseWasReleasedAsync(server);
     }
 
     [Test]
@@ -277,11 +273,7 @@ public class FencedLockWireTests
         await Assert.That(async () => await new RespireCoordination(client)
             .TryAcquireFencedLockAsync("{job}:lease", "{job}:counter", TimeSpan.FromSeconds(30))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireProtocolException>();
-        var commands = server.ReceivedCommands;
-        await Assert.That(commands.Count).IsEqualTo(2);
-        await Assert.That(commands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
-        var owner = System.Text.Encoding.ASCII.GetString(server.ReceivedArguments[0][5]);
-        await Assert.That(commands[1]).IsEqualTo($"DELEX {{job}}:lease IFEQ {owner}");
+        await AssertFencedLeaseWasReleasedAsync(server);
     }
 
     [Test]
@@ -489,5 +481,16 @@ public class FencedLockWireTests
         await Assert.That(server.ReceivedCommands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
         await Assert.That(server.ReceivedCommands[1].StartsWith("EVAL ", StringComparison.Ordinal)).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
+    }
+
+    private static async Task AssertFencedLeaseWasReleasedAsync(FakeRespServer server)
+    {
+        var commands = server.ReceivedCommands;
+        await Assert.That(commands.Count).IsEqualTo(4);
+        await Assert.That(commands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(commands[1]).IsEqualTo("CLIENT ID");
+        await Assert.That(commands[2]).IsEqualTo("CLIENT KILL ID 1 SKIPME yes");
+        var owner = System.Text.Encoding.ASCII.GetString(server.ReceivedArguments[0][5]);
+        await Assert.That(commands[3]).IsEqualTo($"DELEX {{job}}:lease IFEQ {owner}");
     }
 }

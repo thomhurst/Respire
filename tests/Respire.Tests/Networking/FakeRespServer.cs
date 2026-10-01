@@ -21,6 +21,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly byte[][] _replies;
     private readonly Dictionary<int, int> _replyDelays = [];
+    private volatile (string Prefix, int Milliseconds)[] _commandDelays = [];
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -124,6 +125,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// happen while a command's confirmation is still in flight. Call before the command is sent.
     /// </summary>
     public void DelayReply(int replyIndex, int milliseconds) => _replyDelays[replyIndex] = milliseconds;
+
+    /// <summary>
+    /// Delays the reply to every command whose text starts with <paramref name="commandPrefix"/>.
+    /// Unlike <see cref="DelayReply"/>, it does not depend on how many setup commands precede
+    /// the target. The delay also holds back later commands on the same connection.
+    /// </summary>
+    public void DelayCommand(string commandPrefix, int milliseconds)
+        => _commandDelays = [.. _commandDelays, (commandPrefix, milliseconds)];
 
     /// <summary>Injects a server-initiated frame (e.g. a pub/sub message) onto the wire.</summary>
     public async Task SendRawAsync(byte[] frame)
@@ -235,6 +244,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     if (_replyDelays.TryGetValue(replyIndex, out var delay))
                     {
                         await Task.Delay(delay, _cts.Token);
+                    }
+
+                    foreach (var (prefix, milliseconds) in _commandDelays)
+                    {
+                        if (commandText.StartsWith(prefix, StringComparison.Ordinal))
+                        {
+                            await Task.Delay(milliseconds, _cts.Token);
+                        }
                     }
 
                     if (SuppressReply?.Invoke(commandText) != true)

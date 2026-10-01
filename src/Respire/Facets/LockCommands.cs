@@ -141,6 +141,24 @@ public static class LockCommandExtensions
 
 internal interface IManagedLockCommands
 {
+    /// <summary>
+    /// Releases a managed lock. Failures are classified explicitly so the handle never infers
+    /// safety from a missing signal:
+    /// <list type="bullet">
+    /// <item><see cref="LockReleaseNotSubmittedException"/> wraps any failure that provably
+    /// happened before a delete could reach Redis; ownership is unchanged and release may be
+    /// retried.</item>
+    /// <item><see cref="RespireServerException"/> is a definitive rejection of the delete.</item>
+    /// <item>Anything else is uncertain. <paramref name="onOutcomeUncertain"/> runs before the
+    /// connection is fenced, so protected work stops while the fence waits.</item>
+    /// </list>
+    /// </summary>
+    ValueTask<bool> ReleaseManagedAsync(
+        RespireKey key,
+        RespireLockToken token,
+        Action onOutcomeUncertain,
+        CancellationToken cancellationToken);
+
     ValueTask<bool> ExtendManagedAsync(
         RespireKey key,
         RespireLockToken token,
@@ -274,6 +292,115 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         return client.ExecuteLockAsync(key, token, null, cancellationToken);
     }
 
+    async ValueTask<bool> IManagedLockCommands.ReleaseManagedAsync(
+        RespireKey key,
+        RespireLockToken token,
+        Action onOutcomeUncertain,
+        CancellationToken cancellationToken)
+    {
+        ValidateToken(token);
+        RespireClient.TrackedLockExecution execution;
+        bool fenced;
+        try
+        {
+            // Identity setup and StartLockExecutionAsync finish before the routed send can fail:
+            // send failures surface only through Response. Any error here, including cancellation
+            // while CLIENT ID is set up or a connection is acquired, precedes submission.
+            (execution, fenced) = await StartReleaseExecutionAsync(key, token, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            throw new LockReleaseNotSubmittedException(error);
+        }
+
+        try
+        {
+            return await execution.Response.ConfigureAwait(false);
+        }
+        catch (Exception error) when (!execution.CommandMayBeOutstanding)
+        {
+            // The routing loop is the single source of truth for submission: it cleared the flag
+            // only on proof that no delete reached Redis.
+            throw new LockReleaseNotSubmittedException(
+                error is RespireCommandNotSubmittedException { InnerException: OperationCanceledException cause }
+                    ? cause
+                    : error);
+        }
+        catch (RespireServerException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            // The delete may have reached Redis. Report that before fencing so ownership loss is
+            // visible while the fence waits for its control connection.
+            onOutcomeUncertain();
+            if (fenced && execution.ConnectionIdentity.ServerClientId > 0 && IsFenceableUncertainty(error))
+            {
+                // A fence failure is logged and must not replace the release error.
+                await client.TryFenceLockConnectionAsync(execution.ConnectionIdentity, "lock release")
+                    .ConfigureAwait(false);
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Whether an uncertain release left its connection alive with the delete possibly still
+    /// queued, so <c>CLIENT KILL</c> is needed to stop it. Connection failures and abandoned waits
+    /// qualify. Other errors (a protocol fault, a disposed client) have already torn the
+    /// connection down, so there is nothing left to fence; ownership is still treated as lost.
+    /// </summary>
+    private static bool IsFenceableUncertainty(Exception error)
+        => error is OperationCanceledException or RespireTimeoutException or RespireConnectionException;
+
+    /// <summary>
+    /// Starts the compare-and-delete. Identity tracking and fencing are set up only when the
+    /// release can become ambiguous (a cancellable token or a command timeout); otherwise the
+    /// caller waits for the reply or connection loss and no CLIENT permissions are needed.
+    /// Returns whether the execution is fenceable.
+    /// </summary>
+    private async ValueTask<(RespireClient.TrackedLockExecution Execution, bool Fenced)> StartReleaseExecutionAsync(
+        RespireKey key, RespireLockToken token, CancellationToken cancellationToken)
+    {
+        if (client.RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            try
+            {
+                await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                return (await client.StartLockExecutionAsync(
+                        key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true, cancellationToken)
+                    .ConfigureAwait(false), true);
+            }
+            catch (RespireServerException error) when (
+                Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
+            {
+                // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
+                // Other server errors propagate. An uncertain outcome still fails closed, and a
+                // latent compare-and-delete cannot match another owner's token. Operators are told
+                // once that the fence is unavailable. A cluster redirect or replacement target
+                // that denies them later gets the same fallback inside the routing loop.
+                client.LogUnfencedLockReleaseOnce(error);
+            }
+        }
+
+        return (await client.StartLockExecutionAsync(
+                key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false, cancellationToken)
+            .ConfigureAwait(false), false);
+    }
+
+    // Transport proof that an attempt was never enqueued: cancellation or a command timeout while
+    // waiting for in-flight capacity, a connection retired before it accepted the command, or a
+    // connection already closed when the command reached the write gate.
+    internal static bool IsUnsubmitted(Exception error)
+        => error is RespireException { IsCommandNotSubmitted: true }
+            or RespireCommandNotSubmittedException
+            or Respire.Networking.RespireConnectionRetiredException
+            or Respire.Networking.RespireConnectionClosedBeforeSendException
+            or RespireTimeoutException { Diagnostics.Stage: RespireCommandStage.WaitingForCapacity };
+
     public ValueTask<bool> ResetExpiryAsync(
         RespireKey key,
         RespireLockToken token,
@@ -299,7 +426,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         try
         {
             execution = await client.StartLockExecutionAsync(
-                    key, token, milliseconds, requireIdentity: true, cancellationToken)
+                    key, token, milliseconds, requireIdentity: true, allowUnfencedFallback: false, cancellationToken)
                 .ConfigureAwait(false);
             return await execution.Response.ConfigureAwait(false);
         }
@@ -366,3 +493,10 @@ internal readonly struct LockTakeCommand(RespireValue key, RespireValue token, l
         writer.WriteBulkInteger(milliseconds);
     }
 }
+
+/// <summary>
+/// Wraps a lock-release failure that provably happened before any delete was submitted.
+/// <see cref="RespireLock"/> restores ownership on this signal and rethrows
+/// <see cref="Exception.InnerException"/>; callers never see this type.
+/// </summary>
+internal sealed class LockReleaseNotSubmittedException(Exception error) : Exception(error.Message, error);

@@ -1377,8 +1377,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ThrowIfRetired();
                 if (_dead)
                 {
-                    throw Volatile.Read(ref _abortReason)
-                        ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    throw ClosedBeforeEnqueue();
                 }
 
                 if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
@@ -1452,8 +1451,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ThrowIfRetired();
             if (_dead)
             {
-                throw Volatile.Read(ref _abortReason)
-                    ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                throw ClosedBeforeEnqueue();
             }
 
             if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
@@ -1779,6 +1777,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
+        }
+        catch (OperationCanceledException error)
+        {
+            // The command never reached the ring, so this cancellation proves it was not sent.
+            // Callers that must tell a safe retry from an uncertain outcome (lock release) rely
+            // on the marker; everyone else still sees an OperationCanceledException.
+            ReclaimUnpublished(source, retainRepliesBefore ? discardRepliesBefore + 2 : 2);
+            throw new RespireCommandNotSubmittedException(error);
         }
         catch
         {
@@ -2903,6 +2909,59 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             _logger?.LogDebug("Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", failed, Host, Port, exception.Message);
         }
+    }
+
+    /// <summary>
+    /// The failure for a command that found the connection already closed under the write gate,
+    /// before anything was appended or reserved. A generic close becomes
+    /// <see cref="RespireConnectionClosedBeforeSendException"/>. Known Respire close reasons keep
+    /// their public exception type and carry a per-command marker, so lock release can distinguish
+    /// a pre-enqueue failure from the same failure on an in-flight command.
+    /// </summary>
+    private Exception ClosedBeforeEnqueue()
+    {
+        var reason = Volatile.Read(ref _abortReason);
+        if (reason is null)
+        {
+            return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
+        }
+
+        return reason switch
+        {
+            RespireAuthenticationException authentication => MarkNotSubmitted(authentication),
+            RespireReconnectLimitException reconnectLimit => MarkNotSubmitted(reconnectLimit),
+            RespireProtocolException protocol => MarkNotSubmitted(protocol),
+            RespireConnectionException connection when connection.GetType() == typeof(RespireConnectionException)
+                => new RespireConnectionClosedBeforeSendException(connection.Message, connection.InnerException),
+            _ => new RespireConnectionClosedBeforeSendException(reason.Message, reason),
+        };
+    }
+
+    private static RespireAuthenticationException MarkNotSubmitted(RespireAuthenticationException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireAuthenticationException(reason.Message, inner)
+            : new RespireAuthenticationException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
+    }
+
+    private static RespireReconnectLimitException MarkNotSubmitted(RespireReconnectLimitException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireReconnectLimitException(reason.Message, inner)
+            : new RespireReconnectLimitException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
+    }
+
+    private static RespireProtocolException MarkNotSubmitted(RespireProtocolException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireProtocolException(reason.Message, inner)
+            : new RespireProtocolException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
