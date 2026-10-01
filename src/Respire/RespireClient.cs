@@ -3472,8 +3472,7 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken,
-                    onFallbackSend: () => execution.StartedTimestamp = Stopwatch.GetTimestamp());
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution);
             }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
@@ -3703,7 +3702,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken,
-        Action? onFallbackSend = null)
+        TrackedScriptExecution execution)
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
@@ -3715,7 +3714,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(
-                    connection, script, tail, cancellationToken, onFallbackSend)
+                    connection, script, tail, cancellationToken, execution)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
@@ -3735,7 +3734,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken,
-        Action? onFallbackSend = null)
+        TrackedScriptExecution? execution = null)
     {
         try
         {
@@ -3746,7 +3745,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
-            onFallbackSend?.Invoke();
+            if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
             var reply = await SendOnConnectionCoreAsync(
                     script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);

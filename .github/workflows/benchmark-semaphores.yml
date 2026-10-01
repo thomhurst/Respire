@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/Respire.Extensions.Coordination/**'
+      - 'src/Respire/RespireClient.cs'
       - 'benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs'
       - '.github/workflows/benchmark-semaphores.yml'
 
@@ -46,10 +47,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The baseline build compiles the candidate's semaphore sources, so they may only use
-          # internals (such as RespireLock.NewToken) that already exist on the base branch.
+          # Keep shared feature sources identical across phases so each revision builds.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
+          cp candidate/src/Respire/RespireClient.cs baseline/src/Respire/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
