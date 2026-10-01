@@ -434,7 +434,7 @@ public sealed class RespireCoordination
     {
         Exception? originalFailure = null;
         Task? originalCorrection = null;
-        var promotedGenerationCorrected = false;
+        object? correctedSentinelGeneration = null;
         if (connectionIdentity.Connection is not null)
         {
             try
@@ -449,14 +449,8 @@ public sealed class RespireCoordination
 
             try
             {
-                if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
-                {
-                    // The original generation preserves FIFO ordering for its accepted acquisition.
-                    // Release the same owner field on the promoted generation as well.
-                    await client.ExecuteOnAllConnectionsAsync(
-                        ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
-                    promotedGenerationCorrected = true;
-                }
+                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
+                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -466,18 +460,14 @@ public sealed class RespireCoordination
             if (originalCorrection is not null)
             {
                 var probeDelay = TimeSpan.FromMilliseconds(100);
-                while (!originalCorrection.IsCompleted && !promotedGenerationCorrected)
+                while (!originalCorrection.IsCompleted)
                 {
                     await Task.WhenAny(originalCorrection, Task.Delay(probeDelay)).ConfigureAwait(false);
                     if (originalCorrection.IsCompleted) break;
                     try
                     {
-                        if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
-                        {
-                            await client.ExecuteOnAllConnectionsAsync(
-                                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
-                            promotedGenerationCorrected = true;
-                        }
+                        correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
+                            client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
                     }
                     catch (Exception error)
                     {
@@ -486,27 +476,14 @@ public sealed class RespireCoordination
                     probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
                 }
 
-                if (promotedGenerationCorrected)
-                {
-                    // The owner-checked release completed on the current primary. The old
-                    // generation task may remain stuck; observe it without blocking cleanup.
-                    ObserveCorrectionFailure(originalCorrection);
-                }
-                else
-                {
-                    try { await originalCorrection.ConfigureAwait(false); }
-                    catch (Exception error) { originalFailure ??= error; }
-                }
+                try { await originalCorrection.ConfigureAwait(false); }
+                catch (Exception error) { originalFailure ??= error; }
             }
 
             try
             {
-                if (!promotedGenerationCorrected
-                    && await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
-                {
-                    await client.ExecuteOnAllConnectionsAsync(
-                        ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
-                }
+                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
+                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -529,6 +506,26 @@ public sealed class RespireCoordination
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+
+    private static async ValueTask<object?> ReleaseOnCurrentSentinelGenerationAsync(
+        RespireClient client,
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient.TrackedConnectionIdentity originalIdentity,
+        object? correctedGeneration)
+    {
+        var sentinel = client.Core.Sentinel;
+        if (sentinel is null || originalIdentity.Connection is null) return correctedGeneration;
+        var current = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
+        if (ReferenceEquals(current.Multiplexer, originalIdentity.Connection.Multiplexer)) return null;
+        if (ReferenceEquals(current, correctedGeneration)) return correctedGeneration;
+
+        await client.ExecuteOnAllConnectionsAsync(
+            ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+        var afterRelease = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
+        return ReferenceEquals(current, afterRelease) ? current : null;
+    }
 
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, long milliseconds, CancellationToken cancellationToken)

@@ -374,6 +374,12 @@ public class HashFieldLeaseWireTests
                 ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
                 : null,
         };
+        await using var secondPromotedPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
+                : null,
+        };
         var primaryPort = oldPrimary.Port;
         await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
         {
@@ -406,9 +412,21 @@ public class HashFieldLeaseWireTests
         using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
         generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
         await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        using var promotedTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!promotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            await Task.Delay(5, promotedTimeout.Token);
+
+        Volatile.Write(ref primaryPort, secondPromotedPrimary.Port);
+        var secondGeneration = client.Core.Sentinel!.Current!;
+        using var secondRejection = Respire.Protocol.RespValue.Error("READONLY replica");
+        secondGeneration.ObserveResponse(secondGeneration.Multiplexer.GetConnection(), "SET", in secondRejection);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        while (!secondPromotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            await Task.Delay(5, promotedTimeout.Token);
         await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(promotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(secondPromotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
         await Assert.That(cleanup.IsCompleted).IsTrue();
     }
 
