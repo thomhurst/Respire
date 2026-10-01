@@ -93,13 +93,17 @@ Under pressure, the oldest finished identity is evicted first. More than 256 con
 share a conservative overflow window that expires automatically. Completion replays received
 before the negotiation acknowledgement are suppressed; pushes after it are handled normally. Reconnect starts with fresh per-connection state.
 
-This release implements notifications, diagnostics, and timeout relaxation. It does not yet
-perform proactive `MOVING` handoff ([#634](https://github.com/thomhurst/Respire/issues/634))
-or update Cluster ownership from `SMIGRATED` ([#635](https://github.com/thomhurst/Respire/issues/635)).
-The server can still close a connection after its grace period. Blocking, pub/sub, Sentinel
-discovery, and correction-control connections do not negotiate maintenance notifications.
-Their existing wait/recovery behavior stays unchanged. Connection establishment, topology
-recovery budgets, and explicit operation-level cancellation deadlines also retain their limits.
+For multiplexed client connections, `MOVING` also triggers a background handoff. Respire
+connects and completes the normal TLS, authentication, database, and notification handshake
+with the announced endpoint before publishing replacement sockets. A null target reconnects
+to the configured logical host; that host remains the reconnect name so DNS can change later.
+Accepted commands drain on the old sockets, while commands selected just before retirement
+move to a current socket only when the old socket had not accepted their frame. Blocking,
+pub/sub, Sentinel discovery, and correction-control connections do not negotiate maintenance
+notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
+topology recovery budgets, and explicit operation-level cancellation deadlines also retain
+their limits. Cluster ownership updates from `SMIGRATED` remain unsupported
+([#635](https://github.com/thomhurst/Respire/issues/635)).
 
 Server support and deployment restrictions are described in the
 [Redis smart client handoff documentation](https://redis.io/docs/latest/develop/clients/sch/).

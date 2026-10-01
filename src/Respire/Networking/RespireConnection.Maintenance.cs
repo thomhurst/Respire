@@ -17,7 +17,9 @@ internal sealed partial class RespireConnection
     private const int MaintenanceNegotiating = 1;
     private const int MaintenanceEnabled = 2;
     private int _maintenanceStatus;
+    private MaintenanceNotification? _lastMovingNotification;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
+    internal MaintenanceNotification? LastMovingNotification => Volatile.Read(ref _lastMovingNotification);
 
     private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespProtocol protocol,
         CancellationToken cancellationToken, bool armCommandDeadline)
@@ -91,6 +93,11 @@ internal sealed partial class RespireConnection
             Volatile.Write(ref _maintenanceState, state);
         }
         state.Apply(notification, Environment.TickCount64);
+        if (notification.Kind == "MOVING")
+        {
+            Volatile.Write(ref _lastMovingNotification, notification);
+            MovingNotification?.Invoke(notification);
+        }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
         {
@@ -99,6 +106,8 @@ internal sealed partial class RespireConnection
         }
         return true;
     }
+
+    internal event Action<MaintenanceNotification>? MovingNotification;
 
     private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
         long deadline = long.MaxValue)

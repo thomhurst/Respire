@@ -23,6 +23,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly int[] _reconnecting;
     private readonly int[]? _reconnectAttempts;
     private readonly RespireConnectionOptions _options;
+    private ActiveEndpoint _activeEndpoint;
+    private readonly object _movingGate = new();
+    private long _movingSequence = -1;
+    private RespireEndpoint _pendingMovingEndpoint;
+    private TimeSpan _pendingMovingGrace;
+    private int _movingWorker;
+    private TaskCompletionSource? _movingCompletion;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
@@ -123,6 +130,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         Host = host;
         Port = port;
+        _activeEndpoint = new ActiveEndpoint(host, port);
         _options = options;
         _logger = logger;
         _connections = new RespireConnection?[connectionCount];
@@ -198,7 +206,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var connectTasks = new Task<RespireConnection>[_connections.Length];
             for (var i = 0; i < connectTasks.Length; i++)
             {
-                connectTasks[i] = RespireConnection.ConnectAsync(Host, Port, _options, _logger, cancellationToken);
+                var endpoint = Volatile.Read(ref _activeEndpoint);
+                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, cancellationToken);
             }
 
             try
@@ -778,7 +787,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, _stopConnecting.Token).ConfigureAwait(false);
-            replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger, _stopConnecting.Token)
+            var endpoint = Volatile.Read(ref _activeEndpoint);
+            replacement = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, _stopConnecting.Token)
                 .ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
                 await replacement.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
@@ -788,6 +798,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             lock (_lifecycleGate)
             {
                 ThrowIfUnavailable();
+                if (!ReferenceEquals(endpoint, Volatile.Read(ref _activeEndpoint)))
+                    throw new RespireConnectionException("Connection endpoint changed during reconnect.");
                 replacement.Multiplexer = this;
                 old = Interlocked.Exchange(ref _connections[slot], replacement);
                 publishedReplacement = replacement;
@@ -841,6 +853,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void ObserveConnectionFailure(int slot, RespireConnection connection)
     {
+        connection.MovingNotification += notification => QueueMovingHandoff(notification);
+        if (connection.LastMovingNotification is { } notification)
+            QueueMovingHandoff(notification);
         if (_options.EnableClientTracking)
         {
             connection.PendingCommandsFailing += () => HandleConnectionFailure(slot, connection);
@@ -848,6 +863,122 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 HandleConnectionFailure(slot, connection);
             }
+        }
+    }
+
+    private sealed record ActiveEndpoint(string Host, int Port);
+
+    private void QueueMovingHandoff(MaintenanceNotification notification)
+    {
+        lock (_movingGate)
+        {
+            if (!IsOperational || notification.SequenceId <= _movingSequence) return;
+            _movingSequence = notification.SequenceId;
+            _pendingMovingEndpoint = notification.Target ?? new RespireEndpoint(Host, Port);
+            _pendingMovingGrace = TimeSpan.FromSeconds(Math.Clamp(notification.Seconds ?? 5, 1, 30));
+            if (Interlocked.Exchange(ref _movingWorker, 1) != 0) return;
+            _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        _ = Task.Run(ProcessMovingHandoffsAsync);
+    }
+
+    private async Task ProcessMovingHandoffsAsync()
+    {
+        try
+        {
+            while (IsOperational)
+            {
+                long sequence;
+                RespireEndpoint endpoint;
+                TimeSpan drainTimeout;
+                lock (_movingGate)
+                {
+                    sequence = _movingSequence;
+                    endpoint = _pendingMovingEndpoint;
+                    drainTimeout = _pendingMovingGrace;
+                }
+                if (sequence < 0) return;
+                var replacements = new RespireConnection[_connections.Length];
+                try
+                {
+                    for (var i = 0; i < replacements.Length; i++)
+                    {
+                        replacements[i] = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
+                            _options, _logger, _stopConnecting.Token).ConfigureAwait(false);
+                        if (Volatile.Read(ref _trackServerClientIds) != 0)
+                            await replacements[i].EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
+                    }
+                    RespireConnection?[] old;
+                    lock (_lifecycleGate)
+                    {
+                        ThrowIfUnavailable();
+                        lock (_movingGate)
+                        {
+                            if (sequence != _movingSequence) continue;
+                            _options.CredentialCacheInvalidation?.Invoke();
+                            Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
+                        }
+                        old = new RespireConnection?[_connections.Length];
+                        for (var i = 0; i < replacements.Length; i++)
+                        {
+                            replacements[i].Multiplexer = this;
+                            old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
+                            ObserveConnectionFailure(i, replacements[i]);
+                            replacements[i] = null!;
+                        }
+                    }
+                    var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
+                    try
+                    {
+                        await Task.WhenAll(drains).WaitAsync(drainTimeout).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException)
+                    {
+                        foreach (var connection in old)
+                        {
+                            if (connection is null || connection.DrainedSuccessfully) continue;
+                            RetireConnection(connection);
+                            await connection.DisposeAsync().ConfigureAwait(false);
+                        }
+                        try { await Task.WhenAll(drains).ConfigureAwait(false); }
+                        catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after abortive drain cleanup"); }
+                        if (HasPendingCorrectionFences)
+                            await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
+                        _logger?.LogWarning("MOVING handoff drain exceeded {Timeout}; aborted remaining old sockets", drainTimeout);
+                    }
+                }
+                catch (OperationCanceledException) when (!IsOperational) { return; }
+                catch (Exception error)
+                {
+                    _logger?.LogWarning(error, "MOVING handoff to {Host}:{Port} failed; keeping current connections", endpoint.Host, endpoint.Port);
+                }
+                finally
+                {
+                    foreach (var replacement in replacements)
+                        if (replacement is not null) await replacement.DisposeAsync().ConfigureAwait(false);
+                }
+                lock (_movingGate)
+                    if (sequence == _movingSequence) { _movingSequence = -1; return; }
+            }
+        }
+        finally
+        {
+            var restart = false;
+            lock (_movingGate)
+            {
+                Volatile.Write(ref _movingWorker, 0);
+                if (IsOperational && _movingSequence >= 0)
+                {
+                    Volatile.Write(ref _movingWorker, 1);
+                    restart = true;
+                }
+                else
+                {
+                    _movingCompletion?.TrySetResult();
+                    _movingCompletion = null;
+                }
+            }
+            if (restart) _ = Task.Run(ProcessMovingHandoffsAsync);
         }
     }
 
@@ -1065,6 +1196,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 : (_reconnectsDrained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
         await reconnects.ConfigureAwait(false);
+        Task? moving;
+        lock (_movingGate) moving = _movingCompletion?.Task;
+        if (moving is not null) await moving.ConfigureAwait(false);
     }
 
     private async Task RetireCoreAsync(TaskCompletionSource completion)
