@@ -365,15 +365,19 @@ public class MaintenanceNotificationTests
     {
         await using var source = Server(maxConnections: 2);
         await using var firstTarget = Server(maxConnections: 2);
+        await using var secondTarget = Server(maxConnections: 2);
         await using var delayedTarget = Server(maxConnections: 2);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
         var announcingConnection = multiplexer.GetConnection();
+        var waitForPublication = typeof(RespireConnectionMultiplexer).GetMethod("WaitForPublicationAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
         await source.SendRawAsync(Moving(1, firstTarget.Port));
         await WaitForPort(multiplexer, firstTarget.Port);
-        var waitForPublication = typeof(RespireConnectionMultiplexer).GetMethod("WaitForPublicationAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await ((Task)waitForPublication.Invoke(multiplexer, null)!).WaitAsync(TimeSpan.FromSeconds(5));
+        await firstTarget.SendRawAsync(Moving(1, secondTarget.Port));
+        await WaitForPort(multiplexer, secondTarget.Port);
         await ((Task)waitForPublication.Invoke(multiplexer, null)!).WaitAsync(TimeSpan.FromSeconds(5));
 
         var delayedNotification = new MaintenanceNotification("MOVING", 2, 10,

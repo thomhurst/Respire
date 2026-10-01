@@ -930,8 +930,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private const long MaxMovingGraceSeconds = 24 * 60 * 60;
 
-    internal long GetMovingPublicationGeneration(int slot)
-        => Volatile.Read(ref _movingPublicationGenerations[slot]);
+    internal long GetMovingPublicationGeneration(int slot, RespireConnection connection)
+        => ReferenceEquals(Volatile.Read(ref _connections[slot]), connection)
+            ? connection.MovingPublicationGeneration
+            : -1;
 
     private void QueueMovingHandoff(int slot, RespireConnection connection, MaintenanceNotification notification,
         long notificationGeneration)
@@ -947,15 +949,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection,
         MaintenanceNotification notification, long notificationGeneration)
     {
-        var current = Volatile.Read(ref _connections[slot]);
-        var currentGeneration = Volatile.Read(ref _movingPublicationGenerations[slot]);
-        var receivedFromPublishedSocket = notificationGeneration == connection.MovingPublicationGeneration;
-        var stillPublished = ReferenceEquals(current, connection) && currentGeneration == notificationGeneration;
-        // A callback parsed by the published socket just before a handoff may be delayed until
-        // publication releases this gate. Accept exactly that one generation step.
-        var parsedBeforePublication = currentGeneration == notificationGeneration + 1;
+        // Eligibility is captured when the receive loop parses the push. The source may pass
+        // through multiple publications before its callback acquires this gate.
+        var receivedFromPublishedSocket = notificationGeneration >= 0
+            && notificationGeneration == connection.MovingPublicationGeneration;
         var peer = (connection.NetworkPeerAddress ?? connection.Host, connection.NetworkPeerPort ?? connection.Port);
-        if (!IsOperational || !receivedFromPublishedSocket || (!stillPublished && !parsedBeforePublication)
+        if (!IsOperational || !receivedFromPublishedSocket
             || notification.SequenceId <= connection.LastQueuedMovingSequence
             || _movingSequences.TryGetValue(peer, out var seen) && notification.SequenceId <= seen)
         {

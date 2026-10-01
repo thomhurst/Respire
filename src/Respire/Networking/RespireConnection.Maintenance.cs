@@ -96,7 +96,7 @@ internal sealed partial class RespireConnection
         state.Apply(notification, Environment.TickCount64);
         if (notification.Kind == "MOVING")
         {
-            var publicationGeneration = Multiplexer?.GetMovingPublicationGeneration(MultiplexerSlot) ?? -1;
+            var publicationGeneration = Multiplexer?.GetMovingPublicationGeneration(MultiplexerSlot, this) ?? -1;
             Volatile.Write(ref _lastMovingPublicationGeneration, publicationGeneration);
             Volatile.Write(ref _lastMovingNotification, notification);
             MovingNotification?.Invoke(notification, publicationGeneration);
