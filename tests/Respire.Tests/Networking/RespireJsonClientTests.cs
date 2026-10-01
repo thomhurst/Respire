@@ -1,5 +1,7 @@
+using System.Text;
 using System.Text.Json.Serialization;
 using Respire;
+using Respire.Commands;
 using Respire.Extensions.Json;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -135,10 +137,174 @@ public partial class RespireJsonClientTests
             new("{same}:two", new(2), "$.field"),
         ];
 
-        await Assert.That(await json.MultiSetAsync(entries, JsonTestContext.Default.Profile)).IsTrue();
+        await json.MultiSetAsync(entries, JsonTestContext.Default.Profile);
 
         await Assert.That(server.ReceivedCommands)
             .Contains("JSON.MSET {same}:one $.field {\"Age\":1} {same}:two $.field {\"Age\":2}");
+    }
+
+    [Test]
+    public async Task JsonPathRepliesDeserializeEveryMatchAndLegacyNullIsFound()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "JSON.GET many $..Age" => Bulk("[{\"Age\":1},{\"Age\":2}]"),
+                "JSON.GET single $" => Bulk("[{\"Age\":3}]"),
+                "JSON.GET none $.missing" => Bulk("[]"),
+                "JSON.GET stored-null ." => Bulk("null"),
+                "JSON.GET missing ." => "$-1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client);
+
+        var many = await json.GetManyAsync("many", JsonTestContext.Default.Profile, "$..Age");
+        await Assert.That(many.Select(value => value.Value!.Age).ToArray()).IsEquivalentTo(new[] { 1, 2 });
+        await Assert.That(async () => await json.GetAsync("many", JsonTestContext.Default.Profile, "$..Age"))
+            .Throws<InvalidOperationException>();
+        var single = await json.GetAsync("single", JsonTestContext.Default.Profile, RespireJsonPath.JsonPathRoot);
+        await Assert.That(single.Value!.Age).IsEqualTo(3);
+        var none = await json.GetAsync("none", JsonTestContext.Default.Profile, "$.missing");
+        await Assert.That(none.Found).IsFalse();
+        var storedNull = await json.GetAsync("stored-null", JsonTestContext.Default.Profile);
+        await Assert.That(storedNull.Found).IsTrue();
+        await Assert.That(storedNull.Value).IsNull();
+        var missing = await json.GetAsync("missing", JsonTestContext.Default.Profile);
+        await Assert.That(missing.Found).IsFalse();
+    }
+
+    [Test]
+    public async Task MultiGetReturnsNullForMissingKeys()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "JSON.MGET {t}:a {t}:b $"
+                ? Encoding.ASCII.GetBytes("*2\r\n$11\r\n[{\"Age\":7}]\r\n$-1\r\n")
+                : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client);
+
+        var values = await json.MultiGetAsync(
+            new RespireKey[] { "{t}:a", "{t}:b" }, JsonTestContext.Default.Profile, RespireJsonPath.JsonPathRoot);
+
+        await Assert.That(values.Length).IsEqualTo(2);
+        await Assert.That(values[0]![0].Value!.Age).IsEqualTo(7);
+        await Assert.That(values[1]).IsNull();
+    }
+
+    [Test]
+    public async Task SetSendsConditionTokensAndReportsRejectedWrites()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.EndsWith(" NX", StringComparison.Ordinal) ? "$-1\r\n"u8.ToArray() : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client.WithKeyPrefix("tenant:"));
+
+        await Assert.That(await json.SetAsync("profile", new Profile(5), JsonTestContext.Default.Profile)).IsTrue();
+        await Assert.That(await json.SetAsync("profile", new Profile(6), JsonTestContext.Default.Profile,
+            condition: RespireJsonSetCondition.Nx)).IsFalse();
+        await Assert.That(await json.SetJsonAsync("profile", new ReadOnlyMemory<byte>("{\"Age\":7}"u8.ToArray()),
+            condition: RespireJsonSetCondition.Xx)).IsTrue();
+        await Assert.That(async () => await json.SetJsonAsync("profile", "{}", condition: (RespireJsonSetCondition)42))
+            .Throws<ArgumentOutOfRangeException>();
+
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:profile . {\"Age\":5}");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:profile . {\"Age\":6} NX");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:profile . {\"Age\":7} XX");
+    }
+
+    [Test]
+    public async Task GetMemoryUsageRoutesByDocumentKeyAndReadsBothReplyShapes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "JSON.DEBUG MEMORY tenant:profile ." => ":42\r\n"u8.ToArray(),
+                "JSON.DEBUG MEMORY tenant:profile $..Age" => "*2\r\n:8\r\n:9\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client.WithKeyPrefix("tenant:"));
+
+        await Assert.That(await json.GetMemoryUsageAsync("profile")).IsEquivalentTo(new[] { 42L });
+        await Assert.That(await json.GetMemoryUsageAsync("profile", "$..Age")).IsEquivalentTo(new[] { 8L, 9L });
+    }
+
+    [Test]
+    public async Task PathEqualityUsesTheValueSentToRedis()
+    {
+        await Assert.That(default(RespireJsonPath)).IsEqualTo(RespireJsonPath.Root);
+        await Assert.That(default(RespireJsonPath).GetHashCode()).IsEqualTo(RespireJsonPath.Root.GetHashCode());
+        await Assert.That(default(RespireJsonPath) == RespireJsonPath.Root).IsTrue();
+        await Assert.That(RespireJsonPath.Root != RespireJsonPath.JsonPathRoot).IsTrue();
+        await Assert.That(RespireJsonPath.From("$.a")).IsEqualTo((RespireJsonPath)"$.a");
+        await Assert.That(default(RespireJsonPath).UsesJsonPath).IsFalse();
+        await Assert.That(RespireJsonPath.Root.UsesJsonPath).IsFalse();
+        await Assert.That(RespireJsonPath.JsonPathRoot.UsesJsonPath).IsTrue();
+        await Assert.That(((RespireJsonPath)"$..name").UsesJsonPath).IsTrue();
+        await Assert.That(((RespireJsonPath)".name").UsesJsonPath).IsFalse();
+        await Assert.That(() => (RespireJsonPath)" ").Throws<ArgumentException>();
+        await Assert.That(() => RespireJsonPath.From(null!)).Throws<ArgumentNullException>();
+    }
+
+    [Test]
+    public async Task GetOptionsRejectMissingPathsWhenAssigned()
+    {
+        await Assert.That(() => new RespireJsonGetOptions { Paths = [] }).Throws<ArgumentException>();
+        await Assert.That(() => new RespireJsonGetOptions { Paths = null! }).Throws<ArgumentNullException>();
+    }
+
+    /// <summary>
+    /// RedisJSON command names live in the generated interfaces, the key-layout table, and the client-side
+    /// cache classification. This fails when a command is added to one and not the others.
+    /// </summary>
+    [Test]
+    public async Task EveryJsonCommandHasAKeyLayoutAndACacheClassification()
+    {
+        var operations = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var type in new[] { typeof(RespireCommands.Json), typeof(RespireCommands.Dragonfly) })
+        {
+            foreach (var field in type.GetFields())
+            {
+                if (field.GetValue(null) is RespireCommand command && command.Name.StartsWith("JSON.", StringComparison.Ordinal))
+                    operations.Add(command.Name);
+            }
+        }
+        var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Extensions.Json.IRespireJsonModifierCommands")!;
+        foreach (var type in new[] { typeof(IRespireJsonCommands), modifierCommands })
+        {
+            foreach (var method in type.GetMethods())
+            {
+                foreach (var attribute in method.GetCustomAttributes(typeof(RespireCommandAttribute), false))
+                    operations.Add(((RespireCommandAttribute)attribute).Name);
+            }
+        }
+
+        // JSON.MSET writes several keys and deliberately takes the conservative full-cache flush.
+        string[] flushesWholeCache = ["JSON.MSET"];
+        var missingLayout = operations.Where(operation => !RawCommandKeyLayouts.HasLayout(operation)).ToArray();
+        var unclassified = operations.Where(operation =>
+            !ClientSideCacheCoordinator.IsReadOnly(operation)
+            && !ClientSideCacheCoordinator.IsSingleKeyMutation(operation)
+            && !flushesWholeCache.Contains(operation)).ToArray();
+
+        await Assert.That(operations.Count).IsGreaterThan(20);
+        await Assert.That(missingLayout).IsEmpty();
+        await Assert.That(unclassified).IsEmpty();
+    }
+
+    private static byte[] Bulk(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        return Encoding.UTF8.GetBytes("$" + bytes.Length + "\r\n" + value + "\r\n");
     }
 
     private sealed record Profile(int Age);
