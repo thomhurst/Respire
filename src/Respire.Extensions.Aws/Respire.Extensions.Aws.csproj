@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>Respire.Extensions.Aws</PackageId>
+    <Title>Respire.Extensions.Aws</Title>
+    <Description>AWS IAM credential providers for Amazon ElastiCache and MemoryDB.</Description>
+    <PackageTags>$(PackageTags);aws;elasticache;memorydb;iam;credentials</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Respire.Tests" />
+    <PackageReference Include="AWSSDK.Core" />
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+  </ItemGroup>
+
+</Project>
