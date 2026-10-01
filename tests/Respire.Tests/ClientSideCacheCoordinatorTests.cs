@@ -421,7 +421,7 @@ public class ClientSideCacheCoordinatorTests
             Insert(cache, "series", "old");
             var command = new Cmd1N(new Verb(operation), "series", [1]);
             var fence = cache.BeforeCommand(operation, in command);
-            await Assert.That(fence.IsRequired).IsTrue();
+            await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Key);
             await Assert.That(cache.TryGet(new RespireKey("series"), out _)).IsFalse();
             cache.CompleteMutation(in fence);
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
@@ -435,7 +435,8 @@ public class ClientSideCacheCoordinatorTests
             Insert(cache, "unrelated", "dropped");
             var command = new Cmd1N(new Verb(operation), "series", ["other"]);
             var fence = cache.BeforeCommand(operation, in command);
-            await Assert.That(fence.FlushAll).IsTrue().Because($"{operation} writes more than its first key");
+            await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All)
+                .Because($"{operation} writes more than its first key");
             await Assert.That(cache.Count).IsEqualTo(0);
             cache.CompleteMutation(in fence);
         }
