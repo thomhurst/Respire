@@ -59,6 +59,30 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task WarmClientStreamsSetPayloads()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        await client.PingAsync();
+        using var source = new MemoryStream(new byte[] { 1, 2, 3 });
+        await Assert.That(await client.Strings.SetAsync("stream", source, 3)).IsTrue();
+
+        var first = new BufferSegment(new byte[] { 4, 5 });
+        var last = first.Append(new byte[] { 6 });
+        var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
+        await Assert.That(await client.Strings.SetAsync("sequence", sequence)).IsTrue();
+
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING", "SET", "SET" });
+    }
+
+    [Test]
     public async Task EarlyEndOfStreamClosesConnectionBeforeAnotherFrameCanFollow()
     {
         await using var server = new CountingSetServer();
