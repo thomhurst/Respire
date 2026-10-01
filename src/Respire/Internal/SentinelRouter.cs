@@ -91,7 +91,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
         if (expectedPrimary is null && rejectedPrimary is null && !refreshAfterSubscriptionGap
-            && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
+            && Current is { IsRetired: false } current && current.Multiplexer.IsConnected)
+        {
+            lock (_gate)
+            {
+                if (_pendingSwitchPrimary is { } pending && SentinelResolver.SameEndpoint(current.Endpoint, pending))
+                    ClearPendingSwitchLocked();
+                return current;
+            }
+        }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
@@ -130,7 +138,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (rejectedPrimary is { } rejected && previousHealthy && !SentinelResolver.SameEndpoint(previous!.Endpoint, rejected))
                 return previous;
             if (expectedPrimary is { } expected && previousHealthy && SentinelResolver.SameEndpoint(previous!.Endpoint, expected))
+            {
+                if (_pendingSwitchPrimary is { } pending && SentinelResolver.SameEndpoint(expected, pending))
+                    ClearPendingSwitchLocked();
                 return previous;
+            }
             var expectedWasRetired = expectedGeneration?.IsRetired == true;
             var preservePrevious = refreshAfterSubscriptionGap && previousHealthy;
             if (!preservePrevious && previous is not null) Invalidate(previous);
@@ -176,11 +188,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                             new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                     QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
                 }
+                if (_pendingSwitchPrimary is { } pending && SentinelResolver.SameEndpoint(replacement.Endpoint, pending))
+                    ClearPendingSwitchLocked();
                 if (switchRefreshVersion == _switchRefreshVersion)
-                {
-                    _pendingSwitchPrimary = null;
-                    _pendingSwitchPrevious = null;
-                }
+                    ClearPendingSwitchLocked();
             }
             if (unchanged is not null)
             {
@@ -371,6 +382,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (current is { IsRetired: false }) Invalidate(current);
         }
         TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, newPrimary, previousPrimary, switchRefreshVersion: version));
+    }
+
+    private void ClearPendingSwitchLocked()
+    {
+        if (_pendingSwitchPrimary is null) return;
+        _pendingSwitchPrimary = null;
+        _pendingSwitchPrevious = null;
+        _switchRefreshVersion++;
     }
 
     private void OnSentinelSubscriptionGap(RespireEndpoint sentinel)
