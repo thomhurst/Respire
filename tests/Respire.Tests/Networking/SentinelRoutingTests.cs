@@ -384,13 +384,25 @@ public class SentinelRoutingTests
         });
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var router = client.Core.Sentinel!;
+        var queued = router.QueuedNotificationCount;
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        // Prove the subscription is established: a delivered event reaches the router and its
+        // discovery (still the same primary) completes before the connection is dropped.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown", $"master mymaster 127.0.0.1 {original.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 1);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        await WaitForCommandCountAsync(original, "ROLE", 2);
         var subscriptions = sentinel.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
 
         // Events published while the monitor reconnects are lost, so the resubscription must rediscover.
         sentinel.CloseConnections();
-        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
 
         await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal)))
             .IsGreaterThan(subscriptions);
