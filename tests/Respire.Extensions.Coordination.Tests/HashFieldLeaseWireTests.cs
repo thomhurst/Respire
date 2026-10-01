@@ -444,7 +444,9 @@ public class HashFieldLeaseWireTests
 
     [Test]
     [NotInParallel]
-    public async Task UncertainCleanupFollowsNewClusterOwnerWhileCurrentOwnerReleaseIsPending()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task UncertainCleanupFollowsNewClusterOwnerWhileCurrentOwnerReleaseIsPending(bool originalCorrectionStalls)
     {
         static bool IsEval(string command) => command.StartsWith("EVAL", StringComparison.Ordinal);
         await using var replacementOwner = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -482,7 +484,9 @@ public class HashFieldLeaseWireTests
             RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
         using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
         await client.GetStringAsync("registry");
-        oldOwner.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
+        // When the original correction is answered, monitoring must still continue for the stalled owner.
+        if (originalCorrectionStalls)
+            oldOwner.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
 
         var cleanup = new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
             "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity).AsTask();

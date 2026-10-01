@@ -462,27 +462,31 @@ public sealed class RespireCoordination
 
         await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
 
-        if (originalCorrection is not null)
+        // Keep following route changes while any correction is still unanswered: a stalled original
+        // or routed release means the lease may now live on a node that a later route points to.
+        var probeDelay = TimeSpan.FromMilliseconds(100);
+        using (var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout))
         {
-            var probeDelay = TimeSpan.FromMilliseconds(100);
-            using var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout);
-            while (!originalCorrection.IsCompleted && !monitoringTimeout.IsCancellationRequested)
+            while (!monitoringTimeout.IsCancellationRequested && HasPendingCorrection())
             {
-                await Task.WhenAny(originalCorrection, Task.Delay(probeDelay, monitoringTimeout.Token)).ConfigureAwait(false);
-                if (originalCorrection.IsCompleted || monitoringTimeout.IsCancellationRequested) break;
+                var probe = Task.Delay(probeDelay, monitoringTimeout.Token);
+                await (originalCorrection is { IsCompleted: false }
+                    ? Task.WhenAny(originalCorrection, probe)
+                    : Task.WhenAny(probe)).ConfigureAwait(false);
+                if (monitoringTimeout.IsCancellationRequested || !HasPendingCorrection()) break;
                 await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
                 probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
             }
+        }
 
-            if (originalCorrection.IsCompleted)
-            {
-                try { await originalCorrection.ConfigureAwait(false); }
-                catch (Exception error) { originalFailure ??= error; }
-            }
-            else
-            {
-                ObserveCorrectionFailure(originalCorrection);
-            }
+        if (originalCorrection is { IsCompleted: true })
+        {
+            try { await originalCorrection.ConfigureAwait(false); }
+            catch (Exception error) { originalFailure ??= error; }
+        }
+        else if (originalCorrection is not null)
+        {
+            ObserveCorrectionFailure(originalCorrection);
         }
 
         await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
@@ -506,6 +510,10 @@ public sealed class RespireCoordination
 
         if (originalFailure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
+
+        bool HasPendingCorrection()
+            => originalCorrection is { IsCompleted: false }
+               || routedReleases?.Exists(static release => !release.IsCompleted) == true;
 
         async ValueTask ReleaseOnCurrentRoutesAsync()
         {
