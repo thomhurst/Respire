@@ -210,6 +210,38 @@ public class ClusterShardedPubSubTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task TopologyMoveStartsGapBeforeRecoveryBackoff(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        var clock = new RecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var subscription = await hub.SubscribeAsync(
+            SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? [.. cluster.Confirmation("ssubscribe", "foo"), .. cluster.Message("foo", "after")] : null;
+        var router = client.Core.Cluster!;
+        var first = router.GetMultiplexer(new("127.0.0.1", cluster.First.Port));
+        router.SetSlotOwner(ClusterHash.GetSlot("foo"), first);
+
+        var backoff = await clock.NextAsync();
+        await Task.Delay(100);
+        backoff.Fire();
+
+        await using var reader = subscription.GetAsyncEnumerator();
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
+        await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+        await Assert.That(reader.Current.Gap!.Duration).IsGreaterThan(TimeSpan.FromMilliseconds(50));
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
+        await Assert.That(reader.Current.Text).IsEqualTo("after");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task UnsolicitedSunsubscribeDoesNotCompleteAnotherPendingSubscription(int protocol)
     {
         await using var cluster = new Cluster(protocol);

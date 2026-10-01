@@ -425,7 +425,10 @@ internal sealed partial class SubscriptionHub
                 if (_shardedOwners.TryGetValue(name, out var primary)
                     && primary.Confirmed.Contains(name)
                     && !IsRouteOwnerCurrentLocked(primary, core.Cluster!.GetKnownSlotOwner(ClusterHash.GetSlot(name.Span))))
+                {
+                    MarkShardedInterruptedLocked(name);
                     RequestShardedRecoveryLocked(primary);
+                }
             }
         }
     }
