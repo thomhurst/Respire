@@ -37,6 +37,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private string? _pendingNotificationKey;
     private RespireEndpoint? _pendingNotificationTarget;
     private bool _pendingNotificationRetiresCurrent;
+    private bool _pendingNotificationMustRediscover;
+    private bool _pendingNotificationIsActiveDuplicate;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -223,7 +225,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                await using var client = await RespireClient.ConnectAsync(CreateSentinelMonitorOptions(core.Options, endpoint), cancellationToken).ConfigureAwait(false);
+                await using var client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint));
                 var subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 try
@@ -328,29 +330,52 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             catch (Exception) { }
         }
         if (switchHint || masterDownHint)
-            QueueNotificationRediscovery(channel + ":" + message.Text, promotedPrimary, retireCurrent: switchHint);
+            QueueNotificationRediscovery(channel + ":" + message.Text, promotedPrimary,
+                retireCurrent: switchHint, mustRediscoverAfterCurrent: masterDownHint);
     }
 
-    private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target, bool retireCurrent)
+    private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target,
+        bool retireCurrent, bool mustRediscoverAfterCurrent = false)
     {
         lock (_gate)
         {
             if (_disposed) return;
-            if (_activeNotificationKey == notificationKey || _pendingNotificationKey == notificationKey) return;
             var current = Current;
-            if (target is { } targetEndpoint && current is { IsRetired: false }
+            if (_activeNotificationKey == notificationKey)
+            {
+                // Coalesce a duplicate while discovery is active, but retain it until the
+                // attempt succeeds so it can trigger another attempt after a transient failure.
+                if (!_notificationPending)
+                {
+                    _notificationPending = true;
+                    _pendingNotificationKey = notificationKey;
+                    _pendingNotificationTarget = target;
+                    _pendingNotificationIsActiveDuplicate = true;
+                }
+                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
+                return;
+            }
+            if (_pendingNotificationKey == notificationKey)
+            {
+                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
+                return;
+            }
+            if (!mustRediscoverAfterCurrent && target is { } targetEndpoint && current is { IsRetired: false }
                 && SameEndpoint(current.Endpoint, targetEndpoint)) return;
-            var pendingRetiresCurrent = _pendingNotificationRetiresCurrent || retireCurrent;
-            _notificationPending = true;
-            _pendingNotificationKey = pendingRetiresCurrent && _pendingNotificationRetiresCurrent
-                ? _pendingNotificationKey : notificationKey;
-            _pendingNotificationTarget = target ?? _pendingNotificationTarget;
-            _pendingNotificationRetiresCurrent = pendingRetiresCurrent;
-            if (_notificationRediscovery is { IsCompleted: false }) return;
-            _notificationPending = false;
-            _pendingNotificationKey = null;
-            _pendingNotificationTarget = null;
-            _pendingNotificationRetiresCurrent = false;
+            if (_notificationRediscovery is { IsCompleted: false })
+            {
+                _notificationPending = true;
+                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
+                _pendingNotificationIsActiveDuplicate = false;
+                if (retireCurrent || !_pendingNotificationRetiresCurrent)
+                {
+                    _pendingNotificationKey = notificationKey;
+                    _pendingNotificationTarget = target ?? _pendingNotificationTarget;
+                }
+                _pendingNotificationRetiresCurrent |= retireCurrent;
+                return;
+            }
+            ClearPendingNotificationLocked();
             _activeNotificationKey = notificationKey;
             if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
             _notificationRediscovery = Task.Run(() => RediscoverFromNotificationAsync(notificationKey));
@@ -361,7 +386,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         while (!_lifetime.IsCancellationRequested)
         {
-            try { await GetGenerationAsync(_lifetime.Token, forceDiscovery: true).ConfigureAwait(false); }
+            var succeeded = false;
+            try
+            {
+                await GetGenerationAsync(_lifetime.Token, forceDiscovery: true).ConfigureAwait(false);
+                succeeded = true;
+            }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             catch (Exception error)
             {
@@ -381,13 +411,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 var pendingKey = _pendingNotificationKey;
                 var pendingTarget = _pendingNotificationTarget;
                 var retireCurrent = _pendingNotificationRetiresCurrent;
-                _notificationPending = false;
-                _pendingNotificationKey = null;
-                _pendingNotificationTarget = null;
-                _pendingNotificationRetiresCurrent = false;
+                var mustRediscover = _pendingNotificationMustRediscover;
+                var duplicateOfActive = _pendingNotificationIsActiveDuplicate;
+                ClearPendingNotificationLocked();
                 var current = Current;
-                if (pendingTarget is { } target && current is { IsRetired: false }
-                    && SameEndpoint(current.Endpoint, target))
+                if ((succeeded && duplicateOfActive)
+                    || (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
+                        && SameEndpoint(current.Endpoint, target)))
                 {
                     _notificationRediscovery = null;
                     _activeNotificationKey = null;
@@ -398,6 +428,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 _activeNotificationKey = notificationKey;
             }
         }
+    }
+
+    private void ClearPendingNotificationLocked()
+    {
+        _notificationPending = false;
+        _pendingNotificationKey = null;
+        _pendingNotificationTarget = null;
+        _pendingNotificationRetiresCurrent = false;
+        _pendingNotificationMustRediscover = false;
+        _pendingNotificationIsActiveDuplicate = false;
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
