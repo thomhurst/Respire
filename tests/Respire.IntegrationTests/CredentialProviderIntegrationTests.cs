@@ -107,6 +107,15 @@ public class CredentialProviderIntegrationTests
             var reconnectCalls = data.Calls;
             using (var killed = await administrators[int.Parse(identity[0])].ExecuteAsync("CLIENT", "KILL", "ID", identity[1]))
                 killed.AsInteger().Should().Be(1);
+            // Killing an idle TCP connection is only observable when the client next uses it.
+            // Evict cached reads, then route through each Cluster primary so the test actually
+            // exercises the dead socket before waiting for its replacement credentials.
+            client.ClientSideCache!.Clear();
+            foreach (var key in new[] { "{a}:credential", "{b}:credential", "{c}:credential" })
+            {
+                try { _ = await client.GetStringAsync(key); }
+                catch (RespireConnectionException) { /* A request can observe the killed socket before recovery completes. */ }
+            }
             await UntilAsync(async () =>
             {
                 var current = await ConnectionsAsync(administrators);
