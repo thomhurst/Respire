@@ -60,7 +60,7 @@ public class RedlockWireTests
     }
 
     [Test]
-    public async Task RemainingEstimateKeepsLeaseSnapshotBeforeClockRead()
+    public async Task RemainingEstimateRetriesWhenLeaseChangesDuringClockRead()
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
         var clock = new ManualClock();
@@ -82,7 +82,23 @@ public class RedlockWireTests
         }
 
         var remaining = await remainingTask.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(remaining).IsEqualTo(TimeSpan.FromMilliseconds(8_898));
+        await Assert.That(remaining).IsEqualTo(TimeSpan.FromMilliseconds(18_798));
+    }
+
+    [Test]
+    public async Task ShorterRenewalBoundsVisibleLeaseBeforeNodeReplies()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        foreach (var server in nodes.Servers) server.DelayReply(1, 250);
+        var group = new RespireRedlockGroup(nodes.Clients);
+        await using var attempt = await group.TryAcquireAsync("redlock:short-renew", TimeSpan.FromSeconds(10));
+        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(1)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (nodes.CommandsSeen < nodes.Servers.Length * 2) await Task.Delay(5, timeout.Token);
+
+        var remaining = attempt.Lock.RemainingEstimate;
+        await Assert.That(remaining > TimeSpan.Zero && remaining <= TimeSpan.FromSeconds(1)).IsTrue();
+        await Assert.That(await renewal.WaitAsync(timeout.Token)).IsTrue();
     }
 
     [Test]

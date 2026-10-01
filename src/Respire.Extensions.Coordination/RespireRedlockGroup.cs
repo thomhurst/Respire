@@ -150,6 +150,10 @@ internal sealed class RespireRedlockNodes
             throw new ArgumentOutOfRangeException(parameterName, "Lease duration is too long to track locally.");
     }
 
+    internal long GetConservativeDeadline(long started, TimeSpan duration)
+        => TryAddDuration(started, CalculateValidity(duration, TimeSpan.Zero, _driftFactor), out var deadline)
+            ? deadline : long.MaxValue;
+
     /// <summary>
     /// Builds the lease state when a quorum succeeded with positive validity. The validity and the
     /// deadline share one completion timestamp, so the deadline equals the start plus the
@@ -261,13 +265,14 @@ internal sealed class RespireRedlockNodes
 
 /// <summary>One immutable lease generation, published atomically so readers never mix renewals.</summary>
 internal sealed record RespireRedlockLease(TimeSpan Duration, TimeSpan Validity, long ValidUntil);
+internal sealed record RespireRedlockLeaseState(RespireRedlockLease Lease, long? PendingValidUntil);
 
 /// <summary>A Redlock lease acquired on a quorum; operations remain attached to supplied clients.</summary>
 public sealed class RespireRedlock : IAsyncDisposable
 {
     private readonly RespireRedlockNodes _nodes;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private RespireRedlockLease _lease;
+    private RespireRedlockLeaseState _leaseState;
     private int _released;
     private int _releaseConfirmed;
 
@@ -276,7 +281,7 @@ public sealed class RespireRedlock : IAsyncDisposable
         _nodes = nodes;
         Key = key;
         Token = token;
-        _lease = lease;
+        _leaseState = new(lease, null);
     }
 
     /// <summary>Lock key before each client's configured key prefix.</summary>
@@ -284,19 +289,28 @@ public sealed class RespireRedlock : IAsyncDisposable
     /// <summary>Random binary owner value stored on every node in the acquired quorum.</summary>
     public RespireLockToken Token { get; }
     /// <summary>Configured lease duration.</summary>
-    public TimeSpan Duration => Volatile.Read(ref _lease).Duration;
+    public TimeSpan Duration => Volatile.Read(ref _leaseState).Lease.Duration;
     /// <summary>Validity after acquisition elapsed time and configured drift allowance.</summary>
-    public TimeSpan Validity => Volatile.Read(ref _lease).Validity;
+    public TimeSpan Validity => Volatile.Read(ref _leaseState).Lease.Validity;
     /// <summary>Conservative estimate; it does not prove continued server ownership.</summary>
     public TimeSpan RemainingEstimate
     {
         get
         {
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
-            var lease = Volatile.Read(ref _lease);
-            var clock = _nodes.Clock;
-            var remaining = clock.GetElapsedTime(clock.GetTimestamp(), lease.ValidUntil);
-            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+            while (true)
+            {
+                if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+                var state = Volatile.Read(ref _leaseState);
+                var clock = _nodes.Clock;
+                var timestamp = clock.GetTimestamp();
+                if (!ReferenceEquals(state, Volatile.Read(ref _leaseState))) continue;
+                var deadline = state.PendingValidUntil is { } pending
+                    ? Math.Min(state.Lease.ValidUntil, pending)
+                    : state.Lease.ValidUntil;
+                var remaining = clock.GetElapsedTime(timestamp, deadline);
+                return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+            }
         }
     }
     /// <summary>Whether this handle was released, expired locally, or lost quorum.</summary>
@@ -319,9 +333,12 @@ public sealed class RespireRedlock : IAsyncDisposable
         try
         {
             if (IsReleased) return false;
-            var previousLease = Volatile.Read(ref _lease);
+            var previousLease = Volatile.Read(ref _leaseState).Lease;
             var started = _nodes.Clock.GetTimestamp();
             _nodes.ValidateDeadline(started, duration, nameof(duration));
+            var requestedDeadline = _nodes.GetConservativeDeadline(started, duration);
+            if (requestedDeadline < previousLease.ValidUntil)
+                Volatile.Write(ref _leaseState, new(previousLease, requestedDeadline));
             bool[] renewed;
             try
             {
@@ -337,7 +354,7 @@ public sealed class RespireRedlock : IAsyncDisposable
 
             if (_nodes.TryCreateLease(renewed, duration, started, previousLease.ValidUntil) is { } lease)
             {
-                Volatile.Write(ref _lease, lease);
+                Volatile.Write(ref _leaseState, new(lease, null));
                 return true;
             }
 
@@ -383,6 +400,8 @@ public sealed class RespireRedlock : IAsyncDisposable
     private async ValueTask LoseOwnershipAsync()
     {
         Volatile.Write(ref _released, 1);
+        var state = Volatile.Read(ref _leaseState);
+        Volatile.Write(ref _leaseState, new(state.Lease, null));
         if (await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false))
             Volatile.Write(ref _releaseConfirmed, 1);
     }
