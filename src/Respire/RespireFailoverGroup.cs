@@ -58,6 +58,11 @@ public sealed record RespireFailoverEndpointStatus(
 public static class RespireFailoverSwitchReasons
 {
     /// <summary>The group selected its first healthy endpoint.</summary>
+    /// <remarks>
+    /// The first selection happens inside <see cref="RespireFailoverGroup.ConnectAsync(IEnumerable{RespireFailoverCandidate}, RespireFailoverGroupOptions?, CancellationToken)"/>,
+    /// before callers can subscribe to <see cref="RespireFailoverGroup.EndpointSwitched"/>, so this reason is
+    /// reported only through the <c>respire.failover.endpoint.switches</c> metric and logs.
+    /// </remarks>
     public const string FirstHealthy = "first-healthy";
 
     /// <summary>An endpoint became healthy after the group had no healthy endpoint.</summary>
@@ -122,8 +127,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         _logger = logger;
     }
 
-    /// <summary>Raised when health policy changes the selected endpoint.</summary>
+    /// <summary>Raised when health policy changes the selected endpoint after <see cref="ConnectAsync(IEnumerable{RespireFailoverCandidate}, RespireFailoverGroupOptions?, CancellationToken)"/> returns.</summary>
     /// <remarks>
+    /// The initial selection made during connection is not raised; read <see cref="ActiveClient"/> after connecting instead.
     /// Handlers run synchronously on the health monitor, so a slow handler delays the next probe round.
     /// Keep handlers short, and never wait for <see cref="DisposeAsync"/> from a handler, synchronously or
     /// asynchronously: disposal waits for the monitor, which is running the handler. Handler exceptions are

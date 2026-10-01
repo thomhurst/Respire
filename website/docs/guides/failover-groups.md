@@ -55,9 +55,11 @@ await group.ActiveClient.Strings.SetAsync("service:health", "ready");
 ```
 
 Subscribe to `EndpointSwitched` for application-level resubscription or diagnostics. The
-`Reason` value is one of the `RespireFailoverSwitchReasons` constants. `FirstHealthy` marks the
-initial selection; `RecoveredFromNoHealthyEndpoint` marks a later recovery after every endpoint
-was unhealthy. Handlers run synchronously on the health monitor, so keep them short. A slow
+`Reason` value is one of the `RespireFailoverSwitchReasons` constants. The initial selection
+happens inside `ConnectAsync`, before a handler can be attached, so the event never reports
+`FirstHealthy`; that reason appears only in the switch metric and logs. Read `ActiveClient` after
+connecting to see the initial endpoint. `RecoveredFromNoHealthyEndpoint` marks a later recovery
+after every endpoint was unhealthy. Handlers run synchronously on the health monitor, so keep them short. A slow
 handler delays the next probe round, and a handler must never wait for `DisposeAsync`, either
 synchronously or with `await`, because disposal waits for the monitor that runs the handler. A client
 reference obtained before a switch stays attached to its original deployment. The group keeps
