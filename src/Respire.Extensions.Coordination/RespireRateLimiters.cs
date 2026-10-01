@@ -49,6 +49,13 @@ internal sealed class RedisRateLimiter : RateLimiter
         local width = tonumber(ARGV[1])
         local requested = tonumber(ARGV[2])
         local limit = tonumber(ARGV[3])
+        if requested == 0 then
+            local value = tonumber(redis.call('GET', KEYS[1]) or '0')
+            local ttl = redis.call('PTTL', KEYS[1])
+            local available = limit - value
+            if available > 0 then return {1, 0, available, 0} end
+            return {0, math.max(1, ttl), available, 0}
+        end
         -- The fourth result element reports that INCREX is unavailable so the caller stops probing it.
         local unsupported = 0
         if ARGV[4] == '1' then
@@ -98,6 +105,10 @@ internal sealed class RedisRateLimiter : RateLimiter
         end
         local requested = tonumber(ARGV[3])
         local limit = tonumber(ARGV[4])
+        if requested == 0 then
+            if count < limit then return {1, 0, limit - count} end
+            requested = 1
+        end
         if count + requested <= limit then
             local current = redis.call('ZRANGEBYSCORE', KEYS[1], bucketEnd, bucketEnd)
             local segmentCount = 0
@@ -133,6 +144,12 @@ internal sealed class RedisRateLimiter : RateLimiter
         tokens = math.min(tonumber(ARGV[1]), tokens + math.floor(elapsed / tonumber(ARGV[2])) * tonumber(ARGV[3]))
         last = last + math.floor(elapsed / tonumber(ARGV[2])) * tonumber(ARGV[2])
         local requested = tonumber(ARGV[4])
+        if requested == 0 then
+            redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
+            redis.call('PEXPIRE', KEYS[1], ARGV[5])
+            if tokens > 0 then return {1, 0, tokens} end
+            return {0, math.max(1, tonumber(ARGV[2]) - (now - last)), tokens}
+        end
         if tokens >= requested then
             tokens = tokens - requested
             redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
@@ -259,7 +276,7 @@ internal sealed class RedisRateLimiter : RateLimiter
     private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
     {
         if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
-        if (permitCount == 0) return new RedisRateLimitLease(true, TimeSpan.Zero);
+        if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken).ConfigureAwait(false);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
             if (_queueLimit == 0) return new RedisRateLimitLease(false, null);
