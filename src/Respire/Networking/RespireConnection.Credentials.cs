@@ -66,14 +66,12 @@ internal sealed partial class RespireConnection
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            ObserveProviderFailure(providerTask);
             throw new OperationCanceledException(cancellationToken);
         }
         catch (Exception)
         {
-            if (providerTask is not null)
-                _ = providerTask.ContinueWith(static task => _ = task.Exception,
-                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
+            ObserveProviderFailure(providerTask);
             // Provider-owned messages and inner exceptions can contain tokens, including
             // exceptions already typed as RespireAuthenticationException. Do not retain them.
             throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.");
@@ -81,6 +79,14 @@ internal sealed partial class RespireConnection
         if (credentials is null || credentials.ExpiresAt <= options.CredentialTimeProvider.GetUtcNow())
             throw new RespireAuthenticationException($"Credential provider returned null or expired credentials for {host}:{port}.");
         return credentials;
+    }
+
+    private static void ObserveProviderFailure(Task<RespireCredentials>? providerTask)
+    {
+        if (providerTask is null) return;
+        _ = providerTask.ContinueWith(static task => _ = task.Exception,
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private void StartCredentialRefresh(RespireConnectionOptions options)
