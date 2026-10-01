@@ -64,7 +64,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
         => _coordination.VerifyHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken);
 
-    /// <summary>Renews only this owner and preserves the hash field's independent expiry; an owner-checked renewal can settle uncertain state.</summary>
+    /// <summary>Renews only this owner and preserves the hash field's independent expiry; uncertain state fails closed.</summary>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
@@ -74,8 +74,8 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             var state = Volatile.Read(ref _state);
             if (state is StateReleasing or StateReleased or StateNotOwned) return false;
             // An earlier timed-out renewal may still execute on another Redis connection.
-            // An owner-checked renewal can settle an uncertain result. If the field expired
-            // or another owner replaced it, the Redis script returns false.
+            // Its late execution could shorten a later renewal, so uncertain state stays fail-closed.
+            if (state == StateUncertain) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
