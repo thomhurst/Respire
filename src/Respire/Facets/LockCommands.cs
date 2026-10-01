@@ -380,8 +380,9 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 
     // Cancellation or a command timeout while waiting for in-flight capacity happens before the
     // command is enqueued, so nothing was written.
-    private static bool IsUnsubmitted(Exception error)
+    internal static bool IsUnsubmitted(Exception error)
         => error is RespireCommandNotSubmittedException
+            or Respire.Networking.RespireConnectionRetiredException
             or RespireTimeoutException { Diagnostics.Stage: RespireCommandStage.WaitingForCapacity };
 
     public ValueTask<bool> ResetExpiryAsync(

@@ -10,6 +10,14 @@ namespace Respire.Tests.Networking;
 public class LockCommandTests
 {
     [Test]
+    public async Task RetiredConnectionMeansLockReleaseWasNotSubmitted()
+    {
+        var error = new Respire.Networking.RespireConnectionRetiredException("localhost", 6379);
+
+        await Assert.That(LockCommands.IsUnsubmitted(error)).IsTrue();
+    }
+
+    [Test]
     public async Task LockCommands_WriteExpectedFramesAndParseReplies()
     {
         await using var server = new FakeRespServer(
