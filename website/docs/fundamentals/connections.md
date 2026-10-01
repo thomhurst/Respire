@@ -306,18 +306,21 @@ step. On large fleets, a longer interval reduces `CLUSTER SLOTS` load.
 Set `ClusterTopologyRefreshInterval` to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to
 disable the periodic timer. This disables only the timer. The router still refreshes when:
 
-- a primary connection is lost (at most once per second while a primary keeps failing to reconnect);
+- a primary connection is lost (at most once per second while a primary keeps failing to reconnect,
+  and no sooner than the failure retry below while one is pending);
 - a `MOVED` redirect arrives (debounced for 5 seconds from the first redirect, so a stream of
   redirects cannot postpone the refresh);
 - a refresh failed (retried with backoff from 5 to 60 seconds until one succeeds). While a retry
-  is pending, redirect-driven and periodic refreshes wait for it, even when the periodic interval
-  is shorter than the backoff; only primary-disconnect refreshes run sooner.
+  is pending, redirect-driven, periodic and primary-disconnect refreshes wait for it, even when the
+  periodic interval is shorter than the backoff.
 
 These timings are fixed. A redirect-driven refresh reuses a refresh that succeeded within the last
 5 seconds. Refresh work triggered by redirects, disconnects, or concurrent `READONLY` recoveries is
 coalesced into one flight. One refresh pass is bounded to 60 seconds whatever the interval, tries
-connected nodes and configured seeds before other known nodes, and keeps the last published slot
-map when discovery fails. Replica endpoints, node IDs, and aliases from `CLUSTER SLOTS` stay current
+connected nodes and configured seeds before other known nodes (later fallbacks are tried in a
+different order on each pass), and keeps the last published slot map when discovery fails. A
+partial `CLUSTER SLOTS` reply, for example from a cluster with `cluster-require-full-coverage no`
+that has lost a shard, updates the slots it covers and keeps the previous owners of the rest. Replica endpoints, node IDs, and aliases from `CLUSTER SLOTS` stay current
 in router metadata and are used as refresh fallbacks when every primary and seed fails; command
 routing still uses primaries (reading from replicas is out of scope).
 

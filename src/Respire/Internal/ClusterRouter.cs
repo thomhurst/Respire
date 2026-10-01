@@ -1282,6 +1282,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
+        => ApplyTopologyCore(ranges, expectedVersion, discoveryGeneration, keepUncoveredOwners: false);
+
+    // keepUncoveredOwners: a slot the reply does not cover keeps its current owner, protected like
+    // a slot a newer redirect changed. Background refresh uses this so a partial map (a lost shard
+    // with cluster-require-full-coverage no, or a node with an incomplete view) still publishes the
+    // ownership it does report without dropping the rest. Replica metadata is retained as well.
+    private void ApplyTopologyCore(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration,
+        bool keepUncoveredOwners)
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
         List<RetiredGeneration> retirements;
@@ -1310,14 +1318,53 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     (protectedNodes ??= []).Add(node);
                 }
             }
+            bool[]? keptSlots = null;
+            if (keepUncoveredOwners)
+            {
+                var covered = new bool[ClusterHash.SlotCount];
+                foreach (var range in ranges)
+                {
+                    covered.AsSpan(range.Start, range.End - range.Start + 1).Fill(true);
+                }
+                for (var slot = 0; slot < covered.Length; slot++)
+                {
+                    if (!covered[slot] && _slots[slot] is { } owner)
+                    {
+                        keptSlots ??= new bool[ClusterHash.SlotCount];
+                        keptSlots[slot] = true;
+                        (protectedNodes ??= []).Add(owner);
+                    }
+                }
+            }
             var resolved = _identities.ApplySnapshot(ranges, protectedNodes);
-            Volatile.Write(ref _replicas, MergeReplicas(ranges));
+            var replicas = MergeReplicas(ranges);
+            if (keptSlots is not null)
+            {
+                // Replicas are not tied to their primary here; keeping the previous entries is
+                // harmless because they are only refresh fallbacks.
+                var current = new HashSet<RespireEndpoint>(RespireEndpointComparer.Instance);
+                foreach (var replica in replicas) current.Add(replica.Endpoint);
+                var keptReplicas = new List<ClusterTopologyReplica>(replicas);
+                foreach (var previous in Volatile.Read(ref _replicas))
+                {
+                    if (current.Add(previous.Endpoint)) keptReplicas.Add(previous);
+                }
+                replicas = keptReplicas.ToArray();
+            }
+            Volatile.Write(ref _replicas, replicas);
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)
             {
                 for (var slot = range.Start; slot <= range.End; slot++)
                 {
                     refreshedSlots[slot] = node;
+                }
+            }
+            if (keptSlots is not null)
+            {
+                for (var slot = 0; slot < keptSlots.Length; slot++)
+                {
+                    if (keptSlots[slot]) refreshedSlots[slot] = _slots[slot];
                 }
             }
 
@@ -1687,10 +1734,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ParseEndpointAliases(replica, (int)port));
     }
 
+    // keepUncoveredOwners is true for background refresh: slots the reply does not cover keep their
+    // current owner instead of being cleared (see ApplyTopologyCore).
     private async ValueTask<bool> TryLoadSlotsAsync(
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken,
-        bool requireComplete = false)
+        bool keepUncoveredOwners = false)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -1771,18 +1820,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     return false;
                 }
 
-                if (requireComplete)
-                {
-                    var nextSlot = 0;
-                    foreach (var range in topology.OrderBy(static range => range.Start))
-                    {
-                        if (range.Start != nextSlot) return false;
-                        nextSlot = range.End + 1;
-                    }
-                    if (nextSlot != ClusterHash.SlotCount) return false;
-                }
-
-                ApplyTopology(topology, topologyVersion, discoveryGeneration);
+                ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners);
                 return true;
             }
             finally

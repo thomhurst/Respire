@@ -694,7 +694,7 @@ public class ClusterTopologyRefreshTests
         .GetValue(router)!;
 
     [Test]
-    public async Task IncompleteRefreshKeepsPublishedTopologyAndReplicaMetadata()
+    public async Task PartialRefreshKeepsUncoveredOwnersAndReplicaMetadata()
     {
         await using var replicaServer = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
@@ -730,8 +730,77 @@ public class ClusterTopologyRefreshTests
         await Task.Delay(100);
 
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(originalOwner);
-        await Assert.That(router.GetReplicas().Single()).IsEqualTo(originalReplica);
-        await Assert.That(replicaServer.ReceivedCommands).Contains("CLUSTER SLOTS");
+        await Assert.That(router.GetSlotOwnerEndpoint(16383)).IsEqualTo(originalOwner);
+        var replica = router.GetReplicas().Single();
+        await Assert.That(replica.Endpoint).IsEqualTo(originalReplica.Endpoint);
+        await Assert.That(replica.NodeId).IsEqualTo(originalReplica.NodeId);
+        await Assert.That(replica.Aliases).IsEquivalentTo(originalReplica.Aliases);
+        // The partial reply answered the refresh: no fallback candidate was needed.
+        await Assert.That(replicaServer.ReceivedCommands).DoesNotContain("CLUSTER SLOTS");
+    }
+
+    [Test]
+    public async Task PartialRefreshUpdatesCoveredSlotsAndKeepsTheRest()
+    {
+        await using var second = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var slotsCalls = 0;
+        // Slots 0-100 moved to the second primary; the rest of the first primary's range is not
+        // reported, as with a lost shard and cluster-require-full-coverage no.
+        var partial = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:100\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        seed.ReplyOverride = (_, command) => command != "CLUSTER SLOTS" ? null
+            : Interlocked.Increment(ref slotsCalls) == 1
+                ? TwoMasterTopology(seed.Port, 8191, 8192, second.Port)
+                : partial;
+        second.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? partial : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        var seedEndpoint = new RespireEndpoint("127.0.0.1", seed.Port);
+        var secondEndpoint = new RespireEndpoint("127.0.0.1", second.Port);
+
+        router.SignalTopologyRefresh(force: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (router.GetSlotOwnerEndpoint(0) != secondEndpoint) await Task.Delay(10, timeout.Token);
+
+        await Assert.That(router.GetSlotOwnerEndpoint(100)).IsEqualTo(secondEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(101)).IsEqualTo(seedEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(8191)).IsEqualTo(seedEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(8192)).IsEqualTo(secondEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(16383)).IsEqualTo(secondEndpoint);
+    }
+
+    [Test]
+    public async Task RefreshFallbacksStartAtADifferentCandidateOnEachPass()
+    {
+        // Each attempt has a minimum timeout, so many stalled fallbacks can use up the deadline
+        // before the end of the list. Rotating the start lets later passes reach every fallback.
+        var candidates = new List<ClusterRouter.TopologyRefreshCandidate>
+        {
+            new(null, new RespireEndpoint("seed", 1), IsConfiguredSeed: true),
+        };
+        for (var port = 10; port < 14; port++)
+            candidates.Add(new(null, new RespireEndpoint("replica", port), IsConfiguredSeed: false));
+        var random = new Random(1234);
+        var firstFallbacks = new HashSet<int>();
+
+        for (var pass = 0; pass < 64; pass++)
+        {
+            var ordered = ClusterRouter.OrderTopologyRefreshCandidates(candidates, random);
+            await Assert.That(ordered.Count).IsEqualTo(5);
+            await Assert.That(ordered[0].IsConfiguredSeed).IsTrue();
+            await Assert.That(ordered.Skip(1).Select(static candidate => candidate.Endpoint.Port).Order().ToArray())
+                .IsEquivalentTo(new[] { 10, 11, 12, 13 });
+            firstFallbacks.Add(ordered[1].Endpoint.Port);
+        }
+
+        await Assert.That(firstFallbacks.Count).IsEqualTo(4);
     }
 
     private static byte[] Topology(int masterPort, int replicaPort)

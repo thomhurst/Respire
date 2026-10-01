@@ -131,7 +131,7 @@ public class ClusterScanIntegrationTests
             {
                 if (current.Message.Contains("port is already allocated", StringComparison.OrdinalIgnoreCase)
                     || current.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
-                    || current.Message.Contains("bind", StringComparison.OrdinalIgnoreCase))
+                    || current.Message.Contains("failed to bind host port", StringComparison.OrdinalIgnoreCase))
                     return true;
             }
             return false;

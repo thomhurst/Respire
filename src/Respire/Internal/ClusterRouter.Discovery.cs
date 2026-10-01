@@ -36,7 +36,8 @@ internal sealed partial class ClusterRouter
 
     internal enum RefreshFlightKind
     {
-        /// <summary>Full topology discovery: requires a complete <c>CLUSTER SLOTS</c> map.</summary>
+        /// <summary>Full topology discovery. A partial <c>CLUSTER SLOTS</c> map updates the slots it
+        /// covers and keeps the current owners of the rest.</summary>
         Topology,
         /// <summary>Repairs the owner of one slot after a <c>READONLY</c> rejection.</summary>
         ReadOnly,
@@ -287,15 +288,16 @@ internal sealed partial class ClusterRouter
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null).ConfigureAwait(false);
-                    if (await TryLoadSlotsAsync(node, candidateToken.Token, requireComplete: true).ConfigureAwait(false)
-                        && HasCompleteTopology())
+                    // A partial map updates the slots it covers and keeps the current owners of the
+                    // rest, so a lost shard or an in-progress change cannot make every refresh fail.
+                    if (await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true).ConfigureAwait(false))
                     {
                         // SetSeed publishes the node's current active identity; a replica or a
                         // departed address falls back to a published master.
                         SetSeed(node);
                         return true;
                     }
-                    round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
+                    round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a topology."));
                 }
                 catch (OperationCanceledException) when (candidateDeadline.IsCancellationRequested && !linked.IsCancellationRequested)
                 {
@@ -306,7 +308,7 @@ internal sealed partial class ClusterRouter
                     round?.FailedNode(node, error);
                 }
             }
-            scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no complete topology."));
+            scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no topology."));
             _logger.TryLog(LogLevel.Debug, null,
                 "Redis Cluster topology refresh failed for all {CandidateCount} candidates", candidates.Count);
             return false;
@@ -386,10 +388,14 @@ internal sealed partial class ClusterRouter
     /// <remarks>Connected nodes usually answer fastest and are tried first, starting at a random one
     /// to spread load. Disconnected configured seeds go right after the first attempt: they are the
     /// user's recovery path, and several stalled connected nodes must not use up the deadline
-    /// before a healthy seed is tried. Lazy replica fallbacks go last.</remarks>
+    /// before a healthy seed is tried. The remaining disconnected nodes and lazy replica fallbacks go
+    /// last, starting at a random one: each attempt has a minimum timeout, so with many stalled
+    /// fallbacks the deadline can run out before the end of the list, and a fixed order would miss
+    /// the same usable fallback on every pass.</remarks>
     internal static List<TopologyRefreshCandidate> OrderTopologyRefreshCandidates(
-        List<TopologyRefreshCandidate> candidates)
+        List<TopologyRefreshCandidate> candidates, Random? random = null)
     {
+        random ??= Random.Shared;
         var connected = new List<TopologyRefreshCandidate>();
         var disconnectedSeeds = new List<TopologyRefreshCandidate>();
         var disconnected = new List<TopologyRefreshCandidate>();
@@ -401,12 +407,14 @@ internal sealed partial class ClusterRouter
         }
 
         var ordered = new List<TopologyRefreshCandidate>(candidates.Count);
-        var start = connected.Count == 0 ? 0 : Random.Shared.Next(connected.Count);
+        var start = connected.Count == 0 ? 0 : random.Next(connected.Count);
         if (connected.Count > 0) ordered.Add(connected[start]);
         ordered.AddRange(disconnectedSeeds);
         for (var offset = 1; offset < connected.Count; offset++)
             ordered.Add(connected[(start + offset) % connected.Count]);
-        ordered.AddRange(disconnected);
+        var fallbackStart = disconnected.Count == 0 ? 0 : random.Next(disconnected.Count);
+        for (var offset = 0; offset < disconnected.Count; offset++)
+            ordered.Add(disconnected[(fallbackStart + offset) % disconnected.Count]);
         return ordered;
     }
 
@@ -570,6 +578,9 @@ internal sealed partial class ClusterRouter
         private Exception? _terminalError;
         // Set when this round's caller was cancelled while a shared READONLY flight it had joined
         // kept running for other waiters, or had already finished. That flight owns the outcome.
+        // A plain field is enough: it is written in AwaitSharedRefreshAsync's finally block and read
+        // by RecordCommandFailure, and both run in the round owner's own sequential async flow (the
+        // await between them publishes the write). The shared flight itself never touches it.
         private bool _leftSurvivingSharedFlight;
         internal void LeftSurvivingSharedFlight() => _leftSurvivingSharedFlight = true;
         internal Exception? TerminalError

@@ -5,11 +5,11 @@ namespace Respire.Internal;
 /// <summary>What one background refresh did.</summary>
 internal enum TopologyRefreshOutcome
 {
-    /// <summary>The cluster was queried and returned a complete topology.</summary>
+    /// <summary>The cluster was queried and returned a topology (a partial map keeps the owners of uncovered slots).</summary>
     Refreshed,
     /// <summary>No query was sent: a refresh that succeeded moments ago answered the request.</summary>
     ReusedRecent,
-    /// <summary>No candidate returned a complete topology.</summary>
+    /// <summary>No candidate returned a usable topology.</summary>
     Failed,
 }
 
@@ -28,9 +28,11 @@ internal enum TopologyRefreshOutcome
 /// because a primary that keeps failing to reconnect reports a disconnect for every slot on every
 /// attempt. Forced and plain deadlines are kept apart, so an earlier plain or periodic deadline never
 /// turns into a forced refresh that skips the spacing.</item>
-/// <item>A failed refresh schedules a retry with capped exponential backoff. Plain requests and the
-/// periodic deadline wait for that retry, so a cluster that is down is not probed back to back.
-/// Forced requests still run at their own deadline.</item>
+/// <item>A failed refresh schedules a retry with capped exponential backoff. Plain requests, the
+/// periodic deadline and primary-disconnect requests wait for that retry, so a cluster that is down
+/// is not probed back to back. A primary that stays down reports a disconnect on every reconnect
+/// attempt, so without this its forced requests would keep refreshing one spacing apart. Only an
+/// explicit forced request still runs at its own deadline.</item>
 /// <item>A refresh satisfies every plain request pending when it starts. A forced request is
 /// satisfied by a refresh that started at or after its deadline, or by any refresh that started
 /// after the request arrived and actually queried the cluster.</item>
@@ -58,6 +60,9 @@ internal sealed class ClusterTopologyRefreshScheduler
     private TimeSpan? _pendingDue;
     private TimeSpan? _forcedDue;
     private bool _forcedDisconnect;
+    // True when an explicit forced request (not a primary disconnect) is pending; only those
+    // bypass the failure backoff.
+    private bool _forcedExplicit;
     // Sequence number of the latest forced request; a run records the value it started with.
     private long _forcedSequence;
     private TimeSpan? _periodicDue;
@@ -99,8 +104,8 @@ internal sealed class ClusterTopologyRefreshScheduler
             : time > TimeSpan.MaxValue - delay ? TimeSpan.MaxValue
             : time + delay;
 
-    /// <summary>Requests a refresh after <paramref name="delay"/>; a forced request bypasses the
-    /// recent-success coalescing window and the failure backoff.</summary>
+    /// <summary>Requests a refresh after <paramref name="delay"/>; an explicit forced request bypasses
+    /// the recent-success coalescing window and the failure backoff.</summary>
     internal void Request(TimeSpan delay, bool force = false)
     {
         lock (_gate)
@@ -118,7 +123,8 @@ internal sealed class ClusterTopologyRefreshScheduler
         }
     }
 
-    /// <summary>Requests a forced refresh after a primary disconnect, spaced from the last one.</summary>
+    /// <summary>Requests a forced refresh after a primary disconnect, spaced from the last one and
+    /// never earlier than a pending failure retry.</summary>
     internal void RequestPrimaryDisconnect()
     {
         lock (_gate)
@@ -126,6 +132,7 @@ internal sealed class ClusterTopologyRefreshScheduler
             var due = Now;
             if (_lastDisconnectRefresh is { } last && SaturatingAdd(last, PrimaryDisconnectSpacing) > due)
                 due = SaturatingAdd(last, PrimaryDisconnectSpacing);
+            if (_retryDue is { } retry && retry > due) due = retry;
             MergeForcedLocked(due, disconnect: true);
         }
     }
@@ -134,6 +141,7 @@ internal sealed class ClusterTopologyRefreshScheduler
     {
         if (_forcedDue is not { } pending || due < pending) _forcedDue = due;
         _forcedDisconnect |= disconnect;
+        _forcedExplicit |= !disconnect;
         _forcedSequence++;
         _forcedRequestPending = true;
         _wake.TrySetResult();
@@ -186,6 +194,7 @@ internal sealed class ClusterTopologyRefreshScheduler
         if (_forcedDisconnect) _lastDisconnectRefresh = refreshStartedAt;
         _forcedDue = null;
         _forcedDisconnect = false;
+        _forcedExplicit = false;
         _forcedRequestPending = false;
     }
 
@@ -231,6 +240,8 @@ internal sealed class ClusterTopologyRefreshScheduler
                     // instead of probing an unavailable cluster again straight away. The periodic
                     // timer is re-armed when the retry completes.
                     if (_pendingDue is { } pending && pending < retryDue) _pendingDue = retryDue;
+                    // A disconnect queued while the failed refresh ran waits for the retry too.
+                    if (!_forcedExplicit && _forcedDue is { } forced && forced < retryDue) _forcedDue = retryDue;
                     _periodicDue = null;
                     return retryDelay;
             }

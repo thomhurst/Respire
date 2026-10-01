@@ -190,7 +190,7 @@ public class ClusterTopologyRefreshSchedulerTests
     }
 
     [Test]
-    public async Task FailureBackoffDelaysRedirectsButNotForcedRequests()
+    public async Task FailureBackoffDelaysRedirectsButNotExplicitForcedRequests()
     {
         var clock = new SteppedClock();
         var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
@@ -202,6 +202,50 @@ public class ClusterTopologyRefreshSchedulerTests
 
         scheduler.Request(TimeSpan.Zero, force: true);
         await Assert.That(scheduler.Next().Run).IsTrue();
+    }
+
+    [Test]
+    public async Task PrimaryDisconnectAfterAFailedRefreshWaitsForTheRetry()
+    {
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        for (var failure = 0; failure < 4; failure++) _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
+
+        scheduler.RequestPrimaryDisconnect();
+        await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromSeconds(40));
+        await Assert.That(scheduler.HasPendingForcedRequest).IsTrue();
+    }
+
+    [Test]
+    public async Task PrimaryThatStaysDownIsNotRefreshedBackToBack()
+    {
+        // A primary that stays down reports a disconnect on every reconnect attempt, including
+        // while each refresh runs. The attempts must follow the failure backoff, not the 1s spacing.
+        var clock = new SteppedClock();
+        var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
+        scheduler.Start();
+        scheduler.RequestPrimaryDisconnect();
+        var waits = new List<int>();
+
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            var run = scheduler.Next();
+            await Assert.That(run.Run).IsTrue();
+            clock.Advance(TimeSpan.FromMilliseconds(500));
+            scheduler.RequestPrimaryDisconnect();
+            clock.Advance(TimeSpan.FromMilliseconds(600));
+            scheduler.RequestPrimaryDisconnect();
+            _ = scheduler.Complete(run, TopologyRefreshOutcome.Failed);
+            scheduler.RequestPrimaryDisconnect();
+
+            var wait = scheduler.Next();
+            await Assert.That(wait.Run).IsFalse();
+            waits.Add((int)wait.Wait!.Value.TotalSeconds);
+            clock.Advance(wait.Wait.Value);
+        }
+
+        await Assert.That(waits.ToArray()).IsEquivalentTo(new[] { 5, 10, 20, 40, 60, 60 });
     }
 
     [Test]
