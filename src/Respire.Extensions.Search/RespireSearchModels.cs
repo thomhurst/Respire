@@ -126,11 +126,19 @@ public static class RespireSearchQueryBuilder
     public static string NumericRange(string field, double minimum, double maximum)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
+        if (double.IsNaN(minimum)) throw new ArgumentOutOfRangeException(nameof(minimum));
+        if (double.IsNaN(maximum)) throw new ArgumentOutOfRangeException(nameof(maximum));
         if (minimum > maximum) throw new ArgumentOutOfRangeException(nameof(minimum));
-        var lower = minimum.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var upper = maximum.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var lower = FormatBound(minimum);
+        var upper = FormatBound(maximum);
         return $"@{field}:[{lower} {upper}]";
     }
+    private static string FormatBound(double value) => value switch
+    {
+        double.NegativeInfinity => "-inf",
+        double.PositiveInfinity => "+inf",
+        _ => value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
     /// <summary>Combines expressions with AND.</summary>
     public static string And(params string[] expressions) => Combine(" ", expressions);
     /// <summary>Combines expressions with OR.</summary>
@@ -284,11 +292,26 @@ public sealed record RespireSearchAggregateOptions
         }
         if (SortBy.Count > 0)
         {
-            var sortTokens = new List<string>();
+            var sortTokens = new List<RespireValue>();
             foreach (var expression in SortBy)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(expression);
-                sortTokens.AddRange(expression.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                var trimmed = expression.Trim();
+                var directionStart = trimmed.LastIndexOfAny([' ', '\t', '\r', '\n']);
+                var direction = directionStart < 0 ? string.Empty : trimmed[(directionStart + 1)..];
+                if (directionStart >= 0
+                    && (direction.Equals("ASC", StringComparison.OrdinalIgnoreCase)
+                        || direction.Equals("DESC", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var field = trimmed[..directionStart].TrimEnd();
+                    ArgumentException.ThrowIfNullOrWhiteSpace(field);
+                    sortTokens.Add(field);
+                    sortTokens.Add(direction.ToUpperInvariant());
+                }
+                else
+                {
+                    sortTokens.Add(trimmed);
+                }
             }
             args.Add("SORTBY"); args.Add(sortTokens.Count);
             foreach (var token in sortTokens) args.Add(token);
@@ -433,7 +456,18 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
                 if (key == "total_results") total = value.AsInteger();
                 else if (key == "results")
                 {
-                    for (var j = 0; j < value.Count; j++) mappedRows.Add(ParseFields(value[j]));
+                    for (var j = 0; j < value.Count; j++)
+                    {
+                        var item = value[j];
+                        var fields = item;
+                        for (var k = 0; k + 1 < item.Count; k += 2)
+                        {
+                            if (item[k].AsString() != "extra_attributes") continue;
+                            fields = item[k + 1];
+                            break;
+                        }
+                        mappedRows.Add(ParseFields(fields));
+                    }
                 }
             }
             return new(total, mappedRows);
