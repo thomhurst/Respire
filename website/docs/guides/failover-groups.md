@@ -100,7 +100,7 @@ new RespireFailoverCandidate(new RespireOptions
     SentinelUsername = "sentinel-app",
     SentinelPassword = "<sentinel-password>",
     UseTls = true,
-}, Priority: 0)
+}, Priority: 0);
 ```
 
 ## Metrics
