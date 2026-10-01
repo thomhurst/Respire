@@ -744,6 +744,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private static bool IsSingleKeyMutation(string operation)
         => operation is
             "SET" or "DELEX" or "DELIFEQ" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
+            "BF.RESERVE" or "BF.ADD" or "BF.MADD" or "BF.INSERT" or "BF.LOADCHUNK" or
+            "CF.RESERVE" or "CF.ADD" or "CF.ADDNX" or "CF.INSERT" or "CF.INSERTNX" or "CF.DEL" or "CF.LOADCHUNK" or
+            "CMS.INITBYDIM" or "CMS.INITBYPROB" or "CMS.INCRBY" or "CMS.MERGE" or
+            "TOPK.RESERVE" or "TOPK.ADD" or "TOPK.INCRBY" or
+            "TDIGEST.CREATE" or "TDIGEST.RESET" or "TDIGEST.ADD" or "TDIGEST.MERGE" or
             "INCR" or "INCRBY" or "INCRBYFLOAT" or "DECR" or "DECRBY" or
             "PEXPIRE" or "PEXPIREAT" or "PERSIST" or
             "HSET" or "HSETNX" or "HDEL" or "HINCRBY" or "HINCRBYFLOAT" or

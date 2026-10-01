@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Probabilistic</PackageId>
+    <Title>Respire.Probabilistic</Title>
+    <Description>Typed Redis probabilistic data structure commands for Respire.</Description>
+    <PackageTags>$(PackageTags);redis;probabilistic;Bloom;Cuckoo;Count-Min;Top-K;t-digest</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+  <Target Name="_PackRespireProbabilisticAnalyzer" BeforeTargets="_GetPackageFiles">
+    <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_RespireProbabilisticAnalyzerAssembly" />
+    </MSBuild>
+    <Error Condition="'@(_RespireProbabilisticAnalyzerAssembly)' == ''" Text="Respire.Analyzers.dll was not produced for packaging." />
+    <PropertyGroup>
+      <_RespireProbabilisticAnalyzerOutputDir>%(_RespireProbabilisticAnalyzerAssembly.RootDir)%(_RespireProbabilisticAnalyzerAssembly.Directory)</_RespireProbabilisticAnalyzerOutputDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <None Include="@(_RespireProbabilisticAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+      <_RespireProbabilisticAnalyzerDependency Include="$(_RespireProbabilisticAnalyzerOutputDir)*.dll" Exclude="@(_RespireProbabilisticAnalyzerAssembly);$(_RespireProbabilisticAnalyzerOutputDir)Respire.Analyzers.dll;$(_RespireProbabilisticAnalyzerOutputDir)Microsoft.CodeAnalysis.dll;$(_RespireProbabilisticAnalyzerOutputDir)Microsoft.CodeAnalysis.CSharp.dll" />
+      <None Include="@(_RespireProbabilisticAnalyzerDependency)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

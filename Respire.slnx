@@ -24,6 +24,7 @@
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <Project Path="src/Respire.Extensions.Coordination/Respire.Extensions.Coordination.csproj" />
     <Project Path="src/Respire.Extensions.Aws/Respire.Extensions.Aws.csproj" />
+    <Project Path="src/Respire.Extensions.Probabilistic/Respire.Extensions.Probabilistic.csproj" />
     <Project Path="src/Respire/Respire.csproj" />
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>

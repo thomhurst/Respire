@@ -29,6 +29,8 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("XREADGROUP")]
     [Arguments("MIGRATE")]
     [Arguments("JSON.MGET")]
+    [Arguments("CMS.MERGE")]
+    [Arguments("TDIGEST.MERGE")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
     {
         await using var client = RespireClient.Create(new RespireOptions
@@ -201,6 +203,7 @@ public class ImmediateRawKeyLayoutTests
         "XREADGROUP" => ["GROUP", "STREAMS", "consumer", "NOACK", "STREAMS", first, second, ">", ">"],
         "MIGRATE" => ["destination", 6379, "", 0, 1000, "AUTH2", "user", "KEYS", "KEYS", first, second],
         "JSON.MGET" => [first, second, "$.{not-a-key}"],
+        "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
         _ => [first, second],
     };
 }
