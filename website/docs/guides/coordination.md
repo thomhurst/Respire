@@ -118,21 +118,33 @@ even when the caller does not receive an acquired lease.
 ### Fixed window
 
 ```csharp
-var limiter = coordination.RateLimiters.FixedWindow(
+using Respire.Extensions.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var coordination = new RespireCoordination(client);
+using var limiter = coordination.RateLimiters.FixedWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1));
 ```
 
 ### Sliding window
 
 ```csharp
-var limiter = coordination.RateLimiters.SlidingWindow(
+using Respire.Extensions.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var coordination = new RespireCoordination(client);
+using var limiter = coordination.RateLimiters.SlidingWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1), segments: 10);
 ```
 
 ### Token bucket
 
 ```csharp
-var limiter = coordination.RateLimiters.TokenBucket(
+using Respire.Extensions.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var coordination = new RespireCoordination(client);
+using var limiter = coordination.RateLimiters.TokenBucket(
     "limits:api", tokenLimit: 100, tokensPerPeriod: 10,
     replenishmentPeriod: TimeSpan.FromSeconds(1));
 ```
