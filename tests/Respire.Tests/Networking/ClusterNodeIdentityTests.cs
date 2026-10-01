@@ -85,6 +85,37 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task ClientDisposalFromRetiredNodeCallbackKeepsWorkerContextAcrossPoolAwait()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        await using var client = RespireClient.Create(Options(server.Port));
+        var core = client.Core;
+        var pool = core.CreateServerPool(endpoint);
+        await using var activeConnection = await pool.RentAsync(CancellationToken.None);
+
+        var router = core.Cluster!;
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.GetMultiplexer(targetEndpoint);
+        router.SetSlotOwner(0, source);
+        core.NotifyCommandStateChanged(source, 0, RespireConnectionState.Reconnecting);
+
+        var disposed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint == sourceEndpoint && change.State == RespireConnectionState.Connected)
+                disposed.TrySetResult(client.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
+        };
+
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1,
+            Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
+
+        await Assert.That(await disposed.Task.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+    }
+
+    [Test]
     public async Task DisposalStartedOnTaskRunWaitsForSmigratedWorker()
     {
         var options = Options(6379);
