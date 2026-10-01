@@ -104,6 +104,17 @@ public sealed record RespireCuckooInsertOptions
     }
 }
 
+/// <summary>Per-item outcome of CF.INSERT and CF.INSERTNX.</summary>
+public enum RespireCuckooInsertResult
+{
+    /// <summary>The filter was full, so the item was not inserted.</summary>
+    FilterFull = -1,
+    /// <summary>The item may already exist, so CF.INSERTNX did not insert it.</summary>
+    AlreadyExists = 0,
+    /// <summary>The item was inserted.</summary>
+    Inserted = 1,
+}
+
 /// <summary>Options accepted by CMS.MERGE.</summary>
 public sealed record RespireCountMinMergeOptions
 {

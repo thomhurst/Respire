@@ -157,6 +157,36 @@ public class ProbabilisticClientTests
     }
 
     [Test]
+    public async Task CuckooInsertReportsFullFilterSeparatelyFromSuccess()
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "CF.INSERTNX filter ITEMS a b c" => "*3\r\n:1\r\n:0\r\n:-1\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        var results = await probabilistic.CuckooInsertIfAbsentAsync("filter", ["a", "b", "c"]);
+
+        await Assert.That(results.SequenceEqual([RespireCuckooInsertResult.Inserted, RespireCuckooInsertResult.AlreadyExists, RespireCuckooInsertResult.FilterFull])).IsTrue();
+    }
+
+    [Test]
+    public async Task TDigestAddRejectsNonFiniteObservations()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.TDigestAddAsync("digest", [1, double.NaN]))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.TDigestAddAsync("digest", [double.PositiveInfinity]))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task TdigestTrimRejectsEqualCutoffs()
     {
         await using var client = RespireClient.Create(DisconnectedOptions());

@@ -32,7 +32,7 @@ await probabilistic.TDigestAddAsync("latency:api", [12.4, 19.1, 35.8]);
 var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 0.95, 0.99]);
 ```
 
-Bloom supports reserve, add, exists, multi-add, multi-exists, insert options, cardinality, info, and incremental dump/load. Cuckoo supports reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, and incremental dump/load.
+Bloom supports reserve, add, exists, multi-add, multi-exists, insert options, cardinality, info, and incremental dump/load. Cuckoo supports reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, and incremental dump/load. Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists`, or `FilterFull`), so a full filter is not reported as success.
 
 Count-Min supports dimension or probability initialization, batched increments and queries, info, and merges with positive integer weights. Top-K supports reserve options, add, weighted increment, query, count, list with optional counts, and info. Eviction results from add and increment are returned as nullable byte arrays to preserve binary items. Bloom insert capacity and error-rate options can each be provided independently. t-digest supports create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/reverse rank, trimmed mean, and info.
 

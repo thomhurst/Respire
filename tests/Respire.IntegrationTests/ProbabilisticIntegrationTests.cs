@@ -40,8 +40,10 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         (await probabilistic.CuckooReserveAsync("cuckoo", 1_000, new() { BucketSize = 2 })).Should().BeTrue();
         (await probabilistic.CuckooAddAsync("cuckoo", "a")).Should().BeTrue();
         (await probabilistic.CuckooAddIfAbsentAsync("cuckoo", "a")).Should().BeFalse();
-        (await probabilistic.CuckooInsertAsync("cuckoo", ["a", "b"])).Should().Equal(true, true);
-        (await probabilistic.CuckooInsertIfAbsentAsync("cuckoo", ["b", "c"])).Should().Equal(false, true);
+        (await probabilistic.CuckooInsertAsync("cuckoo", ["a", "b"]))
+            .Should().Equal(RespireCuckooInsertResult.Inserted, RespireCuckooInsertResult.Inserted);
+        (await probabilistic.CuckooInsertIfAbsentAsync("cuckoo", ["b", "c"]))
+            .Should().Equal(RespireCuckooInsertResult.AlreadyExists, RespireCuckooInsertResult.Inserted);
         (await probabilistic.CuckooCountAsync("cuckoo", "a")).Should().Be(2);
         (await probabilistic.CuckooDeleteAsync("cuckoo", "a")).Should().BeTrue();
         (await probabilistic.CuckooExistsAsync("cuckoo", "c")).Should().BeTrue();

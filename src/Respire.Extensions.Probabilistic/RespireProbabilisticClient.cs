@@ -113,18 +113,18 @@ public sealed class RespireProbabilisticClient
         return result.AsBoolean();
     }
 
-    /// <summary>Creates a Cuckoo filter when needed and inserts multiple items.</summary>
-    public async ValueTask<bool[]> CuckooInsertAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>Creates a Cuckoo filter when needed and inserts multiple items, reporting per item whether it was inserted or the filter was full.</summary>
+    public async ValueTask<RespireCuckooInsertResult[]> CuckooInsertAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.CuckooInsertAsync(key, (options ?? new()).ToArguments(items), cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        return ReadCuckooInsertResults(result);
     }
 
-    /// <summary>Creates a Cuckoo filter when needed and inserts only absent items.</summary>
-    public async ValueTask<bool[]> CuckooInsertIfAbsentAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>Creates a Cuckoo filter when needed and inserts only absent items, reporting per item whether it was inserted, already present, or the filter was full.</summary>
+    public async ValueTask<RespireCuckooInsertResult[]> CuckooInsertIfAbsentAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.CuckooInsertIfAbsentAsync(key, (options ?? new()).ToArguments(items), cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        return ReadCuckooInsertResults(result);
     }
 
     /// <summary>Deletes one item from a Cuckoo filter.</summary>
@@ -308,6 +308,7 @@ public sealed class RespireProbabilisticClient
     {
         ArgumentNullException.ThrowIfNull(observations);
         if (observations.Count == 0) throw new ArgumentException("At least one observation is required.", nameof(observations));
+        foreach (var observation in observations) if (!double.IsFinite(observation)) throw new ArgumentOutOfRangeException(nameof(observations));
         using var result = await _commands.TDigestAddAsync(key, observations.Select(static value => (RespireValue)value).ToArray(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -410,6 +411,23 @@ public sealed class RespireProbabilisticClient
 
     private static bool IsOk(RespireResult result) => result.Type == RespDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
     private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsBoolean(); return values; }
+    private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
+    {
+        var values = new RespireCuckooInsertResult[result.Count];
+        for (var i = 0; i < values.Length; i++)
+        {
+            // RESP3 replies with booleans for success/presence and keeps -1 for a full filter.
+            var item = result[i];
+            values[i] = (item.Type == RespDataType.Boolean ? (item.AsBoolean() ? 1 : 0) : item.AsInteger()) switch
+            {
+                1 => RespireCuckooInsertResult.Inserted,
+                0 => RespireCuckooInsertResult.AlreadyExists,
+                -1 => RespireCuckooInsertResult.FilterFull,
+                var other => throw new InvalidOperationException($"Unexpected Cuckoo insert reply {other}."),
+            };
+        }
+        return values;
+    }
     private static long[] ReadIntegers(RespireResult result) { var values = new long[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsInteger(); return values; }
 
     private static void ValidateErrorRate(double value)
