@@ -75,6 +75,7 @@ internal sealed partial class SubscriptionHub
     private NotificationTopology? _latestNotificationTopology;
     private bool _notificationReconciliationScheduled;
     private bool _notificationReconciliationScheduledAgain;
+    private bool _notificationReconciliationHasExaminedSubscriptions;
     private long _scheduledNotificationReconciliationVersion;
 
     // Test seams for the route bookkeeping invariants.
@@ -841,14 +842,11 @@ internal sealed partial class SubscriptionHub
             if (version <= _notificationTopologyVersion) return;
             _latestNotificationTopology = new NotificationTopology(version, endpoints, authoritative);
             Volatile.Write(ref _notificationTopologyVersion, version);
-        }
-        if (authoritative)
-        {
-            // An endpoint absent from a complete map has left the cluster. Forget its terminal
-            // state so a primary later started at that address is treated as a new node.
-            List<RespireEndpoint> departed = [];
-            lock (_gate)
+            if (authoritative)
             {
+                // An endpoint absent from a complete map has left the cluster. Forget its terminal
+                // state so a primary later started at that address is treated as a new node.
+                List<RespireEndpoint> departed = [];
                 _notificationExhaustedEndpoints.RemoveWhere(endpoint => Array.IndexOf(endpoints, endpoint) < 0);
                 foreach (var endpoint in _notificationDisconnectedEndpoints.Union(_notificationRetryingEndpoints))
                     if (Array.IndexOf(endpoints, endpoint) < 0) departed.Add(endpoint);
@@ -856,9 +854,9 @@ internal sealed partial class SubscriptionHub
                 {
                     _notificationDisconnectedEndpoints.Remove(endpoint);
                     _notificationRetryingEndpoints.Remove(endpoint);
+                    core.ClearClusterSubscriptionState(endpoint);
                 }
             }
-            foreach (var endpoint in departed) core.ClearClusterSubscriptionState(endpoint);
         }
         _ = ReconcileNotificationsAsync(version, endpoints, authoritative);
     }
@@ -927,6 +925,12 @@ internal sealed partial class SubscriptionHub
                         }
                         (failures ??= []).Add((subscription, failingEndpoint.Value, error, subscriptionAttempt));
                     }
+                    finally
+                    {
+                        lock (_gate)
+                            if (version == _notificationTopologyVersion)
+                                _notificationReconciliationHasExaminedSubscriptions = true;
+                    }
                 }
                 if (failures is not null)
                 {
@@ -988,7 +992,8 @@ internal sealed partial class SubscriptionHub
             version = _notificationTopologyVersion;
             if (_notificationReconciliationScheduled)
             {
-                if (version != _scheduledNotificationReconciliationVersion)
+                if (version != _scheduledNotificationReconciliationVersion
+                    || _notificationReconciliationHasExaminedSubscriptions)
                 {
                     _notificationReconciliationScheduledAgain = true;
                     _scheduledNotificationReconciliationVersion = version;
@@ -996,6 +1001,7 @@ internal sealed partial class SubscriptionHub
                 return;
             }
             _notificationReconciliationScheduled = true;
+            _notificationReconciliationHasExaminedSubscriptions = false;
             _scheduledNotificationReconciliationVersion = version;
         }
         _ = RunScheduledNotificationReconciliationAsync(version, latest);
@@ -1006,6 +1012,7 @@ internal sealed partial class SubscriptionHub
     {
         while (true)
         {
+            lock (_gate) _notificationReconciliationHasExaminedSubscriptions = false;
             await ReconcileNotificationsAsync(version, topology?.Endpoints, topology?.Authoritative ?? false)
                 .ConfigureAwait(false);
             lock (_gate)
