@@ -137,6 +137,7 @@ internal sealed partial class RespireConnection
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
             // the wire yet, so fail here instead of queueing an expired header that a later wait
             // would have to abort the connection for.
+            timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
 
             // Retirement (local or cluster generation) rejects the upload until its header is
@@ -430,6 +431,7 @@ internal sealed partial class RespireConnection
                 _ = drained.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
+                cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfRetired();
             }
             await drained.ConfigureAwait(false);

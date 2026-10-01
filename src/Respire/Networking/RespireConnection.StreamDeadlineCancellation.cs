@@ -66,6 +66,15 @@ internal sealed partial class RespireConnection
             Schedule();
         }
 
+        // A synchronous stream implementation can block before its ReadAsync returns a Task for
+        // WaitAsync to observe. Recompute when that call returns so a delayed timer callback cannot
+        // let an already-expired command queue its header.
+        internal void ThrowIfDue()
+        {
+            Schedule();
+            _source.Token.ThrowIfCancellationRequested();
+        }
+
         // Runs on the receive loop: never cancel inline (that would run caller continuations
         // there); fire the timer so Schedule recomputes the deadline on a pool thread.
         private void Recheck()
