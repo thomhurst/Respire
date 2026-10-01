@@ -90,8 +90,17 @@ internal sealed class RedisRateLimiter : RateLimiter
             redis.call('PEXPIRE', KEYS[1], width * 2)
             return {1, 0, limit - count - requested}
         end
-        local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-        local retry = tonumber(oldest[2]) + width - now
+        local needed = count + requested - limit
+        local released = 0
+        local retry = 1
+        for i = 1, #entries, 2 do
+            local separator = string.find(entries[i], ':', 1, true)
+            released = released + tonumber(string.sub(entries[i], separator + 1))
+            if released >= needed then
+                retry = tonumber(entries[i + 1]) + width - now
+                break
+            end
+        end
         return {0, math.max(1, retry), limit - count}
         """);
 
@@ -181,12 +190,12 @@ internal sealed class RedisRateLimiter : RateLimiter
         if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        if (permitCount > _permitLimit) return new RedisRateLimitLease(false, TimeSpan.Zero);
+        if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
         if (permitCount == 0) return new RedisRateLimitLease(true, TimeSpan.Zero);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
-            if (_queueLimit == 0) return new RedisRateLimitLease(false, TimeSpan.Zero);
-            return await QueueAsync(permitCount, new RedisRateLimitLease(false, TimeSpan.FromMilliseconds(1)), cancellationToken)
+            if (_queueLimit == 0) return new RedisRateLimitLease(false, null);
+            return await QueueAsync(permitCount, new RedisRateLimitLease(false, null), cancellationToken)
                 .ConfigureAwait(false);
         }
         var lease = await AcquireFromRedisAsync(permitCount, cancellationToken).ConfigureAwait(false);
@@ -415,15 +424,16 @@ internal sealed class RedisRateLimiter : RateLimiter
         public bool IsProcessing { get; set; }
     }
 
-    private sealed class RedisRateLimitLease(bool acquired, TimeSpan retryAfter) : RateLimitLease
+    private sealed class RedisRateLimitLease(bool acquired, TimeSpan? retryAfter) : RateLimitLease
     {
         public override bool IsAcquired => acquired;
-        public override IEnumerable<string> MetadataNames => acquired ? [] : [MetadataName.RetryAfter.Name];
+        public override IEnumerable<string> MetadataNames
+            => acquired || retryAfter is null ? [] : [MetadataName.RetryAfter.Name];
         public override bool TryGetMetadata(string metadataName, out object? metadata)
         {
-            if (!acquired && metadataName == MetadataName.RetryAfter.Name)
+            if (!acquired && retryAfter is { } value && metadataName == MetadataName.RetryAfter.Name)
             {
-                metadata = retryAfter;
+                metadata = value;
                 return true;
             }
             metadata = null;

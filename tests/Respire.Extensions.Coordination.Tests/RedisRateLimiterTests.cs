@@ -186,6 +186,48 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    public async Task SlidingWindowBulkRetryWaitsForEnoughSegments()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        const int segmentMs = 2_000;
+        await WaitForRedisSegmentPhaseAsync(client, segmentMs, segmentChanged: false, previousSegment: 0);
+        var firstSegment = (await client.Server.TimeAsync()).ToUnixTimeMilliseconds() / segmentMs;
+        await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
+            "sliding-bulk-retry", permitLimit: 2, TimeSpan.FromSeconds(4), segments: 2);
+
+        using var first = await limiter.AcquireAsync(1);
+        await Assert.That(first.IsAcquired).IsTrue();
+        await WaitForRedisSegmentPhaseAsync(client, segmentMs, segmentChanged: true, previousSegment: firstSegment);
+        using var second = await limiter.AcquireAsync(1);
+        await Assert.That(second.IsAcquired).IsTrue();
+
+        using var denied = await limiter.AcquireAsync(2);
+        await Assert.That(denied.IsAcquired).IsFalse();
+        await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
+        await Assert.That(retry > TimeSpan.FromSeconds(5)).IsTrue();
+    }
+
+    [Test]
+    public async Task QueueRejectionDoesNotExposeSyntheticRetryDelay()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+            "queue-no-synthetic-retry", permitLimit: 1, TimeSpan.FromSeconds(30), queueLimit: 1);
+
+        using var initial = await limiter.AcquireAsync(1);
+        using var cancellation = new CancellationTokenSource();
+        var queued = limiter.AcquireAsync(1, cancellation.Token).AsTask();
+        await Task.Delay(100);
+        using var rejected = await limiter.AcquireAsync(1);
+        await Assert.That(rejected.IsAcquired).IsFalse();
+        await Assert.That(rejected.TryGetMetadata(MetadataName.RetryAfter, out _)).IsFalse();
+        cancellation.Cancel();
+        await Assert.That(async () => await queued).Throws<OperationCanceledException>();
+    }
+
+    [Test]
     public async Task SlidingWindowAggregatesLargeBulkAcquisitions()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
@@ -261,6 +303,21 @@ public class RedisRateLimiterTests
         await Assert.That(granted.IsAcquired).IsTrue();
         cancelSecond.Cancel();
         await Assert.That(async () => await second).Throws<OperationCanceledException>();
+    }
+
+    private static async Task WaitForRedisSegmentPhaseAsync(
+        RespireClient client, int segmentMs, bool segmentChanged, long previousSegment)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+        while (true)
+        {
+            var now = await client.Server.TimeAsync(timeout.Token);
+            var milliseconds = now.ToUnixTimeMilliseconds();
+            var segment = milliseconds / segmentMs;
+            var phase = milliseconds % segmentMs;
+            if ((!segmentChanged || segment != previousSegment) && phase is >= 100 and <= 500) return;
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     [Test]
