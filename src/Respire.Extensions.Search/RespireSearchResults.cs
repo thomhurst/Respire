@@ -270,11 +270,17 @@ public sealed record RespireSearchAggregateCursorPage(RespireSearchAggregateResu
     /// <summary>True when the server returned the last page and released the cursor.</summary>
     public bool IsComplete => CursorId == 0;
 
-    internal static RespireSearchAggregateCursorPage Parse(RespireResult result, string command)
+    /// <summary>
+    /// Index the cursor belongs to. Pages returned by <see cref="RespireSearchClient"/> always set it,
+    /// so the page-based cursor overloads cannot pair a cursor with the wrong index.
+    /// </summary>
+    public string? Index { get; init; }
+
+    internal static RespireSearchAggregateCursorPage Parse(RespireResult result, string command, string index)
     {
         if (result.Type != RespDataType.Array || result.Count != 2)
             throw RespireSearchReply.Unexpected(command, "a reply that is not [results, cursor]");
-        return new(RespireSearchAggregateResult.Parse(result[0]), result[1].AsInteger());
+        return new(RespireSearchAggregateResult.Parse(result[0]), result[1].AsInteger()) { Index = index };
     }
 }
 

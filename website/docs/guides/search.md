@@ -74,19 +74,23 @@ Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.IN
 
 `RespireSearchQueryOptions` supports projections, scores, sorting, limits, named parameters, timeout, and dialect. Named parameters need an explicit dialect of 2 or later. `RespireSearchResult` contains the total count, document IDs, fields, scores, and any warnings the server returns.
 
-Query helpers escape field names and tag values, so names from configuration cannot change the query. They build exact text, tag, numeric range (inclusive or exclusive, with infinite bounds), AND, and OR expressions. For prefix, fuzzy, wildcard, and other advanced syntax, pass native query text to `RespireSearchQuery`.
+Query helpers escape field names, tag values, and quoted text, so values passed to them cannot change the query. They build exact text, tag, numeric range (inclusive or exclusive, with infinite bounds), AND, and OR expressions. For prefix, fuzzy, wildcard, and other advanced syntax, pass native query text to `RespireSearchQuery`.
+
+### Untrusted input
+
+Query expressions are strings that Redis parses. `RespireSearchQuery.Expression`, `RespireVectorSearchRequest.Filter`, `RespireHybridSearchQuery.TextExpression`, and aggregation `FILTER` and `APPLY` expressions are sent exactly as written. `And` and `Or` wrap their inputs in parentheses but do not validate them. If you concatenate user input into any of these, the input can change the query. For example, a value of `) | (@secret:*` widens a filter to every document. Pass untrusted values through a helper such as `Tag`, `TextField`, or `NumericRange`, or reference them as `$name` parameters in `Parameters` (dialect 2 or later), and keep raw query text to strings you control.
 
 ## Aggregation
 
 `AggregateAsync` uses `FT.AGGREGATE`. `RespireSearchAggregateOptions.Stages` is an ordered pipeline that is sent exactly as written. Use it when a FILTER needs an alias from an earlier APPLY, or when a LIMIT must run before GROUPBY. The factory methods on `RespireSearchAggregateStage` create LOAD, FILTER, APPLY, GROUPBY with REDUCE, SORTBY (multiple keys and an optional `Max`), and LIMIT stages. An empty GROUPBY property list groups every row together. Rows expose string values by name, and `StructuredRows` preserves nested values from reducers such as `TOLIST`.
 
-For large results, `AggregateWithCursorAsync` adds `WITHCURSOR` with an optional page size and idle timeout. It returns the first page. Call `ReadCursorAsync` until `IsComplete` is true, or release the cursor early with `DeleteCursorAsync`.
+For large results, `AggregatePagesAsync` runs the aggregation with `WITHCURSOR` and returns an `IAsyncEnumerable` of pages, reading the next page only when you ask for it. If you stop early with `break`, an exception, or cancellation, it deletes the server cursor for you. For manual control, `AggregateWithCursorAsync` returns the first page. Each page records its index, so pass the page to `ReadCursorAsync` until `IsComplete` is true, or release the cursor early with `DeleteCursorAsync`. Overloads that take an index name and cursor ID are also available.
 
 ## Vector and hybrid queries
 
 `VectorSearchAsync` emits FT.SEARCH KNN syntax with dialect 2 and a binary `$vector` parameter. Set `Filter` on the request for a pre-filtered KNN query such as `(@category:{database})=>[KNN ...]`. The request is validated when it is created. By default it returns up to `K` documents sorted by score; explicit `Limit` and `SortBy` options are kept. The parameter name `vector` is reserved, and supplying it in `Parameters` throws. Vector queries need RediSearch 2.4 or later.
 
-`HybridSearchAsync` emits FT.HYBRID text and vector search with reciprocal-rank fusion. Set `RrfWindow`, `Parameters`, `TimeoutMilliseconds`, and `LoadFields` as needed. FT.HYBRID requires Redis Open Source 8.4.0 or later. Search features vary by server version; check [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/), [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/), [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/), and [FT.HYBRID](https://redis.io/docs/latest/commands/ft.hybrid/) for supported features.
+`HybridSearchAsync` emits FT.HYBRID text and vector search with reciprocal-rank fusion. Set `RrfWindow`, `Parameters`, `TimeoutMilliseconds`, and `LoadFields` as needed. FT.HYBRID requires Redis Open Source 8.4.0 or later; on an older server that does not recognize the command, `HybridSearchAsync` throws `NotSupportedException`. Search features vary by server version; check [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/), [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/), [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/), and [FT.HYBRID](https://redis.io/docs/latest/commands/ft.hybrid/) for supported features.
 
 `RespireSearchDocument.Fields` and aggregate `Rows` provide string views for convenient text results. `StructuredFields` and `StructuredRows` preserve RESP types, nested values, and copied raw bytes for binary fields. Replies with an unexpected shape throw `InvalidOperationException` rather than silently dropping data.
 

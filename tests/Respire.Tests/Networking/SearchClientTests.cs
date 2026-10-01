@@ -229,6 +229,127 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task AggregatePagesReadsEveryPageWithoutDeletingCompletedCursor()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => "*2\r\n*2\r\n:2\r\n*2\r\n$1\r\nn\r\n$1\r\n1\r\n:42\r\n"u8.ToArray(),
+                "FT.CURSOR READ idx 42" => "*2\r\n*2\r\n:2\r\n*2\r\n$1\r\nn\r\n$1\r\n2\r\n:0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var values = new List<string?>();
+        await foreach (var page in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+        {
+            values.AddRange(page.Rows.Select(row => row["n"]));
+        }
+
+        await Assert.That(values).IsEquivalentTo(["1", "2"], CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.CURSOR DEL", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task AggregatePagesDeletesCursorWhenEnumerationStopsEarly()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => "*2\r\n*2\r\n:2\r\n*2\r\n$1\r\nn\r\n$1\r\n1\r\n:42\r\n"u8.ToArray(),
+                "FT.CURSOR DEL idx 42" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await foreach (var _ in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+        {
+            break;
+        }
+
+        await Assert.That(server.ReceivedCommands).Contains("FT.CURSOR DEL idx 42");
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.CURSOR READ", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task CursorPageOverloadsUseThePageIndex()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => "*2\r\n*1\r\n:0\r\n:42\r\n"u8.ToArray(),
+                "FT.CURSOR READ books 42 COUNT 5" => "*2\r\n*1\r\n:0\r\n:43\r\n"u8.ToArray(),
+                "FT.CURSOR DEL books 43" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var first = await search.AggregateWithCursorAsync("books", "*");
+        await Assert.That(first.Index).IsEqualTo("books");
+        var second = await search.ReadCursorAsync(first, 5);
+        await Assert.That(second.Index).IsEqualTo("books");
+        await Assert.That(second.CursorId).IsEqualTo(43);
+        await search.DeleteCursorAsync(second);
+        await search.DeleteCursorAsync(new RespireSearchAggregateCursorPage(second.Result, 0));
+
+        await Assert.That(server.ReceivedCommands).Contains("FT.CURSOR READ books 42 COUNT 5");
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FT.CURSOR DEL", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(async () => await search.ReadCursorAsync(new RespireSearchAggregateCursorPage(second.Result, 9)))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task HybridSearchReportsUnsupportedServerAsNotSupported()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID", StringComparison.Ordinal)
+                ? "-ERR unknown command 'FT.HYBRID', with args beginning with: 'idx' \r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var exception = await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+            .Throws<NotSupportedException>();
+        await Assert.That(exception!.Message).Contains("8.4.0");
+        await Assert.That(exception.InnerException).IsTypeOf<RespireServerException>();
+    }
+
+    [Test]
+    public async Task HybridSearchKeepsOtherServerErrors()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID", StringComparison.Ordinal)
+                ? "-ERR idx: no such index\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+            .Throws<RespireServerException>();
+    }
+
+    [Test]
+    public async Task SearchQueryValidatesExpressionWhenCreated()
+    {
+        await Assert.That(() => new RespireSearchQuery(" ")).Throws<ArgumentException>();
+        var query = new RespireSearchQuery("*");
+        await Assert.That(() => query with { Expression = "" }).Throws<ArgumentException>();
+    }
+
+    [Test]
     public async Task NamedParametersRequireExplicitCompatibleDialect()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)

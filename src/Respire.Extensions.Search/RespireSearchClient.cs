@@ -67,7 +67,6 @@ public sealed class RespireSearchClient
     public async ValueTask<RespireSearchResult> SearchAsync(string index, RespireSearchQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        ArgumentException.ThrowIfNullOrWhiteSpace(query.Expression);
         var options = query.Options ?? RespireSearchQueryOptions.Default;
         using var result = await _commands.SearchAsync(RequireName(index), query.Expression, options.ToArguments(), cancellationToken).ConfigureAwait(false);
         return RespireSearchResult.Parse(result, options.NoContent, options.WithScores);
@@ -84,15 +83,57 @@ public sealed class RespireSearchClient
 
     /// <summary>
     /// Runs an aggregation with <c>WITHCURSOR</c> and returns its first page. Read later pages with
-    /// <see cref="ReadCursorAsync"/> until <see cref="RespireSearchAggregateCursorPage.IsComplete"/> is true,
-    /// or release the cursor early with <see cref="DeleteCursorAsync"/>.
+    /// <see cref="ReadCursorAsync(RespireSearchAggregateCursorPage, int?, CancellationToken)"/> until
+    /// <see cref="RespireSearchAggregateCursorPage.IsComplete"/> is true, or release the cursor early with
+    /// <see cref="DeleteCursorAsync(RespireSearchAggregateCursorPage, CancellationToken)"/>.
+    /// <see cref="AggregatePagesAsync"/> does both for you.
     /// </summary>
     public async ValueTask<RespireSearchAggregateCursorPage> AggregateWithCursorAsync(string index, string expression, RespireSearchAggregateOptions? options = null, RespireSearchCursorOptions? cursor = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        var name = RequireName(index);
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments(cursor ?? new RespireSearchCursorOptions());
-        using var result = await _commands.AggregateAsync(RequireName(index), expression, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE");
+        using var result = await _commands.AggregateAsync(name, expression, arguments, cancellationToken).ConfigureAwait(false);
+        return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE", name);
+    }
+
+    /// <summary>
+    /// Runs a cursor aggregation and yields every page, reading the next page only when the caller asks
+    /// for it. When enumeration stops before the last page (a <c>break</c>, an exception, or
+    /// cancellation), the cursor is deleted on a best-effort basis so it does not wait for
+    /// <see cref="RespireSearchCursorOptions.MaxIdleMilliseconds"/> on the server.
+    /// </summary>
+    public async IAsyncEnumerable<RespireSearchAggregateResult> AggregatePagesAsync(
+        string index,
+        string expression,
+        RespireSearchAggregateOptions? options = null,
+        RespireSearchCursorOptions? cursor = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var page = await AggregateWithCursorAsync(index, expression, options, cursor, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            while (true)
+            {
+                yield return page.Result;
+                if (page.IsComplete) yield break;
+                page = await ReadCursorAsync(page, count: null, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (!page.IsComplete) await TryDeleteCursorAsync(page).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Reads the page after <paramref name="page"/> with <c>FT.CURSOR READ</c>, using the page's index.</summary>
+    /// <param name="page">A page returned by this client that is not yet complete.</param>
+    /// <param name="count">Rows to read, or null for the cursor's configured count.</param>
+    /// <param name="cancellationToken">Cancels the command.</param>
+    public ValueTask<RespireSearchAggregateCursorPage> ReadCursorAsync(RespireSearchAggregateCursorPage page, int? count = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        return ReadCursorAsync(RequirePageIndex(page), page.CursorId, count, cancellationToken);
     }
 
     /// <summary>Reads the next page of an aggregation cursor with <c>FT.CURSOR READ</c>.</summary>
@@ -104,19 +145,55 @@ public sealed class RespireSearchClient
     {
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
         if (count is <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        var name = RequireName(index);
         RespireValue[] args = count is { } value
-            ? [RequireName(index), cursorId, "COUNT", value]
-            : [RequireName(index), cursorId];
+            ? [name, cursorId, "COUNT", value]
+            : [name, cursorId];
+        // FT.CURSOR READ/DEL go through the catalog command rather than IRespireSearchCommands: the
+        // generator accepts a single command token, and the catalog entry carries the subcommand and
+        // routes by the index name, so the read reaches the node that owns the cursor.
         using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_READ, args, cancellationToken: cancellationToken).ConfigureAwait(false);
-        return RespireSearchAggregateCursorPage.Parse(result, "FT.CURSOR READ");
+        return RespireSearchAggregateCursorPage.Parse(result, "FT.CURSOR READ", name);
+    }
+
+    /// <summary>Deletes the cursor behind <paramref name="page"/> with <c>FT.CURSOR DEL</c>. A complete page has no cursor left to delete.</summary>
+    public ValueTask DeleteCursorAsync(RespireSearchAggregateCursorPage page, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        return page.IsComplete ? default : DeleteCursorAsync(RequirePageIndex(page), page.CursorId, cancellationToken);
     }
 
     /// <summary>Deletes an aggregation cursor with <c>FT.CURSOR DEL</c>.</summary>
     public async ValueTask DeleteCursorAsync(string index, long cursorId, CancellationToken cancellationToken = default)
     {
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
+        // See ReadCursorAsync for why this uses the catalog command.
         using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_DEL, [RequireName(index), cursorId], cancellationToken: cancellationToken).ConfigureAwait(false);
     }
+
+    private async ValueTask TryDeleteCursorAsync(RespireSearchAggregateCursorPage page)
+    {
+        try
+        {
+            // Cleanup runs during unwinding, possibly after the caller's token was cancelled.
+            await DeleteCursorAsync(page, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is RespireException or ObjectDisposedException or OperationCanceledException)
+        {
+            // Best effort: the cursor may already have expired, or the connection may be gone. The
+            // server still frees it after MAXIDLE, and a cleanup failure must not hide the error or
+            // early exit that ended the enumeration.
+        }
+    }
+
+    // Redis replies "ERR unknown command 'FT.HYBRID', with args beginning with: ..." when the command does not exist.
+    private static bool IsUnknownCommand(RespireServerException exception)
+        => exception.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase);
+
+    private static string RequirePageIndex(RespireSearchAggregateCursorPage page)
+        => string.IsNullOrWhiteSpace(page.Index)
+            ? throw new ArgumentException("The page has no index. Use a page returned by RespireSearchClient, or pass the index explicitly.", nameof(page))
+            : page.Index;
 
     /// <summary>Runs a typed vector similarity query through FT.SEARCH KNN syntax.</summary>
     /// <remarks>
@@ -141,11 +218,28 @@ public sealed class RespireSearchClient
     }
 
     /// <summary>Runs an FT.HYBRID query. Redis Open Source 8.4.0 or later is required.</summary>
+    /// <exception cref="NotSupportedException">The server does not recognize FT.HYBRID (Redis earlier than 8.4.0).</exception>
     public async ValueTask<RespireSearchResult> HybridSearchAsync(string index, RespireHybridSearchQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        using var result = await _commands.HybridAsync(RequireName(index), query.ToArguments(), cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.ParseHybrid(result);
+        var name = RequireName(index);
+        var arguments = query.ToArguments();
+        RespireResult result;
+        try
+        {
+            result = await _commands.HybridAsync(name, arguments, cancellationToken).ConfigureAwait(false);
+        }
+        catch (RespireServerException ex) when (IsUnknownCommand(ex))
+        {
+            throw new NotSupportedException(
+                "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
+                ex);
+        }
+
+        using (result)
+        {
+            return RespireSearchResult.ParseHybrid(result);
+        }
     }
 
     /// <summary>Returns the server query plan text.</summary>

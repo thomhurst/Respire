@@ -4,22 +4,43 @@ using System.Text;
 
 namespace Respire.Extensions.Search;
 
-/// <summary>Search query with typed modifiers.</summary>
+/// <summary>Search query with typed modifiers. The expression is validated when the query is created.</summary>
 /// <param name="Expression">
-/// Native Redis Search query syntax. Pass raw syntax for prefix, fuzzy, wildcard, and other
-/// advanced expressions; <see cref="RespireSearchQueryBuilder"/> covers common exact matches.
+/// Native Redis Search query syntax, sent as written. Pass raw syntax for prefix, fuzzy, wildcard,
+/// and other advanced expressions; <see cref="RespireSearchQueryBuilder"/> covers common exact
+/// matches. Never concatenate untrusted input into this text: build the value with a
+/// <see cref="RespireSearchQueryBuilder"/> helper, or reference a <c>$name</c> parameter from
+/// <see cref="RespireSearchQueryOptions.Parameters"/>.
 /// </param>
 /// <param name="Options">Optional FT.SEARCH modifiers.</param>
 public sealed record RespireSearchQuery(string Expression, RespireSearchQueryOptions? Options = null)
 {
+    /// <summary>Native Redis Search query syntax, sent as written.</summary>
+    public string Expression { get; init => field = RequireExpression(value); } = RequireExpression(Expression);
+
     internal RespireValue[] ToArguments() => (Options ?? RespireSearchQueryOptions.Default).ToArguments();
+
+    private static string RequireExpression(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(Expression));
+        return value;
+    }
 }
 
 /// <summary>Composable helpers for common Redis Search query expressions.</summary>
 /// <remarks>
-/// Field names and tag values are escaped, so configuration-supplied names cannot change the query.
+/// <para>
+/// Field names, tag values, and quoted text are escaped, and numeric bounds are formatted from typed
+/// values, so values passed to these helpers cannot change the query structure.
 /// The helpers build exact matches only. For prefix (<c>term*</c>), fuzzy (<c>%term%</c>), or
 /// wildcard queries, write native query syntax and pass it to <see cref="RespireSearchQuery"/>.
+/// </para>
+/// <para>
+/// <see cref="And"/> and <see cref="Or"/> take expressions, not values. They wrap each input in
+/// parentheses but do not parse or validate it, so a raw string such as <c>") | (@secret:*"</c> can still
+/// change the query. Pass only output from these helpers or trusted query text, and send untrusted values
+/// through a helper or a <c>$name</c> query parameter.
+/// </para>
 /// </remarks>
 public static class RespireSearchQueryBuilder
 {
@@ -56,10 +77,10 @@ public static class RespireSearchQueryBuilder
             exclusiveMaximum);
     }
 
-    /// <summary>Combines expressions with AND.</summary>
+    /// <summary>Combines expressions with AND. Inputs are trusted query syntax and are not escaped.</summary>
     public static string And(params string[] expressions) => Combine(" ", expressions);
 
-    /// <summary>Combines expressions with OR.</summary>
+    /// <summary>Combines expressions with OR. Inputs are trusted query syntax and are not escaped.</summary>
     public static string Or(params string[] expressions) => Combine(" | ", expressions);
 
     internal static string EscapeField(string value) => EscapeIdentifier(value);
@@ -232,7 +253,9 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 
     /// <summary>
     /// Optional pre-filter in native query syntax, such as <c>@category:{books}</c>. Null searches
-    /// all documents. Filter parameters go in <see cref="RespireSearchQueryOptions.Parameters"/>.
+    /// all documents. The filter is sent as written, so build untrusted values with
+    /// <see cref="RespireSearchQueryBuilder"/> or pass them as parameters in
+    /// <see cref="RespireSearchQueryOptions.Parameters"/>.
     /// </summary>
     public string? Filter
     {
@@ -258,6 +281,14 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 }
 
 /// <summary>Typed FT.HYBRID text and vector query.</summary>
+/// <param name="TextExpression">
+/// Native query syntax for the text leg, sent as written. Build untrusted values with
+/// <see cref="RespireSearchQueryBuilder"/> or reference them as <c>$name</c> entries in <see cref="Parameters"/>.
+/// </param>
+/// <param name="VectorField">Vector field name; it is escaped.</param>
+/// <param name="Vector">Query vector bytes in the index's element type.</param>
+/// <param name="K">Number of nearest neighbours for the vector leg.</param>
+/// <param name="Limit">Maximum number of fused results.</param>
 public sealed record RespireHybridSearchQuery(string TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
 {
     /// <summary>Reciprocal-rank-fusion constant.</summary>

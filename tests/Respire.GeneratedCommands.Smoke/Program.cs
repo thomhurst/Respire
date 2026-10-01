@@ -66,11 +66,21 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             var cursorRows = page.Result.Rows.Count;
             while (!page.IsComplete)
             {
-                page = await search.ReadCursorAsync(index, page.CursorId);
+                page = await search.ReadCursorAsync(page);
                 cursorRows += page.Result.Rows.Count;
             }
 
             if (cursorRows != 2) throw new InvalidOperationException($"Respire.Search cursor paging returned {cursorRows} rows.");
+
+            var pagedRows = 0;
+            await foreach (var rows in search.AggregatePagesAsync(index, "*",
+                new() { Stages = [RespireSearchAggregateStage.Load("@title")] },
+                new() { Count = 1 }))
+            {
+                pagedRows += rows.Rows.Count;
+            }
+
+            if (pagedRows != 2) throw new InvalidOperationException($"Respire.Search AggregatePagesAsync returned {pagedRows} rows.");
 
             var info = await search.GetIndexInfoAsync(index);
             if (info.Name != index || info.DocumentCount != 2 || info.Attributes.Count != 3 || info.Attributes[2].Type != "VECTOR")
