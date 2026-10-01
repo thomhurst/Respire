@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.RateLimiting;
 
 namespace Respire.Extensions.Coordination;
@@ -32,6 +33,8 @@ internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket }
 internal sealed class RedisRateLimiter : RateLimiter
 {
     private static readonly TimeSpan MaxQueueDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
+    private const long MaxExactLuaInteger = 9_007_199_254_740_991;
+    private static readonly long MaxTimeSpanMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
     private static readonly RespireScript FixedWindowScript = RespireScript.Create("""
         local width = tonumber(ARGV[1])
         local requested = tonumber(ARGV[2])
@@ -63,15 +66,27 @@ internal sealed class RedisRateLimiter : RateLimiter
         local width = tonumber(ARGV[1])
         local segment = math.ceil(width / tonumber(ARGV[2]))
         local bucket = math.floor(now / segment) * segment
+        -- Score at the segment end so a permit cannot expire before its full window.
+        local bucketEnd = bucket + segment
         local cutoff = now - width
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff)
-        local count = redis.call('ZCARD', KEYS[1])
+        local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
+        local count = 0
+        for i = 1, #entries, 2 do
+            local separator = string.find(entries[i], ':', 1, true)
+            count = count + tonumber(string.sub(entries[i], separator + 1))
+        end
         local requested = tonumber(ARGV[3])
         local limit = tonumber(ARGV[4])
         if count + requested <= limit then
-            for i = 1, requested do
-                redis.call('ZADD', KEYS[1], bucket, ARGV[5] .. ':' .. i)
+            local current = redis.call('ZRANGEBYSCORE', KEYS[1], bucketEnd, bucketEnd)
+            local segmentCount = 0
+            if #current > 0 then
+                local separator = string.find(current[1], ':', 1, true)
+                segmentCount = tonumber(string.sub(current[1], separator + 1))
+                redis.call('ZREM', KEYS[1], current[1])
             end
+            redis.call('ZADD', KEYS[1], bucketEnd, bucket .. ':' .. (segmentCount + requested))
             redis.call('PEXPIRE', KEYS[1], width * 2)
             return {1, 0, limit - count - requested}
         end
@@ -91,8 +106,8 @@ internal sealed class RedisRateLimiter : RateLimiter
         local requested = tonumber(ARGV[4])
         if tokens >= requested then
             tokens = tokens - requested
-            redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', now)
-            redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]) * math.ceil(tonumber(ARGV[1]) / tonumber(ARGV[3])) * 2)
+            redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
+            redis.call('PEXPIRE', KEYS[1], ARGV[5])
             return {1, 0, tokens}
         end
         local missing = requested - tokens
@@ -110,6 +125,7 @@ internal sealed class RedisRateLimiter : RateLimiter
     private readonly long _periodMs;
     private readonly int _segments;
     private readonly int _tokensPerPeriod;
+    private readonly long _tokenBucketExpiryMs;
     private readonly object _queueGate = new();
     private readonly LinkedList<QueuedRequest> _queue = [];
     private readonly SemaphoreSlim _queueChanged = new(0, 1);
@@ -140,6 +156,13 @@ internal sealed class RedisRateLimiter : RateLimiter
         _periodMs = checked((long)period.TotalMilliseconds);
         _segments = segments;
         _tokensPerPeriod = tokensPerPeriod;
+        if (kind == RedisRateLimiterKind.TokenBucket)
+        {
+            var periodsToFull = ((long)permitLimit + tokensPerPeriod - 1) / tokensPerPeriod;
+            if (_periodMs > MaxExactLuaInteger / periodsToFull)
+                throw new ArgumentOutOfRangeException(nameof(period), "Token-bucket refill duration exceeds Redis/Lua's exact integer range.");
+            _tokenBucketExpiryMs = _periodMs * periodsToFull;
+        }
     }
 
     public override TimeSpan? IdleDuration => null;
@@ -158,6 +181,7 @@ internal sealed class RedisRateLimiter : RateLimiter
         if (permitCount < 0 || permitCount > _permitLimit) throw new ArgumentOutOfRangeException(nameof(permitCount));
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+        if (permitCount == 0) return new RedisRateLimitLease(true, TimeSpan.Zero);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
             if (_queueLimit == 0) return new RedisRateLimitLease(false, TimeSpan.Zero);
@@ -171,12 +195,11 @@ internal sealed class RedisRateLimiter : RateLimiter
 
     private async ValueTask<RateLimitLease> AcquireFromRedisAsync(int permitCount, CancellationToken cancellationToken)
     {
-        var unique = Guid.NewGuid().ToString("N");
         RespireValue[] args = _kind switch
         {
             RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit],
-            RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit, unique],
-            _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount],
+            RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit],
+            _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
         var script = _kind switch
         {
@@ -188,7 +211,7 @@ internal sealed class RedisRateLimiter : RateLimiter
             .ConfigureAwait(false);
         if (result.Count != 3) throw new RespireProtocolException("Rate-limit script returned an invalid response.");
         var granted = result[0].AsInteger() == 1;
-        var retry = Math.Max(0, result[1].AsInteger());
+        var retry = Math.Clamp(result[1].AsInteger(), 0, MaxTimeSpanMilliseconds);
         return new RedisRateLimitLease(granted, TimeSpan.FromMilliseconds(retry));
     }
 
@@ -201,8 +224,8 @@ internal sealed class RedisRateLimiter : RateLimiter
             ObjectDisposedException.ThrowIf(_disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
             if (permitCount > _queueLimit || (_queueOrder == QueueProcessingOrder.OldestFirst
-                && _queuedPermits + permitCount > _queueLimit)) return denied;
-            while (_queueOrder == QueueProcessingOrder.NewestFirst && _queuedPermits + permitCount > _queueLimit)
+                && permitCount > _queueLimit - _queuedPermits)) return denied;
+            while (_queueOrder == QueueProcessingOrder.NewestFirst && permitCount > _queueLimit - _queuedPermits)
             {
                 var removed = _queue.Last!;
                 if (removed.Value.IsProcessing) return denied;
@@ -243,8 +266,9 @@ internal sealed class RedisRateLimiter : RateLimiter
                 request = _queue.First.Value;
             }
             using var wakeCancellation = new CancellationTokenSource();
-            var delay = request.RetryAfter <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1)
-                : request.RetryAfter > MaxQueueDelay ? MaxQueueDelay : request.RetryAfter;
+            var remaining = request.RemainingRetryAfter;
+            var delay = remaining <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1)
+                : remaining > MaxQueueDelay ? MaxQueueDelay : remaining;
             var timer = Task.Delay(delay, wakeCancellation.Token);
             var changed = _queueChanged.WaitAsync(wakeCancellation.Token);
             await Task.WhenAny(timer, changed).ConfigureAwait(false);
@@ -281,7 +305,7 @@ internal sealed class RedisRateLimiter : RateLimiter
                 lock (_queueGate)
                 {
                     request.IsProcessing = false;
-                    request.RetryAfter = ReadRetryAfter(lease);
+                    request.SetRetryAfter(ReadRetryAfter(lease));
                 }
                 continue;
             }
@@ -365,7 +389,15 @@ internal sealed class RedisRateLimiter : RateLimiter
     private sealed class QueuedRequest(int permitCount, TimeSpan retryAfter, CancellationToken cancellationToken)
     {
         public int PermitCount { get; } = permitCount;
-        public TimeSpan RetryAfter { get; set; } = retryAfter;
+        private TimeSpan _retryAfter = retryAfter;
+        private long _retryStarted = Stopwatch.GetTimestamp();
+        public TimeSpan RemainingRetryAfter
+            => _retryAfter - Stopwatch.GetElapsedTime(Volatile.Read(ref _retryStarted));
+        public void SetRetryAfter(TimeSpan retryAfter)
+        {
+            _retryAfter = retryAfter;
+            Volatile.Write(ref _retryStarted, Stopwatch.GetTimestamp());
+        }
         public CancellationToken CancellationToken { get; } = cancellationToken;
         public TaskCompletionSource<RateLimitLease> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationTokenRegistration Registration { get; set; }

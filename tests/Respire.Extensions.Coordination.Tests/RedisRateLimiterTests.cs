@@ -147,8 +147,137 @@ public class RedisRateLimiterTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
         await Assert.That(async () => await limiter.AcquireAsync(1, cancellation.Token))
             .Throws<OperationCanceledException>();
-        await Task.Delay(210);
+        await Task.Delay(330);
         await Assert.That((await limiter.AcquireAsync(1)).IsAcquired).IsTrue();
+    }
+
+    [Test]
+    public async Task SlidingWindowDoesNotExpirePermitsBeforeAFullWindow()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        const int widthMs = 800;
+        await WaitForRedisWindowPhaseAsync(client, widthMs, 300, 350);
+        await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
+            "sliding-safe-expiry", permitLimit: 1, TimeSpan.FromMilliseconds(widthMs), segments: 1);
+
+        using var acquired = await limiter.AcquireAsync(1);
+        await Assert.That(acquired.IsAcquired).IsTrue();
+        await Task.Delay(600);
+        using var tooEarly = await limiter.AcquireAsync(1);
+        await Assert.That(tooEarly.IsAcquired).IsFalse();
+        await Task.Delay(800);
+        using var expired = await limiter.AcquireAsync(1);
+        await Assert.That(expired.IsAcquired).IsTrue();
+    }
+
+    [Test]
+    public async Task SlidingWindowAggregatesLargeBulkAcquisitions()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
+            "sliding-bulk", permitLimit: 1_000_000, TimeSpan.FromMinutes(1), segments: 60);
+
+        using var lease = await limiter.AcquireAsync(1_000_000).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(lease.IsAcquired).IsTrue();
+    }
+
+    [Test]
+    public async Task TokenBucketPreservesElapsedRefillAfterSuccessfulAcquisition()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
+            "bucket-refill-boundary", tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromSeconds(1));
+
+        using var first = await limiter.AcquireAsync(1);
+        await Task.Delay(800);
+        using var second = await limiter.AcquireAsync(1);
+        await Assert.That(second.IsAcquired).IsTrue();
+        using var denied = await limiter.AcquireAsync(1);
+        await Assert.That(denied.IsAcquired).IsFalse();
+        await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
+        await Assert.That(retry < TimeSpan.FromMilliseconds(400)).IsTrue();
+    }
+
+    [Test]
+    public async Task TokenBucketRejectsRefillExpiryOutsideLuaExactIntegerRange()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)],
+        });
+        var rateLimiters = new RespireCoordination(client).RateLimiters;
+
+        await Assert.That(() => rateLimiters.TokenBucket("huge-bucket", int.MaxValue, 1, TimeSpan.FromDays(30)))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task TokenBucketClampsRetryToTimeSpanRange()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
+            "bucket-long-retry", tokenLimit: int.MaxValue, tokensPerPeriod: 1, TimeSpan.FromHours(1));
+
+        using var depleted = await limiter.AcquireAsync(int.MaxValue);
+        using var denied = await limiter.AcquireAsync(int.MaxValue);
+        await Assert.That(depleted.IsAcquired).IsTrue();
+        await Assert.That(denied.IsAcquired).IsFalse();
+        await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
+        await Assert.That(retry > TimeSpan.FromDays(300)).IsTrue();
+    }
+
+    [Test]
+    public async Task QueueChangesDoNotRestartHeadRetryDelay()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+            "queue-deadline", permitLimit: 1, TimeSpan.FromMilliseconds(1500), queueLimit: 2);
+
+        using var initial = await limiter.AcquireAsync(1);
+        using var cancelSecond = new CancellationTokenSource();
+        var first = limiter.AcquireAsync(1).AsTask();
+        await Task.Delay(700);
+        var second = limiter.AcquireAsync(1, cancelSecond.Token).AsTask();
+        using var granted = await first.WaitAsync(TimeSpan.FromSeconds(1));
+        await Assert.That(granted.IsAcquired).IsTrue();
+        cancelSecond.Cancel();
+        await Assert.That(async () => await second).Throws<OperationCanceledException>();
+    }
+
+    [Test]
+    [Arguments(QueueProcessingOrder.OldestFirst)]
+    [Arguments(QueueProcessingOrder.NewestFirst)]
+    public async Task QueueAccountingHandlesLargePermitCounts(QueueProcessingOrder order)
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+            "queue-large-count", permitLimit: int.MaxValue, TimeSpan.FromSeconds(30),
+            queueLimit: int.MaxValue, queueProcessingOrder: order);
+
+        using var initial = await limiter.AcquireAsync(int.MaxValue);
+        var first = limiter.AcquireAsync(int.MaxValue).AsTask();
+        if (order == QueueProcessingOrder.OldestFirst)
+        {
+            using var rejected = await limiter.AcquireAsync(10);
+            await Assert.That(rejected.IsAcquired).IsFalse();
+        }
+        else
+        {
+            var replacement = limiter.AcquireAsync(10).AsTask();
+            using var evicted = await first.WaitAsync(TimeSpan.FromSeconds(1));
+            await Assert.That(evicted.IsAcquired).IsFalse();
+            limiter.Dispose();
+            await Assert.That(async () => await replacement).Throws<ObjectDisposedException>();
+            return;
+        }
+        limiter.Dispose();
+        await Assert.That(async () => await first).Throws<ObjectDisposedException>();
     }
 
     [Test]
@@ -198,5 +327,20 @@ public class RedisRateLimiterTests
 
         await limiter.DisposeAsync();
         await Assert.That(async () => await queued).Throws<ObjectDisposedException>();
+    }
+
+    private static async Task WaitForRedisWindowPhaseAsync(RespireClient client, int widthMs, int minimum, int maximum)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            using var response = await client.ExecuteAsync("TIME", [], cancellationToken: timeout.Token);
+            var seconds = long.Parse(response[0].AsString(), System.Globalization.CultureInfo.InvariantCulture);
+            var microseconds = long.Parse(response[1].AsString(), System.Globalization.CultureInfo.InvariantCulture);
+            var milliseconds = seconds * 1000 + microseconds / 1000;
+            var phase = (int)(milliseconds % widthMs);
+            if (phase >= minimum && phase <= maximum) return;
+            await Task.Delay(5, timeout.Token);
+        }
     }
 }

@@ -128,6 +128,10 @@ using var limiter = coordination.RateLimiters.FixedWindow(
 
 ### Sliding window
 
+The limiter stores one aggregated count per active segment. It rounds each segment timestamp
+forward to its end, so permits never expire early; this can delay availability by up to one
+segment duration. More segments reduce that extra delay.
+
 ```csharp
 using Respire.Extensions.Coordination;
 
