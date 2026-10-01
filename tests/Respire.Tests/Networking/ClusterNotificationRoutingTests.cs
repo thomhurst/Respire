@@ -646,10 +646,7 @@ public class ClusterNotificationRoutingTests
 
         await Assert.That(await tenant.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
-        var attempts = (System.Collections.IDictionary)typeof(SubscriptionHub)
-            .GetField("_notificationReconciliationAttempts", System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.NonPublic)!.GetValue(client.Core.Hub)!;
-        await Assert.That(attempts.Contains(tenant)).IsFalse();
+        await Assert.That(client.Core.Hub!.HasClusterNotificationReconciliationState(tenant)).IsFalse();
         await stableReplayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(stable.Completion.IsCompleted).IsFalse();
         await stable.DisposeAsync();
@@ -995,32 +992,140 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
-    public async Task AllPrimaryActivationReusesCompleteCachedTopology()
+    public async Task AllPrimaryActivationSubscribesPrimaryAddedSinceCachedTopology()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => Volatile.Read(ref topology), resp3: false);
+        Configure(second, () => Volatile.Read(ref topology), resp3: false);
+        Configure(third, () => Volatile.Read(ref topology), resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        // The first subscription leaves a complete cached slot map behind.
+        await using var firstSubscription = await client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The cluster gains a primary, and nothing has told the client yet.
+        Volatile.Write(ref topology, Topology(first.Port, second.Port, third.Port));
+        var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        await using var secondSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        foreach (var server in new[] { first, second, third })
+            await Assert.That(server.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+    }
+
+    [Test]
+    public async Task NodeExhaustionIsNotReportedAsRecoveredByAPendingReconciliationRetry()
     {
         await using var first = new FakeRespServer(20);
         await using var second = new FakeRespServer(20);
         var topology = Topology(first.Port, second.Port);
-        var topologyQueries = 0;
-        Configure(first, () => topology, resp3: false, command =>
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        await using var client = RespireClient.Create(new RespireOptions
         {
-            if (command == "CLUSTER SLOTS") Interlocked.Increment(ref topologyQueries);
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            // Long enough for a loaded test host, short enough to exhaust the replay quickly.
+            ConnectTimeout = TimeSpan.FromMilliseconds(500),
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromMilliseconds(1),
+                MaxDelay = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0,
+                MaxAttempts = 1,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
         });
-        Configure(second, () => topology, resp3: false, command =>
-        {
-            if (command == "CLUSTER SLOTS") Interlocked.Increment(ref topologyQueries);
-        });
-        await using var client = CreateClusterClient(first.Port, resp3: false);
-        await using var firstSubscription = await client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0))
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-        var queriesAfterFirst = Volatile.Read(ref topologyQueries);
-
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
-        await using var secondSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var secondEndpoint = new RespireEndpoint("127.0.0.1", second.Port);
+        var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connectedAfterExhaustion = 0;
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Disconnected) disconnected.TrySetResult();
+            else if (change.State == RespireConnectionState.Connected && disconnected.Task.IsCompleted)
+                Interlocked.Exchange(ref connectedAfterExhaustion, 1);
+        };
 
-        await Assert.That(Volatile.Read(ref topologyQueries)).IsEqualTo(queriesAfterFirst);
-        foreach (var server in new[] { first, second })
-            await Assert.That(server.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+        // Activation refreshed the topology, which queued a reconciliation pass behind it. A
+        // subscription on the first primary waits for that pass on the control gate.
+        var keys = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .Where(static value => ClusterHash.GetSlot(value) is > 0 and <= 8191).Take(2).ToArray();
+        await using var settled = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(keys[0], 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // A reconciliation route on the second primary failed earlier and is still waiting
+        // for its retry when the node's own recovery runs out of attempts.
+        var hub = client.Core.Hub!;
+        hub.MarkClusterNotificationEndpointRetrying(secondEndpoint);
+        await Assert.That(hub.IsClusterNotificationEndpointRetrying(secondEndpoint)).IsTrue();
+        second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+        var subscribeIndex = second.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {descriptor}");
+        second.CloseConnection(second.ReceivedConnectionIds[subscribeIndex]);
+        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(hub.IsClusterNotificationEndpointRetrying(secondEndpoint)).IsFalse();
+
+        // A later reconciliation pass must not turn the terminal Disconnected into Connected.
+        var router = client.Core.Cluster!;
+        router.ClearSlotOwner(0, router.GetMultiplexer(new("127.0.0.1", first.Port)));
+        // The pass is queued on the control gate synchronously, so a later subscription on the
+        // healthy primary waits for it. A slot other than the cleared one keeps it there.
+        await using var barrier = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(keys[1], 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(second.ReceivedCommands).DoesNotContain($"SUBSCRIBE {RespireChannel.KeySpaceSingleKey(keys[1], 0)}");
+        await Assert.That(Volatile.Read(ref connectedAfterExhaustion)).IsEqualTo(0);
     }
+
+    [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
+    public async Task UnroutedNotificationFrameAllocatesNothing()
+    {
+        await using var server = new FakeRespServer(20);
+        Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
+        await using var client = CreateClusterClient(server.Port, resp3: false);
+        await using var subscription = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var hub = client.Core.Hub!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        var channel = "__keyevent@0__:del"u8.ToArray();
+        var payload = "tenant:key"u8.ToArray();
+        _ = MeasureUnroutedDelivery(hub, endpoint, channel, payload, allocate: false, iterations: 100);
+        _ = MeasureUnroutedDelivery(hub, endpoint, channel, payload, allocate: true, iterations: 100);
+        // Keep concurrent GC and surrounding async/assertion allocations outside the counter
+        // interval. See docs/ALLOCATION_MEASUREMENT.md for this shared boundary.
+        var (measured, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureUnroutedDelivery(hub, endpoint, channel, payload, allocate: false, iterations: 1000),
+                MeasureUnroutedDelivery(hub, endpoint, channel, payload, allocate: true, iterations: 1000)));
+        await Assert.That(measured.Delivered).IsEqualTo(1000);
+        await Assert.That(control.Delivered).IsEqualTo(1000);
+        await Assert.That(measured.Allocated).IsEqualTo(0L);
+        await Assert.That(control.Allocated).IsGreaterThanOrEqualTo(1000L * 37);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (long Allocated, int Delivered) MeasureUnroutedDelivery(
+        SubscriptionHub hub, RespireEndpoint endpoint, byte[] channel, byte[] payload, bool allocate, int iterations)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var delivered = 0;
+        for (var index = 0; index < iterations; index++)
+        {
+            if (hub.TryDeliverClusterNotification(endpoint, channel, payload)) delivered++;
+            if (allocate) GC.KeepAlive(AllocateDeliveryControl());
+        }
+        return (GC.GetAllocatedBytesForCurrentThread() - before, delivered);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static object AllocateDeliveryControl() => new byte[37];
 
     [Test]
     public async Task ConcurrentSubscriptionsAndTopologyFlipsReleaseEveryRoute()

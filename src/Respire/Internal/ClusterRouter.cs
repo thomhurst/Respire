@@ -115,31 +115,40 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private const int SlotOwnerResolveAttempts = 3;
 
-    // Primaries that own slots in the cached complete map, read without opening connections.
-    // Falls back to discovery when the map is incomplete or names a retired primary.
+    // Primaries that own slots in a freshly loaded complete map. A cached map can predate a
+    // failover or an added primary, so it is refreshed first with one CLUSTER SLOTS on a node
+    // that is already connected; this does not open connections to every primary. Falls back
+    // to full discovery when no node is connected or the refreshed map is not usable.
     internal async ValueTask<RespireEndpoint[]> GetPrimaryEndpointsAsync(CancellationToken cancellationToken)
     {
-        lock (_nodesGate)
-        {
-            if (HasCompleteTopology())
-            {
-                var masters = _masters;
-                var counts = _masterSlotCounts;
-                List<RespireEndpoint> endpoints = new(masters.Length);
-                var usable = true;
-                for (var index = 0; index < masters.Length && usable; index++)
-                {
-                    if (counts[index] == 0) continue;
-                    usable = !masters[index].IsRetired;
-                    var endpoint = Endpoint(masters[index]);
-                    if (!endpoints.Contains(endpoint)) endpoints.Add(endpoint);
-                }
-                if (usable && endpoints.Count != 0) return [.. endpoints];
-            }
-        }
+        if (TryGetConnectedNode() is { } node
+            && await TryRefreshTopologyAsync(node, cancellationToken, discovery: null).ConfigureAwait(false)
+            && TryGetCachedPrimaryEndpoints() is { } endpoints)
+            return endpoints;
         var connections = await GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
         return connections.Select(static connection => new RespireEndpoint(connection.Host, connection.Port))
             .Distinct().ToArray();
+    }
+
+    // Slot-owning primaries of the cached complete map, or null when the map is incomplete or
+    // names a retired primary.
+    private RespireEndpoint[]? TryGetCachedPrimaryEndpoints()
+    {
+        lock (_nodesGate)
+        {
+            if (!HasCompleteTopology()) return null;
+            var masters = _masters;
+            var counts = _masterSlotCounts;
+            List<RespireEndpoint> endpoints = new(masters.Length);
+            for (var index = 0; index < masters.Length; index++)
+            {
+                if (counts[index] == 0) continue;
+                if (masters[index].IsRetired) return null;
+                var endpoint = Endpoint(masters[index]);
+                if (!endpoints.Contains(endpoint)) endpoints.Add(endpoint);
+            }
+            return endpoints.Count != 0 ? [.. endpoints] : null;
+        }
     }
 
     // Read the published generation without connecting or taking _nodesGate. Subscription

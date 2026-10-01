@@ -160,8 +160,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         try
         {
             RespireEndpoint[]? endpoints;
-            lock (_gate) endpoints = _notificationCoverage.TryGetValue(subscription, out var coverage)
-                ? coverage.ToArray() : null;
+            lock (_gate) endpoints = _notificationSubscriptions.TryGetValue(subscription, out var state)
+                ? state.Coverage.ToArray() : null;
             if (endpoints is not null)
             {
                 foreach (var endpoint in endpoints)
@@ -171,7 +171,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                     if (node is not null)
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
                 }
-                lock (_gate) EndNotificationCoverageLocked(subscription);
+                lock (_gate) EndNotificationSubscriptionLocked(subscription);
                 return;
             }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
@@ -295,12 +295,20 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     }
 
     internal void LogGapObserverFailure(Exception error)
+        => TryLogWarning(error, "Subscription delivery-gap observer threw");
+
+    // Logging providers must not interrupt delivery, cleanup or recovery, so their failures
+    // are swallowed. Out-of-memory is not, because nothing after it is reliable.
+    private void TryLogDebug(Exception error, string message)
     {
-        try { core.Logger?.LogWarning(error, "Subscription delivery-gap observer threw"); }
-        catch (Exception logError) when (logError is not OutOfMemoryException)
-        {
-            // Logging failures must not interrupt gap delivery or recovery.
-        }
+        try { core.Logger?.LogDebug(error, message); }
+        catch (Exception logError) when (logError is not OutOfMemoryException) { }
+    }
+
+    private void TryLogWarning(Exception error, string message, params object?[] args)
+    {
+        try { core.Logger?.LogWarning(error, message, args); }
+        catch (Exception logError) when (logError is not OutOfMemoryException) { }
     }
 
     private async Task ObserveAbandonedConnectionAsync(Task disposal)
@@ -806,8 +814,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
                     routes.Clear();
                 }
-                subscriptions.AddRange(_notificationCoverage.Keys);
-                _notificationCoverage.Clear();
+                subscriptions.AddRange(_notificationSubscriptions.Keys);
+                _notificationSubscriptions.Clear();
                 foreach (var node in _notificationNodes.Values)
                 {
                     lock (node.Gate)

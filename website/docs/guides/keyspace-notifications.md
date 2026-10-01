@@ -125,9 +125,11 @@ Pub/Sub connections for notification descriptors:
 - Prefix, pattern, keyevent, and subkeyevent descriptors subscribe on every current primary.
 - Connections are shared by notification routes that use the same primary. One logical
   subscription does not unsubscribe another route's channel.
-- `SubscribeAsync` returns only after every required primary acknowledges its route. If
-  activation fails or is cancelled, Respire removes its routes and closes connections whose
-  server-side subscription state is uncertain.
+- `SubscribeAsync` returns only after every required primary acknowledges its route. For a
+  cluster-wide descriptor it first reloads the slot map with one `CLUSTER SLOTS` call, so a
+  primary added or promoted since the last discovery is included. If activation fails or is
+  cancelled, Respire removes its routes and closes connections whose server-side subscription
+  state is uncertain.
 - A primary added by topology discovery is acknowledged before an old primary's route is
   removed. Exact-key subscriptions move when slot ownership changes.
 - A failure on one primary reconnects that primary's notification connection. Delivery from
@@ -140,7 +142,8 @@ Pub/Sub connections for notification descriptors:
   because it would otherwise silently miss that primary's events. Its routes on other primaries
   are released. Topology reconciliation does not retry an exhausted primary. A later
   `SubscribeAsync` that needs it tries to connect again, and the primary is also forgotten once
-  it leaves the discovered topology. A subscription rejected by a reachable primary (for example
+  it leaves the discovered topology. An exhausted primary stays `Disconnected` until then, even
+  if a topology retry for it was still pending. A subscription rejected by a reachable primary (for example
   `NOPERM`), or one that fails on a connection other subscriptions still use, ends only that
   subscription.
 - When a primary rejects one route of a multi-channel subscription during replay, the replayed
