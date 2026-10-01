@@ -334,9 +334,17 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
         if (!switchHint && !relatedDownEvent) return;
         RespireEndpoint? promotedPrimary = null;
+        var retireCurrent = false;
         // An unparseable target still triggers untargeted discovery; ROLE validation selects the primary.
-        if (switchHint && int.TryParse(fields[4], out var newPort) && newPort is >= 1 and <= 65535)
-            promotedPrimary = new(fields[3], newPort);
+        if (switchHint)
+        {
+            if (int.TryParse(fields[4], out var newPort) && newPort is >= 1 and <= 65535)
+                promotedPrimary = new(fields[3], newPort);
+            // Out-of-order switch hints must not retire a newer, healthy primary.
+            if (int.TryParse(fields[2], out var oldPort) && oldPort is >= 1 and <= 65535
+                && Current is { IsRetired: false } current)
+                retireCurrent = SameEndpoint(current.Endpoint, new RespireEndpoint(fields[1], oldPort));
+        }
         if (relatedDownEvent)
         {
             try { core.Logger?.LogInformation("Sentinel {Channel} hint for service {Service} from {Sentinel}", channel, serviceName, sentinel); }
@@ -346,7 +354,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // +odown text carries changing quorum counts; key master-down hints by service so
             // repeated reports of one outage coalesce while discovery is active.
             QueueNotificationRediscovery(masterDownHint ? channel + ":master:" + serviceName : channel + ":" + message.Text, promotedPrimary,
-                retireCurrent: switchHint, mustRediscoverAfterCurrent: masterDownHint);
+                retireCurrent, mustRediscoverAfterCurrent: masterDownHint);
     }
 
     private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target,
@@ -371,6 +379,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var current = Current;
             if (_activeNotificationKey == notificationKey)
             {
+                if (!mustRediscoverAfterCurrent) return;
                 // Coalesce a duplicate while discovery is active, but retain it until the
                 // attempt succeeds so it can trigger another attempt after a transient failure.
                 if (!_notificationPending)
@@ -384,6 +393,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             if (_pendingNotificationKey == notificationKey)
             {
+                if (!mustRediscoverAfterCurrent) return;
                 _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
                 return;
             }
