@@ -2734,11 +2734,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>
     /// The failure for a command that found the connection already closed under the write gate,
     /// before anything was appended or reserved. A generic close becomes
-    /// <see cref="RespireConnectionClosedBeforeSendException"/>, which keeps the close reason's
-    /// message and cause, so callers that must prove a command was not sent (lock release) can
-    /// tell it from a failure of an in-flight command. Authentication failures are retained as
-    /// the inner cause because this rejection happened before enqueue. Other specific close
-    /// reasons are rethrown as is.
+    /// <see cref="RespireConnectionClosedBeforeSendException"/>. Known Respire close reasons keep
+    /// their public exception type and carry a per-command marker, so lock release can distinguish
+    /// a pre-enqueue failure from the same failure on an in-flight command.
     /// </summary>
     private Exception ClosedBeforeEnqueue()
     {
@@ -2748,11 +2746,42 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
         }
 
-        return reason is RespireAuthenticationException
-            ? new RespireConnectionClosedBeforeSendException(reason.Message, reason)
-            : reason.GetType() == typeof(RespireConnectionException)
-                ? new RespireConnectionClosedBeforeSendException(reason.Message, reason.InnerException)
-                : reason;
+        return reason switch
+        {
+            RespireAuthenticationException authentication => MarkNotSubmitted(authentication),
+            RespireReconnectLimitException reconnectLimit => MarkNotSubmitted(reconnectLimit),
+            RespireProtocolException protocol => MarkNotSubmitted(protocol),
+            RespireConnectionException connection when connection.GetType() == typeof(RespireConnectionException)
+                => new RespireConnectionClosedBeforeSendException(connection.Message, connection.InnerException),
+            _ => new RespireConnectionClosedBeforeSendException(reason.Message, reason),
+        };
+    }
+
+    private static RespireAuthenticationException MarkNotSubmitted(RespireAuthenticationException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireAuthenticationException(reason.Message, inner)
+            : new RespireAuthenticationException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
+    }
+
+    private static RespireReconnectLimitException MarkNotSubmitted(RespireReconnectLimitException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireReconnectLimitException(reason.Message, inner)
+            : new RespireReconnectLimitException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
+    }
+
+    private static RespireProtocolException MarkNotSubmitted(RespireProtocolException reason)
+    {
+        var failure = reason.InnerException is { } inner
+            ? new RespireProtocolException(reason.Message, inner)
+            : new RespireProtocolException(reason.Message);
+        failure.IsCommandNotSubmitted = true;
+        return failure;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

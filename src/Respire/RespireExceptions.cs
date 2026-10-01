@@ -3,6 +3,8 @@ namespace Respire;
 /// <summary>Base exception for all Respire failures.</summary>
 public class RespireException : Exception
 {
+    internal bool IsCommandNotSubmitted { get; set; }
+
     /// <summary>Creates a Respire exception.</summary>
     public RespireException(string message) : base(message)
     {

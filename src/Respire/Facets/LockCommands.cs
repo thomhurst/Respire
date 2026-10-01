@@ -395,7 +395,8 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     // waiting for in-flight capacity, a connection retired before it accepted the command, or a
     // connection already closed when the command reached the write gate.
     internal static bool IsUnsubmitted(Exception error)
-        => error is RespireCommandNotSubmittedException
+        => error is RespireException { IsCommandNotSubmitted: true }
+            or RespireCommandNotSubmittedException
             or Respire.Networking.RespireConnectionRetiredException
             or Respire.Networking.RespireConnectionClosedBeforeSendException
             or RespireTimeoutException { Diagnostics.Stage: RespireCommandStage.WaitingForCapacity };

@@ -7,10 +7,8 @@ namespace Respire.Networking;
 /// </summary>
 /// <remarks>
 /// It is still a <see cref="RespireConnectionException"/> with the close reason's message and
-/// cause, so ordinary callers see the same failure as before. Lock release uses the type as
-/// proof that no delete was sent. Specific close reasons (authentication, reconnect limit,
-/// protocol faults) are rethrown unchanged instead; a release that hits one of those still
-/// fails closed.
+/// cause. Known Respire close reasons keep their original exception type and carry a marker on
+/// this per-send copy; ordinary in-flight failures remain unmarked.
 /// </remarks>
 internal sealed class RespireConnectionClosedBeforeSendException(string message, Exception? innerException)
     : RespireConnectionException(message, innerException!);
