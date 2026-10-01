@@ -810,6 +810,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 publishedReplacement = replacement;
                 replacement = null;
                 if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                // A reconnect can reach a restarted or different physical server whose
+                // sequence IDs start again; a repeated notification only re-runs a handoff.
+                lock (_movingGate) _movingSequence = -1;
             }
             ObserveConnectionFailure(slot, publishedReplacement);
             RetireConnection(old);
@@ -890,6 +893,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private sealed record MovingRequest(RespireEndpoint Endpoint, long Deadline);
 
+    private const long MaxMovingGraceSeconds = 24 * 60 * 60;
+
     private void QueueMovingHandoff(int slot, RespireConnection connection, MaintenanceNotification notification)
     {
         lock (_movingGate)
@@ -902,7 +907,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 return;
             }
             _movingSequence = notification.SequenceId;
-            var grace = TimeSpan.FromSeconds(Math.Clamp(notification.Seconds ?? 5, 1, 30));
+            // Honor the advertised grace; the upper bound only keeps tick arithmetic finite.
+            var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
             // The grace period starts at receipt, so slow target setup consumes drain time.
             _pendingMoving = new MovingRequest(notification.Target ?? new RespireEndpoint(Host, Port),
                 Environment.TickCount64 + (long)grace.TotalMilliseconds);
