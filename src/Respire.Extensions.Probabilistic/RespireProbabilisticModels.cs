@@ -129,9 +129,12 @@ public sealed record RespireCountMinMergeOptions
 /// <summary>CMS.MERGE aggregation strategy.</summary>
 public enum RespireCountMinMergeAggregation
 {
-    /// <summary>Sum counters from source sketches.</summary> Sum,
-    /// <summary>Take the minimum counter from source sketches.</summary> Minimum,
-    /// <summary>Take the maximum counter from source sketches.</summary> Maximum,
+    /// <summary>Sum counters from source sketches.</summary>
+    Sum,
+    /// <summary>Take the minimum counter from source sketches.</summary>
+    Minimum,
+    /// <summary>Take the maximum counter from source sketches.</summary>
+    Maximum,
 }
 
 /// <summary>Options accepted by TOPK.RESERVE.</summary>
