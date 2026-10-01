@@ -492,6 +492,22 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task DeadlineSweepIgnoresRerouteMarkerForTickArithmetic()
+    {
+        const long deadline = 2000;
+        var pool = new PendingResponsePool(1);
+        var ring = new InflightRing(1);
+        var source = pool.Rent(commandName: "PING");
+        source.Deadline = deadline | (1L << 62);
+        ring.TryEnqueue(source);
+
+        var remaining = ring.SweepExpired(deadline - 1, TimeSpan.FromMilliseconds(100), null);
+        await Assert.That(remaining).IsEqualTo(1);
+        remaining = ring.SweepExpired(deadline, TimeSpan.FromMilliseconds(100), null);
+        await Assert.That(remaining).IsEqualTo(-1);
+    }
+
+    [Test]
     public async Task CutoffSurvivesOverlapAndResetsAfterCompletionOrExpiry()
     {
         var state = new MaintenanceTimeoutState(1000);

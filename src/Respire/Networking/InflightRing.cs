@@ -140,7 +140,7 @@ internal sealed class InflightRing
                 continue;
             }
 
-            var deadline = source.Deadline;
+            var deadline = RespireConnection.PlainDeadline(source.Deadline);
             if (deadline == 0)
             {
                 continue;

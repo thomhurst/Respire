@@ -1771,7 +1771,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     private static void ClampDeadline(PendingResponse source, long deadline)
     {
-        if (deadline != 0) source.Deadline = PlainDeadline(deadline);
+        if (deadline != 0) source.Deadline = deadline;
     }
 
     /// <summary>

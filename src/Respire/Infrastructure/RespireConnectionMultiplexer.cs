@@ -917,12 +917,16 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void QueueMovingHandoff(int slot, RespireConnection connection, MaintenanceNotification notification)
     {
+        // Capture publication status before contending on the handoff gate. Publication holds
+        // this gate while swapping sockets; a push already delivered by the published socket
+        // must remain eligible when its callback resumes after that swap.
+        var wasPublished = ReferenceEquals(Volatile.Read(ref _connections[slot]), connection);
         lock (_movingGate)
         {
             // Replaced sockets can still deliver the MOVING that started their own handoff
             // while they drain; only published sockets speak for the active endpoint.
             var peer = (connection.NetworkPeerAddress ?? connection.Host, connection.NetworkPeerPort ?? connection.Port);
-            if (!IsOperational || !ReferenceEquals(Volatile.Read(ref _connections[slot]), connection)
+            if (!IsOperational || (!wasPublished && !ReferenceEquals(Volatile.Read(ref _connections[slot]), connection))
                 || _movingSequences.TryGetValue(peer, out var seen) && notification.SequenceId <= seen)
             {
                 return;

@@ -121,10 +121,10 @@ internal sealed partial class RespireConnection
 
     // Marks a deadline that a reroute already extended by the relaxed-timeout allowance, so a
     // later MOVING handoff in the same send cannot add it again. TickCount64 never reaches this bit;
-    // ClampDeadline and the capacity waits strip it before use.
+    // deadline consumers strip it before tick arithmetic.
     private const long RelaxedRerouteDeadline = 1L << 62;
 
-    private static long PlainDeadline(long deadline) => deadline & ~RelaxedRerouteDeadline;
+    internal static long PlainDeadline(long deadline) => deadline & ~RelaxedRerouteDeadline;
 
     private long GetReroutedCommandDeadline(long deadline)
     {
