@@ -247,7 +247,9 @@ public class ClusterNotificationRoutingTests
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (!first.ReceivedCommands.Contains($"SUBSCRIBE {secondChannel}")
-            || !second.ReceivedCommands.Contains($"SUBSCRIBE {firstChannel}"))
+            || !second.ReceivedCommands.Contains($"SUBSCRIBE {firstChannel}")
+            || !first.ReceivedCommands.Contains($"UNSUBSCRIBE {firstChannel}")
+            || !second.ReceivedCommands.Contains($"UNSUBSCRIBE {secondChannel}"))
             await Task.Delay(10, deadline.Token);
         await Assert.That(first.ReceivedCommands).Contains($"UNSUBSCRIBE {firstChannel}");
         await Assert.That(second.ReceivedCommands).Contains($"UNSUBSCRIBE {secondChannel}");

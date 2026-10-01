@@ -92,6 +92,11 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
 
         await cluster.RestartPrimaryAsync(1);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            while (int.Parse((await cluster.CommandAsync(1, "PUBSUB", "NUMPAT")).Trim(), CultureInfo.InvariantCulture) == 0)
+                await Task.Delay(10, deadline.Token);
+        }
         await client.SetAsync(restartedKey, "after-restart");
         await WaitForNotificationsAsync(subscription, [restartedKey], RespireKeyNotificationType.Set);
     }
