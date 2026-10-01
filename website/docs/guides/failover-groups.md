@@ -76,6 +76,12 @@ The group records these instruments on the `Respire` meter:
 | `respire.failover.endpoint.switches` | `respire.failover.switch.reason`, `respire.failover.endpoint.previous`, `respire.failover.endpoint.current` | Selected endpoint changes. The reason is a `RespireFailoverSwitchReasons` value; a missing endpoint is reported as `none`. |
 | `respire.failover.monitor.errors` | `respire.failover.error.source`, `error.type` | Unexpected monitor failures (`monitor`) and exceptions thrown by `EndpointSwitched` handlers (`handler`). The monitor continues after either. |
 
+## Logging
+
+The group logs through the first candidate whose `RespireOptions.LoggerFactory` is set, under the
+`Respire.FailoverGroup` category. Endpoint switches are logged at `Information`; monitor-round
+failures and `EndpointSwitched` handler exceptions are logged at `Warning` with the exception.
+
 ## Consistency
 
 Failover does not replicate data between deployments or fence writes. An operation can reach one

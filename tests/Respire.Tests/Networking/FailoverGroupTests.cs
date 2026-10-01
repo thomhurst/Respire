@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -337,6 +338,33 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task ThrowingSwitchHandlerIsLoggedThroughCandidateLoggerFactory()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryFailed = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryFailed) != 0
+                ? "-ERR primary unavailable
+"u8.ToArray()
+                : null;
+        var logger = new CapturingLogger();
+        var first = Candidate(primary, priority: 0);
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [first with { Options = first.Options with { LoggerFactory = logger } }, Candidate(secondary, priority: 1)],
+            FastOptions());
+        group.EndpointSwitched += _ => throw new InvalidOperationException("handler failure");
+
+        Volatile.Write(ref primaryFailed, 1);
+        await WaitUntilAsync(() => logger.Warnings.Any(entry => entry.Error is InvalidOperationException));
+
+        var warning = logger.Warnings.First(entry => entry.Error is InvalidOperationException);
+        await Assert.That(warning.Category).IsEqualTo("Respire.FailoverGroup");
+        await Assert.That(warning.Message).Contains("EndpointSwitched handler threw");
+    }
+
+    [Test]
     public async Task ConnectAsync_RejectsProbeTimeoutBeyondTimerLimit()
     {
         var options = FastOptions() with { ProbeTimeout = TimeSpan.FromDays(50) };
@@ -476,6 +504,24 @@ public class FailoverGroupTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!condition()) await Task.Delay(10, timeout.Token);
+    }
+
+    private sealed class CapturingLogger : ILoggerFactory
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(string Category, string Message, Exception? Error)> Warnings { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new CategoryLogger(this, categoryName);
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+
+        private sealed class CategoryLogger(CapturingLogger owner, string category) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel == LogLevel.Warning) owner.Warnings.Enqueue((category, formatter(state, exception), exception));
+            }
+        }
     }
 
     private sealed class ManualClock(DateTimeOffset utcNow) : TimeProvider

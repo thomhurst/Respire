@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Respire.Internal;
 
 namespace Respire;
@@ -103,6 +104,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private readonly CandidateState[] _candidates;
     private readonly RespireFailoverGroupOptions _options;
     private readonly TimeProvider _clock;
+    private readonly ILogger? _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
     private readonly object _disposeLock = new();
@@ -112,11 +114,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private bool _hasSelected;
     private volatile bool _disposed;
 
-    private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock)
+    private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock, ILogger? logger)
     {
         _candidates = candidates;
         _options = options;
         _clock = clock;
+        _logger = logger;
     }
 
     /// <summary>Raised when health policy changes the selected endpoint.</summary>
@@ -124,7 +127,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     /// Handlers run synchronously on the health monitor, so a slow handler delays the next probe round.
     /// Keep handlers short, and never wait for <see cref="DisposeAsync"/> from a handler, synchronously or
     /// asynchronously: disposal waits for the monitor, which is running the handler. Handler exceptions are
-    /// ignored and counted by <c>respire.failover.monitor.errors</c> with <c>respire.failover.error.source</c> = <c>handler</c>.
+    /// ignored, counted by <c>respire.failover.monitor.errors</c> with <c>respire.failover.error.source</c> = <c>handler</c>,
+    /// and logged as warnings through the first candidate that sets <see cref="RespireOptions.LoggerFactory"/>.
     /// </remarks>
     public event Action<RespireFailoverSwitch>? EndpointSwitched;
 
@@ -185,6 +189,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
         var states = new List<CandidateState>();
         var endpoints = new List<RespireEndpoint>();
+        ILogger? logger = null;
         RespireFailoverGroup? group = null;
         try
         {
@@ -217,13 +222,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                         "Client-side caching is not supported across independent failover deployments.");
                 }
 
+                logger ??= snapshot.CreateLogger("Respire.FailoverGroup");
                 var client = RespireClient.Create(snapshot);
                 states.Add(new CandidateState(client, candidate.Priority, states.Count));
             }
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
 
-            var created = group = new RespireFailoverGroup(states.ToArray(), settings, clock);
+            var created = group = new RespireFailoverGroup(states.ToArray(), settings, clock, logger);
             await Task.WhenAll(states.Select(state => created.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
             await group.SelectActiveAsync().ConfigureAwait(false);
             if (Volatile.Read(ref group._active) is null)
@@ -279,7 +285,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 }
                 catch (Exception error)
                 {
-                    RespireTelemetry.RecordFailoverMonitorError("monitor", error);
+                    RecordMonitorError("monitor", error);
                 }
             }
         }
@@ -386,16 +392,33 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         if (change is { } switched)
         {
             RespireTelemetry.RecordFailoverSwitch(switched.PreviousEndpoint, switched.CurrentEndpoint, switched.Reason);
+            try
+            {
+                _logger?.LogInformation("Failover group switched from {PreviousEndpoint} to {CurrentEndpoint} ({Reason})",
+                    switched.PreviousEndpoint?.ToString() ?? "none", switched.CurrentEndpoint?.ToString() ?? "none", switched.Reason);
+            }
+            catch { /* Logging must not stop health monitoring. */ }
             var handlers = EndpointSwitched;
             if (handlers is not null)
             {
                 foreach (Action<RespireFailoverSwitch> handler in handlers.GetInvocationList())
                 {
                     try { handler(switched); }
-                    catch (Exception error) { RespireTelemetry.RecordFailoverMonitorError("handler", error); }
+                    catch (Exception error) { RecordMonitorError("handler", error); }
                 }
             }
         }
+    }
+
+    private void RecordMonitorError(string source, Exception error)
+    {
+        RespireTelemetry.RecordFailoverMonitorError(source, error);
+        try
+        {
+            if (source == "handler") _logger?.LogWarning(error, "Failover group EndpointSwitched handler threw");
+            else _logger?.LogWarning(error, "Failover group health monitor round failed");
+        }
+        catch { /* Logging must not stop health monitoring. */ }
     }
 
     /// <summary>Stops health probes and disposes every candidate client.</summary>
