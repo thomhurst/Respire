@@ -44,7 +44,7 @@ public class ClusterSlotFencesTests
         var bc = ClusterSlotMutationClock.Next();
         var ab = ClusterSlotMutationClock.Next();
 
-        fences.RecordMigration([0], a, Endpoint(a), ab);
+        fences.RecordMigration([0], a, Endpoint(a), b, Endpoint(b), ab);
         await Assert.That(fences.Version(0)).IsEqualTo(ab);
 
         // B->C was received before A->B, but B owns the slot through that SMIGRATED chain.
@@ -53,7 +53,7 @@ public class ClusterSlotFencesTests
         await Assert.That(fences.IsFenced(0, null, null, new RespireEndpoint("none", 1), bc)).IsTrue();
 
         // Crossing keeps the version monotonic.
-        fences.RecordMigration([0], b, Endpoint(b), bc);
+        fences.RecordMigration([0], b, Endpoint(b), c, Endpoint(c), bc);
         await Assert.That(fences.Version(0)).IsEqualTo(ab);
     }
 
@@ -65,7 +65,7 @@ public class ClusterSlotFencesTests
         var fences = new ClusterSlotFences();
         var bc = ClusterSlotMutationClock.Next();
         var ab = ClusterSlotMutationClock.Next();
-        fences.RecordMigration([0], a, Endpoint(a), ab);
+        fences.RecordMigration([0], a, Endpoint(a), b, Endpoint(b), ab);
         fences.MarkOwnerChanged(0);
 
         await Assert.That(fences.IsFenced(0, b, b, Endpoint(b), bc)).IsTrue();
@@ -80,7 +80,7 @@ public class ClusterSlotFencesTests
         var bc = ClusterSlotMutationClock.Next();
         fences.MarkOwnerChanged(0);
         var ab = ClusterSlotMutationClock.Next();
-        fences.RecordMigration([0], a, Endpoint(a), ab);
+        fences.RecordMigration([0], a, Endpoint(a), b, Endpoint(b), ab);
 
         await Assert.That(fences.IsFenced(0, b, b, Endpoint(b), bc)).IsTrue();
     }
@@ -94,13 +94,30 @@ public class ClusterSlotFencesTests
         var ac = ClusterSlotMutationClock.Next();
         var ba = ClusterSlotMutationClock.Next();
         var ab = ClusterSlotMutationClock.Next();
-        fences.RecordMigration([0], a, Endpoint(a), ab);
-        fences.RecordMigration([0], b, Endpoint(b), ba);
+        fences.RecordMigration([0], a, Endpoint(a), b, Endpoint(b), ab);
+        fences.RecordMigration([0], b, Endpoint(b), a, Endpoint(a), ba);
 
         // A->B departed A after A->C was received.
         await Assert.That(fences.IsFenced(0, a, a, Endpoint(a), ac)).IsTrue();
         // A migration received after that departure is newer than the whole chain.
         await Assert.That(fences.IsFenced(0, a, a, Endpoint(a), ClusterSlotMutationClock.Next())).IsFalse();
+    }
+
+    [Test]
+    public async Task NewerReturnMigrationKeepsEarlierSourceDepartureInChain()
+    {
+        await using var a = Node(7000);
+        await using var b = Node(7001);
+        await using var c = Node(7002);
+        var fences = new ClusterSlotFences();
+        var ab = ClusterSlotMutationClock.Next();
+        var ac = ClusterSlotMutationClock.Next();
+        var ba = ClusterSlotMutationClock.Next();
+        fences.RecordMigration([0], a, Endpoint(a), b, Endpoint(b), ab);
+        fences.RecordMigration([0], b, Endpoint(b), a, Endpoint(a), ba);
+
+        // A->C was received after A->B, but B->A was processed first.
+        await Assert.That(fences.IsFenced(0, a, a, Endpoint(a), ac)).IsTrue();
     }
 
     [Test]
@@ -112,7 +129,7 @@ public class ClusterSlotFencesTests
         var bc = ClusterSlotMutationClock.Next();
         fences.MarkOwnerChanged(1);
         var ab = ClusterSlotMutationClock.Next();
-        fences.RecordMigration([0, 1], a, Endpoint(a), ab);
+        fences.RecordMigration([0, 1], a, Endpoint(a), b, Endpoint(b), ab);
 
         // Slot 1 changed owner after B->C was received; slot 0 did not.
         await Assert.That(fences.IsFenced(0, b, b, Endpoint(b), bc)).IsFalse();
@@ -133,14 +150,14 @@ public class ClusterSlotFencesTests
             for (var i = 0; i < ClusterSlotFences.MaxChainLength; i++)
             {
                 await Assert.That(fences.IsFenced(0, nodes[i], nodes[i], Endpoint(nodes[i]), tokens[i])).IsFalse();
-                fences.RecordMigration([0], nodes[i], Endpoint(nodes[i]), tokens[i]);
+                fences.RecordMigration([0], nodes[i], Endpoint(nodes[i]), nodes[i + 1], Endpoint(nodes[i + 1]), tokens[i]);
             }
 
             // The next dependent link would exceed the bound: it still applies, then closes the
             // chain, so a further dependent link is fenced.
             var last = ClusterSlotFences.MaxChainLength;
             await Assert.That(fences.IsFenced(0, nodes[last], nodes[last], Endpoint(nodes[last]), tokens[last])).IsFalse();
-            fences.RecordMigration([0], nodes[last], Endpoint(nodes[last]), tokens[last]);
+            fences.RecordMigration([0], nodes[last], Endpoint(nodes[last]), nodes[last + 1], Endpoint(nodes[last + 1]), tokens[last]);
             var older = tokens[^1] - 1;
             await Assert.That(fences.IsFenced(0, nodes[last + 1], nodes[last + 1], Endpoint(nodes[last + 1]), older)).IsTrue();
         }

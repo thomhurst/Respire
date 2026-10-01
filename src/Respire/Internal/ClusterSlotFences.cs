@@ -47,10 +47,13 @@ internal sealed class ClusterSlotFences
     private readonly ChainLink?[] _chains = new ChainLink?[ClusterHash.SlotCount];
 
     private sealed class ChainLink(
-        RespireConnectionMultiplexer departed, RespireEndpoint departedEndpoint, long token, ChainLink? previous)
+        RespireConnectionMultiplexer departed, RespireEndpoint departedEndpoint,
+        RespireConnectionMultiplexer arrived, RespireEndpoint arrivedEndpoint, long token, ChainLink? previous)
     {
         internal readonly RespireConnectionMultiplexer Departed = departed;
         internal readonly RespireEndpoint DepartedEndpoint = departedEndpoint;
+        internal readonly RespireConnectionMultiplexer Arrived = arrived;
+        internal readonly RespireEndpoint ArrivedEndpoint = arrivedEndpoint;
         internal readonly long Token = token;
         internal readonly ChainLink? Previous = previous;
         internal readonly int Length = (previous?.Length ?? 0) + 1;
@@ -82,6 +85,17 @@ internal sealed class ClusterSlotFences
             if (link.Token > token && (ReferenceEquals(link.Departed, source)
                     || ClusterNodeIdentityIndex.EndpointsEqual(link.DepartedEndpoint, sourceEndpoint)))
                 return true;
+
+            if (link.Token > token && (ReferenceEquals(link.Arrived, source)
+                    || ClusterNodeIdentityIndex.EndpointsEqual(link.ArrivedEndpoint, sourceEndpoint)))
+            {
+                for (var earlier = link.Previous; earlier is not null; earlier = earlier.Previous)
+                {
+                    if (earlier.Token <= token && (ReferenceEquals(earlier.Departed, source)
+                            || ClusterNodeIdentityIndex.EndpointsEqual(earlier.DepartedEndpoint, sourceEndpoint)))
+                        return true;
+                }
+            }
         }
         return false;
     }
@@ -92,7 +106,7 @@ internal sealed class ClusterSlotFences
     /// passed <see cref="IsFenced"/> for the same source and token.
     /// </summary>
     internal void RecordMigration(List<int> slots, RespireConnectionMultiplexer source, RespireEndpoint sourceEndpoint,
-        long token)
+        RespireConnectionMultiplexer target, RespireEndpoint targetEndpoint, long token)
     {
         // Slots moved together usually share their chain, so reuse the link built for the
         // previous slot when its predecessor matches.
@@ -102,17 +116,23 @@ internal sealed class ClusterSlotFences
         foreach (var slot in slots)
         {
             var prior = _versions[slot];
+            var previous = _chains[slot];
             if (prior <= token)
             {
-                // Newer than every change so far: start a new chain at this move.
+                // Newer than every change so far. Keep the current SMIGRATED chain so a
+                // delayed migration cannot cross after its source leaves and returns.
                 _versions[slot] = token;
-                _chainStarts[slot] = prior;
-                _chains[slot] = fresh ??= new ChainLink(source, sourceEndpoint, token, null);
-                continue;
+                if (previous is null)
+                {
+                    _chainStarts[slot] = prior;
+                    _chains[slot] = fresh ??= new ChainLink(source, sourceEndpoint, target, targetEndpoint, token, null);
+                    continue;
+                }
             }
 
-            // A dependent move crossed the fence: extend the chain and keep its start.
-            var previous = _chains[slot]!;
+            if (previous is null) continue;
+
+            // A dependent move crossed the fence, or a newer move extended the chain.
             if (previous.Length >= MaxChainLength)
             {
                 _chains[slot] = null;
@@ -121,7 +141,7 @@ internal sealed class ClusterSlotFences
             if (!ReferenceEquals(previous, lastPrevious))
             {
                 lastPrevious = previous;
-                lastExtended = new ChainLink(source, sourceEndpoint, token, previous);
+                lastExtended = new ChainLink(source, sourceEndpoint, target, targetEndpoint, token, previous);
             }
             _chains[slot] = lastExtended;
         }

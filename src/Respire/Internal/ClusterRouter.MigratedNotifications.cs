@@ -328,7 +328,7 @@ internal sealed partial class ClusterRouter
         // overwrite these slots.
         var migrationVersion = ++_topologyVersion;
         foreach (var slot in movable) PublishSlotLocked(slot, target, migrationVersion);
-        _slotFences.RecordMigration(movable, source!, sourceEndpoint, token);
+        _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count)) (retiredNodes ??= []).Add(source!);
         return new AppliedSmigratedMove(target, [.. movable]);
