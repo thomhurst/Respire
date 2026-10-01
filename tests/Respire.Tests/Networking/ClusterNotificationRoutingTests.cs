@@ -1009,6 +1009,86 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task RecreatedNodeDoesNotHideEarlierRouteReconnectState()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
+        var laterDescriptor = RespireChannel.KeySpacePrefix("later:", 0);
+        var stableAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterAdded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stableAttempts = 0;
+        second.SuppressReply = command =>
+        {
+            if (command != $"PSUBSCRIBE {stableDescriptor}") return false;
+            if (Interlocked.Increment(ref stableAttempts) == 1)
+            {
+                stableAttempt.TrySetResult();
+                return true;
+            }
+            return false;
+        };
+        var configured = second.ReplyOverride!;
+        second.ReplyOverride = (connectionId, command) =>
+        {
+            if (command == $"PSUBSCRIBE {laterDescriptor}") laterAdded.TrySetResult();
+            return configured(connectionId, command);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromSeconds(10),
+                MaxDelay = TimeSpan.FromSeconds(10),
+                JitterRatio = 0,
+                MaxAttempts = 2,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var clock = new NotificationRecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var stable = await hub.SubscribeAsync(
+            SubscriptionKind.Pattern, [stableDescriptor], new(), CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await using var later = await hub.SubscribeAsync(
+            SubscriptionKind.Pattern, [laterDescriptor], new(), CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+                recovered.TrySetResult();
+        };
+        topology = Topology(first.Port, second.Port);
+        hub.NotifyTopologyChanged(1,
+            [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
+            authoritative: true);
+
+        await stableAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await laterAdded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var retry = await clock.NextAsync();
+        await Assert.That(reconnecting.Task.IsCompleted).IsTrue();
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+        await Assert.That(later.Completion.IsCompleted).IsFalse();
+
+        retry.Fire();
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+        await Assert.That(later.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task ReplayRejectionStillReportsGapForReplayedRoutes()
     {
         await using var server = new FakeRespServer(20);

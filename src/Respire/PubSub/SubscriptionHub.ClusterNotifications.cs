@@ -1293,17 +1293,22 @@ internal sealed partial class SubscriptionHub
     // retrying, until a later pass reaches or drops it, or the subscription exhausts. With no
     // node, rollback retired it and no watcher reports the outage, so report it here with the
     // same attempt telemetry a watcher uses. A node that still serves other routes had its
-    // socket closed by the failure; its watcher reports the outage, and this marker keeps its
-    // recovery from being reported before the failed route is acknowledged.
+    // socket closed by the failure; its watcher reports the outage. A newly recreated healthy
+    // node has not observed that earlier failure, so this pass must report it instead.
     private void ReportNotificationReconciliationRetry(
         RespireEndpoint? endpoint, Exception error, int attempt, TimeSpan nextDelay)
     {
         if (endpoint is not { } failed || ContainsServerRejection(error)) return;
+        bool watcherOwnsRecovery = false;
         lock (_gate)
         {
             _notificationRetryingEndpoints.Add(failed);
-            if (_notificationNodes.ContainsKey(failed)) return;
+            if (_notificationNodes.TryGetValue(failed, out var node))
+            {
+                lock (node.Gate) watcherOwnsRecovery = node.InterruptedAt is not null;
+            }
         }
+        if (watcherOwnsRecovery) return;
         try
         {
             RespireTelemetry.RecordReconnectAttempt(failed.Host, failed.Port, attempt, nextDelay,
