@@ -35,6 +35,10 @@ public sealed class RespireCountdownLatch
     public async ValueTask<bool> WaitAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var initialState = await ReadStateAsync(cancellationToken).ConfigureAwait(false);
+        if (initialState.Generation != _generation) return false;
+        if (initialState.Remaining == 0) return true;
+
         await using var subscription = await _client.SubscribeAsync(new RespireChannel(_channel), cancellationToken).ConfigureAwait(false);
         await using var messages = subscription.GetAsyncEnumerator(cancellationToken);
         while (true)
