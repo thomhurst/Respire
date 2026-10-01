@@ -1,6 +1,8 @@
 using System.Text;
 using System.Threading.Channels;
+using Respire.Infrastructure;
 using Respire.Internal;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -430,10 +432,23 @@ public class ClusterTopologyRefreshTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (router.GetMultiplexer(seedEndpoint).IsConnected) await Task.Delay(10, timeout.Token);
 
+        var firstNode = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", firstMaster.Port));
+        var secondNode = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", secondMaster.Port));
+        await firstNode.EnsureConnectedAsync(CancellationToken.None);
+        await secondNode.EnsureConnectedAsync(CancellationToken.None);
+
         var buildCandidates = typeof(ClusterRouter).GetMethod("GetTopologyRefreshCandidates",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var candidates = ((System.Collections.IEnumerable)buildCandidates.Invoke(router, null)!).Cast<object>();
-        await Assert.That(ReferenceEquals(candidates.First(), router.GetMultiplexer(seedEndpoint))).IsTrue();
+        var candidates = ((System.Collections.IEnumerable)buildCandidates.Invoke(router, null)!)
+            .Cast<RespireConnectionMultiplexer>().ToList();
+        var orderCandidates = typeof(ClusterRouter).GetMethod("OrderTopologyRefreshCandidates",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var ordered = ((System.Collections.IEnumerable)orderCandidates.Invoke(null, [candidates])!)
+            .Cast<RespireConnectionMultiplexer>().ToList();
+        var connectedCount = ordered.Count(node => node.IsConnected && !node.IsRetired);
+        await Assert.That(connectedCount).IsEqualTo(2);
+        await Assert.That(ordered.Take(connectedCount).All(node => node.IsConnected && !node.IsRetired)).IsTrue();
+        await Assert.That(ordered.Skip(connectedCount).All(node => !node.IsConnected || node.IsRetired)).IsTrue();
     }
 
     [Test]

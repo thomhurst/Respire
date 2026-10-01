@@ -266,11 +266,7 @@ internal sealed partial class ClusterRouter
         {
             var round = scope.Round;
             var candidates = GetTopologyRefreshCandidates();
-            var connected = candidates.Select((node, index) => (node, index))
-                .Where(static candidate => candidate.node.IsConnected && !candidate.node.IsRetired)
-                .Select(static candidate => candidate.index).ToArray();
-            var position = connected.Length == 0 ? -1 : connected[Random.Shared.Next(connected.Length)];
-            if (position > 0) candidates = candidates.Skip(position).Concat(candidates.Take(position)).ToList();
+            candidates = OrderTopologyRefreshCandidates(candidates);
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
@@ -356,6 +352,19 @@ internal sealed partial class ClusterRouter
             }
         }
         return candidates;
+    }
+
+    private static List<RespireConnectionMultiplexer> OrderTopologyRefreshCandidates(
+        List<RespireConnectionMultiplexer> candidates)
+    {
+        var connected = candidates.Where(static node => node.IsConnected && !node.IsRetired).ToList();
+        var connectedStart = connected.Count == 0 ? 0 : Random.Shared.Next(connected.Count);
+        if (connectedStart > 0)
+            connected = connected.Skip(connectedStart).Concat(connected.Take(connectedStart)).ToList();
+
+        var connectedSet = new HashSet<RespireConnectionMultiplexer>(connected,
+            ReferenceEqualityComparer.Instance);
+        return connected.Concat(candidates.Where(node => !connectedSet.Contains(node))).ToList();
     }
 
     private void StartTopologyRefreshWorker()
