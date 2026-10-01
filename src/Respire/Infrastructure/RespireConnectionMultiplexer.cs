@@ -109,7 +109,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     // handlers comes from CaptureMaintenanceHandlers. slotMutationToken comes from
-    // ClusterSlotMutationClock, read right after the capture.
+    // ClusterSlotMutationClock, read before handler capture can block.
     internal void PublishMaintenanceNotification(MaintenanceNotificationHandler? handlers,
         object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
         => handlers?.Invoke(this, sequenceScope, notification, slotMutationToken);

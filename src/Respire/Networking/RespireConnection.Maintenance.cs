@@ -89,17 +89,16 @@ internal sealed partial class RespireConnection
     {
         var status = Volatile.Read(ref _maintenanceStatus);
         if (status == MaintenanceInactive) return false;
-        // Order a slot migration against Cluster owner mutations as soon as the frame is known
-        // to be SMIGRATED, before Parse scans its (up to 16384) triplets. Reading the clock later
-        // would let a route change made meanwhile look older than this notification and be
-        // overwritten by it. The handlers are captured first, while the sender is still known
-        // to be active: a sender retired after this point still delivers the push it received.
+        // Stamp SMIGRATED as soon as the frame is known, before handler capture can block or
+        // Parse scans its (up to 16384) triplets. A later token could let a stale push overwrite
+        // an owner mutation made while capture or parsing runs. Capture handlers before parsing,
+        // while the sender is still active, so retirement after capture still delivers this push.
         MaintenanceNotificationHandler? migrationHandlers = null;
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
-            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers();
             slotMutationToken = ClusterSlotMutationClock.Next();
+            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers();
         }
         if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not
