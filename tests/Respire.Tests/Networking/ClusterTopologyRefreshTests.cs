@@ -141,6 +141,39 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task RepeatedMovedSignalsDoNotRestartRefreshDebounce()
+    {
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            return Topology(seed.Port, seed.Port);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var clock = new ManualTopologyRefreshClock();
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(4));
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        var finalDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(1)).WaitAsync(TimeSpan.FromSeconds(2));
+        finalDelay.Fire();
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
     public async Task DisposeCancelsInflightTopologyRefresh()
     {
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -361,7 +394,11 @@ public class ClusterTopologyRefreshTests
     private sealed class ManualTopologyRefreshClock : TimeProvider
     {
         private readonly Channel<ManualTimer> _timers = Channel.CreateUnbounded<ManualTimer>();
+        private long _timestamp;
         internal TaskCompletionSource<ManualTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+        internal void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
 
         internal async Task<ManualTimer> NextTimerAsync(TimeSpan dueTime)
         {
@@ -374,20 +411,24 @@ public class ClusterTopologyRefreshTests
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            var timer = new ManualTimer(callback, state, dueTime);
+            var timer = new ManualTimer(this, callback, state, dueTime);
             Created.TrySetResult(timer);
             _timers.Writer.TryWrite(timer);
             return timer;
         }
     }
 
-    private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    private sealed class ManualTimer(ManualTopologyRefreshClock clock, TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private int _fired;
         internal TimeSpan DueTime { get; } = dueTime;
         internal void Fire()
         {
-            if (Interlocked.Exchange(ref _fired, 1) == 0) callback(state);
+            if (Interlocked.Exchange(ref _fired, 1) == 0)
+            {
+                clock.Advance(DueTime);
+                callback(state);
+            }
         }
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _fired) == 0;
         public void Dispose() => Interlocked.Exchange(ref _fired, 1);

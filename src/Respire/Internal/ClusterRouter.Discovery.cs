@@ -153,7 +153,8 @@ internal sealed partial class ClusterRouter
         using var scope = BeginDiscovery(discovery);
         try
         {
-            scope.Round?.Failed(new RespireEndpoint(source.Host, source.Port), rejection);
+            if (scope.Round is { HasPendingFailure: false } round)
+                round.Failed(new RespireEndpoint(source.Host, source.Port), rejection, source.Multiplexer);
             _ = await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
                 .ConfigureAwait(false);
             return true;
@@ -349,10 +350,14 @@ internal sealed partial class ClusterRouter
 
     private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds)
     {
+        var started = TopologyRefreshClock.GetTimestamp();
         while (delayMilliseconds > 0)
         {
+            var elapsed = TopologyRefreshClock.GetElapsedTime(started);
+            var remaining = TimeSpan.FromMilliseconds(delayMilliseconds) - elapsed;
+            if (remaining <= TimeSpan.Zero) return false;
             using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-            var delay = Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TopologyRefreshClock, waitCancellation.Token);
+            var delay = Task.Delay(remaining, TopologyRefreshClock, waitCancellation.Token);
             var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
             var completed = await Task.WhenAny(delay, signal).ConfigureAwait(false);
             await waitCancellation.CancelAsync().ConfigureAwait(false);
@@ -364,7 +369,11 @@ internal sealed partial class ClusterRouter
                 out var wasSignaled, out var nextDelay, out var force);
             if (!wasSignaled) return false;
             if (force) return true;
-            delayMilliseconds = nextDelay > 0 ? nextDelay : 0;
+            if (nextDelay == 0) return false;
+            // Repeated MOVED signals keep the first debounce deadline; they cannot
+            // postpone discovery indefinitely while routing remains stale.
+            delayMilliseconds = Math.Max(0, delayMilliseconds - (int)Math.Min(int.MaxValue,
+                Math.Ceiling(elapsed.TotalMilliseconds)));
         }
         return false;
     }

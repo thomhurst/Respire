@@ -699,6 +699,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         try
         {
+            // Every command that joins another READONLY flight still needs its own
+            // retry round seeded with this rejected source before fallback recovery.
+            if (discovery is { HasPendingFailure: false })
+                discovery.Failed(new RespireEndpoint(source.Host, source.Port), error, source.Multiplexer);
             var sharedRefresh = RefreshReadOnlySharedAsync(
                 error, source, slot, cancellationToken, discovery,
                 out var joinedDifferentRecovery, out var joinedTopologyRefresh);
