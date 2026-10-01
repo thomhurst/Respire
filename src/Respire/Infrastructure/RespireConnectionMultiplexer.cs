@@ -25,9 +25,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly RespireConnectionOptions _options;
     private ActiveEndpoint _activeEndpoint;
     private readonly object _movingGate = new();
-    // Highest MOVING sequence announced by the published sockets. Sequence IDs belong to the
-    // announcing server, so each completed handoff resets it for the new endpoint.
-    private long _movingSequence = -1;
+    // Highest MOVING sequence seen from each physical peer of a published socket. Sequence IDs
+    // belong to the announcing server: sockets to one server repeat its IDs, while a different
+    // server (after DNS change or a handoff) numbers independently. Cleared by each handoff.
+    private readonly Dictionary<(string Host, int Port), long> _movingSequences = new();
     private MovingRequest? _pendingMoving;
     private bool _movingWorker;
     private TaskCompletionSource? _movingCompletion;
@@ -377,6 +378,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         ThrowIfRecoveryExhausted(slot);
                         ready = false;
                     }
+                    catch (RespireConnectionRetiredException)
+                    {
+                        // A handoff unpublished this socket before admitting CLIENT ID; its
+                        // replacement is examined on the next pass.
+                        ready = false;
+                    }
                 }
 
                 if (ready)
@@ -396,6 +403,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                             ThrowIfRecoveryExhausted(slot);
                         }
 
+                        await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                    catch (RespireConnectionRetiredException)
+                    {
                         await Task.Delay(25, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
@@ -445,6 +457,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         RespireConnection connection,
         CancellationToken cancellationToken)
     {
+        RespireConnection.PinSendsToSelectedConnection(); // Probes this connection's own ID.
         // Target this connection's valid ID but explicitly exclude the caller. Redis performs
         // CLIENT KILL ACL validation, then returns 0 without disconnecting anything. Identity
         // setup is bounded by its callers' own timeout tokens, not the per-command deadline.
@@ -479,6 +492,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
+        // Each copy orders against its own socket's FIFO; moving it would void that barrier.
+        RespireConnection.PinSendsToSelectedConnection();
         ThrowIfUnavailable();
         if (!_connected)
         {
@@ -495,6 +510,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
 
             var sends = new List<(RespireConnection Connection, ValueTask<RespValue> Send)>(_connections.Length);
+            var retiredBeforeAdmission = false;
             for (var slot = 0; slot < _connections.Length; slot++)
             {
                 var connection = Volatile.Read(ref _connections[slot]);
@@ -519,6 +535,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     RetireConnection(connection);
                     ScheduleReconnect(slot);
                 }
+                catch (RespireConnectionRetiredException)
+                {
+                    // Never admitted, so nothing to fence; the replacement gets the next pass.
+                    retiredBeforeAdmission = true;
+                }
             }
 
             // Each reply is drained by its own task, not awaited in sequence: a slot that never
@@ -531,13 +552,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 drains[i] = DrainAsync(sends[i].Connection, sends[i].Send);
             }
 
-            var retry = sends.Count == 0;
+            var retry = sends.Count == 0 || retiredBeforeAdmission;
             Exception? fatal = null;
             for (var i = 0; i < drains.Length; i++)
             {
                 if (await drains[i].ConfigureAwait(false) is { } ex)
                 {
-                    if (IsConnectionLoss(ex))
+                    if (IsConnectionLoss(ex) || ex is RespireConnectionRetiredException)
                     {
                         retry = true;
                     }
@@ -810,9 +831,6 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 publishedReplacement = replacement;
                 replacement = null;
                 if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
-                // A reconnect can reach a restarted or different physical server whose
-                // sequence IDs start again; a repeated notification only re-runs a handoff.
-                lock (_movingGate) _movingSequence = -1;
             }
             ObserveConnectionFailure(slot, publishedReplacement);
             RetireConnection(old);
@@ -901,12 +919,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             // Replaced sockets can still deliver the MOVING that started their own handoff
             // while they drain; only published sockets speak for the active endpoint.
+            var peer = (connection.NetworkPeerAddress ?? connection.Host, connection.NetworkPeerPort ?? connection.Port);
             if (!IsOperational || !ReferenceEquals(Volatile.Read(ref _connections[slot]), connection)
-                || notification.SequenceId <= _movingSequence)
+                || _movingSequences.TryGetValue(peer, out var seen) && notification.SequenceId <= seen)
             {
                 return;
             }
-            _movingSequence = notification.SequenceId;
+            _movingSequences[peer] = notification.SequenceId;
             // Honor the advertised grace; the upper bound only keeps tick arithmetic finite.
             var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
             // The grace period starts at receipt, so slow target setup consumes drain time.
@@ -1003,7 +1022,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     if (!IsOperational || _pendingMoving is not null) return;
                     cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
                     Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
-                    _movingSequence = -1;
+                    _movingSequences.Clear();
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         replacements[i].Multiplexer = this;
@@ -1011,8 +1030,6 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         // Failure history belongs to the previous endpoint's sockets.
                         if (_reconnectAttempts is not null) _reconnectAttempts[i] = 0;
                     }
-                    var drain = DrainMovedConnectionsInBackgroundAsync(old, request.Deadline);
-                    _movingDrains = _movingDrains.IsCompleted ? drain : Task.WhenAll(_movingDrains, drain);
                     published = true;
                 }
                 for (var i = 0; i < replacements.Length; i++)
@@ -1028,6 +1045,15 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
         }
 
+        // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
+        // each socket's write gate, so it runs after the multiplexer locks are released.
+        var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
+        lock (_movingGate)
+        {
+            var drain = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
+            _movingDrains = _movingDrains.IsCompleted ? drain : Task.WhenAll(_movingDrains, drain);
+        }
+
         // Metrics listeners can run user code, so publish outside the lifecycle locks.
         if (cacheEvictions is { } removed)
         {
@@ -1036,12 +1062,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async Task DrainMovedConnectionsInBackgroundAsync(RespireConnection?[] old, long deadline)
+    private async Task DrainMovedConnectionsInBackgroundAsync(RespireConnection?[] old, Task[] drains, long deadline)
     {
-        await Task.Yield(); // Never run drain work under the handoff locks.
+        await Task.Yield(); // Never run drain work under the handoff gate.
         try
         {
-            await DrainMovedConnectionsAsync(old, deadline).ConfigureAwait(false);
+            await DrainMovedConnectionsAsync(old, drains, deadline).ConfigureAwait(false);
         }
         catch (Exception error) when (IsOperational)
         {
@@ -1094,9 +1120,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// Drains the unpublished sockets until the grace deadline and aborts any still busy. Every
     /// identity whose socket did not drain cleanly is fenced, whatever ended the drain.
     /// </summary>
-    private async Task DrainMovedConnectionsAsync(RespireConnection?[] old, long deadline)
+    private async Task DrainMovedConnectionsAsync(RespireConnection?[] old, Task[] drains, long deadline)
     {
-        var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
         try
         {
             var remainingMilliseconds = Math.Max(0, deadline - Environment.TickCount64);

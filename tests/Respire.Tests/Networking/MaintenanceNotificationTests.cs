@@ -305,6 +305,24 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingDoesNotRerouteConnectionScopedIdentityCommands()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var staleSelection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForRetirement(staleSelection);
+
+        // CLIENT ID names the socket that runs it, so a retired socket must not borrow another.
+        await Assert.That(async () => await staleSelection.EnsureServerClientIdAsync())
+            .Throws<RespireConnectionRetiredException>();
+        await Assert.That(target.ReceivedCommands.Contains("CLIENT ID")).IsFalse();
+    }
+
+    [Test]
     public async Task LaterMovingStartsWhileEarlierSocketsStillDrain()
     {
         await using var source = Server(maxConnections: 2);

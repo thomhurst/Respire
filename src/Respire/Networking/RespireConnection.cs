@@ -112,7 +112,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// owner routes the command instead.
     /// </summary>
     private Respire.Infrastructure.RespireConnectionMultiplexer? RetiredSendReroute
-        => _generation?.IsRetired != true && Multiplexer is { IsRetired: false } multiplexer ? multiplexer : null;
+        => !s_pinnedSends.Value && _generation?.IsRetired != true && Multiplexer is { IsRetired: false } multiplexer
+            ? multiplexer : null;
+
+    // Read only on the rare retirement path, so ordinary sends pay nothing for it.
+    private static readonly AsyncLocal<bool> s_pinnedSends = new();
+
+    /// <summary>
+    /// Makes sends in the calling async method (and its callees) surface retirement instead of
+    /// moving to another socket. Connection-scoped commands such as CLIENT ID, CLIENT KILL
+    /// probes and FIFO ordering barriers are meaningless on a different connection. Call it
+    /// first in an async method; the async method boundary restores the previous value.
+    /// </summary>
+    internal static void PinSendsToSelectedConnection() => s_pinnedSends.Value = true;
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
 
@@ -662,6 +674,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     internal async ValueTask<long> EnsureServerClientIdAsync(CancellationToken cancellationToken = default)
     {
+        PinSendsToSelectedConnection(); // The ID belongs to this socket.
         var existing = ServerClientId;
         if (existing != 0)
         {
