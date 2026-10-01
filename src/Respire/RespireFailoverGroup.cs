@@ -313,6 +313,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
+    internal static bool ShouldFailCandidateForSentinelIdentityConflict(bool candidateIsHealthy, bool otherIsHealthy)
+        => !candidateIsHealthy || otherIsHealthy;
+
     private static void ValidateSentinelIdentity(CandidateState candidate, IReadOnlyList<CandidateState> candidates)
     {
         if (candidate.SentinelPrimaryName is not { Length: > 0 } primaryName
@@ -335,6 +338,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                         discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered)));
                 if (samePrimary || sameServiceOverlaps)
                 {
+                    if (!ShouldFailCandidateForSentinelIdentityConflict(candidate.IsHealthy, other.IsHealthy)) continue;
                     throw new RespireConfigurationException(
                         $"Failover candidates for Sentinel service '{primaryName}' discovered the same primary or overlapping Sentinel endpoints.");
                 }
@@ -346,6 +350,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered))
                 || discoveredPrimary is { } primary && SameEndpoint(endpoint, primary)))
             {
+                if (!ShouldFailCandidateForSentinelIdentityConflict(candidate.IsHealthy, other.IsHealthy)) continue;
                 throw new RespireConfigurationException(
                     $"Sentinel candidate '{primaryName}' discovered an endpoint configured as another failover candidate's data endpoint.");
             }

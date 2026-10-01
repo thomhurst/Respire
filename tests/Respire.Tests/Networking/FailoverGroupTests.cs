@@ -198,6 +198,18 @@ public class FailoverGroupTests
     }
 
     [Test]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, true)]
+    public async Task SentinelIdentityConflictFailsNewOrUnownedCandidate(
+        bool candidateIsHealthy, bool otherIsHealthy, bool expected)
+    {
+        await Assert.That(RespireFailoverGroup.ShouldFailCandidateForSentinelIdentityConflict(
+            candidateIsHealthy, otherIsHealthy)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task ConsecutiveProbeFailuresOpenCircuitAndSwitchNewOperations()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
