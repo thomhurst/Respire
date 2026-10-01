@@ -491,7 +491,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             catch (Exception error)
             {
-                discovery?.RecordCommandFailure(error, discoveryPending, slot);
+                discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
                 throw;
             }
             finally { discovery?.Finish(); }

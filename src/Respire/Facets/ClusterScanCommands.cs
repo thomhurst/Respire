@@ -33,7 +33,8 @@ internal sealed partial class KeyCommands
         {
             // Cancellation before the next selection still ends a pending recovery. Errors
             // from INFO/SCAN after successful selection do not invalidate discovery telemetry.
-            if (discovery is not null) discovery.RecordCommandFailure(error, discovery.HasPendingFailure);
+            if (discovery is not null)
+                discovery.RecordCommandFailure(error, discovery.HasPendingFailure, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }

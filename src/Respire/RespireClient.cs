@@ -1970,7 +1970,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2430,7 +2430,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2517,7 +2517,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2753,7 +2753,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2807,7 +2807,7 @@ public sealed partial class RespireClient : IRespireClient
                     {
                         // A later target may still succeed; retain this target's discovery
                         // failure before continuing, without classifying application failures.
-                        discovery?.RecordCommandFailure(ex, discoveryPending);
+                        discovery?.RecordCommandFailure(ex, discoveryPending, cancellationToken);
                         discoveryPending = false;
                         (failures ??= []).Add(ex);
                     }
@@ -2829,7 +2829,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2945,7 +2945,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -3055,7 +3055,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -3302,7 +3302,7 @@ public sealed partial class RespireClient : IRespireClient
                                 : connection.CaptureDedicatedTimeoutDiagnostics())
                         : null;
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
-                        acquiringRedirectPool || connection is null, slot, noRedirect);
+                        acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
@@ -3808,7 +3808,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }

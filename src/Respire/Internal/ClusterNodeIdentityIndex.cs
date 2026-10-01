@@ -4,7 +4,13 @@ using Respire.Infrastructure;
 namespace Respire.Internal;
 
 internal sealed record ClusterTopologyRange(
-    int Start, int End, RespireEndpoint Preferred, string? NodeId, List<RespireEndpoint> Aliases);
+    int Start, int End, RespireEndpoint Preferred, string? NodeId, List<RespireEndpoint> Aliases)
+{
+    internal List<ClusterTopologyReplica> Replicas { get; init; } = [];
+}
+
+internal sealed record ClusterTopologyReplica(
+    RespireEndpoint Endpoint, string? NodeId, List<RespireEndpoint> Aliases);
 
 /// <summary>Owns endpoint aliases, Redis node identities, and every constructed transport.</summary>
 /// <remarks>The caller holds ClusterRouter's node gate for all access, including snapshot publication.</remarks>
@@ -69,6 +75,12 @@ internal sealed class ClusterNodeIdentityIndex
         Debug.Assert(!IsActive(node), "An active generation cannot be forgotten.");
         _allNodes.Remove(node);
         ValidateInvariants();
+    }
+
+    internal RespireConnectionMultiplexer? TryGet(RespireEndpoint endpoint)
+    {
+        AssertAccess();
+        return _nodes.TryGetValue(endpoint, out var existing) ? existing : null;
     }
 
     internal RespireConnectionMultiplexer GetOrCreate(RespireEndpoint endpoint)

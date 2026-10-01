@@ -81,7 +81,7 @@ public class ClusterNodeIdentityTests
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
         var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
-        typeof(ClusterRouter).GetMethod("SetSeed", flags)!.Invoke(router, [client.Core.Multiplexer]);
+        typeof(ClusterRouter).GetField("_seed", flags)!.SetValue(router, client.Core.Multiplexer);
         var endpoint = new RespireEndpoint("localhost");
         List<ClusterTopologyRange> original = [new(0, 16383, endpoint, "old-id", [])];
         List<ClusterTopologyRange> replacement = [new(0, 16383, endpoint, "new-id", [])];
@@ -250,7 +250,7 @@ public class ClusterNodeIdentityTests
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
         var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
-        typeof(ClusterRouter).GetMethod("SetSeed", flags)!.Invoke(router, [client.Core.Multiplexer]);
+        typeof(ClusterRouter).GetField("_seed", flags)!.SetValue(router, client.Core.Multiplexer);
         var endpoint = new RespireEndpoint("localhost");
         List<ClusterTopologyRange> initial = [new(0, 16383, endpoint, "initial", [])];
         List<ClusterTopologyRange> older = [new(0, 16383, endpoint, "older", [])];
