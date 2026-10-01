@@ -619,6 +619,27 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task ConnectAsync_RejectsSentinelSeedsReusedAsDataEndpointsInEitherOrder()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var endpoint = Endpoint(server);
+        var standalone = new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint] });
+        var sentinel = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [endpoint],
+            SentinelPrimaryName = "mymaster",
+        });
+
+        foreach (var candidates in new[] { new[] { standalone, sentinel }, new[] { sentinel, standalone } })
+        {
+            await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(candidates))
+                .ThrowsExactly<RespireConfigurationException>();
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ConnectAsync_RejectsFiniteReconnectBudget()
     {
         var candidate = new RespireFailoverCandidate(new RespireOptions

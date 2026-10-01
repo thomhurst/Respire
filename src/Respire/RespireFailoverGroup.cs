@@ -227,6 +227,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 if (isSentinel)
                 {
                     var normalizedEndpoints = NormalizeEndpoints(snapshot.Endpoints);
+                    if (endpoints.Any(endpoint => normalizedEndpoints.Any(
+                        sentinelEndpoint => SameEndpoint(endpoint, sentinelEndpoint))))
+                    {
+                        throw new RespireConfigurationException(
+                            "Failover candidates cannot reuse a Sentinel seed as a standalone or Cluster data endpoint.");
+                    }
                     var overlappingSentinelSeeds = sentinelDeployments.Any(existing =>
                         string.Equals(existing.PrimaryName, snapshot.SentinelPrimaryName, StringComparison.Ordinal)
                         && existing.Endpoints.Any(endpoint => normalizedEndpoints.Any(
@@ -240,6 +246,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     // Standalone candidates use one endpoint; Cluster candidates use every seed.
                     foreach (var endpoint in snapshot.Endpoints)
                     {
+                        if (sentinelDeployments.Any(deployment => deployment.Endpoints.Any(
+                            sentinelEndpoint => SameEndpoint(endpoint, sentinelEndpoint))))
+                        {
+                            throw new RespireConfigurationException(
+                                $"Failover candidates cannot reuse Sentinel seed '{endpoint}' as a standalone or Cluster data endpoint.");
+                        }
                         if (endpoints.Any(existing => SameEndpoint(existing, endpoint)))
                         {
                             throw new RespireConfigurationException(
