@@ -77,7 +77,7 @@ The metadata-aware `SubscribeAsync` uses `Kind` to select SUBSCRIBE, PSUBSCRIBE,
 Multi-target subscriptions require one kind; use separate subscriptions for mixed kinds. Named
 `SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets and explicitly select
 their command family. Patterns cannot be published. Existing string subscription and publication
-overloads remain available. Sharded subscriptions across Redis Cluster nodes remain unsupported.
+overloads remain available, including sharded subscriptions across Redis Cluster primaries.
 
 Equality and hashing compare only bytes, independently of kind. Equivalent text and UTF-8 byte
 targets deduplicate within a subscription. `ClusterSlot` uses raw bytes and Redis hash-tag rules.
@@ -89,6 +89,39 @@ Names such as `__keyspace@0__:key` remain ordinary channels, with no inferred no
 now contain `RespireChannel` values. Use `.Bytes` for lossless identity and `.ToString()` for UTF-8
 display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
 diagnostics use `Convert.ToHexString(channel.Bytes.Span)`; channel bytes are not telemetry tags.
+
+## Sharded subscriptions in Redis Cluster
+
+With `UseCluster = true`, `SubscribeShardedAsync` groups channels by their hash-slot owner and
+uses one dedicated subscription connection per primary. Channels on different slots can share
+one subscription; channels on the same primary share its connection. Duplicate consumers share
+one server-side subscription until the last consumer disposes. `SPUBLISH` uses the command
+connection for the channel's slot. Channel names are never affected by a client's key prefix.
+
+`MOVED` and `ASK` replies, unsolicited `SUNSUBSCRIBE` frames during resharding, and refreshed topology
+all trigger routing to the current owner. Socket failures restore the affected channels without
+resubscribing healthy primaries. The existing subscription and its buffer survive these changes.
+A reconnect gap marker precedes messages from the replacement subscription; Redis pub/sub
+cannot replay messages lost while a channel changes owners.
+
+Sharded Cluster subscriptions share one recovery episode and configured attempt budget,
+with health retained for every affected primary until the episode completes. An attempt on
+another primary cannot clear an earlier primary's failure. Successful recovery clears all
+affected endpoints; exhaustion marks them disconnected. Topology-driven recovery reports
+subscription owners rather than an unrelated configured seed. New sharded subscriptions
+fail while an episode is active, with or without a configured `ReconnectPolicy`, even for
+channels whose primary is healthy, because the episode owns every sharded route; subscribe
+again after recovery completes. Existing subscriptions keep their buffers and routes.
+With a null policy, recovery retries indefinitely: the first attempt is immediate, then
+exponential waits begin at 250 ms and stop growing at five seconds. New subscriptions do
+not wait for that episode; during a prolonged outage they continue to fail promptly.
+Configure `ReconnectPolicy.MaxAttempts` to bound recovery.
+
+The sharded recovery budget is
+separate from regular channel and pattern subscriptions. Exhausting that budget completes all
+sharded subscriptions with `ReconnectExhausted`; regular subscriptions remain usable. Recreate
+the client to create sharded subscriptions after exhaustion. Notifications across Cluster
+primaries are a separate feature and remain unsupported.
 
 ## Read message data
 

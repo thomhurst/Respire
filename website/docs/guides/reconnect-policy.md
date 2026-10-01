@@ -100,6 +100,12 @@ rules and bypass this policy, including its attempt cap.
 
 ## Pub/sub reconnection and resubscription
 
+In Cluster mode, sharded subscriptions have their own recovery episode, separate from the
+regular channel/pattern connection. An attempt restores all affected sharded routes; healthy
+primaries keep delivering. Sharded exhaustion ends all sharded subscriptions and rejects new
+sharded subscriptions, while regular subscriptions remain usable. Regular pub/sub exhaustion
+likewise leaves sharded subscriptions usable.
+
 With a null policy, pub/sub retains its existing schedule: an immediate replacement
 attempt followed, on failure, by 250 ms exponential waits capped at five seconds.
 With a policy, the first replacement waits `InitialDelay`, and every failed connection

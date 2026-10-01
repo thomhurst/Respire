@@ -8,6 +8,62 @@ namespace Respire.Tests.Networking;
 public class ClientCoreTests
 {
     [Test]
+    public async Task ShardedPrimariesRetainIndependentHealthUntilEachRecovers()
+    {
+        await using var core = new ClientCore(new RespireOptions());
+        var first = new RespireEndpoint("first", 6379);
+        var second = new RespireEndpoint("second", 6379);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        await Assert.That(changes.Any(change => change.State == RespireConnectionState.Connected)).IsFalse();
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Connected, null), clusterSharded: true);
+        await Assert.That(changes.Count(change => change.Endpoint == first)).IsEqualTo(1);
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Disconnected, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        await Assert.That(changes.Where(change => change.Endpoint == first).Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Reconnecting, RespireConnectionState.Disconnected]);
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Connected, null), clusterSharded: true);
+        await Assert.That(changes.Last().Endpoint).IsEqualTo(first);
+        await Assert.That(changes.Last().State).IsEqualTo(RespireConnectionState.Connected);
+    }
+
+    [Test]
+    public async Task RecoveredShardedEndpointReceivesTerminalStateOnDisposal()
+    {
+        // An ASK target is not an active Cluster command endpoint, so disposal must learn
+        // about it from sharded subscription health even after that endpoint recovered.
+        var core = new ClientCore(new RespireOptions());
+        var target = new RespireEndpoint("ask-target", 7000);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(target, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(target, RespireConnectionState.Connected, null), clusterSharded: true);
+        await core.DisposeAsync();
+        await Assert.That(changes.Where(change => change.Endpoint == target).Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Reconnecting, RespireConnectionState.Connected, RespireConnectionState.Disconnected]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PubSubGroupsCannotOverwriteEachOthersFailure(bool failedSharded)
+    {
+        await using var core = new ClientCore(new RespireOptions());
+        var endpoint = core.Options.PrimaryEndpoint;
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Disconnected, null), failedSharded);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Reconnecting, null), !failedSharded);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null), !failedSharded);
+        await Assert.That(changes.Select(change => change.State)).IsEquivalentTo([RespireConnectionState.Disconnected]);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null), failedSharded);
+        await Assert.That(changes.Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Disconnected, RespireConnectionState.Connected]);
+    }
+
+    [Test]
     public async Task StateChange_IncludesSourceEndpointAndError()
     {
         await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });

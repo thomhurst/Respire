@@ -51,7 +51,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter "$filter" --job "$job" --exporters json markdown \
+                --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
@@ -69,6 +69,47 @@ jobs:
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
+      - name: Summarize dispatch controls and individual launches
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          phases = {}
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("results", phase, "results").glob("*PubSubDeliveryBenchmarks-report-full-compressed.json"))
+              assert len(reports) == 1, phase
+              cases = json.loads(reports[0].read_text())["Benchmarks"]
+              assert len(cases) == 2, phase
+              phases[phase] = {(case["Method"], case["Parameters"]): case for case in cases}
+          assert phases["baseline-a"].keys() == phases["candidate"].keys() == phases["baseline-b"].keys()
+          lines = ["## Dispatch versus both controls", "",
+                   "Positive deltas mean slower. Individual launches retain within-run variation.", "",
+                   "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | Allocated B (A/candidate/B) |",
+                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+          for key in sorted(phases["candidate"]):
+              cases = [phases[phase][key] for phase in ("baseline-a", "candidate", "baseline-b")]
+              a, candidate, b = [case["Statistics"]["Mean"] for case in cases]
+              allocations = [case["Memory"]["BytesAllocatedPerOperation"] for case in cases]
+              assert allocations[1] <= min(allocations[0], allocations[2]), (key, allocations)
+              lines.append(f"| {key} | {a:.3f} | {candidate:.3f} | {b:.3f} | "
+                           f"{100*(candidate/a-1):+.2f}% | {100*(candidate/b-1):+.2f}% | {'/'.join(map(str, allocations))} |")
+          lines.extend(["", "## Individual process launches", "",
+                        "| Phase | Case | Launch | Mean ns | Min ns | Max ns |",
+                        "| --- | --- | ---: | ---: | ---: | ---: |"])
+          for phase, cases in phases.items():
+              for key, case in sorted(cases.items()):
+                  launches = {}
+                  for measurement in case["Measurements"]:
+                      if measurement["IterationStage"] == "Result" and measurement["IterationMode"] == "Workload":
+                          launches.setdefault(measurement["LaunchIndex"], []).append(measurement["Nanoseconds"] / measurement["Operations"])
+                  assert launches, (phase, key)
+                  for launch, values in sorted(launches.items()):
+                      lines.append(f"| {phase} | {key} | {launch} | {sum(values)/len(values):.3f} | {min(values):.3f} | {max(values):.3f} |")
+          summary = "\n".join(lines) + "\n"
+          Path("results/comparison.md").write_text(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
       - name: Publish comparison reports
         if: always()
         shell: bash

@@ -7,7 +7,7 @@ internal sealed partial class SubscriptionHub
 {
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     // All configured recovery state is guarded by _reconnectStateGate. _gate protects
-    // route membership separately; recovery holds _controlGate while restoring routes.
+    // route membership separately; ordinary recovery holds _controlGate while restoring routes.
     // When nested, acquire _reconnectStateGate before _gate, never the reverse.
     private RespireConnection? _configuredConnection;
     private TaskCompletionSource? _configuredRecoveryDrained;
@@ -149,7 +149,10 @@ internal sealed partial class SubscriptionHub
         {
             var snapshot = new List<(SubscriptionKind, RespireChannel)>();
             for (var i = 0; i < _routes.Length; i++)
+            {
+                if (IsClusterSharded((SubscriptionKind)i)) continue;
                 foreach (var name in _routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
+            }
             routes = [.. snapshot];
         }
         foreach (var (kind, name) in routes)
@@ -173,12 +176,13 @@ internal sealed partial class SubscriptionHub
             HashSet<RespireSubscription> subscriptions = [];
             lock (_gate)
             {
-                foreach (var routes in _routes)
+                for (var i = 0; i < _routes.Length; i++)
                 {
-                    foreach (var list in routes.Values) subscriptions.UnionWith(list);
-                    routes.Clear();
+                    if (IsClusterSharded((SubscriptionKind)i)) continue;
+                    foreach (var list in _routes[i].Values) subscriptions.UnionWith(list);
+                    _routes[i].Clear();
                 }
-                _interrupted.Clear();
+                foreach (var subscription in subscriptions) _interrupted.Remove(subscription);
             }
             // Completion only closes an internal buffer and signals asynchronous continuations.
             // No user callback runs here; keep the terminal reason serialized with disposal.
@@ -188,13 +192,13 @@ internal sealed partial class SubscriptionHub
     }
 
     private void QueueConfiguredState(RespireEndpoint endpoint, RespireConnectionState state,
-        Exception? error, int attempt, TimeSpan? delay = null, bool exhausted = false)
+        Exception? error, int attempt, TimeSpan? delay = null, bool exhausted = false, bool clusterSharded = false)
     {
         lock (_reconnectStateGate)
         {
             if (_disposed) return;
             if (QueueReconnectStateLocked(new RespireConnectionStateChange(endpoint, state, error)
-                { ReconnectAttempt = attempt, NextReconnectDelay = delay, ReconnectExhausted = exhausted }))
+                { ReconnectAttempt = attempt, NextReconnectDelay = delay, ReconnectExhausted = exhausted }, clusterSharded))
                 ThreadPool.UnsafeQueueUserWorkItem(static hub => hub.PublishReconnectStates(), this, preferLocal: false);
         }
     }

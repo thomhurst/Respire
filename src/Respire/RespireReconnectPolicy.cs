@@ -26,7 +26,8 @@ public sealed record RespireReconnectPolicy
     /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
     /// Cluster discovery counts fallbacks after a failed candidate or a rejected route. Successful
     /// required node connections do not consume fallback attempts. New rounds start fresh.
-    /// Pub/sub exhaustion ends live subscriptions and prevents new subscriptions on that client.
+    /// Pub/sub exhaustion ends live subscriptions and prevents new subscriptions in that group.
+    /// Cluster sharded subscriptions use a separate group from regular channel/pattern subscriptions.
     /// Leave null for long-lived clients that must keep trying after an outage.
     /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.
     /// With null, all available Sentinel candidates may incur backoff and their own timeouts. Supply caller
