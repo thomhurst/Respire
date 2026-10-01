@@ -1,4 +1,6 @@
-namespace Respire.Search;
+using Respire;
+
+namespace Redis.Search;
 
 /// <summary>Generated Redis Search command methods.</summary>
 [RespireCommands]

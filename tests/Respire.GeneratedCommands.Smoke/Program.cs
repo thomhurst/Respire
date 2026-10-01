@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using Respire;
 using Respire.Extensions.Json;
-using Respire.Search;
+using Redis.Search;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })

@@ -1,4 +1,6 @@
-namespace Respire.Search;
+using Respire;
+
+namespace Redis.Search;
 
 /// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
 /// <remarks>Search commands are raw module commands. Keys and prefixes must be supplied in index definitions; generated module commands use conservative routing and cache invalidation.</remarks>

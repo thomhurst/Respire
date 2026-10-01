@@ -1,7 +1,8 @@
 using System.Text;
+using Respire;
 using Respire.Protocol;
 
-namespace Respire.Search;
+namespace Redis.Search;
 
 /// <summary>Search index source type.</summary>
 public enum RespireSearchSource

@@ -11,7 +11,7 @@ dotnet add package Respire.Search
 This package provides the client API. Your Redis server must also provide the Redis Search module.
 
 ```csharp
-using Respire.Search;
+using Redis.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var search = new RespireSearchClient(client);
