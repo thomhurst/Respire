@@ -991,6 +991,13 @@ public class LockCommandTests
 
         public void CompleteRaceRelease() => _raceRelease.TrySetResult();
 
+        ValueTask<bool> IManagedLockCommands.ReleaseManagedAsync(
+            RespireKey key,
+            RespireLockToken token,
+            Action onOutcomeUncertain,
+            CancellationToken cancellationToken)
+            => ReleaseAsync(key, token, cancellationToken);
+
         async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
             RespireKey key,
             RespireLockToken token,

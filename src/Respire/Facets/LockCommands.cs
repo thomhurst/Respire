@@ -141,6 +141,12 @@ public static class LockCommandExtensions
 
 internal interface IManagedLockCommands
 {
+    ValueTask<bool> ReleaseManagedAsync(
+        RespireKey key,
+        RespireLockToken token,
+        Action onOutcomeUncertain,
+        CancellationToken cancellationToken);
+
     ValueTask<bool> ExtendManagedAsync(
         RespireKey key,
         RespireLockToken token,
@@ -272,6 +278,32 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     {
         ValidateToken(token);
         return client.ExecuteLockAsync(key, token, null, cancellationToken);
+    }
+
+    async ValueTask<bool> IManagedLockCommands.ReleaseManagedAsync(
+        RespireKey key,
+        RespireLockToken token,
+        Action onOutcomeUncertain,
+        CancellationToken cancellationToken)
+    {
+        ValidateToken(token);
+        await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+        RespireClient.TrackedLockExecution? execution = null;
+        try
+        {
+            execution = await client.StartLockExecutionAsync(
+                    key, token, milliseconds: null, requireIdentity: true, cancellationToken)
+                .ConfigureAwait(false);
+            return await execution.Response.ConfigureAwait(false);
+        }
+        catch (Exception error) when (
+            error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+        {
+            onOutcomeUncertain();
+            if (execution?.ConnectionIdentity.ServerClientId > 0)
+                await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public ValueTask<bool> ResetExpiryAsync(

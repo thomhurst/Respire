@@ -247,11 +247,17 @@ public sealed class RespireLock : IAsyncDisposable
     /// touching the server. Concurrent callers share one in-flight release, governed by the
     /// cancellation token of the caller that starts it.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels release. Cancellation before command submission preserves ownership and allows retry;
+    /// after submission, an uncertain outcome fails closed.
+    /// </param>
     /// <returns>
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
+        TaskCompletionSource<LockReleaseOutcome>? start = null;
+        Task<LockReleaseOutcome> releaseTask;
         lock (_releaseSync)
         {
             var state = Volatile.Read(ref _state);
@@ -267,20 +273,36 @@ public sealed class RespireLock : IAsyncDisposable
 
             if (state == StateReleasing)
             {
-                return new ValueTask<LockReleaseOutcome>(_releaseTask!);
+                releaseTask = _releaseTask!;
             }
-
-            Volatile.Write(ref _state, StateReleasing);
-            return new ValueTask<LockReleaseOutcome>(
-                _releaseTask = ReleaseCoreAsync(cancellationToken));
+            else
+            {
+                Volatile.Write(ref _state, StateReleasing);
+                start = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                releaseTask = _releaseTask = start.Task;
+            }
         }
+
+        if (start is not null) _ = CompleteReleaseAsync(start, cancellationToken);
+        return new ValueTask<LockReleaseOutcome>(releaseTask);
+    }
+
+    private async Task CompleteReleaseAsync(
+        TaskCompletionSource<LockReleaseOutcome> completion, CancellationToken cancellationToken)
+    {
+        try { completion.TrySetResult(await ReleaseCoreAsync(cancellationToken).ConfigureAwait(false)); }
+        catch (Exception error) { completion.TrySetException(error); }
     }
 
     private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
     {
+        var outcomeUncertain = 0;
         try
         {
-            var released = await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
+            var released = _locks is IManagedLockCommands managed
+                ? await managed.ReleaseManagedAsync(Key, Token,
+                    () => Interlocked.Exchange(ref outcomeUncertain, 1), cancellationToken).ConfigureAwait(false)
+                : await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
             SignalLeaseChanged();
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
@@ -289,6 +311,18 @@ public sealed class RespireLock : IAsyncDisposable
         {
             // A server error is a definitive reply: the compare-and-DEL did not complete, so
             // this handle may still own the key and can safely retry.
+            lock (_releaseSync)
+            {
+                Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing);
+                _releaseTask = null;
+            }
+
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested
+            && Volatile.Read(ref outcomeUncertain) == 0)
+        {
+            // Cancellation before command admission proves no delete ran.
             lock (_releaseSync)
             {
                 Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing);
