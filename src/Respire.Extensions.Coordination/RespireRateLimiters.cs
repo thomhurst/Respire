@@ -180,7 +180,7 @@ internal sealed class RedisRateLimiter : RateLimiter
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
-        if (permitCount < 0 || permitCount > _permitLimit) throw new ArgumentOutOfRangeException(nameof(permitCount));
+        if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
         if (_disposed) throw new ObjectDisposedException(nameof(RedisRateLimiter));
         throw new NotSupportedException("Redis-backed rate limiters require asynchronous acquisition. Use AcquireAsync.");
     }
@@ -234,7 +234,8 @@ internal sealed class RedisRateLimiter : RateLimiter
             ObjectDisposedException.ThrowIf(_disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
             if (permitCount > _queueLimit || (_queueOrder == QueueProcessingOrder.OldestFirst
-                && permitCount > _queueLimit - _queuedPermits)) return new RedisRateLimitLease(false, null);
+                && permitCount > _queueLimit - _queuedPermits))
+                return _queuedPermits == 0 ? denied : new RedisRateLimitLease(false, null);
             if (_queueOrder == QueueProcessingOrder.NewestFirst && permitCount > _queueLimit - _queuedPermits)
             {
                 var removablePermits = 0;

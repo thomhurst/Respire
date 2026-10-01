@@ -125,6 +125,10 @@ public class RedisRateLimiterTests
         using var acquired = await limiter.AcquireAsync(1);
         await Assert.That(acquired.IsAcquired).IsTrue();
 
+        using (var replicated = await client.Core.Sentinel!.Current!.Multiplexer.GetConnection().SendAsync(
+                   new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+            await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+
         using (var failover = await sentinel.ExecuteAsync(
             RespireCommands.Sentinel.SENTINEL_FAILOVER, RespireContainerFixture.SentinelServiceName))
             await Assert.That(failover.AsString()).IsEqualTo("OK");
