@@ -282,7 +282,9 @@ internal sealed partial class ClusterRouter
                     MaximumTopologyRefreshDeadline - clock.GetElapsedTime(refreshStarted),
                     candidates.Count - candidateIndex, configuredCandidateTimeout);
                 if (budget.Timeout <= TimeSpan.Zero) break;
-                var node = candidate.Node ?? GetOrCreateNode(candidate.Endpoint, observe: false);
+                var node = candidate.Node;
+                if (node is null || node.IsRetired)
+                    node = GetOrCreateNode(candidate.Endpoint, observe: false);
                 if (node.IsRetired) continue;
                 using var candidateDeadline = new CancellationTokenSource(budget.Timeout, clock);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
