@@ -343,6 +343,32 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task NormalizedReadOnlySubcommandPreservesCacheForBothExecutionPaths()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            ":42\r\n"u8.ToArray(),
+            ":42\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        using (var result = await client.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0))
+        {
+            await Assert.That(result.AsInteger()).IsEqualTo(42);
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsGreaterThanOrEqualTo(1);
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SampledMemoryUsage_BypassesClientCache()
     {
         await using var server = new FakeRespServer(
