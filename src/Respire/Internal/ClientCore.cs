@@ -563,6 +563,10 @@ internal sealed class ClientCore : IAsyncDisposable
                     QueueEndpointStateLocked(new RespireConnectionStateChange(
                         subscription.Endpoint, RespireConnectionState.Disconnected, null));
 
+            foreach (var endpoint in _clusterSubscriptionStates.Keys)
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    endpoint, RespireConnectionState.Disconnected, null));
+
             foreach (var endpoint in commandEndpoints)
             {
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
