@@ -29,6 +29,7 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("XREADGROUP")]
     [Arguments("MIGRATE")]
     [Arguments("JSON.MGET")]
+    [Arguments("JSON.MSET")]
     [Arguments("CMS.MERGE")]
     [Arguments("TDIGEST.MERGE")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
@@ -79,7 +80,7 @@ public class ImmediateRawKeyLayoutTests
         byte[] first = [255, .. "{tenant}:one"u8];
         byte[] second = [0, 128, .. "{tenant}:two"u8];
         string[] operations = ["KEYDB.MEXISTS", "MGET", "MSET", "BITOP", "EVAL", "ZINTERSTORE",
-            "BLPOP", "BLMPOP", "MSETEX", "XREAD", "XREADGROUP", "MIGRATE", "JSON.MGET"];
+            "BLPOP", "BLMPOP", "MSETEX", "XREAD", "XREADGROUP", "MIGRATE", "JSON.MGET", "JSON.MSET"];
         await using var owner = new FakeRespServer(2, FakeRespServer.OkReply);
         var slot = ClusterHash.GetSlot(first);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
@@ -203,6 +204,7 @@ public class ImmediateRawKeyLayoutTests
         "XREADGROUP" => ["GROUP", "STREAMS", "consumer", "NOACK", "STREAMS", first, second, ">", ">"],
         "MIGRATE" => ["destination", 6379, "", 0, 1000, "AUTH2", "user", "KEYS", "KEYS", first, second],
         "JSON.MGET" => [first, second, "$.{not-a-key}"],
+        "JSON.MSET" => [first, "$.{not-a-key}", "{value-one}", second, "$", "{value-two}"],
         "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
         _ => [first, second],
     };

@@ -1,5 +1,6 @@
 using Respire.Protocol;
 using Respire.Commands;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -69,9 +70,9 @@ public class ClientSideCacheCoordinatorTests
         var fence = cache.BeforeCommand("MSET", in command);
 
         await Assert.That(fence.IsRequired).IsTrue();
-        await Assert.That(fence.Key).IsNotNull();
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Key);
         await Assert.That(fence.Keys).IsNull();
-        await Assert.That(fence.Key!.Value).IsEqualTo(new RespireKey("only"));
+        await Assert.That(fence.Key).IsEqualTo(new RespireKey("only"));
         await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
     }
 
@@ -128,7 +129,7 @@ public class ClientSideCacheCoordinatorTests
 
         var fence = cache.BeforeCommand("CUSTOM.WRITE", in command);
 
-        await Assert.That(fence.FlushAll).IsTrue();
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All);
         await Assert.That(cache.Count).IsEqualTo(0);
         Insert(cache, "racing", "old");
         cache.CompleteMutation(in fence);
@@ -144,8 +145,120 @@ public class ClientSideCacheCoordinatorTests
 
         var fence = cache.BeforeCommand("DEL", in command);
 
-        await Assert.That(fence.FlushAll).IsTrue();
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All);
         await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DuplicateMultiKeyMutationKeysAreFencedOnce()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "a", "old");
+        Insert(cache, "b", "old");
+        Insert(cache, "unrelated", "retained");
+        var before = cache.GetStatistics().Invalidations;
+        var command = new CmdN(Verbs.Del, ["a", "b", "a", "b", "a"]);
+
+        var fence = cache.BeforeCommand("DEL", in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+        await Assert.That(fence.Keys!).IsEquivalentTo(new[] { new RespireKey("a"), new RespireKey("b") });
+        await Assert.That(cache.GetStatistics().Invalidations - before).IsEqualTo(2);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.GetStatistics().Invalidations - before).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task MultiKeyMutationCollapsingToOneDistinctKeyUsesSingleKeyFence()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var command = new CmdN(Verbs.Unlink, ["same", "same", "same"]);
+
+        var fence = cache.BeforeCommand("UNLINK", in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Key);
+        await Assert.That(fence.Key).IsEqualTo(new RespireKey("same"));
+    }
+
+    [Test]
+    public async Task LargeMultiKeyMutationDeduplicatesWithSet()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "key:0", "old");
+        Insert(cache, "unrelated", "retained");
+        // 2,000 arguments over 500 distinct keys exercises the hashed path above the linear-scan limit.
+        var arguments = Enumerable.Range(0, 2000).Select(index => (RespireValue)$"key:{index % 500}").ToArray();
+        var before = cache.GetStatistics().Invalidations;
+        var command = new CmdN(Verbs.Del, arguments);
+
+        var fence = cache.BeforeCommand("DEL", in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+        await Assert.That(fence.Keys!.Length).IsEqualTo(500);
+        await Assert.That(fence.Keys!.Distinct().Count()).IsEqualTo(500);
+        await Assert.That(cache.GetStatistics().Invalidations - before).IsEqualTo(500);
+        await Assert.That(cache.TryGet(new RespireKey("key:0"), out _)).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+    }
+
+    [Test]
+    [Arguments("MSET", new object[] { "first", "new", "second" })]
+    [Arguments("MSETNX", new object[] { "first" })]
+    [Arguments("MSETEX", new object[] { 3, "first", "new", "second", "new" })]
+    [Arguments("MSETEX", new object[] { 0, "first", "new" })]
+    [Arguments("MSETEX", new object[] { "two", "first", "new" })]
+    [Arguments("MSETEX", new object[] { })]
+    [Arguments("JSON.MSET", new object[] { "first", "$", "new", "second", "$" })]
+    [Arguments("UNLINK", new object[] { })]
+    public async Task MalformedMultiKeyLayoutsFallBackToFullFlush(string operation, object[] raw)
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "unrelated", "old");
+        var arguments = raw.Select(value => value switch
+        {
+            int number => (RespireValue)number,
+            string text => (RespireValue)text,
+            _ => throw new ArgumentOutOfRangeException(nameof(raw)),
+        }).ToArray();
+        var command = new CatalogCommand(RespireCommands.All.ToArray().Single(c => c.Name == operation), arguments);
+
+        var fence = cache.BeforeCommand(operation, in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MutationLayoutsAgreeWithRoutingLayouts()
+    {
+        string[] operations = ["MSET", "MSETNX", "MSETEX", "DEL", "UNLINK", "JSON.MSET"];
+        RespireValue[][] inputs =
+        [
+            [], ["a"], ["a", "b"], ["a", "b", "c"], ["a", "b", "c", "d"], ["a", "b", "c", "d", "e", "f"],
+            [0], [1], [1, "a"], [1, "a", "v"], [2, "a", "v"], [2, "a", "v", "b", "v"], [2, "a", "v", "b", "v", "PX", 10],
+            [3, "a", "v", "b", "v"], [-1, "a", "v"], [long.MaxValue, "a", "v"], ["x", "a", "v"],
+        ];
+        foreach (var operation in operations)
+        foreach (var input in inputs)
+        {
+            RawCommandKeyLayouts.KeyLayout? expected;
+            try
+            {
+                expected = RawCommandKeyLayouts.TryGetLayout(operation, input, out var routing) ? routing : null;
+            }
+            catch (ArgumentException)
+            {
+                expected = null;
+            }
+
+            var key = new ClientCacheCommandKey(operation, input);
+            RawCommandKeyLayouts.KeyLayout? actual =
+                RawCommandKeyLayouts.TryGetMutationLayout(operation, in key, out var mutation) ? mutation : null;
+            await Assert.That(actual).IsEqualTo(expected)
+                .Because($"{operation} [{string.Join(", ", input.Select(value => value.ToString()))}]");
+        }
     }
 
     [Test]
