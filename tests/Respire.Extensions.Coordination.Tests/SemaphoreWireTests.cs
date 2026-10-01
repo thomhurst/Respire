@@ -132,15 +132,43 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task NoScriptFallbackStartsAcquisitionExpiryAtFallbackSend()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            "-NOSCRIPT missing script\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(2, 2500);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await using var attempt = await new RespireSemaphore(client, "{retry}:noscript", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromSeconds(2));
+
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UnansweredFenceDoesNotDelayCanceledAcquisition()
     {
-        // Suppresses the acquire and the correction's CLIENT KILL barrier (but not the SKIPME
-        // permission probe), so the ordered cleanup can never complete.
-        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        static bool IsFence(string command)
+            => command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
+                && !command.Contains("SKIPME", StringComparison.OrdinalIgnoreCase);
+
+        var evalCount = 0;
+        var fenceCount = 0;
+        await using var server = new FakeRespServer(5, ":1\r\n"u8.ToArray())
         {
-            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                || (command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
-                    && !command.Contains("SKIPME", StringComparison.OrdinalIgnoreCase)),
+            SuppressReply = command =>
+            {
+                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    && Interlocked.Increment(ref evalCount) == 1) return true;
+                return IsFence(command) && Interlocked.Increment(ref fenceCount) == 1;
+            },
+            ReplyOverride = (_, command) => IsFence(command) ? ":1\r\n"u8.ToArray() : null,
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
@@ -157,13 +185,23 @@ public class SemaphoreWireTests
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(3)).IsTrue();
-        // The release must never overtake the unacknowledged barrier.
-        await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref evalCount) < 2 || Volatile.Read(ref fenceCount) < 2)
+            await Task.Delay(10, deadline.Token);
+        var commands = server.ReceivedCommands;
+        var fences = commands.Select((command, index) => (command, index))
+            .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToArray();
+        var release = commands.Select((command, index) => (command, index))
+            .Where(entry => entry.command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            .Select(entry => entry.index).Last();
+        await Assert.That(fences.Length).IsEqualTo(2);
+        await Assert.That(release).IsGreaterThan(fences[^1]);
     }
 
     [Test]
     [NotInParallel]
-    public async Task TransientFenceFailureIsRetriedBeforeCleanup()
+    public async Task FenceRejectionIsRetriedBeforeCleanup()
     {
         static bool IsFence(string command)
             => command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
@@ -184,7 +222,7 @@ public class SemaphoreWireTests
                 return true;
             },
             ReplyOverride = (_, command) => IsFence(command) && Interlocked.Increment(ref fenceCount) == 1
-                ? "-BUSY Redis is busy running a script\r\n"u8.ToArray()
+                ? "-NOPERM ACL changed before cleanup\r\n"u8.ToArray()
                 : null,
         };
         await using var client = RespireClient.Create(new RespireOptions
@@ -210,7 +248,7 @@ public class SemaphoreWireTests
         var fences = commands.Select((command, index) => (command, index))
             .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToList();
         var release = commands.FindLastIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
-        // The refused barrier is retried, and the release is sent only after it is acknowledged.
+        // A refusal does not prove the target connection is gone, so cleanup waits for an acknowledged fence.
         await Assert.That(fences.Count).IsEqualTo(2);
         await Assert.That(release).IsGreaterThan(fences[1]);
     }

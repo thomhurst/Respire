@@ -3472,7 +3472,8 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken,
+                    onFallbackSend: () => execution.StartedTimestamp = Stopwatch.GetTimestamp());
             }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
@@ -3701,7 +3702,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? onFallbackSend = null)
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
@@ -3712,7 +3714,8 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: script.Sha1);
         try
         {
-            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
+            var result = await ExecuteScriptOnConnectionCoreAsync(
+                    connection, script, tail, cancellationToken, onFallbackSend)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
@@ -3731,7 +3734,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? onFallbackSend = null)
     {
         try
         {
@@ -3742,6 +3746,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
+            onFallbackSend?.Invoke();
             var reply = await SendOnConnectionCoreAsync(
                     script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
@@ -3754,7 +3759,11 @@ public sealed partial class RespireClient : IRespireClient
     /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
     /// from the target client can execute afterward.
     /// </summary>
-    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
+    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
+        => FenceCorrectionConnectionAsync(identity, CancellationToken.None);
+
+    internal async ValueTask FenceCorrectionConnectionAsync(
+        TrackedConnectionIdentity identity, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
@@ -3771,15 +3780,15 @@ public sealed partial class RespireClient : IRespireClient
                 ?? throw new InvalidOperationException("Sentinel corrections require the original connection identity.")) : null;
         var pool = sentinelCorrection?.Pool ?? correction?.Pool ?? (core.Cluster is { } routerPool
             ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
-        // A cold control connection may need SELECT/AUTH while the server is paused.
-        // The fence cannot abandon those commands before it reaches CLIENT KILL.
-        var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+        // Cleanup callers bound each attempt. They retire a canceled control connection and
+        // retry; no caller may release the owner token before an acknowledged fence.
+        var control = await pool.RentAsync(cancellationToken, armHandshakeDeadline: false).ConfigureAwait(false);
         try
         {
-            // The kill is an ordering barrier; once owed it must not be abandonable, so no
-            // command deadline applies.
+            // No command deadline applies. Cleanup cancellation still retires this control
+            // connection before retrying the barrier on a replacement.
             var reply = await control.SendAsync(
-                    new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None,
+                    new ClientKillIdCommand(identity.ServerClientId), cancellationToken,
                     armCommandDeadline: false)
                 .ConfigureAwait(false);
             if (reply.IsError)
@@ -3790,6 +3799,14 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             reply.Dispose();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (control.Multiplexer is { } controlMultiplexer)
+                await controlMultiplexer.RetireConnectionAsync(control).ConfigureAwait(false);
+            else
+                await control.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
         finally
         {
