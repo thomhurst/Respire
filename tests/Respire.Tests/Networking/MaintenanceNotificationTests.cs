@@ -1537,6 +1537,25 @@ public class MaintenanceNotificationTests
         }
     }
 
+    [Test]
+    [Arguments(">3\r\n+SMIGRATED\r\n:1\r\n*1\r\n*3\r\n+old:6379\r\n+new:6380\r\n+0-10\r\n", true)]
+    // Identified by kind alone, before the payload is validated.
+    [Arguments(">3\r\n+SMIGRATED\r\n:1\r\n*1\r\n*2\r\n+old:6379\r\n+new:6379\r\n", true)]
+    [Arguments(">3\r\n$9\r\nSMIGRATED\r\n:1\r\n*0\r\n", true)]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+0-10\r\n", false)]
+    [Arguments(">2\r\n+MIGRATED\r\n:1\r\n", false)]
+    [Arguments(">0\r\n", false)]
+    [Arguments("*3\r\n+SMIGRATED\r\n:1\r\n*0\r\n", false)]
+    public async Task IdentifiesSlotMigrationPushBeforeParsing(string wire, bool expected)
+    {
+        var position = 0;
+        var bytes = Encoding.UTF8.GetBytes(wire);
+        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done) throw new Exception("Invalid test fixture");
+        bool actual;
+        using (value) actual = MaintenanceNotification.IsSlotMigrationPush(in value);
+        await Assert.That(actual).IsEqualTo(expected);
+    }
+
     private static MaintenanceNotification? Parse(string wire)
     {
         var position = 0;

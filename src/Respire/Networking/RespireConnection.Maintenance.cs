@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -87,14 +88,27 @@ internal sealed partial class RespireConnection
     private bool TryHandleMaintenancePush(in RespValue value)
     {
         var status = Volatile.Read(ref _maintenanceStatus);
-        if (status == MaintenanceInactive || MaintenanceNotification.Parse(in value) is not { } notification) return false;
-        // Order a slot migration against Cluster owner mutations as soon as it is parsed. Reading
-        // the clock later (after state, telemetry or logger callbacks) would let a route change
-        // made meanwhile look older than this notification and be overwritten by it.
-        var slotMutationToken = notification.IsSlotMigration ? ClusterSlotMutationClock.Next() : 0;
+        if (status == MaintenanceInactive) return false;
+        // Order a slot migration against Cluster owner mutations as soon as the frame is known
+        // to be SMIGRATED, before Parse scans its (up to 16384) triplets. Reading the clock later
+        // would let a route change made meanwhile look older than this notification and be
+        // overwritten by it. The handlers are captured first, while the sender is still known
+        // to be active: a sender retired after this point still delivers the push it received.
+        MaintenanceNotificationHandler? migrationHandlers = null;
+        long slotMutationToken = 0;
+        if (MaintenanceNotification.IsSlotMigrationPush(in value))
+        {
+            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers();
+            slotMutationToken = ClusterSlotMutationClock.Next();
+        }
+        if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not
         // become a new maintenance window or a current diagnostic event.
         if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
+        // Dispatch before the window and diagnostics work below, so the migration reaches the
+        // topology queue as early as possible.
+        if (notification.IsSlotMigration)
+            Multiplexer?.PublishMaintenanceNotification(migrationHandlers, this, notification, slotMutationToken);
         lock (_maintenancePublicationGate)
         {
             var state = Volatile.Read(ref _maintenanceState);
@@ -121,7 +135,6 @@ internal sealed partial class RespireConnection
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))
                 .Publish(notification);
         }
-        Multiplexer?.PublishMaintenanceNotification(this, notification, slotMutationToken);
         return true;
     }
 

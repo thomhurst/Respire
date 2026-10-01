@@ -127,9 +127,15 @@ on the same connection and publishes changed ownership through the normal topolo
 notifications from different connections arrive out of order (for example `B→C` before `A→B`),
 the later move waits in a small bounded list and applies once the earlier one has, whichever
 notification arrived first. A waiting move is dropped after 30 seconds, or when a `MOVED` redirect
-or discovery reassigns its slots after it arrived. If a
+or discovery reassigns its slots after it arrived. An older move is also rejected when its source
+moved the slot away and got it back after that move arrived (`A→B` then `B→A` overtaking an
+older `A→C`). A sequence ID is recorded when the worker first sees it, before its slots are
+checked, so a server resend of the same ID on the same connection is ignored even when its first
+copy was rejected, fenced or later dropped from the waiting list. If a
 notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
-and topology discovery remain the fallback. Drops and other skipped notifications are counted
+and topology discovery remain the fallback. Until one of them runs, commands for the affected
+slots go to the previous owner and are redirected. Triggering a topology refresh when a
+notification is lost is tracked by [#397](https://github.com/thomhurst/Respire/issues/397). Drops and other skipped notifications are counted
 in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).
 Client disposal waits for a topology callback that is already running, such as a
 `ConnectionStateChanged` handler raised by a migration, so keep those handlers short.

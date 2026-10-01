@@ -44,12 +44,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Owner-change fence for queued SMIGRATED work, separate from _slotVersions: it covers
     // discovery publications (which keep their slot version) but not same-owner redirects.
     // Owner-change fence for queued SMIGRATED work, separate from _slotVersions. Values come
-    // from ClusterSlotMutationClock. MOVED new-owner changes, clears, discovery owner changes,
-    // and migrations advance it; MOVED to the current owner does not. Migration callbacks keep
-    // their receive-time token, so FIFO chains apply while later owner changes fence stale work.
-    // Invariant: a slot's mutation token never decreases.
+    // from ClusterSlotMutationClock. Which paths write which fence:
+    // - MOVED with a new owner: _slotVersions (++_topologyVersion) and a fresh mutation token.
+    // - MOVED to the current owner: _slotVersions only. It is not an owner change, so queued
+    //   SMIGRATED work for that slot must still apply.
+    // - Slot clear: _slotVersions and a fresh mutation token.
+    // - Discovery owner change: a fresh mutation token; the slot version is kept.
+    // - SMIGRATED move: _slotVersions (one ++_topologyVersion per migration) and the
+    //   notification's own receive-time token, so FIFO chains (A->B then B->C) both apply while
+    //   a callback overtaken by a later owner change is rejected.
+    // ClusterSlotFences documents when a dependent migration may cross its fence.
     private readonly long[] _slotMutationVersions = new long[ClusterHash.SlotCount];
-    private int _disposed;
+    private readonly ClusterSlotFences _slotFences = new();    private int _disposed;
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
@@ -2108,3 +2114,4 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         await retirements.ConfigureAwait(false);
     }
 }
+

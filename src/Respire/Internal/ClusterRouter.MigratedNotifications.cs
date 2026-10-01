@@ -68,9 +68,6 @@ internal sealed partial class ClusterRouter
     private int _deferredSmigratedSlots;
     // Test seam: the millisecond clock that ages deferred entries.
     internal Func<long> SmigratedClock { get; set; } = static () => Environment.TickCount64;
-    // Zero means the latest owner mutation was not SMIGRATED; otherwise this stores the
-    // receive-time fence immediately before the dependent SMIGRATED chain began, plus one.
-    private readonly long[] _smigratedSlotLineageStarts = new long[ClusterHash.SlotCount];
     // Started on the first queued notification, so routers that never see SMIGRATED own no task.
     // DisposeAsync swaps in a completed task, after which no worker can start.
     private Task? _smigratedWorker;
@@ -99,6 +96,8 @@ internal sealed partial class ClusterRouter
         }, OnSmigratedNotificationDropped);
 
     // Runs on the receive loop that overflowed the queue: count it and warn at a bounded rate.
+    // A throwing metric listener or logger must not escape: the receive loop would treat it as
+    // a connection fault and abort a healthy connection.
     private void OnSmigratedNotificationDropped(QueuedSmigratedNotification dropped)
     {
         Interlocked.Increment(ref _smigratedNotificationsDropped);
@@ -108,18 +107,36 @@ internal sealed partial class ClusterRouter
         var last = Volatile.Read(ref _lastSmigratedDropWarning);
         if ((last != long.MinValue && now - last < SmigratedDropWarningIntervalMilliseconds)
             || Interlocked.CompareExchange(ref _lastSmigratedDropWarning, now, last) != last) return;
-        _logger.LogWarning(
-            "Cluster SMIGRATED queue is full; dropped the oldest notification (from {Host}:{Port}). {Dropped} dropped so far. MOVED handling and topology discovery will correct the affected slots.",
-            dropped.Sender.Host, dropped.Sender.Port, SmigratedNotificationsDropped);
+        try
+        {
+            _logger.LogWarning(
+                "Cluster SMIGRATED queue is full; dropped the oldest notification (from {Host}:{Port}). {Dropped} dropped so far. MOVED handling and topology discovery will correct the affected slots.",
+                dropped.Sender.Host, dropped.Sender.Port, SmigratedNotificationsDropped);
+        }
+        catch
+        {
+            // A failing logger is an isolated diagnostic listener.
+        }
     }
 
-    private static void RecordSmigratedSkipped(string reason, RespireConnectionMultiplexer sender, long count = 1)
+    // Called on the receive loop (queue drops) and by the worker under _nodesGate, where a
+    // throw would abandon a half-applied notification. Listener failures are therefore
+    // contained here, as the maintenance diagnostics path contains them.
+    private void RecordSmigratedSkipped(string reason, RespireConnectionMultiplexer sender, long count = 1)
     {
-        if (!RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled) return;
-        RespireTelemetry.ClusterSlotMigrationsSkipped.Add(count,
-            new KeyValuePair<string, object?>("reason", reason),
-            new KeyValuePair<string, object?>("server.address", sender.Host),
-            new KeyValuePair<string, object?>("server.port", sender.Port));
+        try
+        {
+            if (!RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled) return;
+            RespireTelemetry.ClusterSlotMigrationsSkipped.Add(count,
+                new KeyValuePair<string, object?>("reason", reason),
+                new KeyValuePair<string, object?>("server.address", sender.Host),
+                new KeyValuePair<string, object?>("server.port", sender.Port));
+        }
+        catch (Exception error)
+        {
+            try { _logger?.LogWarning(error, "Cluster slot migration metric listener threw."); }
+            catch { /* A failing logger is also an isolated diagnostic listener. */ }
+        }
     }
 
     private void EnsureSmigratedWorker()
@@ -135,15 +152,16 @@ internal sealed partial class ClusterRouter
         => Interlocked.CompareExchange(ref _smigratedWorker, Task.CompletedTask, null) ?? Task.CompletedTask;
 
     // Receive-loop callback: never takes _nodesGate. The worker re-validates under the gate.
-    // The fence token was read by the receive loop when it parsed the push, before any other
-    // maintenance processing, so an owner change made since then is newer than this item.
+    // The fence token was read by the receive loop as soon as it identified the SMIGRATED push,
+    // before parsing it, so an owner change made since then is newer than this item.
     private void QueueSmigratedNotification(RespireConnectionMultiplexer sender, object sequenceScope,
         MaintenanceNotification notification, long slotMutationToken)
     {
         if (!notification.IsSlotMigration || Volatile.Read(ref _disposed) != 0
             || notification.Migrations is not { Length: > 0 }) return;
         EnsureSmigratedWorker();
-        // This callback is attached only while the sender is active. Preserve that enqueue-time
+        // The receive loop captured this callback while the sender was active, so a push that
+        // arrived before the sender retired still lands here. Preserve that receive-time
         // validity: an earlier FIFO item can retire the sender before a later queued item runs.
         _smigratedNotifications.Writer.TryWrite(new(sender, sequenceScope, notification, slotMutationToken));
     }
@@ -153,11 +171,7 @@ internal sealed partial class ClusterRouter
         RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
         => new(sender, sequenceScope, notification, ClusterSlotMutationClock.Next());
 
-    private void MarkSlotMutatedLocked(int slot)
-    {
-        _slotMutationVersions[slot] = ClusterSlotMutationClock.Next();
-        _smigratedSlotLineageStarts[slot] = 0;
-    }
+    private void MarkSlotMutatedLocked(int slot) => _slotFences.MarkOwnerChanged(slot);
 
     // Ends when DisposeAsync completes the channel. It deliberately takes no cancellation
     // token: a registration on _stopDiscovery would make disposal's CancelAsync asynchronous.
@@ -295,16 +309,7 @@ internal sealed partial class ClusterRouter
         foreach (var slot in slots)
         {
             var owner = Volatile.Read(ref _slots[slot]);
-            // A dependent migration can be received before the migration that establishes its
-            // source (B->C before A->B). Permit a continuous SMIGRATED chain to cross its receive
-            // fence only while the slot ends at this source; MOVED, discovery and slot clears
-            // reset the chain and still win.
-            var mutationVersion = _slotMutationVersions[slot];
-            var isDependentTransfer = mutationVersion > token;
-            if (isDependentTransfer
-                && (!ReferenceEquals(owner, source)
-                    || _smigratedSlotLineageStarts[slot] == 0
-                    || _smigratedSlotLineageStarts[slot] - 1 > token)) continue;
+            if (_slotFences.IsFenced(slot, owner, source, sourceEndpoint, token)) continue;
             if (owner is not null && ReferenceEquals(owner, source)) (movable ??= []).Add(slot);
             else if (owner is null || !ReferenceEquals(owner, knownTarget)) (pending ??= []).Add(slot);
         }
@@ -322,18 +327,8 @@ internal sealed partial class ClusterRouter
         // One discovery fence per migration: older in-flight CLUSTER SLOTS replies cannot
         // overwrite these slots.
         var migrationVersion = ++_topologyVersion;
-        foreach (var slot in movable)
-        {
-            PublishSlotLocked(slot, target, migrationVersion);
-            // Keep the slot mutation version monotonic. Preserve the chain's original fence when
-            // this transfer depends on an earlier SMIGRATED migration; otherwise start a new chain.
-            var priorMutationVersion = _slotMutationVersions[slot];
-            var isDependentTransfer = priorMutationVersion > token;
-            _slotMutationVersions[slot] = Math.Max(priorMutationVersion, token);
-            _smigratedSlotLineageStarts[slot] = isDependentTransfer
-                ? _smigratedSlotLineageStarts[slot]
-                : priorMutationVersion + 1;
-        }
+        foreach (var slot in movable) PublishSlotLocked(slot, target, migrationVersion);
+        _slotFences.RecordMigration(movable, source!, sourceEndpoint, token);
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count)) (retiredNodes ??= []).Add(source!);
         return new AppliedSmigratedMove(target, [.. movable]);

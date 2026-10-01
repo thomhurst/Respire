@@ -20,6 +20,15 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
         _ => Kind,
     };
 
+    // A cheap check of the kind alone, so the receive loop can read the slot fence before
+    // Parse scans and copies a large triplet list.
+    internal static bool IsSlotMigrationPush(in RespValue value)
+    {
+        if (value.Type != RespDataType.Push) return false;
+        var items = value.AsArray();
+        return items.Length > 0 && IsString(items[0]) && items[0].AsSpan().SequenceEqual("SMIGRATED"u8);
+    }
+
     internal static MaintenanceNotification? Parse(in RespValue value)
     {
         if (value.Type != RespDataType.Push) return null;

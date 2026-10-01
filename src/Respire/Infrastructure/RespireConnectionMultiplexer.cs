@@ -84,17 +84,27 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
+    // Raised for SMIGRATED pushes only; other maintenance kinds have no topology consumer.
     // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
     internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived;
 
-    // slotMutationToken comes from ClusterSlotMutationClock, read by the receive loop as soon as
-    // the push was parsed, before any other maintenance processing could delay it.
+    // Receive loop: the handlers for a push that arrived now, or null once this multiplexer is
+    // retired or disposed. The loop captures them before parsing, so a push that arrived while
+    // the sender was active is still delivered if a migration processed meanwhile on another
+    // connection retires the sender (and detaches the handlers) before parsing finishes.
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
+        => IsRetired || Volatile.Read(ref _disposed) != 0 ? null : MaintenanceNotificationReceived;
+
+    // handlers comes from CaptureMaintenanceHandlers. slotMutationToken comes from
+    // ClusterSlotMutationClock, read right after the capture.
+    internal void PublishMaintenanceNotification(MaintenanceNotificationHandler? handlers,
+        object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
+        => handlers?.Invoke(this, sequenceScope, notification, slotMutationToken);
+
+    // Test convenience: delivers the notification as if it was received with this token now.
     internal void PublishMaintenanceNotification(
         object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
-    {
-        if (IsRetired || Volatile.Read(ref _disposed) != 0) return;
-        MaintenanceNotificationReceived?.Invoke(this, sequenceScope, notification, slotMutationToken);
-    }
+        => PublishMaintenanceNotification(CaptureMaintenanceHandlers(), sequenceScope, notification, slotMutationToken);
 
     // Test convenience: stamps the notification as received now.
     internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
