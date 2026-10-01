@@ -21,7 +21,9 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();
     private readonly SemaphoreSlim _sentinelRefreshGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private RespireEndpoint[] _replicas = Order(core.Options.ReplicaEndpoints);
+    private RespireEndpoint[] _replicas = string.IsNullOrWhiteSpace(core.Options.SentinelPrimaryName)
+        ? Order(core.Options.ReplicaEndpoints)
+        : [];
     private int _nextReplica;
     private int _disposed;
     private int _backgroundRefresh;
@@ -448,7 +450,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             get
             {
                 var multiplexer = Volatile.Read(ref _multiplexer);
-                return !_closed && multiplexer?.HasConnection(connection =>
+                return !_closed && !IsCoolingDown && multiplexer?.HasConnection(connection =>
                     _health.Check(connection, router.RoleRevalidationInterval) != ReplicaValidation.Required) == true;
             }
         }

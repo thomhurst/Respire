@@ -138,6 +138,36 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task FailedRoleRevalidationRemovesCoolingReplicaFromConnectedState()
+    {
+        var failRevalidation = 0;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole, Bulk("replica"))
+        {
+            SuppressReply = command => command == "ROLE" && Volatile.Read(ref failRevalidation) != 0,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.FromSeconds(1);
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await Assert.That(await view.GetStringAsync("first")).IsEqualTo("replica");
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        Volatile.Write(ref failRevalidation, 1);
+        await Assert.That(async () => await view.GetStringAsync("second")).Throws<RespireConnectionException>();
+
+        // The last successful ROLE is stale but still recent. Cooldown makes this entry unusable.
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
     public async Task StreamedAndReadOnlyScriptCommandsUseReplicaPolicy()
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
@@ -875,7 +905,7 @@ public class ReadEndpointRoutingTests
     public async Task SentinelOutageKeepsKnownReplicasAndRemovalRetiresReplica()
     {
         int[] replicaPorts = [];
-        var outage = 0;
+        var outage = 1;
         static byte[]? ReplicaReply(string command)
             => command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk("replica")
                 : command.StartsWith("SCAN 0 ", StringComparison.Ordinal) ? KeysPage("7", "a")
@@ -905,8 +935,15 @@ public class ReadEndpointRoutingTests
             CommandTimeout = TimeSpan.FromSeconds(10),
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            ReplicaEndpoints = [new("127.0.0.1", first.Port)],
         });
         var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        // Configured standalone endpoints are ignored with Sentinel. An outage cannot use them.
+        await Assert.That(async () => await view.GetStringAsync("before-discovery"))
+            .Throws<RespireConnectionException>();
+        Volatile.Write(ref outage, 0);
+        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
 
         var enumerator = view.Keys.ScanAsync().GetAsyncEnumerator();
         try
@@ -1033,7 +1070,7 @@ public class ReadEndpointRoutingTests
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
-        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromMilliseconds(300);
+        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromSeconds(30);
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
         await using var stream = await view.Strings.GetStreamAsync("big");

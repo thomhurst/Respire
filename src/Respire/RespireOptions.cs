@@ -345,9 +345,6 @@ public sealed record RespireOptions
         if (ReadFrom != RespireReadFrom.Primary && string.IsNullOrWhiteSpace(SentinelPrimaryName)
             && ReplicaEndpoints.Count == 0)
             throw new RespireConfigurationException("RespireOptions.ReadFrom requires Sentinel discovery or at least one ReplicaEndpoints entry.");
-        if (!string.IsNullOrWhiteSpace(SentinelPrimaryName) && ReplicaEndpoints.Count != 0)
-            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Sentinel discovers replicas automatically.");
-
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
