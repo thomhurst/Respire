@@ -20,6 +20,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Extensions.Coordination\Respire.Extensions.Coordination.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Lz4\Respire.Compression.Lz4.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Zstd\Respire.Compression.Zstd.csproj" />
         <ProjectReference Include="..\..\src\Respire.Testing\Respire.Testing.csproj" />

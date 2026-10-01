@@ -183,6 +183,61 @@ release can ask Redis to settle ownership. A release queued behind an in-flight 
 pending and retries after that operation exits, even if its bounded wait expires. Create a new
 handle only after Redis reports that this owner no longer holds the lease.
 
+## Read-write leases
+
+The same package provides immediate shared-read and exclusive-write leases:
+
+```csharp
+using Respire.Extensions.Coordination;
+
+var coordination = new RespireCoordination(redis);
+await using var read = await coordination.TryAcquireReadLockAsync(
+    "{account:42}:rw", TimeSpan.FromSeconds(30));
+if (!read.Acquired) return;
+// Multiple read leases can coexist. A write attempt succeeds only after all readers release or expire.
+```
+
+Use `TryAcquireWriteLockAsync` for an exclusive lease. Both methods return immediately on
+contention; they do not queue, poll or promise fairness. Callers choose retry behavior.
+Each owner has a bounded lease. Renew it with `ResetExpiryAsync`, check it with
+`VerifyStillHeldAsync`, and release it with `ReleaseAsync` or `DisposeAsync`. A failed or
+uncertain renewal marks the local handle lost. A cancelled or failed verification leaves the
+handle unchanged, so release still removes the Redis entry. Stop protected work when ownership
+is uncertain. `DisposeAsync` releases on a best-effort basis and ignores failures; an entry it
+could not remove keeps blocking incompatible owners until its lease expires. Prefer short leases,
+and call `ReleaseAsync` when the caller must observe whether release succeeded.
+
+One sorted-set key stores owner tokens and server-time expiry deadlines. Redis prunes expired
+owners atomically before each acquisition and expires the key at its latest owner deadline.
+Use a dedicated key for this primitive. Client prefixes and binary keys work as for other
+Respire commands. Redis Cluster needs no multi-key slot coordination. Asynchronous Redis
+failover can restore older lock state, so this primitive does not provide consensus safety.
+If the caller cancels after Redis accepted an acquisition, or the reply arrives after the local
+estimate elapsed, the client sends an owner-checked release for the unreturned lease. If the
+reply itself is lost, the owner entry expires after the requested duration; the client does not
+replay or guess whether it acquired.
+
+Readers keep being admitted while any reader is live, so a steady stream of overlapping readers
+can starve writers. Bound writer retries with backoff:
+
+```csharp
+using Respire.Extensions.Coordination;
+
+var coordination = new RespireCoordination(redis);
+for (var delay = TimeSpan.FromMilliseconds(50); ; delay *= 2)
+{
+    await using var write = await coordination.TryAcquireWriteLockAsync(
+        "{account:42}:rw", TimeSpan.FromSeconds(30), cancellationToken);
+    if (write.Acquired)
+    {
+        // Exclusive work here.
+        break;
+    }
+    if (delay > TimeSpan.FromSeconds(2)) throw new TimeoutException("Write lease unavailable.");
+    await Task.Delay(delay, cancellationToken);
+}
+```
+
 ## Multi-node Redlock
 
 `RespireRedlockGroup` provides a quorum lease across an odd number of at least three independent

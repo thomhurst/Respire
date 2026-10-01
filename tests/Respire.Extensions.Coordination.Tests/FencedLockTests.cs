@@ -13,6 +13,58 @@ public class FencedLockTests(RedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ReadWriteLeasesEnforceSharedAndExclusiveOwnership(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var coordination = new RespireCoordination(client);
+        var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:rw";
+        await using var firstReader = await coordination.TryAcquireReadLockAsync(key, Lease);
+        await using var secondReader = await coordination.TryAcquireReadLockAsync(key, Lease);
+        await Assert.That(firstReader.Acquired && secondReader.Acquired).IsTrue();
+        await using (var rejectedWriter = await coordination.TryAcquireWriteLockAsync(key, Lease))
+            await Assert.That(rejectedWriter.Acquired).IsFalse();
+        await using var thirdReader = await coordination.TryAcquireReadLockAsync(key, Lease);
+        await Assert.That(thirdReader.Acquired).IsTrue();
+        await Assert.That(await secondReader.Lock.VerifyStillHeldAsync()).IsTrue();
+        await Assert.That(await firstReader.Lock.ReleaseAsync()).IsTrue();
+        await using (var stillRejectedWriter = await coordination.TryAcquireWriteLockAsync(key, Lease))
+            await Assert.That(stillRejectedWriter.Acquired).IsFalse();
+        await secondReader.Lock.DisposeAsync();
+        await thirdReader.Lock.DisposeAsync();
+
+        await using var writer = await coordination.TryAcquireWriteLockAsync(key, Lease);
+        await Assert.That(writer.Acquired).IsTrue();
+        await Assert.That(writer.Lock.IsWriter).IsTrue();
+        await using (var rejectedReader = await coordination.TryAcquireReadLockAsync(key, Lease))
+            await Assert.That(rejectedReader.Acquired).IsFalse();
+        await Assert.That(await writer.Lock.ResetExpiryAsync(Lease)).IsTrue();
+        await Assert.That(await writer.Lock.VerifyStillHeldAsync()).IsTrue();
+        await Assert.That(await writer.Lock.ReleaseAsync()).IsTrue();
+        await Assert.That(await writer.Lock.ReleaseAsync()).IsFalse();
+        await using var nextReader = await coordination.TryAcquireReadLockAsync(key, Lease);
+        await Assert.That(nextReader.Acquired).IsTrue();
+    }
+
+    [Test]
+    public async Task ExpiredOwnerCannotReleaseReplacementAndBinaryPrefixedKeyWorks()
+    {
+        await using var client = await ConnectAsync(3);
+        var view = client.WithKeyPrefix($"rw:{Guid.NewGuid():N}:");
+        byte[] key = [0xff, 0, 1];
+        var pending = new RespireCoordination(view).TryAcquireReadLockAsync(key, TimeSpan.FromMilliseconds(150));
+        key[2] = 2;
+        await using var expired = await pending;
+        await Assert.That(expired.Acquired).IsTrue();
+        await Task.Delay(250);
+        await using var replacement = await new RespireCoordination(view).TryAcquireWriteLockAsync(new byte[] { 0xff, 0, 1 }, Lease);
+        await Assert.That(replacement.Acquired).IsTrue();
+        await Assert.That(await expired.Lock.ReleaseAsync()).IsFalse();
+        await Assert.That(await replacement.Lock.VerifyStillHeldAsync()).IsTrue();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ContentionReleaseAndRenewalPreserveMonotonicTokens(int protocol)
     {
         await using var client = await ConnectAsync(protocol);

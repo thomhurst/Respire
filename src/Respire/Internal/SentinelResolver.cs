@@ -78,6 +78,14 @@ internal static class SentinelResolver
                 {
                     throw new OperationCanceledException(error.Message, error, cancellationToken);
                 }
+                catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
+                    && connectTimeoutSource.IsCancellationRequested)
+                {
+                    // The connection deadline fired while the caller token stayed live.
+                    throw new RespireTimeoutException(
+                        "CONNECT", options.ConnectTimeout, error,
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+                }
             }
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, discoveryTimeoutSource.Token))

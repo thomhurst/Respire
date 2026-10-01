@@ -9,6 +9,204 @@ namespace Respire.Extensions.Coordination.Tests;
 public class FencedLockWireTests
 {
     [Test]
+    [NotInParallel]
+    public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is "EVALSHA"
+                    && activity.GetTagItem("server.port") is int port && port == server.Port)
+                    cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await Assert.That(async () => await new RespireCoordination(client)
+            .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30), cancellation.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(10, cleanupTimeout.Token);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task CancelledReadWriteVerifyAndReleaseKeepLeaseReleasable()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.That(async () => await attempt.Lock.VerifyStillHeldAsync(cancelled.Token)).Throws<OperationCanceledException>();
+        await Assert.That(async () => await attempt.Lock.ReleaseAsync(cancelled.Token)).Throws<OperationCanceledException>();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task CancelledReleaseWaitKeepsOwnershipClosed()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        using var cancellation = new CancellationTokenSource();
+        var pending = attempt.Lock.ReleaseAsync(cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+        cancellation.Cancel();
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        _ = await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReleaseClosesOwnershipWhileVerificationIsPending()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(3,
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 2,
+            CommandTimeout = null,
+        });
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        var verification = attempt.Lock.VerifyStillHeldAsync().AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+        var release = attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(verification.IsCompleted).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+        await client.DisposeAsync();
+        await Assert.That(async () => await verification.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task ShorteningReadWriteRenewalPublishesShorterBoundBeforeReply()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromHours(1))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(1)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+
+        await Assert.That(renewal.IsCompleted).IsFalse();
+        await Assert.That(attempt.Lock.RemainingEstimate <= TimeSpan.FromSeconds(1)).IsTrue();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        await renewal.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Lock.RemainingEstimate <= TimeSpan.FromSeconds(1)).IsTrue();
+    }
+
+    [Test]
+    public async Task RejectedReadWriteRenewalSendsOneOwnerCheckedRelease()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        // Renewal cleanup completed the single-flight release, so explicit release sends nothing more.
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task LostRenewalRetriesFailedReleaseOnce()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), "-ERR transient\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        // The failed release reset the single-flight task, so cleanup sent one more release that succeeded.
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task ReadWriteRolesDoNotPrefixEachOther()
+    {
+        // Acquisition identifies a writer member by its role prefix.
+        await Assert.That(RespireCoordination.WriterRole.StartsWith(RespireCoordination.ReaderRole, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(RespireCoordination.ReaderRole.StartsWith(RespireCoordination.WriterRole, StringComparison.Ordinal)).IsFalse();
+    }
+
+    [Test]
+    public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireWriteLockAsync("{job}:rw", TimeSpan.MaxValue)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(attempt.Lock.RemainingEstimate > TimeSpan.FromDays(365 * 1000)).IsTrue();
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.MaxValue)).IsTrue();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AcceptedAcquisitionIsNotReplayedAfterCancellationOrDisconnect(bool disconnect)
