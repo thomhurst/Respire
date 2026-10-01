@@ -207,11 +207,12 @@ internal sealed partial class ClusterRouter
     {
         if (item.Notification.Migrations is not { Length: > 0 } migrations) return;
         var parsed = ParseMigrations(item, migrations);
-        if (parsed.Count == 0) return;
 
         List<RespireConnectionMultiplexer>? retiredNodes = null;
         List<RetiredGeneration>? retirements = null;
+        var skippedMetrics = new List<(string Reason, long Count)>();
         var topologyChanged = false;
+        var duplicate = false;
         lock (_nodesGate)
         {
             if (Volatile.Read(ref _disposed) != 0) return;
@@ -221,33 +222,41 @@ internal sealed partial class ClusterRouter
             // an earlier migration are kept in the deferral list, not by forgetting the ID.
             if (!_smigratedSequences.GetOrCreateValue(item.SequenceScope).TryAdd(item.Notification.SequenceId))
             {
-                RecordSmigratedSkipped("duplicate", item.Sender);
-                _logger?.LogDebug("Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.",
-                    item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
-                return;
+                duplicate = true;
             }
-
-            // A notification may list several sources, and the server does not have to send it
-            // from the source itself, so the sender is not checked against each source. Each
-            // slot moves only if its advertised source owns it now.
-            ExpireDeferredMigrationsLocked(item.Sender);
-            Queue<AppliedSmigratedMove>? applied = null;
-            foreach (var (migration, slots) in parsed)
+            else
             {
-                if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
-                        ref retiredNodes, out var waiting) is { } move)
+                // A notification may list several sources, and the server does not have to send it
+                // from the source itself, so the sender is not checked against each source. Each
+                // slot moves only if its advertised source owns it now.
+                ExpireDeferredMigrationsLocked(skippedMetrics);
+                Queue<AppliedSmigratedMove>? applied = null;
+                foreach (var (migration, slots) in parsed)
                 {
-                    topologyChanged = true;
-                    (applied ??= new()).Enqueue(move);
+                    if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
+                            ref retiredNodes, out var waiting) is { } move)
+                    {
+                        topologyChanged = true;
+                        (applied ??= new()).Enqueue(move);
+                    }
+                    if (waiting is not null)
+                        DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
+                            SmigratedClock()), skippedMetrics);
                 }
-                if (waiting is not null)
-                    DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
-                        SmigratedClock()), item.Sender);
-            }
-            if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
+                if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
 
-            if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
+                if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
+            }
         }
+
+        if (duplicate)
+        {
+            RecordSmigratedSkipped("duplicate", item.Sender);
+            _logger?.LogDebug("Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.",
+                item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
+            return;
+        }
+        foreach (var (reason, count) in skippedMetrics) RecordSmigratedSkipped(reason, item.Sender, count);
 
         // Launch retirements before the disposal check: DisposeAsync awaits their completion.
         if (retirements is not null)
@@ -334,7 +343,8 @@ internal sealed partial class ClusterRouter
         return new AppliedSmigratedMove(target, [.. movable]);
     }
 
-    private void DeferMigrationLocked(DeferredSmigratedMigration deferred, RespireConnectionMultiplexer sender)
+    private void DeferMigrationLocked(DeferredSmigratedMigration deferred,
+        List<(string Reason, long Count)> skippedMetrics)
     {
         _deferredSmigratedMigrations.Add(deferred);
         _deferredSmigratedSlots += deferred.Slots.Length;
@@ -343,13 +353,13 @@ internal sealed partial class ClusterRouter
         {
             _deferredSmigratedSlots -= _deferredSmigratedMigrations[0].Slots.Length;
             _deferredSmigratedMigrations.RemoveAt(0);
-            RecordSmigratedSkipped("deferral_evicted", sender);
+            skippedMetrics.Add(("deferral_evicted", 1));
         }
     }
 
     // Drops entries whose dependency has not arrived within DeferredSmigratedLifetimeMilliseconds.
     // The list is oldest first, so expiry stops at the first entry that is still young.
-    private void ExpireDeferredMigrationsLocked(RespireConnectionMultiplexer sender)
+    private void ExpireDeferredMigrationsLocked(List<(string Reason, long Count)> skippedMetrics)
     {
         if (_deferredSmigratedMigrations.Count == 0) return;
         var now = SmigratedClock();
@@ -359,7 +369,7 @@ internal sealed partial class ClusterRouter
             _deferredSmigratedSlots -= _deferredSmigratedMigrations[expired++].Slots.Length;
         if (expired == 0) return;
         _deferredSmigratedMigrations.RemoveRange(0, expired);
-        RecordSmigratedSkipped("deferral_expired", sender, expired);
+        skippedMetrics.Add(("deferral_expired", expired));
     }
 
     // Retries only the entries a move made runnable: those whose source is the node that just

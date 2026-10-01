@@ -307,6 +307,56 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task MalformedSequenceIsConsumedAndSkippedMetricRunsOutsideTopologyLock()
+    {
+        var options = Options(6399);
+        await using var primary = RespireConnectionMultiplexer.Create("smigrated-metric-test", 6399,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var source = new RespireEndpoint("source", 7000);
+        var target = new RespireEndpoint("target", 7001);
+        var duplicateCount = 0L;
+        var metricCallbackReentered = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == RespireTelemetry.SourceName
+                    && instrument.Name == "respire.cluster.slot_migrations.skipped")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            var isTestServer = false;
+            var isDuplicate = false;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.address" && Equals(tag.Value, "smigrated-metric-test"))
+                    isTestServer = true;
+                if (tag.Key == "reason" && Equals(tag.Value, "duplicate"))
+                    isDuplicate = true;
+            }
+            if (isTestServer && isDuplicate)
+            {
+                Interlocked.Increment(ref duplicateCount);
+                metricCallbackReentered = Task.Run(() => router.GetMultiplexer(new("reentered", 7002)))
+                    .Wait(TimeSpan.FromSeconds(2));
+            }
+        });
+        listener.Start();
+
+        var scope = new object();
+        var malformed = router.CaptureSmigratedNotification(primary, scope,
+            new("SMIGRATED", 7, Migrations: [new(source, target, "invalid")]));
+        router.ApplySmigratedNotification(malformed);
+        router.ApplySmigratedNotification(malformed);
+
+        await Assert.That(duplicateCount).IsEqualTo(1L);
+        await Assert.That(metricCallbackReentered).IsTrue();
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task DeferredMigrationChainResolvesWhenItsFirstLinkArrives(bool receivedInChainOrder)
