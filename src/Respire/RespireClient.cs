@@ -2132,9 +2132,17 @@ public sealed partial class RespireClient : IRespireClient
         string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        // Scan cursors are server-local, so successive pages must reach the replica that issued them.
+        var connection = await _core.ReadRouter.GetConnectionAsync(
+            _readFrom, cancellationToken, stable: IsCursorRead(operation)).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
     }
+
+    private static bool IsCursorRead(string operation)
+        => operation.Equals("SCAN", StringComparison.OrdinalIgnoreCase)
+            || operation.Equals("HSCAN", StringComparison.OrdinalIgnoreCase)
+            || operation.Equals("SSCAN", StringComparison.OrdinalIgnoreCase)
+            || operation.Equals("ZSCAN", StringComparison.OrdinalIgnoreCase);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

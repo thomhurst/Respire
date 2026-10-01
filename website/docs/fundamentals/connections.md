@@ -421,7 +421,7 @@ monitor proactively moves an otherwise healthy connection before a failure is ob
 
 Set `RespireOptions.ReplicaEndpoints` for a standalone primary/replica deployment. Sentinel
 clients discover replica endpoints with `SENTINEL REPLICAS`. Respire validates each candidate
-with `ROLE` before sending reads to it. Existing multi-endpoint standalone configuration keeps
+with `ROLE` before sending reads to it, and revalidates each connection at most once per second, so a promoted node stops serving reads without adding a round trip to every read. Sentinel clients refresh the replica set in the background about once per second and keep the last known set when a refresh fails. A replica removed from the set keeps its connections for one command timeout, so reads already using it can finish. Cursor reads such as `SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` always prefer the same replica, because a cursor is only valid on the server that issued it. Existing multi-endpoint standalone configuration keeps
 its current validation and connection-time fallback behavior.
 
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
