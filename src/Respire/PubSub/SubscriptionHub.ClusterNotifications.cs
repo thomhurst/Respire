@@ -99,6 +99,8 @@ internal sealed partial class SubscriptionHub
             }
 
             RespireConnection? connectionToClose;
+            RespireConnection? sharedConnection;
+            List<(SubscriptionKind Kind, RespireChannel Name)> released = [];
             bool empty;
             lock (_gate)
             {
@@ -107,7 +109,11 @@ internal sealed partial class SubscriptionHub
                     var routes = node.Routes[(int)subscription.Kind];
                     if (!routes.TryGetValue(name, out var consumers)) continue;
                     consumers.Remove(subscription);
-                    if (consumers.Count == 0) routes.Remove(name);
+                    if (consumers.Count == 0)
+                    {
+                        routes.Remove(name);
+                        released.Add((subscription.Kind, name));
+                    }
                 }
                 if (_notificationCoverage.TryGetValue(subscription, out var coverage))
                 {
@@ -121,12 +127,35 @@ internal sealed partial class SubscriptionHub
                     Interlocked.Increment(ref node.Epoch);
                     _notificationNodes.Remove(endpoint);
                 }
-                connectionToClose = node.Connection;
+                connectionToClose = empty ? node.Connection : null;
+                sharedConnection = empty ? null : node.Connection;
             }
             if (connectionToClose is not null)
             {
                 try { await connectionToClose.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception error) { core.Logger?.LogDebug(error, "Closing a rolled back cluster notification connection failed"); }
+            }
+            else if (sharedConnection is { IsConnected: true })
+            {
+                foreach (var (kind, name) in released)
+                {
+                    try
+                    {
+                        using var timeout = new CancellationTokenSource(
+                            core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
+                        await SendControlAsync(sharedConnection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
+                            timeout.Token, instrument: true).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (error is RespireException or OperationCanceledException)
+                    {
+                        try { await sharedConnection.DisposeAsync().ConfigureAwait(false); }
+                        catch (Exception closeError)
+                        {
+                            core.Logger?.LogDebug(closeError, "Closing an uncertain rolled back cluster notification connection failed");
+                        }
+                        break;
+                    }
+                }
             }
         }
     }
