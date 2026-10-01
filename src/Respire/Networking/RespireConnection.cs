@@ -52,6 +52,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Stream? _stream;
     private readonly Lock _writeGate = new();
     private readonly SemaphoreSlim _streamingGate = new(1, 1);
+    // Cancelled by Abort so a streamed SET blocked on its source or on a stalled socket write
+    // observes the closed connection. Never disposed: a racing streamed SET may still link to it.
+    private readonly CancellationTokenSource _closedCancellation = new();
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -1245,13 +1248,21 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ? Environment.TickCount64 + _commandTimeoutMilliseconds
             : 0;
         using var timeoutCancellation = deadline == 0 ? null : new CancellationTokenSource(_commandTimeout!.Value);
+        // Streamed SETs are rare and large, so one linked source per call is cheap. It observes the
+        // caller, the command deadline and a connection abort; the reply is not yet published to
+        // _inflight while the frame is written, so nothing else could complete this call.
         using var linkedCancellation = timeoutCancellation is null
-            ? null
-            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
-        var effectiveCancellation = linkedCancellation?.Token ?? cancellationToken;
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closedCancellation.Token)
+            : CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, timeoutCancellation.Token, _closedCancellation.Token);
+        var effectiveCancellation = linkedCancellation.Token;
         try
         {
             await _streamingGate.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (IsClosedCancellation(error, effectiveCancellation, cancellationToken))
+        {
+            throw ClosedDuringStreamedSet(error);
         }
         catch (OperationCanceledException error) when (timeoutCancellation is not null
             && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
@@ -1307,7 +1318,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var write = AppendStreamingStart(command, out queuedBatchStarted, out var requestWriteStart);
             requestStarted = true;
             ScheduleFlush(queuedBatchStarted);
-            await write.ConfigureAwait(false);
+            // A peer that stops reading stalls the socket write; bound every wait by the caller,
+            // the deadline and connection abort so the catch below can close the partial frame.
+            await write.WaitAsync(effectiveCancellation).ConfigureAwait(false);
 
             var chunk = ArrayPool<byte>.Shared.Rent(32 * 1024);
             try
@@ -1322,7 +1335,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     remaining -= read;
                     write = AppendStreamingBytes(chunk.AsSpan(0, read));
                     ScheduleFlush(startedBatch: false);
-                    await write.ConfigureAwait(false);
+                    await write.WaitAsync(effectiveCancellation).ConfigureAwait(false);
                 }
             }
             finally
@@ -1334,6 +1347,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             requestQueued = true;
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(queuedBatchStarted);
+        }
+        catch (OperationCanceledException error) when (IsClosedCancellation(error, effectiveCancellation, cancellationToken))
+        {
+            // The connection is already dead, so no partial frame can be followed by other bytes.
+            if (!requestQueued) ReclaimUnpublished(source);
+            throw ClosedDuringStreamedSet(error);
         }
         catch (OperationCanceledException error) when (timeoutCancellation is not null
             && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
@@ -1369,6 +1388,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return await source.Task.ConfigureAwait(false);
     }
+
+    private bool IsClosedCancellation(
+        OperationCanceledException error, CancellationToken effectiveCancellation, CancellationToken callerToken)
+        => _closedCancellation.IsCancellationRequested && !callerToken.IsCancellationRequested
+            && error.CancellationToken == effectiveCancellation;
+
+    private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
+        => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",
+            Volatile.Read(ref _abortReason) ?? error);
 
     private async Task DrainBufferedWritesAsync(CancellationToken cancellationToken)
     {
@@ -3122,6 +3150,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
+        _closedCancellation.Cancel();
     }
 
     /// <summary>

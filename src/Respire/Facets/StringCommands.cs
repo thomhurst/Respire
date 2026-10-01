@@ -79,7 +79,8 @@ public partial interface IStringCommands
     /// Sets a key from exactly <paramref name="length"/> bytes read from <paramref name="value"/>.
     /// The stream remains open. Cancellation or a read failure during transmission closes the
     /// connection to preserve RESP framing, failing other commands pipelined on it; later
-    /// commands on that connection wait for the complete frame. Respire does not retry streamed writes.
+    /// commands on that connection wait for the complete frame. The command timeout covers the whole
+    /// upload. Respire does not retry streamed writes.
     /// </summary>
     ValueTask<bool> SetAsync(
         RespireKey key,
@@ -89,7 +90,11 @@ public partial interface IStringCommands
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Sets a key from a sequence without combining its segments into one payload buffer.</summary>
+    /// <summary>
+    /// Sets a key from a sequence without combining its segments into one payload buffer. The
+    /// sequence's memory must stay unchanged until the returned task completes; framing and
+    /// timeout behavior match the <see cref="Stream"/> overload.
+    /// </summary>
     ValueTask<bool> SetAsync(
         RespireKey key,
         ReadOnlySequence<byte> value,

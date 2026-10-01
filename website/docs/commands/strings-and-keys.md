@@ -36,7 +36,11 @@ the connection follow the streamed `SET`, and a slow source delays them. Cancell
 failure before Respire queues the complete frame closes the connection to prevent later bytes
 from being parsed as another command, which also fails other commands pipelined on it. Prefer
 seekable or in-memory sources, and use a separate client for slow sources such as network
-streams. After the complete frame is queued, cancellation only cancels the wait for its reply.
+streams. `CommandTimeout` covers the whole upload, including every source read and socket
+write, so raise it (or pass a longer-lived cancellation token with a `null` timeout) for payloads
+that take longer than the timeout to transmit. If the connection closes while Respire is reading
+the source, the call fails with `RespireConnectionException` instead of waiting for the source.
+After the complete frame is queued, cancellation only cancels the wait for its reply.
 A streamed write is not retried once its header is sent. Redirect replies such as `MOVED` and
 transport failures are returned to the caller; after a transport failure, Redis may or may not
 have applied the write.

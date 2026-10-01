@@ -198,6 +198,87 @@ public sealed class StreamedSetTests
         await Assert.That(server.Commands.TakeLast(2).ToArray()).IsEquivalentTo(new[] { "SET", "PING" });
     }
 
+    [Test]
+    public async Task ConnectionCloseWhileReadingSourceFailsStreamedSet()
+    {
+        var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        var source = new PausedStream();
+        var command = new StreamedSetCommand((RespireValue)"orphaned", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // No command timeout is configured, so only the connection abort can end the source read.
+        await server.DisposeAsync();
+        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task StalledPeerWriteHonorsCommandTimeout()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = TimeSpan.FromMilliseconds(500),
+            });
+        // The peer never reads, so socket buffers fill and a payload write stalls indefinitely.
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        var command = new StreamedSetCommand(
+            (RespireValue)"stalled", new GeneratedStream(int.MaxValue), int.MaxValue, default, SetWhen.Always);
+
+        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET")
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task ThrowingSourceClosesConnectionAndClientRecovers()
+    {
+        await using var server = new FakeRespServer(2, "+OK\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "PING" ? "+PONG\r\n"u8.ToArray() : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Strings.SetAsync("broken", new ThrowingStream(), 4))
+            .Throws<IOException>();
+        await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The partial frame died with its connection; the client reconnects for later commands.
+        using var reconnected = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await client.Core.Multiplexer.GetHealthyConnectionAsync(reconnected.Token);
+        await client.PingAsync(reconnected.Token);
+        await Assert.That(server.ReceivedCommands.Contains("PING")).IsTrue();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
+    }
+
+    private sealed class ThrowingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => ValueTask.FromException<int>(new IOException("Source failed mid-frame."));
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class GeneratedStream(int length) : Stream
     {
         private int _position;

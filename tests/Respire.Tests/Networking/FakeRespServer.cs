@@ -241,8 +241,22 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 var pos = 0;
                 while (RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var command) == RespParseStatus.Done)
                 {
-                    var commandText = RecordCommand(in command, connectionId);
+                    var commandText = FormatCommand(in command, out var arguments);
                     command.Dispose();
+                    if (SuppressReply is not null && pendingReplies.Count > 0 && MinimumCommandsBeforeReply <= 1)
+                    {
+                        // Tests park a suppressed command and inject its reply once it is recorded.
+                        // Send replies owed to earlier pipelined commands (such as CLIENT CACHING YES)
+                        // before recording, so an injected frame cannot overtake them.
+                        foreach (var reply in pendingReplies)
+                        {
+                            await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                        }
+
+                        pendingReplies.Clear();
+                    }
+
+                    RecordCommand(commandText, arguments, connectionId);
                     var commandsSeen = Interlocked.Increment(ref _commandsSeen);
                     if (commandsSeen == CloseConnectionAfterCommand)
                     {
@@ -297,7 +311,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
-    private string RecordCommand(in RespValue command, int connectionId)
+    private static string FormatCommand(in RespValue command, out byte[][] arguments)
     {
         var elements = command.AsArray();
         var builder = new StringBuilder();
@@ -311,17 +325,19 @@ internal sealed class FakeRespServer : IAsyncDisposable
             builder.Append(elements[i].AsString());
         }
 
-        var arguments = new byte[elements.Length][];
+        arguments = new byte[elements.Length][];
         for (var i = 0; i < elements.Length; i++) arguments[i] = elements[i].AsSpan().ToArray();
-        var commandText = builder.ToString();
+        return builder.ToString();
+    }
+
+    private void RecordCommand(string commandText, byte[][] arguments, int connectionId)
+    {
         lock (_receivedCommands)
         {
             _receivedCommands.Add(commandText);
             _receivedArguments.Add(arguments);
             _receivedConnectionIds.Add(connectionId);
         }
-
-        return commandText;
     }
 
     public async ValueTask DisposeAsync()
