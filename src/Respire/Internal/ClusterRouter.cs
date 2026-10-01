@@ -1414,8 +1414,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
                 out topologyChanged);
             publishedTopologyVersion = topologyChanged ? ++_topologyVersion : _topologyVersion;
-            publishedEndpoints = _masters.Where(static node => !node.IsRetired)
-                .Select(static node => Endpoint(node)).Distinct().ToArray();
+            publishedEndpoints = Enumerable.Range(0, _masters.Length)
+                .Where(index => _masterSlotCounts[index] != 0 && !_masters[index].IsRetired)
+                .Select(index => Endpoint(_masters[index])).Distinct().ToArray();
             // Resolve stable node identity before pruning the old reverse mapping.
             if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
             var retained = new HashSet<RespireConnectionMultiplexer>(_masters);

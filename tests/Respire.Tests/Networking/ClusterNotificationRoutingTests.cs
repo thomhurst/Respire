@@ -163,6 +163,39 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task IncompleteTopologyDropsRemovedPrimaryFromNotificationCoverage()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        var firstUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Configure(first, () => topology, resp3: false, command =>
+        {
+            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal)) firstUnsubscribed.TrySetResult();
+        });
+        Configure(second, () => topology, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = PartialTopology(second.Port);
+        try
+        {
+            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (RespireConnectionException)
+        {
+            // An incomplete slot map is published for routing, then rejected for cluster-wide commands.
+        }
+
+        await firstUnsubscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(first.ReceivedCommands).Contains($"PUNSUBSCRIBE {descriptor}");
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ExactKeyMovesToNewOwnerAfterTopologyRefresh()
     {
         await using var first = new FakeRespServer(20);
@@ -218,6 +251,11 @@ public class ClusterNotificationRoutingTests
             await Task.Delay(10, deadline.Token);
         await Assert.That(first.ReceivedCommands).Contains($"UNSUBSCRIBE {firstChannel}");
         await Assert.That(second.ReceivedCommands).Contains($"UNSUBSCRIBE {secondChannel}");
+        var firstAdded = first.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {secondChannel}");
+        var firstRemoved = first.ReceivedCommands.ToList().FindIndex(command => command == $"UNSUBSCRIBE {firstChannel}");
+        var secondAdded = second.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {firstChannel}");
+        var secondRemoved = second.ReceivedCommands.ToList().FindIndex(command => command == $"UNSUBSCRIBE {secondChannel}");
+        await Assert.That(firstAdded < firstRemoved && secondAdded < secondRemoved).IsTrue();
     }
 
     [Test]
@@ -290,6 +328,7 @@ public class ClusterNotificationRoutingTests
     [Test]
     public async Task ClusterNotificationRecoveryHonorsReconnectAttemptLimit()
     {
+        await using var server = new FakeRespServer(20);
         var exhaustionMeasurements = 0;
         using var listener = new MeterListener
         {
@@ -301,11 +340,12 @@ public class ClusterNotificationRoutingTests
         };
         listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
         {
-            if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
+            var values = tags.ToArray();
+            if (values.Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub"))
+                && values.Any(tag => tag.Key == "server.port" && Equals(tag.Value, server.Port)))
                 Interlocked.Increment(ref exhaustionMeasurements);
         });
         listener.Start();
-        await using var server = new FakeRespServer(20);
         Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
         await using var client = RespireClient.Create(new RespireOptions
         {
@@ -313,6 +353,7 @@ public class ClusterNotificationRoutingTests
             Protocol = RespProtocol.Resp2,
             Connections = 1,
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            CommandTimeout = TimeSpan.FromMilliseconds(100),
             ReconnectPolicy = new RespireReconnectPolicy
             {
                 InitialDelay = TimeSpan.FromMilliseconds(1),
@@ -325,11 +366,20 @@ public class ClusterNotificationRoutingTests
         var subscription = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
-        await server.DisposeAsync();
+        var subscribeIndex = server.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal));
+        server.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+        server.CloseConnection(server.ReceivedConnectionIds[subscribeIndex]);
 
         await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(5)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(Volatile.Read(ref exhaustionMeasurements)).IsEqualTo(1);
+        server.SuppressReply = null;
+        await Assert.That(async () => await client.SubscribeAsync(
+            RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0)).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
     }
 
     [Test]
@@ -459,6 +509,9 @@ public class ClusterNotificationRoutingTests
 
     private static byte[] SinglePrimaryTopology(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+
+    private static byte[] PartialTopology(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
 
     private static RespireClient CreateClusterClient(
         int port, bool resp3, RespireReconnectPolicy? reconnectPolicy = null)
