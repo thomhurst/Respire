@@ -248,9 +248,19 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
                 if (pendingReplies.Count >= MinimumCommandsBeforeReply)
                 {
-                    foreach (var reply in pendingReplies)
+                    try
                     {
-                        await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                        foreach (var reply in pendingReplies)
+                        {
+                            await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                        }
+                    }
+                    catch (SocketException error) when (!_cts.IsCancellationRequested
+                        && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+                    {
+                        // The peer closed while a (possibly delayed) reply was pending.
+                        _peerClosed.TrySetResult();
+                        return;
                     }
 
                     pendingReplies.Clear();

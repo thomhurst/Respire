@@ -31,6 +31,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
 
     internal Generation? Current => Volatile.Read(ref _current);
+    internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
 
@@ -126,6 +127,47 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             finally { if (acquired) _discoveryGate.Release(); }
         }
+    }
+
+    /// <summary>
+    /// Ensures a <c>ROLE</c>-validated primary is current. Checks the published primary with <c>ROLE</c>.
+    /// On a mismatch, or when the probed generation was retired while answering, retires only that
+    /// generation and rediscovers; discovery validates the replacement with <c>ROLE</c> before publishing it.
+    /// Completes when a validated primary is current; otherwise throws, and discovery failures propagate.
+    /// </summary>
+    internal async ValueTask EnsureValidatedPrimaryAsync(CancellationToken cancellationToken)
+    {
+        var generation = await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await HasPrimaryRoleAsync(generation, cancellationToken).ConfigureAwait(false)) return;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && generation.IsRetired)
+        {
+            // Every failure on a generation that was retired while ROLE was in flight means "not the
+            // current primary". A ROLE mismatch seen by application traffic retires the generation
+            // before this resumes, and a socket or timeout fault on a retired generation needs the same
+            // rediscovery. A failed rediscovery below becomes the probe error, so keep this cause in the log.
+            try { core.Logger?.LogDebug(error, "Sentinel primary probe failed on a retired generation; rediscovering"); }
+            catch { /* Logging must not stop health probes. */ }
+        }
+
+        // Application traffic may already have published a replacement; never retire that one.
+        Invalidate(generation);
+        await GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<bool> HasPrimaryRoleAsync(Generation generation, CancellationToken cancellationToken)
+    {
+        using var role = await generation.Multiplexer.GetConnection()
+            .SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+        if (role.Type != RespDataType.Array) return false;
+        var fields = role.AsArray();
+        return fields.Length >= 3
+            && fields[0].Type is RespDataType.BulkString or RespDataType.SimpleString
+            && fields[0].AsString() == "master"
+            && fields[1].Type == RespDataType.Integer
+            && fields[2].Type == RespDataType.Array;
     }
 
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)

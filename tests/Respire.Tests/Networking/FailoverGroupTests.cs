@@ -25,6 +25,298 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task SentinelCandidateRediscoversWhenCurrentPrimaryIsDemoted()
+    {
+        var primaryPort = 0;
+        var demoted = 0;
+        await using var oldPrimary = new FakeRespServer(RoleReply("master"), FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave") : null,
+        };
+        await using var newPrimary = new FakeRespServer(RoleReply("master"), FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        Volatile.Write(ref primaryPort, oldPrimary.Port);
+        await using var staleSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(Volatile.Read(ref primaryPort)),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var sentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(Volatile.Read(ref primaryPort)),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidateWithSeeds([staleSentinel, sentinel])], FastOptions() with
+            {
+                ProbeInterval = TimeSpan.FromMilliseconds(30),
+                ProbeTimeout = TimeSpan.FromSeconds(2),
+                // A probe failure would keep the only candidate unavailable for the rest of the test.
+                CircuitOpenDuration = TimeSpan.FromMinutes(1),
+            });
+        Volatile.Write(ref primaryPort, newPrimary.Port);
+        Volatile.Write(ref demoted, 1);
+
+        await WaitUntilAsync(() => group.IsConnected && group.ActiveClient.Endpoint == Endpoint(newPrimary)
+            && newPrimary.ReceivedCommands.Contains("PING"));
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(newPrimary));
+        // Rediscovering a validated replacement within the probe is a healthy handoff, not a failure.
+        var status = group.GetEndpointStatuses().Single();
+        await Assert.That(status.IsHealthy).IsTrue();
+        await Assert.That(status.ConsecutiveFailures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SentinelCandidatesRejectDuplicateNormalizedSeedSets()
+    {
+        await using var unused = new FakeRespServer(FakeRespServer.PongReply);
+        var duplicateSeeds = new RespireFailoverCandidate(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", unused.Port), new("127.0.0.1", unused.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+        var singleSeed = new RespireFailoverCandidate(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", unused.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([duplicateSeeds, singleSeed]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(unused.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SentinelCandidatesRejectOverlappingSeedSetsForSameService()
+    {
+        await using var sharedSeed = new FakeRespServer(FakeRespServer.PongReply);
+        await using var additionalSeed = new FakeRespServer(FakeRespServer.PongReply);
+        var first = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sharedSeed.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+        var second = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sharedSeed.Port), new("127.0.0.1", additionalSeed.Port)],
+            SentinelPrimaryName = "mymaster",
+        });
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([first, second]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(sharedSeed.CommandsSeen).IsEqualTo(0);
+        await Assert.That(additionalSeed.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SentinelCandidatesRejectDisjointSeedsThatDiscoverSameDeployment()
+    {
+        await using var firstPrimary = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        await using var secondPrimary = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        FakeRespServer? first = null;
+        FakeRespServer? second = null;
+        await using var firstSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(firstPrimary.Port),
+                "SENTINEL SENTINELS mymaster" => PeerReply(second!.Port),
+                _ => null,
+            },
+        };
+        first = firstSentinel;
+        await using var secondSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(secondPrimary.Port),
+                "SENTINEL SENTINELS mymaster" => PeerReply(first!.Port),
+                _ => null,
+            },
+        };
+        second = secondSentinel;
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidate(firstSentinel), SentinelCandidate(secondSentinel, priority: 1)],
+            FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) }))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task LearnedSentinelPeerCannotBeSelectedAsDataEndpoint()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        await using var dataEndpoint = new FakeRespServer(FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => PeerReply(dataEndpoint.Port),
+                _ => null,
+            },
+        };
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidate(sentinel), Candidate(dataEndpoint, priority: 1)],
+            FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) }))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task UndiscoveredSentinelStatusHasNoDataEndpoint()
+    {
+        await using var invalidSentinel = new FakeRespServer("-ERR unavailable\r\n"u8.ToArray());
+        await using var healthy = new FakeRespServer(FakeRespServer.PongReply);
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [SentinelCandidate(invalidSentinel, priority: 0), Candidate(healthy, priority: 1)], FastOptions());
+
+        await Assert.That(group.GetEndpointStatuses().Single(status => status.Priority == 0).Endpoint).IsNull();
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(healthy));
+    }
+
+    [Test]
+    [Arguments(false, false, true, true)]
+    [Arguments(false, false, false, false)]
+    [Arguments(false, true, true, true)]
+    [Arguments(false, true, false, true)]
+    [Arguments(true, false, true, false)]
+    [Arguments(true, false, false, false)]
+    [Arguments(true, true, true, true)]
+    [Arguments(true, true, false, false)]
+    public async Task DeploymentConflictFailsUnhealthyOrLowerPrecedenceCandidate(
+        bool candidateIsHealthy, bool otherIsHealthy, bool otherPrecedes, bool expected)
+    {
+        await Assert.That(RespireFailoverGroup.ShouldFailCandidateForDeploymentConflict(
+            candidateIsHealthy, otherIsHealthy, otherPrecedes)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task RecoveredSentinelCandidateDuplicatingHealthyDeploymentStaysUnhealthy()
+    {
+        var recovered = 0;
+        await using var primary = new FakeRespServer(8, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        await using var firstSentinel = new FakeRespServer(8, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var secondSentinel = new FakeRespServer(8, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Volatile.Read(ref recovered) == 0
+                    ? "-ERR unavailable\r\n"u8.ToArray() : PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidate(firstSentinel), SentinelCandidate(secondSentinel, priority: 1)],
+            FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) });
+        await Assert.That(group.GetEndpointStatuses().Single(status => status.Priority == 1).IsHealthy).IsFalse();
+
+        // The second deployment recovers and discovers the primary the first candidate already serves.
+        Volatile.Write(ref recovered, 1);
+        await WaitUntilAsync(() => group.GetEndpointStatuses().Single(status => status.Priority == 1).LastErrorType
+            == nameof(RespireConfigurationException));
+
+        var statuses = group.GetEndpointStatuses();
+        await Assert.That(statuses.Single(status => status.Priority == 0).IsHealthy).IsTrue();
+        await Assert.That(statuses.Single(status => status.Priority == 1).IsHealthy).IsFalse();
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsStandaloneEndpointThatIsSentinelPrimaryInEitherOrder()
+    {
+        await using var primary = new FakeRespServer(16, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        await using var sentinel = new FakeRespServer(16, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+
+        foreach (var (sentinelPriority, standalonePriority) in new[] { (0, 1), (1, 0) })
+        {
+            await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+                    [SentinelCandidate(sentinel, sentinelPriority), Candidate(primary, standalonePriority)],
+                    FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) }))
+                .ThrowsExactly<RespireConfigurationException>();
+        }
+    }
+
+    [Test]
+    public async Task SwitchFromSentinelCandidateReportsPrimaryObservedAtSelection()
+    {
+        var demoted = 0;
+        await using var primary = new FakeRespServer(8, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave") : null,
+        };
+        await using var sentinel = new FakeRespServer(8, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Volatile.Read(ref demoted) == 0
+                    ? PrimaryReply(primary.Port) : "-ERR unavailable\r\n"u8.ToArray(),
+                "SENTINEL SENTINELS mymaster" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var standby = new FakeRespServer(FakeRespServer.PongReply);
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidate(sentinel), Candidate(standby, priority: 1)],
+            FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) });
+        var switched = new TaskCompletionSource<RespireFailoverSwitch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        group.EndpointSwitched += change => switched.TrySetResult(change);
+
+        // The demoted primary retires the Sentinel generation, so the candidate's live endpoint becomes null.
+        Volatile.Write(ref demoted, 1);
+        var change = await switched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(change.PreviousEndpoint).IsEqualTo(Endpoint(primary));
+        await Assert.That(change.CurrentEndpoint).IsEqualTo(Endpoint(standby));
+        await Assert.That(change.Reason).IsEqualTo(RespireFailoverSwitchReasons.ActiveEndpointUnhealthy);
+    }
+
+    [Test]
     public async Task ConsecutiveProbeFailuresOpenCircuitAndSwitchNewOperations()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
@@ -456,7 +748,7 @@ public class FailoverGroupTests
         var endpoint = Endpoint(server);
 
         var sentinel = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
-            [new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint], SentinelPrimaryName = "mymaster" })]))
+            [new RespireFailoverCandidate(new RespireOptions { UseCluster = true, Endpoints = [endpoint], SentinelPrimaryName = "mymaster" })]))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(sentinel!.Message).Contains("Sentinel");
 
@@ -470,6 +762,27 @@ public class FailoverGroupTests
             new RespireFailoverCandidate(new RespireOptions { UseCluster = true, Endpoints = [endpoint] }),
         ])).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(overlapping!.Message).Contains(endpoint.ToString());
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsSentinelSeedsReusedAsDataEndpointsInEitherOrder()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var endpoint = Endpoint(server);
+        var standalone = new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint] });
+        var sentinel = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = [endpoint],
+            SentinelPrimaryName = "mymaster",
+        });
+
+        foreach (var candidates in new[] { new[] { standalone, sentinel }, new[] { sentinel, standalone } })
+        {
+            await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(candidates))
+                .ThrowsExactly<RespireConfigurationException>();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -519,11 +832,15 @@ public class FailoverGroupTests
     public async Task DisposeAsync_StopsProbesAndRejectsActiveClientAccess()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(replyIndex: 1, milliseconds: 200);
         var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, priority: 0)], FastOptions());
+        await WaitUntilAsync(() => server.CommandsSeen >= 2);
         await group.DisposeAsync();
         var commandCount = server.CommandsSeen;
 
-        await Task.Delay(60);
+        // The server reports the peer closed only after it finishes the delayed reply and reads every byte
+        // the client sent, so a queued post-disposal probe would already be counted.
+        await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(group.IsConnected).IsFalse();
         await Assert.That(server.CommandsSeen).IsEqualTo(commandCount);
@@ -552,6 +869,29 @@ public class FailoverGroupTests
             CommandTimeout = TimeSpan.FromMilliseconds(300),
             Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
         }, priority);
+
+    private static RespireFailoverCandidate SentinelCandidate(FakeRespServer sentinel, int priority = 0)
+        => SentinelCandidateWithSeeds([sentinel], priority);
+
+    private static RespireFailoverCandidate SentinelCandidateWithSeeds(FakeRespServer[] sentinels, int priority = 0)
+        => new(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            Endpoints = sentinels.Select(sentinel => new RespireEndpoint("127.0.0.1", sentinel.Port)).ToArray(),
+            SentinelPrimaryName = "mymaster",
+        }, priority);
+
+    private static byte[] RoleReply(string role)
+        => Encoding.ASCII.GetBytes($"*3\r\n${role.Length}\r\n{role}\r\n:0\r\n*0\r\n");
+
+    private static byte[] PrimaryReply(int port)
+        => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+
+    private static byte[] PeerReply(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 
     private static RespireFailoverGroupOptions FastOptions(int failureThreshold = 1)
         => new()
