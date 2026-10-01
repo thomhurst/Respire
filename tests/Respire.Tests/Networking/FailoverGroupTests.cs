@@ -388,15 +388,15 @@ public class FailoverGroupTests
     }
 
     [Test]
-    public async Task ConnectAsync_RejectsClusterAndClientSideCacheCandidates()
+    public async Task ConnectAsync_ProbesClusterCandidatesAndRejectsClientSideCache()
     {
         var cluster = new RespireFailoverCandidate(new RespireOptions
         {
             UseCluster = true,
-            Endpoints = ["localhost:6379"],
+            Endpoints = ["127.0.0.1:1"],
         });
         await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([cluster]))
-            .ThrowsExactly<RespireConfigurationException>();
+            .ThrowsExactly<RespireConnectionException>();
 
         var cached = new RespireFailoverCandidate(new RespireOptions
         {

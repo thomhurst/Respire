@@ -5,12 +5,12 @@ using Respire.Internal;
 
 namespace Respire;
 
-/// <summary>An independently operated standalone Redis deployment in a failover group.</summary>
-/// <param name="Options">Connection settings for one standalone Redis endpoint.</param>
+/// <summary>An independently operated Redis deployment in a failover group.</summary>
+/// <param name="Options">Connection settings for one standalone or Redis Cluster deployment.</param>
 /// <param name="Priority">Lower values have higher priority. Equal priorities keep input order.</param>
 public sealed record RespireFailoverCandidate(RespireOptions Options, int Priority = 0);
 
-/// <summary>Health and failback settings for a standalone failover group.</summary>
+/// <summary>Health and failback settings for a Redis failover group.</summary>
 public sealed record RespireFailoverGroupOptions
 {
     /// <summary>Delay between health probe rounds. Defaults to one second.</summary>
@@ -93,7 +93,7 @@ public sealed record RespireFailoverSwitch(
     DateTimeOffset ChangedAt);
 
 /// <summary>
-/// Maintains standalone Redis clients and selects a healthy endpoint for new work.
+/// Maintains independent standalone or Redis Cluster clients and selects a healthy deployment for new work.
 /// Read <see cref="ActiveClient"/> for each new operation so callers observe endpoint changes.
 /// </summary>
 /// <remarks>
@@ -209,19 +209,22 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     throw new RespireConfigurationException(
                         "Failover group candidates require an unlimited reconnect policy (MaxAttempts = null) so a candidate can recover after an outage.");
                 }
-                if (snapshot.Endpoints.Count != 1 || snapshot.UseCluster || !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
+                if (snapshot.Endpoints.Count == 0 || (!snapshot.UseCluster && snapshot.Endpoints.Count != 1)
+                    || !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
                 {
                     throw new RespireConfigurationException(
-                        "Standalone failover candidates require exactly one endpoint and cannot enable Cluster or Sentinel mode.");
+                        "Failover candidates require one endpoint in standalone mode or one or more seed endpoints in Cluster mode; Sentinel mode is not supported.");
                 }
-                var endpoint = snapshot.Endpoints[0];
-                if (endpoints.Any(existing => existing.Port == endpoint.Port
-                    && string.Equals(existing.Host, endpoint.Host, StringComparison.OrdinalIgnoreCase)))
+                foreach (var endpoint in snapshot.Endpoints)
                 {
-                    throw new RespireConfigurationException(
-                        $"Standalone failover candidates must use distinct endpoints; '{endpoint}' is listed more than once.");
+                    if (endpoints.Any(existing => existing.Port == endpoint.Port
+                        && string.Equals(existing.Host, endpoint.Host, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        throw new RespireConfigurationException(
+                            $"Failover candidates must use distinct configured endpoints; '{endpoint}' is listed more than once.");
+                    }
+                    endpoints.Add(endpoint);
                 }
-                endpoints.Add(endpoint);
                 if (snapshot.ClientSideCache is not null)
                 {
                     throw new RespireConfigurationException(
@@ -240,7 +243,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             await group.SelectActiveAsync().ConfigureAwait(false);
             if (Volatile.Read(ref group._active) is null)
             {
-                throw new RespireConnectionException("Unable to connect to any standalone failover candidate.");
+                throw new RespireConnectionException("Unable to connect to any failover candidate.");
             }
 
             group._monitor = group.MonitorAsync();

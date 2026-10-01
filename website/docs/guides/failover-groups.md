@@ -1,9 +1,9 @@
 ---
-title: Standalone failover groups
+title: Failover groups
 ---
 
-`RespireFailoverGroup` monitors independent standalone Redis deployments and selects a healthy
-endpoint for new operations. Lower candidate priorities win. The group uses bounded `PING`
+`RespireFailoverGroup` monitors independent standalone Redis or Redis Cluster deployments and selects a healthy
+deployment for new operations. Lower candidate priorities win. The group uses bounded `PING`
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
@@ -67,6 +67,18 @@ all candidate clients alive until disposal, so in-flight calls are not interrupt
 Pub/sub subscriptions also stay on their original deployment and must be recreated after a
 switch.
 
+For a Cluster deployment, set `UseCluster = true` and provide one or more seed endpoints. Each
+candidate owns a separate `RespireClient`, so slot maps and `MOVED`/`ASK` recovery stay within the
+selected Cluster. Status and switch events report that client's current connection endpoint.
+
+```csharp
+new RespireFailoverCandidate(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
+}, Priority: 0)
+```
+
 ## Metrics
 
 The group records these instruments on the `Respire` meter:
@@ -92,5 +104,5 @@ detection or failback. Design consistency, replication, and write ownership at t
 layer. Client-side caching is rejected because cache entries cannot be shared safely across
 independent deployments.
 
-Sentinel and Cluster candidates are not accepted yet. They are tracked as separate follow-up
-work under [multi-endpoint failover](https://github.com/thomhurst/Respire/issues/426).
+Sentinel candidates are not accepted yet. They are tracked as a follow-up under
+[multi-endpoint failover](https://github.com/thomhurst/Respire/issues/426).

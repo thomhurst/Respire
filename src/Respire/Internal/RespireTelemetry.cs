@@ -81,16 +81,16 @@ internal static class RespireTelemetry
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 
     public static readonly Counter<long> FailoverProbes = Meter.CreateCounter<long>(
-        "respire.failover.probes", unit: "{probe}", description: "Standalone failover endpoint health probes.");
+        "respire.failover.probes", unit: "{probe}", description: "Failover deployment health probes.");
 
     public static readonly Counter<long> FailoverSwitches = Meter.CreateCounter<long>(
-        "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected endpoint changes in standalone failover groups.");
+        "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected deployment changes in failover groups.");
 
     public static readonly Counter<long> FailoverMonitorErrors = Meter.CreateCounter<long>(
-        "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating standalone failover health.");
+        "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating failover health.");
 
     public static readonly Histogram<double> FailoverProbeDuration = Meter.CreateHistogram<double>(
-        "respire.failover.probe.duration", unit: "s", description: "Standalone failover endpoint health probe duration.");
+        "respire.failover.probe.duration", unit: "s", description: "Failover deployment health probe duration.");
 
     internal static void RecordFailoverProbe(RespireEndpoint endpoint, bool succeeded, double durationSeconds)
     {
