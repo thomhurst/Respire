@@ -191,9 +191,20 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error)
             {
+                // A throwing logger must not escape: it would fault the only worker, and every
+                // later notification would then sit in the queue until it was dropped.
                 if (Volatile.Read(ref _disposed) == 0)
-                    _logger?.LogError(error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.",
-                        item.Sender.Host, item.Sender.Port);
+                {
+                    try
+                    {
+                        _logger?.LogError(error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.",
+                            item.Sender.Host, item.Sender.Port);
+                    }
+                    catch
+                    {
+                        // A failing logger is an isolated diagnostic listener.
+                    }
+                }
             }
             finally
             {
@@ -256,11 +267,12 @@ internal sealed partial class ClusterRouter
                 item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
             return;
         }
-        foreach (var (reason, count) in skippedMetrics) RecordSmigratedSkipped(reason, item.Sender, count);
-
-        // Launch retirements before the disposal check: DisposeAsync awaits their completion.
+        // Launch retirements before the disposal check and before any listener runs:
+        // DisposeAsync awaits their completion, so a metric listener that disposes the client
+        // synchronously would otherwise wait for a drain that this thread has not started yet.
         if (retirements is not null)
             foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
+        foreach (var (reason, count) in skippedMetrics) RecordSmigratedSkipped(reason, item.Sender, count);
         if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);

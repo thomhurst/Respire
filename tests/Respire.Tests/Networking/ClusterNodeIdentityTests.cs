@@ -588,6 +588,100 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task ThrowingErrorLoggerDoesNotFaultTheWorker()
+    {
+        using var logger = new ThrowingErrorLogger();
+        var options = Options(6379) with { LoggerFactory = logger };
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+        var secondApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.TopologyChanged += () =>
+        {
+            if (router.GetKnownSlotOwner(1)?.Port == targetEndpoint.Port) secondApplied.TrySetResult();
+            else throw new InvalidOperationException("topology callback failure");
+        };
+        var connection = new object();
+
+        // The first callback throws, and the worker's error log throws too. The worker must
+        // survive both and apply the next notification.
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "1")]));
+
+        await secondApplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(logger.ErrorCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task SkippedMetricListenerCanDisposeTheRouterAfterTheSourceRetires()
+    {
+        const string disposingHost = "metric-listener-disposes";
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var router = new ClusterRouter(options, primary);
+        var now = 1_000L;
+        router.SmigratedClock = () => now;
+        var aEndpoint = new RespireEndpoint(disposingHost, 7000);
+        var bEndpoint = new RespireEndpoint("b", 7001);
+        var cEndpoint = new RespireEndpoint("c", 7002);
+        var a = router.GetMultiplexer(aEndpoint);
+        router.SetSlotOwner(0, a);
+
+        bool? disposedFromListener = null;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (ReferenceEquals(instrument, RespireTelemetry.ClusterSlotMigrationsSkipped))
+                meterListener.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.address" && Equals(tag.Value, disposingHost) && disposedFromListener is null)
+                    disposedFromListener = router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        });
+        listener.Start();
+
+        // B->C waits for B to own slot 1, and expires before A->B arrives.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+            new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "1")])));
+        now += 30_000;
+        // A->B moves A's last slot, so A retires; the expiry metric runs in the same call.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+            new("SMIGRATED", 2, Migrations: [new(aEndpoint, bEndpoint, "0")])));
+
+        // Disposal waits for A's retirement drain, so the drain must have started first.
+        await Assert.That(disposedFromListener).IsEqualTo(true);
+        await router.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task MaintenanceHandlerCaptureFollowsSubscriptionAndRetirement()
+    {
+        await using var node = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: Options(6379).ToConnectionOptions(enableMaintenanceNotifications: true));
+        MaintenanceNotificationHandler handler = (_, _, _, _) => { };
+
+        await Assert.That(node.CaptureMaintenanceHandlers()).IsNull();
+        node.MaintenanceNotificationReceived += handler;
+        await Assert.That(node.CaptureMaintenanceHandlers()).IsEqualTo(handler);
+        node.MaintenanceNotificationReceived -= handler;
+        await Assert.That(node.CaptureMaintenanceHandlers()).IsNull();
+
+        node.MaintenanceNotificationReceived += handler;
+        _ = node.RetireAsync();
+        await Assert.That(node.CaptureMaintenanceHandlers()).IsNull();
+    }
+
+    [Test]
     public async Task SmigratedWorkerCallbacksRunWithTheWorkerMarker()
     {
         // Disposal from a worker callback relies on this marker; an await inside the apply path
@@ -1648,6 +1742,24 @@ public class ClusterNodeIdentityTests
         Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) },
         Connections = 1,
     };
+
+    private sealed class ThrowingErrorLogger : ILoggerFactory, ILogger
+    {
+        private int _errorCount;
+        internal int ErrorCount => Volatile.Read(ref _errorCount);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel < LogLevel.Error) return;
+            Interlocked.Increment(ref _errorCount);
+            throw new InvalidOperationException("logger failure");
+        }
+    }
 
     private sealed class WarningCaptureLogger : ILoggerFactory, ILogger
     {

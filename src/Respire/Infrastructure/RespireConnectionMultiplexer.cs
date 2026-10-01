@@ -86,14 +86,27 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
     // Raised for SMIGRATED pushes only; other maintenance kinds have no topology consumer.
     // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
-    internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived;
+    // Subscription and capture share _maintenanceHandlersGate, so a capture is atomic with the
+    // router detaching a retiring sender: it sees either the attached handlers of an active
+    // sender, or null because the detach (the sender's retirement point) already happened.
+    internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived
+    {
+        add { lock (_maintenanceHandlersGate) _maintenanceNotificationReceived += value; }
+        remove { lock (_maintenanceHandlersGate) _maintenanceNotificationReceived -= value; }
+    }
+
+    private readonly object _maintenanceHandlersGate = new();
+    private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
 
     // Receive loop: the handlers for a push that arrived now, or null once this multiplexer is
     // retired or disposed. The loop captures them before parsing, so a push that arrived while
     // the sender was active is still delivered if a migration processed meanwhile on another
     // connection retires the sender (and detaches the handlers) before parsing finishes.
     internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
-        => IsRetired || Volatile.Read(ref _disposed) != 0 ? null : MaintenanceNotificationReceived;
+    {
+        lock (_maintenanceHandlersGate)
+            return IsRetired || Volatile.Read(ref _disposed) != 0 ? null : _maintenanceNotificationReceived;
+    }
 
     // handlers comes from CaptureMaintenanceHandlers. slotMutationToken comes from
     // ClusterSlotMutationClock, read right after the capture.
