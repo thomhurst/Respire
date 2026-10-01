@@ -35,6 +35,26 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task LongRefreshIntervalUsesTimerSafeSegments()
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = TimeSpan.FromDays(90),
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var clock = new ManualTopologyRefreshClock();
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        var firstSegment = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(firstSegment.DueTime).IsEqualTo(TimeSpan.FromDays(24));
+    }
+
+    [Test]
     public async Task ForcedRefreshSignalBypassesRecentSuccessWindow()
     {
         var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -77,6 +97,7 @@ public class ClusterTopologyRefreshTests
     {
         var refreshes = 0;
         var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpectedRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
@@ -84,6 +105,7 @@ public class ClusterTopologyRefreshTests
             {
                 var count = Interlocked.Increment(ref refreshes);
                 if (count == 2) secondRefresh.TrySetResult();
+                if (count >= 3) unexpectedRefresh.TrySetResult();
                 return Topology(seed.Port, seed.Port);
             }
             return null;
@@ -105,9 +127,13 @@ public class ClusterTopologyRefreshTests
         firstDelay.Fire();
         router.SignalTopologyRefresh(force: true);
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
 
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
-        var secondDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        var secondDelayTask = clock.NextTimerAsync(TimeSpan.FromSeconds(5));
+        var nextEvent = await Task.WhenAny(secondDelayTask, unexpectedRefresh.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(ReferenceEquals(nextEvent, secondDelayTask)).IsTrue();
+        var secondDelay = await secondDelayTask;
         await Task.Delay(100);
         await Assert.That(Volatile.Read(ref refreshes)).IsEqualTo(2);
         secondDelay.Fire();
@@ -138,6 +164,34 @@ public class ClusterTopologyRefreshTests
         router.SignalTopologyRefresh();
         await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task RefreshUsesDisconnectedKnownMasterWhenSeedStalls()
+    {
+        var alternativeRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var alternative = new FakeRespServer(FakeRespServer.OkReply);
+        alternative.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS") alternativeRefresh.TrySetResult();
+            return TwoMasterTopology(alternative.Port, 8191, 8192, alternative.Port);
+        };
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var initialTopology = TwoMasterTopology(seed.Port, 8191, 8192, alternative.Port);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? initialTopology : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromMilliseconds(250),
+            CommandTimeout = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        seed.SuppressReply = command => command == "CLUSTER SLOTS";
+
+        client.Core.Cluster!.SignalTopologyRefresh(force: true);
+        await alternativeRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]
@@ -231,6 +285,11 @@ public class ClusterTopologyRefreshTests
             "*1\r\n*4\r\n:0\r\n:16383\r\n"
             + $"*3\r\n$9\r\n127.0.0.1\r\n:{masterPort}\r\n$9\r\nmaster-id\r\n"
             + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n");
+
+    private static byte[] TwoMasterTopology(int firstPort, int firstEnd, int secondStart, int secondPort)
+        => Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:{firstEnd}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstPort}\r\n" +
+            $"*3\r\n:{secondStart}\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondPort}\r\n");
 
     private sealed class ManualTopologyRefreshClock : TimeProvider
     {

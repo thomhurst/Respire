@@ -603,6 +603,50 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    public async Task NewReadOnlyCallerDoesNotJoinCanceledLastWaiterFlight()
+    {
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        var firstRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var topologyRequests = 0;
+        await using var seed = new FakeRespServer(4, Topology(replica.Port))
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "CLUSTER SLOTS" && Volatile.Read(ref topologyRequests) >= 2)
+                    nextRefresh.TrySetResult();
+                return command == "CLUSTER SLOTS" ? Topology(replacement.Port) : null;
+            },
+            SuppressReply = command =>
+            {
+                if (command != "CLUSTER SLOTS" || Interlocked.Increment(ref topologyRequests) != 1)
+                    return false;
+                firstRefresh.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(seed.Port);
+        await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", replica.Port);
+        using var cancellation = new CancellationTokenSource();
+        var router = client.Core.Cluster!;
+        var rejection = new RespireServerException("READONLY demoted");
+        var canceled = router.GetRedirectConnectionAsync(
+            rejection, source, cancellation.Token, ClusterHash.GetSlot("key"), discovery: null).AsTask();
+        await firstRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
+
+        var lateCaller = router.GetRedirectConnectionAsync(
+            rejection, source, CancellationToken.None, ClusterHash.GetSlot("key"), discovery: null).AsTask();
+        await nextRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(topologyRequests).IsEqualTo(2);
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        try { await lateCaller; }
+        catch (Exception) { }
+    }
+
+    [Test]
     public async Task ConcurrentReadOnlyRecoveriesDiscoverEachCallersSlot()
     {
         await using var sourceServer = new FakeRespServer(ReadOnlyReply);
