@@ -39,7 +39,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private RespireEndpoint? _pendingNotificationTarget;
     private bool _pendingNotificationRetiresCurrent;
     private bool _pendingNotificationMustRediscover;
-    private bool _pendingNotificationIsActiveDuplicate;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -232,6 +231,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         var attempt = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
+            var subscriptionReconnectExhausted = false;
             try
             {
                 await using var client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint));
@@ -243,7 +243,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
                         ObserveSentinelNotification(endpoint, message);
                     if (!cancellationToken.IsCancellationRequested)
-                        await subscription.Completion.ConfigureAwait(false);
+                        subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
+                            == RespireSubscriptionEndReason.ReconnectExhausted;
                 }
                 finally
                 {
@@ -266,6 +267,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
             // initial subscription failure still receives a retry.
             var policy = core.Options.ReconnectPolicy;
+            if (subscriptionReconnectExhausted && policy?.MaxAttempts is { } exhaustedAt)
+                attempt = exhaustedAt;
             if (policy?.IsExhausted(attempt) == true)
             {
                 try { core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}", endpoint); }
@@ -375,7 +378,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     _notificationPending = true;
                     _pendingNotificationKey = notificationKey;
                     _pendingNotificationTarget = target;
-                    _pendingNotificationIsActiveDuplicate = true;
                 }
                 _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
                 return;
@@ -391,7 +393,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 _notificationPending = true;
                 _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
-                _pendingNotificationIsActiveDuplicate = false;
                 if (retireCurrent || !_pendingNotificationRetiresCurrent)
                 {
                     _pendingNotificationKey = notificationKey;
@@ -449,12 +450,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     var pendingTarget = _pendingNotificationTarget;
                     var retireCurrent = _pendingNotificationRetiresCurrent;
                     var mustRediscover = _pendingNotificationMustRediscover;
-                    var duplicateOfActive = _pendingNotificationIsActiveDuplicate;
                     ClearPendingNotificationLocked();
                     var current = Current;
-                    if ((succeeded && duplicateOfActive)
-                        || (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
-                            && SameEndpoint(current.Endpoint, target)))
+                    if (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
+                        && SameEndpoint(current.Endpoint, target))
                     {
                         _notificationRediscovery = null;
                         _activeNotificationKey = null;
@@ -481,7 +480,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         _pendingNotificationTarget = null;
         _pendingNotificationRetiresCurrent = false;
         _pendingNotificationMustRediscover = false;
-        _pendingNotificationIsActiveDuplicate = false;
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)

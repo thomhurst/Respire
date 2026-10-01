@@ -161,6 +161,41 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task RepeatedMasterDownDuringRediscoveryTriggersAnotherDiscovery()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +sdown");
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +odown");
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        var downMessage = $"master mymaster 127.0.0.1 {original.Port}";
+        var router = client.Core.Sentinel!;
+        var queued = router.QueuedNotificationCount;
+        sentinel.SuppressReply = command => command == discovery;
+
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown", downMessage);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown", downMessage);
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
+
+        sentinel.SuppressReply = null;
+        var firstQueryConnection = sentinel.ReceivedConnectionIds[^1];
+        await sentinel.SendRawAsync(AddressReply(original.Port), firstQueryConnection);
+        await WaitForEndpointAsync(client, promoted.Port);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+    }
+
+    [Test]
     public async Task DuplicateSwitchNotificationRetriesFailedRediscovery()
     {
         await using var original = Primary();
