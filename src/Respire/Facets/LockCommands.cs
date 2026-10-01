@@ -287,21 +287,48 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         CancellationToken cancellationToken)
     {
         ValidateToken(token);
-        await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-        RespireClient.TrackedLockExecution? execution = null;
+        // Without cancellation or a command timeout the caller waits for the reply or connection
+        // loss, so no fence is needed and ordinary releases keep working without CLIENT permissions.
+        var requireIdentity = client.RequiresReliableCorrectionOrdering(cancellationToken);
+        RespireClient.TrackedLockExecution execution;
         try
         {
+            // Every failure in this block precedes submission: StartLockExecutionAsync returns
+            // before the routed send runs, and send failures surface through Response.
+            if (requireIdentity)
+                await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             execution = await client.StartLockExecutionAsync(
-                    key, token, milliseconds: null, requireIdentity: true, cancellationToken)
+                    key, token, milliseconds: null, requireIdentity, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (RespireServerException) when (requireIdentity)
+        {
+            // ACLs that deny CLIENT ID or CLIENT KILL keep the compatible release. An uncertain
+            // outcome still fails closed, and a latent compare-and-delete cannot match another
+            // owner's token.
+            requireIdentity = false;
+            execution = await client.StartLockExecutionAsync(
+                    key, token, milliseconds: null, requireIdentity: false, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        try
+        {
             return await execution.Response.ConfigureAwait(false);
         }
-        catch (Exception error) when (
-            error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+        catch (Exception error) when (error is not RespireServerException)
         {
+            // The delete may have reached Redis. Report that before fencing so ownership loss is
+            // visible while the fence waits for its control connection.
             onOutcomeUncertain();
-            if (execution?.ConnectionIdentity.ServerClientId > 0)
-                await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false);
+            if (requireIdentity && execution.ConnectionIdentity.ServerClientId > 0
+                && error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+            {
+                // A fence failure must not replace the release error or imply a definitive reply.
+                try { await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false); }
+                catch (Exception) { }
+            }
+
             throw;
         }
     }

@@ -325,6 +325,55 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ReleaseCancelledBeforeSubmissionRemainsRetryable()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await using var keepAlive = await mutex.KeepAliveAsync();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var release = mutex.ReleaseAsync(cancelled.Token).AsTask();
+        await Assert.That(async () => await release).Throws<OperationCanceledException>();
+        await Assert.That(release.IsCanceled).IsTrue();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(keepAlive.OwnershipLost).IsFalse();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsFalse();
+
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        var token = mutex.Token.ToUtf8String();
+        await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
+        {
+            $"SET resource {token} NX PX 30000",
+            $"DELEX resource IFEQ {token}",
+        });
+    }
+
+    [Test]
+    public async Task RespireLock_ReleaseWithoutClientPermissionsUsesCompatibleDelete()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        var token = mutex.Token.ToUtf8String();
+        await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
+        {
+            $"SET resource {token} NX PX 30000",
+            $"DELEX resource IFEQ {token}",
+        });
+    }
+
+    [Test]
     public async Task RespireLock_ResetExpiryRecordsDurationAndStopsAfterOwnershipLoss()
     {
         await using var server = new FakeRespServer(
@@ -894,8 +943,8 @@ public class LockCommandTests
     }
 
     private static IReadOnlyList<string> RecordedLockOperations(FakeRespServer server)
-        => server.ReceivedCommands.Where(command => command.StartsWith("SET ", StringComparison.Ordinal)
-            || command.StartsWith("DELEX ", StringComparison.Ordinal)).ToArray();
+        // Drop only correction-ordering setup, so an unexpected fallback write still fails assertions.
+        => server.ReceivedCommands.Where(command => !command.StartsWith("CLIENT ", StringComparison.Ordinal)).ToArray();
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
     {
