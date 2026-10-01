@@ -388,6 +388,27 @@ public class SentinelRoutingTests
 
     [Test]
     [NotInParallel]
+    public async Task StaleQueuedSwitchSourceCannotRetireNewGeneration()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var old = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("old.invalid", 6379)] });
+        await using var current = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("current.invalid", 6380)] });
+        typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
+        var queue = typeof(SentinelRouter).GetMethod("QueueNotificationRediscoveryCore",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+        // The switch was parsed from the old generation before current was published.
+        queue.Invoke(router, ["stale-switch", null, old.Endpoint, false]);
+
+        await Assert.That(current.IsRetired).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task RapidFailoversDoNotWaitForBlockedObserversAndDrainNotificationsInOrder()
     {
         const int handoffs = 12;

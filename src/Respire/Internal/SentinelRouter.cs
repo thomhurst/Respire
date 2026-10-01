@@ -37,7 +37,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private string? _activeNotificationKey;
     private string? _pendingNotificationKey;
     private RespireEndpoint? _pendingNotificationTarget;
-    private bool _pendingNotificationRetiresCurrent;
+    private RespireEndpoint? _pendingNotificationOldPrimary;
     private bool _pendingNotificationMustRediscover;
 
     internal Generation? Current => Volatile.Read(ref _current);
@@ -334,16 +334,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
         if (!switchHint && !relatedDownEvent) return;
         RespireEndpoint? promotedPrimary = null;
-        var retireCurrent = false;
+        RespireEndpoint? oldPrimary = null;
         // An unparseable target still triggers untargeted discovery; ROLE validation selects the primary.
         if (switchHint)
         {
             if (int.TryParse(fields[4], out var newPort) && newPort is >= 1 and <= 65535)
                 promotedPrimary = new(fields[3], newPort);
-            // Out-of-order switch hints must not retire a newer, healthy primary.
-            if (int.TryParse(fields[2], out var oldPort) && oldPort is >= 1 and <= 65535
-                && Current is { IsRetired: false } current)
-                retireCurrent = SameEndpoint(current.Endpoint, new RespireEndpoint(fields[1], oldPort));
+            if (int.TryParse(fields[2], out var oldPort) && oldPort is >= 1 and <= 65535)
+                oldPrimary = new(fields[1], oldPort);
         }
         if (relatedDownEvent)
         {
@@ -354,15 +352,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // +odown text carries changing quorum counts; key master-down hints by service so
             // repeated reports of one outage coalesce while discovery is active.
             QueueNotificationRediscovery(masterDownHint ? channel + ":master:" + serviceName : channel + ":" + message.Text, promotedPrimary,
-                retireCurrent, mustRediscoverAfterCurrent: masterDownHint);
+                oldPrimary, mustRediscoverAfterCurrent: masterDownHint);
     }
 
     private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target,
-        bool retireCurrent, bool mustRediscoverAfterCurrent = false)
+        RespireEndpoint? oldPrimary, bool mustRediscoverAfterCurrent = false)
     {
         try
         {
-            QueueNotificationRediscoveryCore(notificationKey, target, retireCurrent, mustRediscoverAfterCurrent);
+            QueueNotificationRediscoveryCore(notificationKey, target, oldPrimary, mustRediscoverAfterCurrent);
         }
         finally
         {
@@ -371,12 +369,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     private void QueueNotificationRediscoveryCore(string notificationKey, RespireEndpoint? target,
-        bool retireCurrent, bool mustRediscoverAfterCurrent)
+        RespireEndpoint? oldPrimary, bool mustRediscoverAfterCurrent)
     {
         lock (_gate)
         {
             if (_disposed) return;
             var current = Current;
+            var retireCurrent = oldPrimary is { } oldEndpoint && current is { IsRetired: false }
+                && SameEndpoint(current.Endpoint, oldEndpoint);
             if (_activeNotificationKey == notificationKey)
             {
                 if (!mustRediscoverAfterCurrent) return;
@@ -387,6 +387,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     _notificationPending = true;
                     _pendingNotificationKey = notificationKey;
                     _pendingNotificationTarget = target;
+                    _pendingNotificationOldPrimary = oldPrimary;
                 }
                 _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
                 return;
@@ -403,17 +404,17 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 _notificationPending = true;
                 _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
-                if (retireCurrent || !_pendingNotificationRetiresCurrent)
+                if (oldPrimary is not null || _pendingNotificationOldPrimary is null)
                 {
                     _pendingNotificationKey = notificationKey;
                     _pendingNotificationTarget = target ?? _pendingNotificationTarget;
+                    _pendingNotificationOldPrimary = oldPrimary;
                 }
-                _pendingNotificationRetiresCurrent |= retireCurrent;
                 return;
             }
             ClearPendingNotificationLocked();
             _activeNotificationKey = notificationKey;
-            if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
+            if (retireCurrent) Invalidate(current!);
             _notificationRediscovery = Task.Run(() => RediscoverFromNotificationAsync(notificationKey));
         }
     }
@@ -458,7 +459,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     failures = 0;
                     var pendingKey = _pendingNotificationKey;
                     var pendingTarget = _pendingNotificationTarget;
-                    var retireCurrent = _pendingNotificationRetiresCurrent;
+                    var oldPrimary = _pendingNotificationOldPrimary;
                     var mustRediscover = _pendingNotificationMustRediscover;
                     ClearPendingNotificationLocked();
                     var current = Current;
@@ -469,7 +470,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         _activeNotificationKey = null;
                         return;
                     }
-                    if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
+                    if (oldPrimary is { } oldEndpoint && current is { IsRetired: false }
+                        && SameEndpoint(current.Endpoint, oldEndpoint)) Invalidate(current);
                     notificationKey = pendingKey ?? notificationKey;
                     _activeNotificationKey = notificationKey;
                 }
@@ -488,7 +490,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         _notificationPending = false;
         _pendingNotificationKey = null;
         _pendingNotificationTarget = null;
-        _pendingNotificationRetiresCurrent = false;
+        _pendingNotificationOldPrimary = null;
         _pendingNotificationMustRediscover = false;
     }
 
