@@ -3823,10 +3823,10 @@ public sealed partial class RespireClient : IRespireClient
     /// from the target client can execute afterward.
     /// </summary>
     internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
-        => FenceCorrectionConnectionAsync(identity, CancellationToken.None);
+        => FenceCorrectionConnectionAsync(identity, CancellationToken.None, null);
 
     internal async ValueTask FenceCorrectionConnectionAsync(
-        TrackedConnectionIdentity identity, CancellationToken cancellationToken)
+        TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
@@ -3861,6 +3861,7 @@ public sealed partial class RespireClient : IRespireClient
                 throw error;
             }
 
+            onAcknowledged?.Invoke();
             reply.Dispose();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

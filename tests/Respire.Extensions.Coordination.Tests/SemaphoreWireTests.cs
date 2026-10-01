@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Respire.Networking;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -32,10 +34,88 @@ public class SemaphoreWireTests
         await using var attempt = await semaphore.TryAcquireAsync();
 
         await Assert.That(async () => await attempt.Permit.ReleaseAsync()).Throws<RespireServerException>();
-        await Assert.That(attempt.Permit.IsReleased).IsFalse();
+        await Assert.That(attempt.Permit.IsReleased).IsTrue();
+        await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(await attempt.Permit.VerifyStillHeldAsync()).IsFalse();
         await Assert.That(await attempt.Permit.ReleaseAsync()).IsTrue();
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
         await Assert.That(EvalCommands(server).Length).IsEqualTo(4);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisposalRetriesFinitePermitAfterReleaseFailure()
+    {
+        var evals = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "CLIENT ID") return ClientIdReply;
+                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ClientKillReply;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                return Interlocked.Increment(ref evals) switch
+                {
+                    1 => ":1\r\n"u8.ToArray(),
+                    2 => "-ERR release failed\r\n"u8.ToArray(),
+                    _ => ":1\r\n"u8.ToArray(),
+                };
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{dispose}:finite-release", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromMinutes(5))).Permit;
+
+        await permit.DisposeAsync();
+        await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        using var retryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref evals) < 3) await Task.Delay(10, retryDeadline.Token);
+        await Assert.That(permit.IsReleased).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task AcknowledgedFenceSurvivesOriginalConnectionRetirementFailure()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLIENT ID" => ClientIdReply,
+                _ when command.StartsWith("CLIENT KILL ID ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        using var logger = new ThrowOnceDisconnectLogger();
+        var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            LoggerFactory = logger,
+        });
+        try
+        {
+            var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+            await client.Core.Multiplexer.EnsureConnectedAsync();
+            var original = client.Core.Multiplexer.GetConnection();
+            await original.EnsureServerClientIdAsync();
+            var identity = new RespireClient.TrackedConnectionIdentity(
+                endpoint, original.ServerClientId, Connection: original);
+            var execution = new RespireClient.TrackedScriptExecution(original, identity);
+
+            var outcome = await RespireSemaphore.TryFenceAsync(client, execution);
+
+            await Assert.That(outcome).IsEqualTo(SemaphoreCleanupAttempt.Succeeded);
+            await Assert.That(logger.DisconnectFailureThrown).IsTrue();
+            await Assert.That(server.ReceivedCommands.Any(command => command == $"CLIENT KILL ID {original.ServerClientId}"))
+                .IsTrue();
+        }
+        finally
+        {
+            try { await client.DisposeAsync(); }
+            catch (Exception) { }
+        }
     }
 
     [Test]
@@ -249,6 +329,42 @@ public class SemaphoreWireTests
         await Assert.That(attempt.Permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(1));
         await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisposalRetriesFailedLateRenewalReleasePastConservativeExpiry()
+    {
+        var evals = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "CLIENT ID") return ClientIdReply;
+                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ClientKillReply;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                return Interlocked.Increment(ref evals) switch
+                {
+                    1 => ":1\r\n"u8.ToArray(),
+                    2 => ":1\r\n"u8.ToArray(),
+                    3 or 4 => "-ERR release failed\r\n"u8.ToArray(),
+                    _ => ":1\r\n"u8.ToArray(),
+                };
+            },
+        };
+        server.DelayReply(3, 50);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{renew}:late-release", capacity: 1)
+            .TryAcquireAsync()).Permit;
+
+        await Assert.That(await permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(1))).IsFalse();
+        await Assert.That(permit.IsReleased).IsTrue();
+        await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await permit.DisposeAsync();
+
+        using var retryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref evals) < 5) await Task.Delay(10, retryDeadline.Token);
+        await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(5);
     }
 
     [Test]
@@ -624,5 +740,25 @@ public class SemaphoreWireTests
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[^1]);
         using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (!permit.IsReleased) await Task.Delay(10, releaseDeadline.Token);
+    }
+
+    private sealed class ThrowOnceDisconnectLogger : ILoggerFactory, ILogger
+    {
+        private int _thrown;
+        internal bool DisconnectFailureThrown => Volatile.Read(ref _thrown) != 0;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Debug
+                && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal)
+                && Interlocked.Exchange(ref _thrown, 1) == 0)
+                throw new InvalidOperationException("Injected original connection retirement failure.");
+        }
     }
 }

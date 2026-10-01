@@ -199,26 +199,28 @@ public sealed class RespireSemaphore
 
     // Without a tracked connection identity there is nothing to fence, and the release proceeds
     // unordered; see the type remarks.
-    private static async ValueTask<SemaphoreCleanupAttempt> TryFenceAsync(
+    internal static async ValueTask<SemaphoreCleanupAttempt> TryFenceAsync(
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution)
     {
         if (wire is null || execution is not { ConnectionIdentity.ServerClientId: > 0 })
             return SemaphoreCleanupAttempt.Succeeded;
         using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        var acknowledged = false;
         try
         {
-            await wire.FenceCorrectionConnectionAsync(execution.ConnectionIdentity, timeout.Token).ConfigureAwait(false);
+            await wire.FenceCorrectionConnectionAsync(execution.ConnectionIdentity, timeout.Token,
+                () => acknowledged = true).ConfigureAwait(false);
             return SemaphoreCleanupAttempt.Succeeded;
         }
         catch (ObjectDisposedException)
         {
             // The client is gone, so no release can be sent either.
-            return SemaphoreCleanupAttempt.Abandoned;
+            return acknowledged ? SemaphoreCleanupAttempt.Succeeded : SemaphoreCleanupAttempt.Abandoned;
         }
         catch (Exception)
         {
             // Includes NOPERM and generic ERR replies: only an acknowledged kill proves ordering.
-            return SemaphoreCleanupAttempt.Failed;
+            return acknowledged ? SemaphoreCleanupAttempt.Succeeded : SemaphoreCleanupAttempt.Failed;
         }
     }
 
@@ -453,12 +455,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     // Serializes renewal and release. It is never disposed: only WaitAsync is used, so no wait
     // handle is ever allocated and there is nothing to free.
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly object _disposeRetryGate = new();
     // Expiry and local validity change together, so readers see both through one snapshot.
     private Lease _lease;
     // PermitState flags. Flags are only ever set or cleared through Set and Clear.
     private int _state;
-    private int _disposeRetryRunning;
-    private int _disposeRetryRestartRequested;
+    private bool _disposeRetryRunning;
+    private bool _disposeRetryRestartRequested;
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
@@ -489,6 +492,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         // A renewal failed and surrendered the permit, so its local lease can no longer be relied
         // on, even when the surrender release has not been confirmed yet.
         RenewalFailed = 16,
+        // A release outcome is unknown, so the permit is unusable locally but can still be retried.
+        ReleaseUncertain = 32,
     }
 
     // ExpiryTicks is 0 for an owner-released permit; ValidUntil is long.MaxValue in that case.
@@ -518,14 +523,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <remarks>
     /// The estimate is conservative because it counts from when the acquire or renewal command was
     /// sent, before Redis applied the expiry, and subtracts the whole round trip. It is zero after a
-    /// release, after a failed or canceled renewal, or after disposal schedules its background
-    /// release.
+    /// release, after a failed or canceled renewal, after a failed release outcome, or after
+    /// disposal schedules its background release.
     /// </remarks>
     public TimeSpan? RemainingEstimate
     {
         get
         {
-            if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled))
+            if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
+                | PermitState.ReleaseUncertain))
                 return TimeSpan.Zero;
             var validUntil = Volatile.Read(ref _lease).ValidUntil;
             if (validUntil == long.MaxValue) return null;
@@ -536,14 +542,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     /// <summary>Whether this permit can no longer be relied on.</summary>
     /// <remarks>
-    /// True after a release, after Redis reported the permit gone, after a failed or canceled
-    /// renewal, after disposal schedules background release, or once <see cref="RemainingEstimate"/>
-    /// reaches zero. It does not mean
-    /// <see cref="ReleaseAsync"/> was called or confirmed: a locally expired or surrendered permit can
-    /// still be on Redis until it is released or its server-side expiry passes.
+    /// True after a release, after Redis reported the permit gone, after a failed renewal or
+    /// uncertain release outcome, after disposal schedules background release, or once
+    /// <see cref="RemainingEstimate"/> reaches zero. It does not mean <see cref="ReleaseAsync"/> was
+    /// called or confirmed: a locally expired or surrendered permit can still be on Redis until it
+    /// is released or its server-side expiry passes.
     /// </remarks>
     public bool IsReleased
-        => Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled)
+        => Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
+            | PermitState.ReleaseUncertain)
             || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks whether this owner still holds an active permit on Redis.</summary>
@@ -751,10 +758,18 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         Set(PermitState.DisposeReleaseScheduled);
         if (!NeedsDisposeCleanup()) return;
-        if (Interlocked.CompareExchange(ref _disposeRetryRunning, 1, 0) == 0)
-            _ = RunDisposeReleaseRetryAsync();
-        else
-            Interlocked.Exchange(ref _disposeRetryRestartRequested, 1);
+        var start = false;
+        lock (_disposeRetryGate)
+        {
+            if (_disposeRetryRunning)
+                _disposeRetryRestartRequested = true;
+            else
+            {
+                _disposeRetryRunning = true;
+                start = true;
+            }
+        }
+        if (start) _ = RunDisposeReleaseRetryAsync();
     }
 
     private async Task RunDisposeReleaseRetryAsync()
@@ -767,9 +782,21 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
         finally
         {
-            Volatile.Write(ref _disposeRetryRunning, 0);
-            if (Interlocked.Exchange(ref _disposeRetryRestartRequested, 0) != 0 && NeedsDisposeCleanup())
-                ScheduleDisposeReleaseRetry();
+            var restart = false;
+            lock (_disposeRetryGate)
+            {
+                _disposeRetryRunning = false;
+                if (_disposeRetryRestartRequested)
+                {
+                    _disposeRetryRestartRequested = false;
+                    if (NeedsDisposeCleanup())
+                    {
+                        _disposeRetryRunning = true;
+                        restart = true;
+                    }
+                }
+            }
+            if (restart) _ = RunDisposeReleaseRetryAsync();
         }
     }
 
@@ -782,7 +809,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         if (Has(PermitState.Released)) return false;
         var lease = Volatile.Read(ref _lease);
-        return lease.ExpiryTicks == 0
+        return Has(PermitState.ReleaseUncertain)
+            || lease.ExpiryTicks == 0
             || Has(PermitState.OutcomeUncertain)
             || lease.ValidUntil == long.MaxValue
             || Stopwatch.GetTimestamp() < lease.ValidUntil;
@@ -811,6 +839,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner).ConfigureAwait(false);
         if (outcome == SemaphoreCleanupAttempt.Succeeded) Set(PermitState.Released);
+        else Set(PermitState.ReleaseUncertain);
         return outcome;
     }
 
