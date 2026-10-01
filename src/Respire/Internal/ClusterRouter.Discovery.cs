@@ -255,25 +255,7 @@ internal sealed partial class ClusterRouter
         try
         {
             var round = scope.Round;
-            var candidates = new List<RespireConnectionMultiplexer>();
-            var seen = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
-            foreach (var master in Volatile.Read(ref _masters))
-            {
-                if (!master.IsRetired && seen.Add(master)) candidates.Add(master);
-            }
-            foreach (var replica in Volatile.Read(ref _replicas))
-            {
-                foreach (var endpoint in replica.Aliases.Prepend(replica.Endpoint))
-                {
-                    var replicaNode = GetOrCreateNode(endpoint, observe: false);
-                    if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
-                }
-            }
-            foreach (var endpoint in _seeds)
-            {
-                var seedNode = GetOrCreateNode(endpoint);
-                if (seen.Add(seedNode)) candidates.Add(seedNode);
-            }
+            var candidates = GetTopologyRefreshCandidates();
             var connected = candidates.Select((node, index) => (node, index))
                 .Where(static candidate => candidate.node.IsConnected && !candidate.node.IsRetired)
                 .Select(static candidate => candidate.index).ToArray();
@@ -338,6 +320,32 @@ internal sealed partial class ClusterRouter
             catch (Exception) { }
             return false;
         }
+    }
+
+    private List<RespireConnectionMultiplexer> GetTopologyRefreshCandidates()
+    {
+        var candidates = new List<RespireConnectionMultiplexer>();
+        var seen = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
+        // A configured seed is the user's known recovery path. Try it before a long list of
+        // stale masters and replicas when no candidate is connected.
+        foreach (var endpoint in _seeds)
+        {
+            var seedNode = GetOrCreateNode(endpoint);
+            if (seen.Add(seedNode)) candidates.Add(seedNode);
+        }
+        foreach (var master in Volatile.Read(ref _masters))
+        {
+            if (!master.IsRetired && seen.Add(master)) candidates.Add(master);
+        }
+        foreach (var replica in Volatile.Read(ref _replicas))
+        {
+            foreach (var endpoint in replica.Aliases.Prepend(replica.Endpoint))
+            {
+                var replicaNode = GetOrCreateNode(endpoint, observe: false);
+                if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
+            }
+        }
+        return candidates;
     }
 
     private void StartTopologyRefreshWorker()

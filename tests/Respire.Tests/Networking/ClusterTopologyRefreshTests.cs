@@ -172,17 +172,21 @@ public class ClusterTopologyRefreshTests
         });
         var router = client.Core.Cluster!;
         // The manual clock never ends the MOVED debounce on its own.
-        router.TopologyRefreshClock = new ManualTopologyRefreshClock();
+        var clock = new ManualTopologyRefreshClock();
+        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         router.SignalPrimaryDisconnectRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
-        await Task.Delay(50);
-        // Inside the spacing window: suppressed now, but it must still wake the debouncing worker.
+        await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        var lastSignal = typeof(ClusterRouter).GetField("_lastPrimaryDisconnectRefreshSignal",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        lastSignal.SetValue(router, System.Diagnostics.Stopwatch.GetTimestamp());
+        // Force the spacing branch while the worker is known to be inside MOVED debounce.
         router.SignalPrimaryDisconnectRefresh();
 
-        await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -402,6 +406,34 @@ public class ClusterTopologyRefreshTests
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
 
         await replicaRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task RefreshCandidatesTryConfiguredSeedBeforeDisconnectedMasters()
+    {
+        await using var firstMaster = new FakeRespServer(FakeRespServer.OkReply);
+        await using var secondMaster = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? TwoMasterTopology(firstMaster.Port, 8191, 8192, secondMaster.Port)
+            : null;
+        var seedEndpoint = new RespireEndpoint("127.0.0.1", seed.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [seedEndpoint],
+        });
+        var router = client.Core.Cluster!;
+        seed.CloseConnections();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (router.GetMultiplexer(seedEndpoint).IsConnected) await Task.Delay(10, timeout.Token);
+
+        var buildCandidates = typeof(ClusterRouter).GetMethod("GetTopologyRefreshCandidates",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var candidates = ((System.Collections.IEnumerable)buildCandidates.Invoke(router, null)!).Cast<object>();
+        await Assert.That(ReferenceEquals(candidates.First(), router.GetMultiplexer(seedEndpoint))).IsTrue();
     }
 
     [Test]
