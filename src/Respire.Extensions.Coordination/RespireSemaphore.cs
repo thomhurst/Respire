@@ -377,8 +377,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                         remaining is { } validRemaining && validRemaining > TimeSpan.Zero
                             ? AddTimestampDuration(completed, validRemaining)
                             : remaining.HasValue ? completed : long.MaxValue);
-                    Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
-                    Volatile.Write(ref _finiteOutcomeUncertain, 0);
+                    // A prior timed-out renewal can still arrive on another connection and
+                    // overwrite this score. Only a confirmed owner-token release resolves that uncertainty.
                 }
                 if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
                     && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
