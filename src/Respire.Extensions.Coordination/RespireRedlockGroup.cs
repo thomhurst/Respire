@@ -243,7 +243,12 @@ internal sealed class RespireRedlockNodes
 
     private static void Observe(Task<bool>? task)
     {
-        if (task is null || task.IsCompleted) return;
+        if (task is null) return;
+        if (task.IsCompleted)
+        {
+            if (task.IsFaulted) _ = task.Exception;
+            return;
+        }
         _ = task.ContinueWith(
             static completed => _ = completed.Exception,
             CancellationToken.None,
