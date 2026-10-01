@@ -1,5 +1,6 @@
 using System.Text;
 using System.Threading.Channels;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -123,11 +124,9 @@ public class ClusterTopologyRefreshTests
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
-        var firstDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
-        firstDelay.Fire();
+        _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalTopologyRefresh(force: true);
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await Task.Delay(100);
 
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
         var secondDelayTask = clock.NextTimerAsync(TimeSpan.FromSeconds(5));
@@ -241,6 +240,74 @@ public class ClusterTopologyRefreshTests
         await Assert.That(replica.NodeId).IsEqualTo("replica-id");
         await Assert.That(replica.Aliases).Contains(new RespireEndpoint("replica", replicaPort));
         await Assert.That(seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ForcedRefreshRunsAfterReadonlyFlightCompletes()
+    {
+        var fullRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slotsCalls = 0;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            if (Interlocked.Increment(ref slotsCalls) >= 2) fullRefresh.TrySetResult();
+            return Topology(seed.Port, seed.Port);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        var refreshTask = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var flightCancellation = new CancellationTokenSource();
+        var flightType = typeof(ClusterRouter).GetNestedType(
+            "ReadOnlyRefreshFlight", System.Reflection.BindingFlags.NonPublic)!;
+        var flight = Activator.CreateInstance(flightType,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            args: [flightCancellation, ClusterHash.GetSlot("key"), new RespireEndpoint("127.0.0.1", seed.Port)],
+            culture: null)!;
+        flightType.GetField("SharedTask", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(flight, refreshTask.Task);
+        flightType.GetField("Waiters", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(flight, 1);
+        var sharedGate = typeof(ClusterRouter).GetField("_sharedRefreshGate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+        lock (sharedGate)
+        {
+            typeof(ClusterRouter).GetField("_sharedRefreshTask",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(router, refreshTask.Task);
+            typeof(ClusterRouter).GetField("_readOnlyRefreshFlight",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(router, flight);
+        }
+
+        router.SignalTopologyRefresh(force: true);
+        var waiters = flightType.GetField("Waiters", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            while ((int)waiters.GetValue(flight)! < 2) await Task.Delay(1, timeout.Token);
+        lock (sharedGate)
+        {
+            flightType.GetField("Completed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(flight, true);
+            typeof(ClusterRouter).GetField("_sharedRefreshTask",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(router, null);
+            typeof(ClusterRouter).GetField("_readOnlyRefreshFlight",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(router, null);
+        }
+        refreshTask.SetResult(true);
+
+        await fullRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(2);
     }
 
     [Test]

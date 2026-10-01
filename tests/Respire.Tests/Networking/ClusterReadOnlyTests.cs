@@ -636,14 +636,14 @@ public class ClusterReadOnlyTests
         await firstRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
+        await seed.SendRawAsync(Topology(replica.Port));
 
         var lateCaller = router.GetRedirectConnectionAsync(
             rejection, source, CancellationToken.None, ClusterHash.GetSlot("key"), discovery: null).AsTask();
         await nextRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(topologyRequests).IsEqualTo(2);
-        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        try { await lateCaller; }
-        catch (Exception) { }
+        var recovered = await lateCaller.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(recovered.Port).IsEqualTo(replacement.Port);
+        await Assert.That(topologyRequests).IsGreaterThanOrEqualTo(2);
     }
 
     [Test]

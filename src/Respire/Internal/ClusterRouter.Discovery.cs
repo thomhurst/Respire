@@ -171,31 +171,45 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private Task<bool> RefreshTopologySharedAsync(CancellationToken waiterToken, bool allowRecentSuccessfulResult = true)
+    private async Task<bool> RefreshTopologySharedAsync(CancellationToken waiterToken, bool allowRecentSuccessfulResult = true)
     {
-        Task<bool> refresh;
-        TaskCompletionSource<bool>? start = null;
-        ReadOnlyRefreshFlight? readOnlyFlight;
-        lock (_sharedRefreshGate)
+        while (true)
         {
-            if (allowRecentSuccessfulResult && _sharedRefreshTask is null && _hasTopologyRefreshTimestamp
-                && TopologyRefreshClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TopologyRefreshCoalescingWindow)
+            Task<bool> refresh;
+            TaskCompletionSource<bool>? start = null;
+            ReadOnlyRefreshFlight? readOnlyFlight;
+            lock (_sharedRefreshGate)
             {
-                return waiterToken.CanBeCanceled
-                    ? Task.FromResult(true).WaitAsync(waiterToken)
-                    : Task.FromResult(true);
+                if (allowRecentSuccessfulResult && _sharedRefreshTask is null && _hasTopologyRefreshTimestamp
+                    && TopologyRefreshClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TopologyRefreshCoalescingWindow)
+                    return true;
+                if (_sharedRefreshTask is null)
+                {
+                    start = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _sharedRefreshTask = start.Task;
+                }
+                refresh = _sharedRefreshTask;
+                readOnlyFlight = _readOnlyRefreshFlight;
+                if (readOnlyFlight is not null) readOnlyFlight.Waiters++;
             }
-            if (_sharedRefreshTask is null)
+
+            if (start is not null) _ = CompleteSharedRefreshAsync(start, RunTopologyRefreshAsync);
+            if (readOnlyFlight is null)
+                return await AwaitTopologyRefreshAsync(refresh, waiterToken, null).ConfigureAwait(false);
+
+            // A READONLY flight only repairs its initiating slot. Keep this topology request
+            // pending, then start a full refresh after that flight releases the shared slot.
+            try { _ = await AwaitTopologyRefreshAsync(refresh, waiterToken, readOnlyFlight).ConfigureAwait(false); }
+            catch (Exception) when (!waiterToken.IsCancellationRequested) { }
+            while (true)
             {
-                start = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _sharedRefreshTask = start.Task;
+                lock (_sharedRefreshGate)
+                    if (!ReferenceEquals(_sharedRefreshTask, refresh)) break;
+                waiterToken.ThrowIfCancellationRequested();
+                await Task.Yield();
             }
-            refresh = _sharedRefreshTask;
-            readOnlyFlight = _readOnlyRefreshFlight;
-            if (readOnlyFlight is not null) readOnlyFlight.Waiters++;
+            allowRecentSuccessfulResult = false;
         }
-        if (start is not null) _ = CompleteSharedRefreshAsync(start, RunTopologyRefreshAsync);
-        return AwaitTopologyRefreshAsync(refresh, waiterToken, readOnlyFlight);
     }
 
     private async Task<bool> AwaitTopologyRefreshAsync(Task<bool> task, CancellationToken waiterToken,
