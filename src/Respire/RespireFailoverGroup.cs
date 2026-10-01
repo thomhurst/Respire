@@ -228,13 +228,25 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             group._monitor = group.MonitorAsync();
             return group;
         }
-        catch
+        catch (Exception constructionError)
         {
-            foreach (var state in states) await state.Client.DisposeAsync().ConfigureAwait(false);
+            List<Exception>? cleanupFailures = null;
+            foreach (var state in states)
+            {
+                try { await state.Client.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+            }
             if (group is not null)
             {
-                group._stop.Dispose();
-                group._gate.Dispose();
+                try { group._stop.Dispose(); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+                try { group._gate.Dispose(); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+            }
+            if (cleanupFailures is not null)
+            {
+                cleanupFailures.Insert(0, constructionError);
+                throw new AggregateException("Failover group construction and cleanup both failed.", cleanupFailures);
             }
             throw;
         }
