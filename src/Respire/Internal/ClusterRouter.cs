@@ -592,6 +592,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             for (var attempt = 0; ; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (error.Code == RespireErrorCodes.Moved)
+                    SignalTopologyRefresh(delayMilliseconds: MovedTopologyRefreshDelayMilliseconds);
                 var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
                 try
                 {
@@ -698,13 +700,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         try
         {
             var sharedRefresh = RefreshReadOnlySharedAsync(
-                error, source, slot, cancellationToken, discovery, out var joinedDifferentRecovery);
-            var sharedRefreshSucceeded = await sharedRefresh.ConfigureAwait(false);
+                error, source, slot, cancellationToken, discovery,
+                out var joinedDifferentRecovery, out var joinedTopologyRefresh);
+            _ = await sharedRefresh.ConfigureAwait(false);
             var owner = Volatile.Read(ref _slots[slot]);
-            if ((owner is null || IsSameEndpoint(owner, source)) && sharedRefreshSucceeded && joinedDifferentRecovery)
+            if ((owner is null || IsSameEndpoint(owner, source))
+                && (joinedDifferentRecovery || joinedTopologyRefresh))
             {
-                // A concurrent READONLY on another slot can join this flight. The flight
-                // repairs its initiating slot; discover this slot before failing its write.
+                // A shared flight repairs its initiating slot, or performs full discovery.
+                // Recheck this rejected route with the slot-specific recovery when it remains stale.
                 owner = await RefreshReadOnlyOwnerCoreAsync(error, source, slot, cancellationToken, discovery)
                     .ConfigureAwait(false);
             }

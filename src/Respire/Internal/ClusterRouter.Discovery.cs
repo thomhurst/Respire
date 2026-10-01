@@ -48,7 +48,7 @@ internal sealed partial class ClusterRouter
 
     private Task<bool> RefreshReadOnlySharedAsync(
         RespireServerException rejection, RespireConnection source, int slot, CancellationToken waiterToken,
-        DiscoveryRound? discovery, out bool joinedDifferentRecovery)
+        DiscoveryRound? discovery, out bool joinedDifferentRecovery, out bool joinedTopologyRefresh)
     {
         TaskCompletionSource<bool>? start = null;
         Task<bool> task;
@@ -74,6 +74,7 @@ internal sealed partial class ClusterRouter
             joinedDifferentRecovery = flight is not null && !ReferenceEquals(start?.Task, task)
                 && (flight.Slot != slot || flight.Source.Port != source.Port
                     || !string.Equals(flight.Source.Host, source.Host, StringComparison.OrdinalIgnoreCase));
+            joinedTopologyRefresh = start is null && flight is null;
             if (flight is not null) flight.Waiters++;
         }
         if (start is not null)
