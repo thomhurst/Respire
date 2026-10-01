@@ -45,9 +45,9 @@ public sealed record RespireBloomInsertOptions
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
         foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
-        if (Capacity.HasValue != ErrorRate.HasValue) throw new ArgumentException("CAPACITY and ERROR must be specified together.");
         var args = new List<RespireValue>();
-        if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); if (ErrorRate is <= 0 or >= 1) throw new ArgumentOutOfRangeException(nameof(ErrorRate)); args.Add("CAPACITY"); args.Add(capacity); args.Add("ERROR"); args.Add(ErrorRate!.Value); }
+        if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); args.Add("CAPACITY"); args.Add(capacity); }
+        if (ErrorRate is { } errorRate) { if (!double.IsFinite(errorRate) || errorRate <= 0 || errorRate >= 1) throw new ArgumentOutOfRangeException(nameof(ErrorRate)); args.Add("ERROR"); args.Add(errorRate); }
         if (Expansion is { } expansion) { if (expansion <= 0) throw new ArgumentOutOfRangeException(nameof(Expansion)); args.Add("EXPANSION"); args.Add(expansion); }
         if (NonScaling) args.Add("NONSCALING");
         if (NoCreate) args.Add("NOCREATE");
@@ -108,9 +108,7 @@ public sealed record RespireCuckooInsertOptions
 public sealed record RespireCountMinMergeOptions
 {
     /// <summary>Weights for each source sketch.</summary>
-    public IReadOnlyList<double>? Weights { get; init; }
-    /// <summary>Aggregation used to combine source counters.</summary>
-    public RespireCountMinMergeAggregation? Aggregation { get; init; }
+    public IReadOnlyList<long>? Weights { get; init; }
 
     internal RespireValue[] ToArguments(int sourceCount)
     {
@@ -118,23 +116,11 @@ public sealed record RespireCountMinMergeOptions
         if (Weights is not null)
         {
             if (Weights.Count != sourceCount) throw new ArgumentException("Weights must match source count.", nameof(Weights));
-            foreach (var weight in Weights) if (!double.IsFinite(weight) || weight < 0) throw new ArgumentOutOfRangeException(nameof(Weights));
+            foreach (var weight in Weights) if (weight <= 0) throw new ArgumentOutOfRangeException(nameof(Weights));
             args.Add("WEIGHTS"); args.AddRange(Weights.Select(static weight => (RespireValue)weight));
         }
-        if (Aggregation is { } aggregation) { args.Add("AGGREGATE"); args.Add(aggregation switch { RespireCountMinMergeAggregation.Sum => "SUM", RespireCountMinMergeAggregation.Minimum => "MIN", RespireCountMinMergeAggregation.Maximum => "MAX", _ => throw new ArgumentOutOfRangeException(nameof(Aggregation)) }); }
         return [.. args];
     }
-}
-
-/// <summary>CMS.MERGE aggregation strategy.</summary>
-public enum RespireCountMinMergeAggregation
-{
-    /// <summary>Sum counters from source sketches.</summary>
-    Sum,
-    /// <summary>Take the minimum counter from source sketches.</summary>
-    Minimum,
-    /// <summary>Take the maximum counter from source sketches.</summary>
-    Maximum,
 }
 
 /// <summary>Options accepted by TOPK.RESERVE.</summary>

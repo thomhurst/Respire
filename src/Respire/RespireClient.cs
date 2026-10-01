@@ -328,7 +328,10 @@ public sealed partial class RespireClient : IRespireClient
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            return ExecuteCatalogAsync(command, args, flags, cancellationToken);
+            if (_keyPrefix is null || !IsModuleCommand(command.Name))
+                return ExecuteCatalogAsync(command, args, flags, cancellationToken);
+            operation = command.Name;
+            rawArguments = args;
         }
 
         if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
@@ -349,7 +352,10 @@ public sealed partial class RespireClient : IRespireClient
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+            if (_keyPrefix is null || !IsModuleCommand(command.Name))
+                return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+            operation = command.Name;
+            rawArguments = args;
         }
 
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
@@ -382,6 +388,14 @@ public sealed partial class RespireClient : IRespireClient
             prefixedArguments[layout.Extra] = arguments[layout.Extra].AsKey().Prepend(_keyPrefix!).AsValue();
         return true;
     }
+
+    private static bool IsModuleCommand(string operation)
+        => operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a

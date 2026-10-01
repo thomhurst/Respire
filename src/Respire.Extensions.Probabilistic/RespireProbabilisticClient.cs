@@ -234,25 +234,25 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Adds items to a Top-K sketch and returns items that were evicted.</summary>
-    public async ValueTask<string?[]> TopKAddAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
+    public async ValueTask<byte[]?[]> TopKAddAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
     {
         ValidateItems(items);
         using var result = await _commands.TopKAddAsync(key, [.. items], cancellationToken).ConfigureAwait(false);
-        var evicted = new string?[result.Count];
-        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsString();
+        var evicted = new byte[]?[result.Count];
+        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsBytes();
         return evicted;
     }
 
     /// <summary>Increments item counts in a Top-K sketch.</summary>
-    public async ValueTask<string?[]> TopKIncrementAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
+    public async ValueTask<byte[]?[]> TopKIncrementAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(increments);
         if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
         var args = new List<RespireValue>(checked(increments.Count * 2));
         foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
         using var result = await _commands.TopKIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
-        var evicted = new string?[result.Count];
-        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsString();
+        var evicted = new byte[]?[result.Count];
+        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsBytes();
         return evicted;
     }
 
@@ -352,7 +352,7 @@ public sealed class RespireProbabilisticClient
     public async ValueTask<double> TDigestTrimmedMeanAsync(RespireKey key, double lowCut, double highCut, CancellationToken cancellationToken = default)
     {
         ValidateQuantile(lowCut, nameof(lowCut)); ValidateQuantile(highCut, nameof(highCut));
-        if (lowCut > highCut) throw new ArgumentOutOfRangeException(nameof(lowCut));
+        if (lowCut >= highCut) throw new ArgumentOutOfRangeException(nameof(lowCut));
         using var result = await _commands.TDigestTrimmedMeanAsync(key, lowCut, highCut, cancellationToken).ConfigureAwait(false);
         return result.AsDouble();
     }

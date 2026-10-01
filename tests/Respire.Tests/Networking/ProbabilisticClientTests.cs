@@ -1,0 +1,121 @@
+using System.Text;
+using Respire.Extensions.Probabilistic;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class ProbabilisticClientTests
+{
+    private static readonly byte[] Hello = "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+
+    [Test]
+    public async Task KeyPrefixedProbabilisticCommandsUseTheirKnownModuleLayouts()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client.WithKeyPrefix("tenant:"));
+
+        await probabilistic.BloomAddAsync("filter", "item");
+
+        await Assert.That(server.ReceivedCommands.Contains("BF.ADD tenant:filter item")).IsTrue();
+    }
+
+    [Test]
+    public async Task BloomInsertAcceptsCapacityAndErrorIndependently()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await probabilistic.BloomInsertAsync("capacity-only", ["one"], new() { Capacity = 100 });
+        await probabilistic.BloomInsertAsync("error-only", ["two"], new() { ErrorRate = 0.01 });
+
+        await Assert.That(server.ReceivedCommands.Contains("BF.INSERT capacity-only CAPACITY 100 ITEMS one")).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("BF.INSERT error-only ERROR 0.01 ITEMS two")).IsTrue();
+    }
+
+    [Test]
+    public async Task CountMinMergeRejectsNonPositiveWeightsBeforeSending()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.CountMinMergeAsync("destination", ["source"],
+            new() { Weights = [0] })).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task CountMinMergeWritesPositiveIntegerWeightsOnly()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await probabilistic.CountMinMergeAsync("destination", ["source-a", "source-b"], new() { Weights = [2, 3] });
+
+        await Assert.That(server.ReceivedCommands.Contains(
+            "CMS.MERGE destination 2 source-a source-b WEIGHTS 2 3")).IsTrue();
+    }
+
+    [Test]
+    public async Task TopKEvictionResultsPreserveBinaryBytes()
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            _ when command.StartsWith("TOPK.ADD sketch ", StringComparison.Ordinal)
+                || command.StartsWith("TOPK.INCRBY sketch ", StringComparison.Ordinal)
+                => [.. "*1\r\n$2\r\n"u8.ToArray(), 0xFF, 0x00, .. "\r\n"u8.ToArray()],
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        var evicted = await probabilistic.TopKAddAsync("sketch", [(RespireValue)(new byte[] { 0xFE, 0x01 })]);
+        var increments = new Dictionary<RespireValue, long> { [(RespireValue)(new byte[] { 0xFD, 0x02 })] = 1 };
+        var incrementEvictions = await probabilistic.TopKIncrementAsync("sketch", increments);
+
+        await Assert.That(evicted.Length).IsEqualTo(1);
+        await Assert.That(evicted[0]).IsEquivalentTo(new byte[] { 0xFF, 0x00 });
+        await Assert.That(incrementEvictions[0]).IsEquivalentTo(new byte[] { 0xFF, 0x00 });
+    }
+
+    [Test]
+    public async Task TdigestTrimRejectsEqualCutoffs()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.TDigestTrimmedMeanAsync("digest", 0.5, 0.5))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    private static FakeRespServer Server()
+        => new(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => Hello,
+                "BF.ADD tenant:filter item" => ":1\r\n"u8.ToArray(),
+                "BF.INSERT capacity-only CAPACITY 100 ITEMS one" => "*1\r\n:1\r\n"u8.ToArray(),
+                "BF.INSERT error-only ERROR 0.01 ITEMS two" => "*1\r\n:1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+
+    private static RespireOptions Options(FakeRespServer server) => new()
+    {
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = RespProtocol.Resp3,
+        ThreadPoolMonitoring = false,
+    };
+
+    private static RespireOptions DisconnectedOptions() => new()
+    {
+        Endpoints = { new("localhost") },
+        ThreadPoolMonitoring = false,
+    };
+}
