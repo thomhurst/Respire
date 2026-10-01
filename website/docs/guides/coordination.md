@@ -57,6 +57,7 @@ and counter must share a slot, as above; the read and script route to that slot'
 tracking connection flushes tracked state and wakes the waiter to check again. The waiter also
 schedules one wake from the lease key's `PTTL`, so expiration does not depend on an immediate
 invalidation. A protected resource must still validate the fencing token on every write.
+The package also provides a distributed countdown latch.
 
 ## Keep the counter's history
 
@@ -210,3 +211,36 @@ cleanup retains its lease until server-side expiry. A node that exceeds `NodeTim
 failed, but its command can still arrive after cleanup has run; that node then holds the token
 until expiry, which can make the next attempts on that key fail to reach a quorum. Use a consensus-backed lock or a protected
 resource that enforces fencing tokens when stale owners must be rejected.
+## Distributed countdown latch
+
+Create one latch generation with a nonnegative count. Each signal decrements the count atomically;
+waiters complete at zero. Reset replaces the generation, wakes old waiters, and makes their
+`WaitAsync` return `false`. A signal against a replaced generation returns `-1`; signaling an
+already completed generation fails rather than underflowing.
+
+```csharp
+var latch = await coordination.CreateCountdownLatchAsync("{batch:42}:latch", count: 3);
+var completed = latch.WaitAsync();
+
+await latch.CountDownAsync();
+await latch.CountDownAsync();
+await latch.CountDownAsync();
+if (await completed) Console.WriteLine("All workers finished");
+```
+
+The caller chooses the key lifetime and cleanup policy. Keep the key until every participant
+has finished using its generation; deletion loses the current generation. A reset creates a
+new unique generation so late signals from earlier work cannot decrement the replacement.
+Client prefixes apply to the key, and binary keys are copied before asynchronous work. The
+single-key scripts work in Cluster without cross-slot operations.
+
+Waiters subscribe before checking Redis, then re-read the authoritative generation and count
+after every notification. Pub/Sub is only a wake-up hint: reconnects or dropped messages do
+not decide completion. Cancellation stops that waiter's local subscription and does not
+change the Redis count. A canceled signal may still have executed if Redis accepted it before
+the cancellation was observed; callers should treat that result as uncertain.
+
+The count and generation live in Redis and follow its persistence and failover guarantees.
+Asynchronous failover or restore can roll back acknowledged signals or resets. Use suitable
+Redis durability for the work being coordinated; this latch does not provide consensus across
+independent Redis histories.
