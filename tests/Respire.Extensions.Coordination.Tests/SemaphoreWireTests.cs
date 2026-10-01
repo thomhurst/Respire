@@ -134,12 +134,11 @@ public class SemaphoreWireTests
         await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        await Assert.That(Volatile.Read(ref evalCount)).IsEqualTo(2);
         var renewalCommand = server.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
                 && command.Contains("semaphore", StringComparison.Ordinal));
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[renewalCommand]);
-        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(2))).IsTrue();
+        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(2))).IsFalse();
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, deadline.Token);

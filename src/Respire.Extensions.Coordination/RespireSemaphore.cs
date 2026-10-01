@@ -10,6 +10,7 @@ namespace Respire.Extensions.Coordination;
 public sealed class RespireSemaphore
 {
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DisposeReleaseRetryLimit = TimeSpan.FromMinutes(1);
     private readonly IRespireClient _client;
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
@@ -288,11 +289,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 var completed = Stopwatch.GetTimestamp();
                 var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
                 var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
-                if (response.AsInteger() == 1 && (!remaining.HasValue || remaining.Value > TimeSpan.Zero))
+                if (response.AsInteger() == 1 && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
+                    && Volatile.Read(ref _disposeReleaseScheduled) == 0)
                 {
                     Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
                     Interlocked.Exchange(ref _validUntil, remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
-                    return true;
+                    return Volatile.Read(ref _disposeReleaseScheduled) == 0;
                 }
             }
             catch
@@ -364,17 +366,41 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     private async Task RetryDisposeReleaseAsync()
     {
+        var started = Stopwatch.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(100);
-        while (Volatile.Read(ref _released) == 0)
+        while (Volatile.Read(ref _released) == 0 && Stopwatch.GetElapsedTime(started) < DisposeReleaseRetryLimit
+            && RemainingEstimate != TimeSpan.Zero)
         {
-            if (await RespireSemaphore.TryReleaseBestEffortAsync(_client, Key, _owner).ConfigureAwait(false))
+            var released = await TryReleaseAfterDisposeAsync().ConfigureAwait(false);
+            if (released is null or true) return;
+
+            if (Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero)
             {
-                Interlocked.Exchange(ref _released, 1);
                 return;
             }
 
             await Task.Delay(delay).ConfigureAwait(false);
             delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+        }
+    }
+
+    private async ValueTask<bool?> TryReleaseAfterDisposeAsync()
+    {
+        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        try
+        {
+            using var response = await _client.Scripts.ExecuteAsync(
+                RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], timeout.Token).ConfigureAwait(false);
+            Interlocked.Exchange(ref _released, 1);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 
