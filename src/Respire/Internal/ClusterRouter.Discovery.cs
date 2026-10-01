@@ -258,6 +258,7 @@ internal sealed partial class ClusterRouter
         try
         {
             var round = scope.Round;
+            var snapshotBatch = new object();
             var refreshTopologyVersion = CaptureTopologyVersion();
             var candidates = OrderTopologyRefreshCandidates(GetTopologyRefreshCandidates());
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
@@ -291,7 +292,7 @@ internal sealed partial class ClusterRouter
                     // Apply partial maps while continuing through known candidates. A later node
                     // may provide the complete map needed to replace stale routes during failover.
                     var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true,
-                        expectedTopologyVersion: refreshTopologyVersion)
+                        expectedTopologyVersion: refreshTopologyVersion, snapshotBatch: snapshotBatch)
                         .ConfigureAwait(false);
                     if (load.Loaded)
                     {

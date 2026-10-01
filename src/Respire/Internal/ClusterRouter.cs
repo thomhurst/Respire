@@ -38,6 +38,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // even when a route changes away and back
     // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
+    private readonly object?[] _slotSnapshotBatches = new object?[ClusterHash.SlotCount];
     private int _disposed;
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
@@ -773,7 +774,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<RespireConnectionMultiplexer?> TryReadOnlyCandidatesAsync(
         List<RespireConnectionMultiplexer> candidates, RespireConnection source, int slot,
-        ClusterRecoveryBudget budget, bool primaryPhase, RespireConnectionMultiplexer? unavailableOwner, DiscoveryRound? discovery)
+        ClusterRecoveryBudget budget, bool primaryPhase, RespireConnectionMultiplexer? unavailableOwner,
+        DiscoveryRound? discovery)
     {
         for (var index = 0; index < candidates.Count; index++)
         {
@@ -803,7 +805,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 continue;
             }
-            if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attemptToken, budget.Token, discovery).ConfigureAwait(false))
+            var snapshotBatch = new object();
+            if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attemptToken, budget.Token, discovery, snapshotBatch)
+                    .ConfigureAwait(false))
             {
                 continue;
             }
@@ -840,12 +844,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     private async ValueTask<bool> TryDiscoverReadOnlyOwnerAsync(
-        RespireConnectionMultiplexer candidate, CancellationToken attemptToken, CancellationToken roundToken, DiscoveryRound? discovery)
+        RespireConnectionMultiplexer candidate, CancellationToken attemptToken, CancellationToken roundToken,
+        DiscoveryRound? discovery, object snapshotBatch)
     {
         try
         {
             await EnsureRouteNodeConnectedAsync(candidate, attemptToken, discovery).ConfigureAwait(false);
-            if (!(await TryLoadSlotsAsync(candidate, attemptToken).ConfigureAwait(false)).Loaded)
+            if (!(await TryLoadSlotsAsync(candidate, attemptToken, snapshotBatch: snapshotBatch).ConfigureAwait(false)).Loaded)
                 discovery?.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide topology."));
             return true;
         }
@@ -1032,6 +1037,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<RespireConnection[]> GetMasterConnectionsCoreAsync(CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
         AddKnownMasters(masters);
@@ -1042,7 +1048,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && discovery?.HasRejected(seed) != true)
         {
             attemptedSeed = seed;
-            refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery, expectedTopologyVersion)
+            refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery, expectedTopologyVersion,
+                    snapshotBatch)
                 .ConfigureAwait(false);
         }
 
@@ -1053,7 +1060,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 // The connected seed is also a known master. Its failed query has already
                 // seeded the round; reserve the fallback budget for a different candidate.
                 if (ReferenceEquals(master, attemptedSeed) || discovery?.HasRejected(master) == true) continue;
-                if (await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion)
+                if (await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion,
+                        snapshotBatch)
                     .ConfigureAwait(false))
                 {
                     SetSeed(master);
@@ -1069,7 +1077,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var fallbackSeed = Volatile.Read(ref _seed)!;
             await EnsureRouteNodeConnectedAsync(fallbackSeed, cancellationToken, discovery).ConfigureAwait(false);
             var loaded = (await TryLoadSlotsAsync(fallbackSeed, cancellationToken,
-                expectedTopologyVersion: expectedTopologyVersion).ConfigureAwait(false)).Loaded;
+                expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch).ConfigureAwait(false)).Loaded;
             if (!loaded || !HasCompleteTopology())
             {
                 throw new RespireConnectionException(
@@ -1151,13 +1159,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<bool> TryRefreshTopologyAsync(
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken, DiscoveryRound? discovery,
-        long? expectedTopologyVersion = null)
+        long? expectedTopologyVersion = null, object? snapshotBatch = null)
     {
         try
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
             var complete = (await TryLoadSlotsAsync(node, cancellationToken,
-                expectedTopologyVersion: expectedTopologyVersion).ConfigureAwait(false)).Loaded && HasCompleteTopology();
+                expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch).ConfigureAwait(false)).Loaded
+                && HasCompleteTopology();
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
             return complete;
         }
@@ -1173,13 +1182,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer? failedOwner,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
         foreach (var master in Volatile.Read(ref _masters))
         {
             // A failed owner can still own other slots. Spend fallback budget on a distinct
             // generation instead of immediately retrying the already rejected connection.
             if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
-            if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion)
+            if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch)
                 .ConfigureAwait(false))
             {
                 continue;
@@ -1290,14 +1300,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
-        => ApplyTopologyCore(ranges, expectedVersion, discoveryGeneration, keepUncoveredOwners: false);
+        => ApplyTopologyCore(ranges, expectedVersion, discoveryGeneration, keepUncoveredOwners: false,
+            snapshotBatch: null);
 
     // keepUncoveredOwners: a slot the reply does not cover keeps its current owner, protected like
     // a slot a newer redirect changed. Background refresh uses this so a partial map (a lost shard
     // with cluster-require-full-coverage no, or a node with an incomplete view) still publishes the
-    // ownership it does report without dropping the rest. Replica metadata is retained as well.
+    // ownership it does report without dropping the rest. Within one fallback batch, the first
+    // reply covering a slot also stays authoritative while later candidates fill uncovered slots.
+    // Replica metadata is retained as well.
     private void ApplyTopologyCore(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration,
-        bool keepUncoveredOwners)
+        bool keepUncoveredOwners, object? snapshotBatch)
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
         List<RetiredGeneration> retirements;
@@ -1368,6 +1381,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     refreshedSlots[slot] = node;
                 }
             }
+            if (snapshotBatch is not null)
+            {
+                for (var slot = 0; slot < _slotSnapshotBatches.Length; slot++)
+                {
+                    if (ReferenceEquals(_slotSnapshotBatches[slot], snapshotBatch))
+                        refreshedSlots[slot] = _slots[slot];
+                }
+            }
             if (keptSlots is not null)
             {
                 for (var slot = 0; slot < keptSlots.Length; slot++)
@@ -1376,8 +1397,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
             }
 
-            var publishedVersion = ++_topologyVersion;
-            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, publishedVersion,
+            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
                 out topologyChanged);
             // Resolve stable node identity before pruning the old reverse mapping.
             if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
@@ -1597,13 +1617,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private List<RespireConnectionMultiplexer>? ReplaceSlotOwnersLocked(
         RespireConnectionMultiplexer?[] refreshedSlots,
-        bool[] coveredSlots, long expectedVersion, long publishedVersion, out bool topologyChanged)
+        bool[] coveredSlots, long expectedVersion, object? snapshotBatch, out bool topologyChanged)
     {
         topologyChanged = false;
-        // Preserve only slots changed since this request began. An unrelated MOVED
-        // must not discard useful discovery for a READONLY command's slot.
-        // Discovery order has its own fence. Publishing an older request must not advance
-        // slot mutation versions past a newer request that is already in flight.
+        // Preserve only slots changed by a redirect since this request began. Snapshot order
+        // has its own generation fence, so publishing a snapshot must not look like a later
+        // redirect to another discovery that began from the same topology.
         var activeNodes = new HashSet<RespireConnectionMultiplexer>();
         for (var slot = 0; slot < refreshedSlots.Length; slot++)
         {
@@ -1630,7 +1649,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (_slotVersions[slot] <= expectedVersion)
             {
                 topologyChanged |= !ReferenceEquals(_slots[slot], node);
-                PublishSlotLocked(slot, node, coveredSlots[slot] ? publishedVersion : _slotVersions[slot]);
+                // Topology replies are ordered by discovery generation. Leave the point-route
+                // version unchanged so a later discovery can replace this snapshot.
+                PublishSlotLocked(slot, node, _slotVersions[slot]);
+                if (snapshotBatch is not null && coveredSlots[slot])
+                    _slotSnapshotBatches[slot] = snapshotBatch;
             }
             complete &= node is not null;
             if (node is not null)
@@ -1755,7 +1778,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken,
         bool keepUncoveredOwners = false,
-        long? expectedTopologyVersion = null)
+        long? expectedTopologyVersion = null,
+        object? snapshotBatch = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -1837,7 +1861,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
 
                 var coversAllSlots = CoversAllSlots(topology);
-                ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners);
+                ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners, snapshotBatch);
                 return (true, coversAllSlots);
             }
             finally
