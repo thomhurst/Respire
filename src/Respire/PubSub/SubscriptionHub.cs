@@ -156,11 +156,18 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         await controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_notificationCoverage.TryGetValue(subscription, out var endpoints))
+            RespireEndpoint[]? endpoints;
+            lock (_gate) endpoints = _notificationCoverage.TryGetValue(subscription, out var coverage)
+                ? coverage.ToArray() : null;
+            if (endpoints is not null)
             {
-                foreach (var endpoint in endpoints.ToArray())
-                    if (_notificationNodes.TryGetValue(endpoint, out var node))
+                foreach (var endpoint in endpoints)
+                {
+                    ClusterNotificationNode? node;
+                    lock (_gate) _notificationNodes.TryGetValue(endpoint, out node);
+                    if (node is not null)
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+                }
                 return;
             }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
@@ -761,6 +768,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             InterruptPublishedConnection(interruptedDisposals);
 
             List<RespireSubscription> subscriptions = [];
+            RespireConnection[] notificationConnections;
             lock (_gate)
             {
                 _interrupted.Clear();
@@ -780,14 +788,15 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                     node.Retired = true;
                     node.Epoch++;
                 }
+                notificationConnections = _notificationNodes.Values
+                    .Select(static node => node.Connection).Where(static connection => connection is not null)
+                    .Select(static connection => connection!).ToArray();
+                _notificationNodes.Clear();
             }
 
-            var notificationConnections = _notificationNodes.Values
-                .Select(static node => node.Connection).Where(static connection => connection is not null).ToArray();
-            _notificationNodes.Clear();
             foreach (var connection in notificationConnections)
             {
-                try { await connection!.DisposeAsync().ConfigureAwait(false); }
+                try { await connection.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception error) { core.Logger?.LogDebug(error, "Closing a cluster notification connection failed"); }
             }
 
