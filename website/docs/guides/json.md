@@ -37,4 +37,4 @@ Use `RespireJsonPath.Root` for legacy root path `.`. Use `RespireJsonPath.JsonPa
 
 `RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, toggle, and debug-memory commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use.
 
-Keys must include any desired key prefix because raw module commands do not apply `WithKeyPrefix`. All keys in `JSON.MGET` must share a Redis Cluster hash slot. RESP2 and RESP3 are supported by Respire's shared command transport.
+Known RedisJSON key arguments receive the prefix configured by `WithKeyPrefix`. All keys in `JSON.MGET` and `JSON.MSET` must share a Redis Cluster hash slot; Respire validates these layouts before dispatch. RESP2 and RESP3 use Respire's shared command transport.

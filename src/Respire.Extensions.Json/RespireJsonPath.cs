@@ -25,6 +25,7 @@ public readonly record struct RespireJsonPath
     public bool UsesJsonPath => Value.StartsWith('$');
 
     /// <summary>Converts a string to a RedisJSON path.</summary>
+    /// <exception cref="ArgumentException">The path is null, empty, or whitespace.</exception>
     public static implicit operator RespireJsonPath(string value) => new(value);
 
     /// <inheritdoc />

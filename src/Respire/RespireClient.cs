@@ -345,6 +345,10 @@ public sealed partial class RespireClient : IRespireClient
         catch (ArgumentException exception)
         {
             return ValueTask.FromException<RespireResult>(exception);
+        if (!TryPrefixGeneratedKeys(operation, rawArguments, out var prefixedArguments))
+        {
+            // Report the rejection through the task, as ExecuteCatalogAsync does, rather than synchronously.
+            return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
         }
         return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
     }
@@ -379,6 +383,27 @@ public sealed partial class RespireClient : IRespireClient
             return ValueTask.FromException(exception);
         }
         return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
+        if (!TryPrefixGeneratedKeys(operation, rawArguments, out var prefixedArguments))
+            return ValueTask.FromException(KeyPrefixNotSupported());
+        return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
+    }
+
+    private bool TryPrefixGeneratedKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    {
+        if (!RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        {
+            prefixedArguments = [];
+            return false;
+        }
+        prefixedArguments = arguments.ToArray();
+        for (var index = 0; index < layout.Count; index++)
+        {
+            var keyIndex = layout.Start + index * layout.Stride;
+            prefixedArguments[keyIndex] = arguments[keyIndex].AsKey().Prepend(_keyPrefix!).AsValue();
+        }
+        if (layout.Extra >= 0)
+            prefixedArguments[layout.Extra] = arguments[layout.Extra].AsKey().Prepend(_keyPrefix!).AsValue();
+        return true;
     }
 
     /// <summary>
@@ -846,10 +871,15 @@ public sealed partial class RespireClient : IRespireClient
 
     private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
-        var validated = ValidateClusterRawKeys(operation, tokens.AsSpan(firstArgumentIndex));
-        if (!validated.Known)
-            return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
-        return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        var validated = ValidateClusterRawKeys(operation, arguments);
+        if (validated.Known)
+            return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
+        if (RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+            return layout.Count > 0
+                ? firstArgumentIndex + layout.Start
+                : layout.Extra >= 0 ? firstArgumentIndex + layout.Extra : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
+        return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)

@@ -6,8 +6,8 @@ namespace Respire.Extensions.Json;
 /// <summary>Typed RedisJSON operations using caller-supplied System.Text.Json metadata.</summary>
 /// <remarks>
 /// The metadata overloads do not use reflection and are suitable for Native AOT. The caller owns
-/// the underlying Respire client. Keys passed to RedisJSON methods must already include any desired
-/// key prefix. Use JSON.MGET only with keys from the same Redis Cluster slot.
+/// the underlying Respire client. RedisJSON key arguments receive the client's configured key
+/// prefix. JSON.MGET and JSON.MSET keys must share a Redis Cluster slot.
 /// </remarks>
 public sealed class RespireJsonClient
 {
