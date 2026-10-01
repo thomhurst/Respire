@@ -76,7 +76,7 @@ new RespireFailoverCandidate(new RespireOptions
 {
     UseCluster = true,
     Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
-}, Priority: 0)
+}, Priority: 0);
 ```
 
 ## Metrics
