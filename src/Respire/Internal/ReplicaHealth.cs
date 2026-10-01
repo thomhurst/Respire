@@ -46,6 +46,9 @@ internal sealed class ReplicaHealth<TConnection> where TConnection : class
         return elapsed < interval + interval ? ReplicaValidation.Stale : ReplicaValidation.Required;
     }
 
+    /// <summary>True when this connection has passed ROLE at least once.</summary>
+    internal bool WasValidated(TConnection connection) => _validated.TryGetValue(connection, out _);
+
     /// <summary>Records a ROLE reply taken at <paramref name="checkedAt"/> (a Stopwatch timestamp).</summary>
     /// <returns>False, and forgets the connection, when the node is not a replica.</returns>
     internal bool Record(TConnection connection, long checkedAt, in RespValue role)

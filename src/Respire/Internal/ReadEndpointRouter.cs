@@ -451,7 +451,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             {
                 var multiplexer = Volatile.Read(ref _multiplexer);
                 return !_closed && !IsCoolingDown && multiplexer?.HasConnection(connection =>
-                    _health.Check(connection, router.RoleRevalidationInterval) != ReplicaValidation.Required) == true;
+                    _health.WasValidated(connection)) == true;
             }
         }
 

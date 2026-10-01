@@ -40,6 +40,7 @@ public class ReadEndpointRoutingTests
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
 
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await view.GetStringAsync("key")).IsEqualTo("replica");
         await Assert.That(client.IsConnected).IsTrue();
