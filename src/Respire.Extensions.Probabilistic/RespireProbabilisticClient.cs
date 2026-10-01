@@ -26,7 +26,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Adds one item to a Bloom filter.</summary>
     public async ValueTask<bool> BloomAddAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.BloomAddAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -34,7 +34,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Checks whether a Bloom filter may contain an item.</summary>
     public async ValueTask<bool> BloomExistsAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.BloomExistsAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -100,7 +100,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Adds an item to a Cuckoo filter.</summary>
     public async ValueTask<bool> CuckooAddAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooAddAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -108,7 +108,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Adds an item only when it is not already present.</summary>
     public async ValueTask<bool> CuckooAddIfAbsentAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooAddIfAbsentAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -130,7 +130,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Deletes one item from a Cuckoo filter.</summary>
     public async ValueTask<bool> CuckooDeleteAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooDeleteAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -138,7 +138,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Checks whether a Cuckoo filter may contain an item.</summary>
     public async ValueTask<bool> CuckooExistsAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
-        RespireValue.ThrowIfNull(item, nameof(item));
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooExistsAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsBoolean();
     }
@@ -199,7 +199,7 @@ public sealed class RespireProbabilisticClient
         ArgumentNullException.ThrowIfNull(increments);
         if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
         var args = new List<RespireValue>(checked(increments.Count * 2));
-        foreach (var (item, amount) in increments) { RespireValue.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
+        foreach (var (item, amount) in increments) { ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
         using var result = await _commands.CountMinIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
         return ReadIntegers(result);
     }
@@ -249,7 +249,7 @@ public sealed class RespireProbabilisticClient
         ArgumentNullException.ThrowIfNull(increments);
         if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
         var args = new List<RespireValue>(checked(increments.Count * 2));
-        foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); RespireValue.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
+        foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
         using var result = await _commands.TopKIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
         var evicted = new string?[result.Count];
         for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsString();
@@ -403,7 +403,7 @@ public sealed class RespireProbabilisticClient
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
-        foreach (var item in items) RespireValue.ThrowIfNull(item, nameof(items));
+        foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
     }
 
     private static void ValidateKeys(IReadOnlyList<RespireKey> keys)

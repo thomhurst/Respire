@@ -1,5 +1,14 @@
 namespace Respire.Extensions.Probabilistic;
 
+internal static class ProbabilisticValueValidation
+{
+    internal static void ThrowIfNull(RespireValue value, string parameterName)
+    {
+        if (value.IsNull)
+            throw new ArgumentNullException(parameterName, "A null value cannot be sent as a Redis argument; use an empty string or delete the key.");
+    }
+}
+
 /// <summary>Options accepted by BF.RESERVE.</summary>
 public sealed record RespireBloomReserveOptions
 {
@@ -35,7 +44,7 @@ public sealed record RespireBloomInsertOptions
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
-        foreach (var item in items) RespireValue.ThrowIfNull(item, nameof(items));
+        foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
         if (Capacity.HasValue != ErrorRate.HasValue) throw new ArgumentException("CAPACITY and ERROR must be specified together.");
         var args = new List<RespireValue>();
         if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); if (ErrorRate is <= 0 or >= 1) throw new ArgumentOutOfRangeException(nameof(ErrorRate)); args.Add("CAPACITY"); args.Add(capacity); args.Add("ERROR"); args.Add(ErrorRate!.Value); }
@@ -86,7 +95,7 @@ public sealed record RespireCuckooInsertOptions
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
-        foreach (var item in items) RespireValue.ThrowIfNull(item, nameof(items));
+        foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
         var args = new List<RespireValue>();
         if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); args.Add("CAPACITY"); args.Add(capacity); }
         if (NoCreate) args.Add("NOCREATE");
