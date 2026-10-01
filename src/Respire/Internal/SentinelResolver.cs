@@ -44,9 +44,9 @@ internal static class SentinelResolver
             {
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
-            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
-                cancellationToken,
-                options.CommandTimeout ?? options.ConnectTimeout);
+            var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
+            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
+            var discoveryCompleted = false;
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -58,6 +58,7 @@ internal static class SentinelResolver
                         cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
+                discoveryCompleted = true;
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -88,7 +89,7 @@ internal static class SentinelResolver
             catch (Exception ex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                lastError = discoveryTimeoutSource.IsCancellationRequested && ContainsCancellation(ex)
+                lastError = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested && ContainsCancellation(ex)
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
