@@ -11,18 +11,27 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     private readonly RespireCoordination _coordination = coordination ?? throw new ArgumentNullException(nameof(coordination));
 
     /// <summary>Creates a fixed-window rate limiter.</summary>
+    /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
+    /// returns an unacquired lease without <c>RetryAfter</c>, even when permits are free. A request for more permits than the
+    /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter FixedWindow(RespireKey key, int permitLimit, TimeSpan window, int queueLimit = 0,
         QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
         => new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
             RedisRateLimiterKind.FixedWindow, window);
 
     /// <summary>Creates a sliding-window rate limiter divided into segments.</summary>
+    /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
+    /// returns an unacquired lease without <c>RetryAfter</c>, even when permits are free. A request for more permits than the
+    /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter SlidingWindow(RespireKey key, int permitLimit, TimeSpan window, int segments,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
         => new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
             RedisRateLimiterKind.SlidingWindow, window, segments);
 
     /// <summary>Creates a token-bucket rate limiter.</summary>
+    /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
+    /// returns an unacquired lease without <c>RetryAfter</c>, even when permits are free. A request for more permits than the
+    /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter TokenBucket(RespireKey key, int tokenLimit, int tokensPerPeriod, TimeSpan replenishmentPeriod,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
         => new RedisRateLimiter(_coordination, key, tokenLimit, queueLimit, queueProcessingOrder,
@@ -44,14 +53,18 @@ internal sealed class RedisRateLimiter : RateLimiter
         local unsupported = 0
         if ARGV[4] == '1' then
             local result = redis.pcall('INCREX', KEYS[1], 'BYINT', requested, 'UBOUND', limit, 'PX', width, 'ENX')
-            if type(result) == 'table' and not result.err then
+            if type(result) ~= 'table' then return redis.error_reply('ERR INCREX returned an unexpected reply') end
+            if not result.err then
                 local current = tonumber(result[1])
                 local applied = tonumber(result[2])
                 if applied == requested then return {1, 0, limit - current, 0} end
                 return {0, math.max(1, redis.call('PTTL', KEYS[1])), limit - current, 0}
             end
-            if not string.find(string.lower(result.err or ''), 'unknown', 1, true) then
-                return redis.error_reply(result.err or 'ERR INCREX failed')
+            -- Only a missing command selects the fallback ("unknown command" or "Unknown Redis command
+            -- called from script"); any other INCREX error, such as an unknown option, is surfaced.
+            local err = string.lower(result.err)
+            if not (string.find(err, 'unknown command', 1, true) or string.find(err, 'unknown %a+ command')) then
+                return redis.error_reply(result.err)
             end
             unsupported = 1
         end
@@ -149,8 +162,8 @@ internal sealed class RedisRateLimiter : RateLimiter
     private int _queuedPermits;
     private bool _pumpRunning;
     private volatile bool _disposed;
-    private volatile bool _increxUnsupported;
-    internal bool IncrexUnsupported => _increxUnsupported;
+    private readonly RespireScript _script;
+    internal bool IncrexUnsupported => _coordination.IncrexUnsupported;
     private int _activeAcquisitions;
     private long _lastActivity = Stopwatch.GetTimestamp();
     private long _availablePermits;
@@ -180,6 +193,12 @@ internal sealed class RedisRateLimiter : RateLimiter
         _periodMs = checked((long)period.TotalMilliseconds);
         _segments = segments;
         _tokensPerPeriod = tokensPerPeriod;
+        _script = kind switch
+        {
+            RedisRateLimiterKind.FixedWindow => FixedWindowScript,
+            RedisRateLimiterKind.SlidingWindow => SlidingWindowScript,
+            _ => TokenBucketScript,
+        };
         if (kind == RedisRateLimiterKind.TokenBucket)
         {
             var periodsToFull = ((long)permitLimit + tokensPerPeriod - 1) / tokensPerPeriod;
@@ -256,22 +275,16 @@ internal sealed class RedisRateLimiter : RateLimiter
     {
         RespireValue[] args = _kind switch
         {
-            RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit, _increxUnsupported ? 0 : 1],
+            RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit, _coordination.IncrexUnsupported ? 0 : 1],
             RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit],
             _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
-        var script = _kind switch
-        {
-            RedisRateLimiterKind.FixedWindow => FixedWindowScript,
-            RedisRateLimiterKind.SlidingWindow => SlidingWindowScript,
-            _ => TokenBucketScript,
-        };
-        using var result = await _coordination.ExecuteRateLimitScriptAsync(script, _key, args, cancellationToken)
+        using var result = await _coordination.ExecuteRateLimitScriptAsync(_script, _key, args, cancellationToken)
             .ConfigureAwait(false);
         var expectedCount = _kind == RedisRateLimiterKind.FixedWindow ? 4 : 3;
         if (result.Count != expectedCount) throw new RespireProtocolException("Rate-limit script returned an invalid response.");
-        // Pre-8.8 servers reject INCREX; remember that so later calls skip the failing probe.
-        if (expectedCount == 4 && result[3].AsInteger() == 1) _increxUnsupported = true;
+        // Pre-8.8 servers reject INCREX; remember that per connection so later limiters skip the failing probe.
+        if (expectedCount == 4 && result[3].AsInteger() == 1) _coordination.IncrexUnsupported = true;
         Volatile.Write(ref _availablePermits, Math.Max(0, result[2].AsInteger()));
         var granted = result[0].AsInteger() == 1;
         var retry = Math.Clamp(result[1].AsInteger(), 0, MaxTimeSpanMilliseconds);

@@ -10,7 +10,10 @@ public sealed class RespireCoordination
 
     /// <summary>Creates coordination operations without taking ownership of <paramref name="client"/>.</summary>
     public RespireCoordination(IRespireClient client)
-        => _client = client ?? throw new ArgumentNullException(nameof(client));
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        RateLimiters = new(this);
+    }
 
     internal static readonly RespireScript CreateCountdownLatch = RespireScript.Create("""
         if redis.call('EXISTS', KEYS[1]) == 1 then return redis.error_reply('ERR latch already exists; use reset') end
@@ -52,9 +55,17 @@ public sealed class RespireCoordination
         RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
 
     /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
-    public RespireRateLimiters RateLimiters => _rateLimiters ??= new(this);
+    public RespireRateLimiters RateLimiters { get; }
 
-    private RespireRateLimiters? _rateLimiters;
+    // Learned once per connection so every limiter (for example, one per PartitionedRateLimiter partition)
+    // skips the failing INCREX probe after the first unknown-command reply from a pre-8.8 server.
+    private volatile bool _increxUnsupported;
+
+    internal bool IncrexUnsupported
+    {
+        get => _increxUnsupported;
+        set => _increxUnsupported = value;
+    }
 
     internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
@@ -131,6 +142,7 @@ public sealed class RespireCoordination
             [snapshot], [generation, count, channel], cancellationToken).ConfigureAwait(false);
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
+
     internal static readonly RespireScript AcquireFencedLock = RespireScript.Create("""
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then

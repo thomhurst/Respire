@@ -36,6 +36,24 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    public async Task FixedWindowIncrexDenialDoesNotConsumePartialPermits()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+            "fixed-bulk", permitLimit: 3, TimeSpan.FromSeconds(30));
+
+        using var first = await limiter.AcquireAsync(1);
+        await Assert.That(first.IsAcquired).IsTrue();
+        // UBOUND must reject the whole increment; a clamped partial increment would leave no room below.
+        using var denied = await limiter.AcquireAsync(3);
+        await Assert.That(denied.IsAcquired).IsFalse();
+        using var remaining = await limiter.AcquireAsync(2);
+        await Assert.That(remaining.IsAcquired).IsTrue();
+        await Assert.That(((RedisRateLimiter)limiter).IncrexUnsupported).IsFalse();
+    }
+
+    [Test]
     public async Task SynchronousAttemptAcquireDefersToAsynchronousAcquisition()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
@@ -75,12 +93,20 @@ public class RedisRateLimiterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
-        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+        var coordination = new RespireCoordination(client);
+        await using var limiter = coordination.RateLimiters.FixedWindow(
             "fixed", permitLimit: 1, TimeSpan.FromSeconds(2));
+        await using var partition = coordination.RateLimiters.FixedWindow(
+            "fixed-partition", permitLimit: 1, TimeSpan.FromSeconds(2));
+        await Assert.That(((RedisRateLimiter)partition).IncrexUnsupported).IsFalse();
 
         using var recovered = await limiter.AcquireAsync(1);
         await Assert.That(recovered.IsAcquired).IsTrue();
         await Assert.That(((RedisRateLimiter)limiter).IncrexUnsupported).IsTrue();
+        // The probe result is shared per connection, so other limiters skip INCREX from their first call.
+        await Assert.That(((RedisRateLimiter)partition).IncrexUnsupported).IsTrue();
+        using var partitionLease = await partition.AcquireAsync(1);
+        await Assert.That(partitionLease.IsAcquired).IsTrue();
         using var denied = await limiter.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
         await Task.Delay(2100);
