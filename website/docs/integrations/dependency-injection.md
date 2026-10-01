@@ -75,10 +75,10 @@ A standalone client with several endpoints throws `RespireConfigurationException
 container first resolves it. Register separate named clients for independent deployments;
 endpoint order does not imply automatic failover.
 
-Sentinel configurations require `await RespireClient.ConnectAsync(options)` during application
-startup because discovery performs network I/O. `AddRespire` and `AddKeyedRespire` create lazy
-clients through `RespireClient.Create`, which rejects `SentinelPrimaryName`; setting that option
-on the DI builder does not enable Sentinel discovery. Applications can register an already
-connected Sentinel client as a singleton and retain responsibility for disposing it at shutdown.
+`AddRespire` and `AddKeyedRespire` support Sentinel through their lazy clients. Set
+`SentinelPrimaryName` and configure Sentinel endpoints; discovery occurs on the first network
+operation. Use `await RespireClient.ConnectAsync(options)` when startup must validate the
+primary eagerly. Prefixed views and DI consumers retain the same client across reactive
+Sentinel primary changes.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).

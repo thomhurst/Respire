@@ -59,7 +59,10 @@ public sealed partial class RespireClient
             }
             else if (requireIdentity)
             {
-                connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken).ConfigureAwait(false);
+                var multiplexer = core.Sentinel is { } sentinel
+                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    : core.Multiplexer;
+                connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken).ConfigureAwait(false);
             }
             else
             {

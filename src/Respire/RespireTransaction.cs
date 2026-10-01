@@ -246,14 +246,15 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         ThrowIfCompleted();
         _completed = true;
         var core = _client.Core;
-        var telemetry = RespireTelemetry.StartBatchOperation(
+        var telemetryOperation = "MULTI";
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "MULTI",
             _ops,
             static op => op.Operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            core.Endpoint,
             core.Options.Database,
-            out var telemetryOperation);
+            out telemetryOperation) : default;
         RespireConnection? connection = _watchConnection;
         Exception? operationError = null;
         var returnWatchConnection = false;
@@ -261,6 +262,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         {
             if (_ops.Count == 0)
             {
+                if (core.Sentinel is not null)
+                {
+                    telemetry = RespireTelemetry.StartBatchOperation(
+                        "MULTI", _ops, static op => op.Operation, core.Options.Database,
+                        out telemetryOperation, sentinelStarted);
+                }
                 return true;
             }
 
@@ -283,9 +290,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null,
-                            core.Cluster is null ? core.Multiplexer.CaptureConnectionWait()
-                                : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+                        var diagnostics = core.Cluster is null && core.Sentinel is null
+                            ? core.Multiplexer.CaptureConnectionWait()
+                            : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);
+                        if (core.Sentinel is not null && connection is not null)
+                            diagnostics = connection.CaptureTimeoutDiagnostics();
+                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null, diagnostics);
                     }
                 }
                 else
@@ -379,12 +389,23 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             finally
             {
-                telemetry.Complete(
-                    core,
-                    telemetryOperation,
-                    error: operationError,
-                    connection: connection,
-                    batchSize: _ops.Count == 1 ? null : _ops.Count);
+                if (connection is null && operationError is not null)
+                    RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
+                        core.Options.Database, sentinelStarted, operationError);
+                if (core.Sentinel is not null && _ops.Count == 0)
+                {
+                    telemetry.Complete(telemetryOperation, host: null, port: 6379,
+                        database: core.Options.Database, error: operationError, batchSize: 0);
+                }
+                else
+                {
+                    telemetry.Complete(
+                        core,
+                        telemetryOperation,
+                        error: operationError,
+                        connection: connection,
+                        batchSize: _ops.Count == 1 ? null : _ops.Count);
+                }
             }
         }
 
@@ -400,6 +421,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, token)
                         .ConfigureAwait(false);
+                    if (core.Sentinel is not null)
+                        telemetry = RespireTelemetry.StartBatchOperation(
+                            "MULTI", _ops, static op => op.Operation,
+                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
                     RespValue reply;
                     try
                     {

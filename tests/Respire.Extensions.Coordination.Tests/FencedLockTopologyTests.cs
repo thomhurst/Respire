@@ -10,6 +10,28 @@ namespace Respire.Extensions.Coordination.Tests;
 public class FencedLockTopologyTests
 {
     [Test]
+    public async Task ClusterAcquireWaitsForSlotOwnerInvalidation()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        {
+            Protocol = RespProtocol.Resp3,
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        var coordination = new RespireCoordination(client.WithKeyPrefix("coordination:"));
+        await using var owner = await coordination.TryAcquireFencedLockAsync("{wait}:lease", "{wait}:counter", TimeSpan.FromSeconds(20));
+
+        var waiting = coordination.AcquireFencedLockAsync("{wait}:lease", "{wait}:counter", TimeSpan.FromSeconds(20)).AsTask();
+        await Task.Delay(100);
+        await Assert.That(waiting.IsCompleted).IsFalse();
+
+        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ClusterSupportsSameSlotKeysAndRejectsCrossSlotPairs(int protocol)

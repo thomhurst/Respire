@@ -24,10 +24,21 @@ internal sealed class ClientCore : IAsyncDisposable
     private bool _publishingState;
     private IDisposable? _threadPoolMonitor;
 
-    public readonly RespireConnectionMultiplexer Multiplexer;
+    private readonly RespireConnectionMultiplexer _multiplexer;
+    public RespireConnectionMultiplexer Multiplexer => Sentinel?.Current?.Multiplexer ?? _multiplexer;
+    internal RespireEndpoint Endpoint
+    {
+        get
+        {
+            var multiplexer = Multiplexer;
+            return new(multiplexer.Host, multiplexer.Port);
+        }
+    }
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
-    public readonly DedicatedConnectionPool DedicatedPool;
+    private readonly DedicatedConnectionPool _dedicatedPool;
+    public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
+    internal readonly SentinelRouter? Sentinel;
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
@@ -44,13 +55,14 @@ internal sealed class ClientCore : IAsyncDisposable
         var connectionOptions = options.ToConnectionOptions(
             pushHandler,
             enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true);
-        Multiplexer = RespireConnectionMultiplexer.Create(
+        _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
-        DedicatedPool = new DedicatedConnectionPool(
+        _dedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
+        Sentinel = string.IsNullOrWhiteSpace(options.SentinelPrimaryName) ? null : new SentinelRouter(this);
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
@@ -58,7 +70,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DiscoveryStateChanged += NotifyRecoveryStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
         }
-        else
+        else if (Sentinel is null)
         {
             Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         }
@@ -67,11 +79,61 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
-        => Cluster is { } cluster
+        => Sentinel is not null
+            ? EnsureSentinelConnectedAsync(cancellationToken)
+            : Cluster is { } cluster
             ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
+    private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken)
+        => await Sentinel!.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+
+    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
+        => Sentinel is { } sentinel
+            ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool
+            : _dedicatedPool;
+
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+
+    internal void NotifySentinelDisconnected(RespireConnectionMultiplexer node, Exception? error = null)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            _disconnectedCommandSlots.Add((node, 0));
+            QueueEndpointStateLocked(new RespireConnectionStateChange(
+                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Disconnected, error));
+        }
+        PublishQueuedStates();
+    }
+
+    internal void NotifySentinelPrimaryChanged(RespireConnectionMultiplexer? previous, RespireConnectionMultiplexer current)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            if (previous is not null)
+            {
+                _reconnectingCommandSlots.RemoveWhere(slot => ReferenceEquals(slot.Node, previous));
+                _disconnectedCommandSlots.RemoveWhere(slot => ReferenceEquals(slot.Node, previous));
+                _publishedEndpointStates.Remove(new(previous.Host, previous.Port));
+            }
+            // Publication itself is a connection event, including the first discovery.
+            // Do not synthesize a continuity loss after new-generation reads can start.
+            var endpoint = new RespireEndpoint(current.Host, current.Port);
+            _publishedEndpointStates.Remove(endpoint);
+            var state = GetEndpointStateLocked(endpoint);
+            if (state == RespireConnectionState.Connected)
+            {
+                _pendingStates.Enqueue(new RespireConnectionStateChange(endpoint, state, null));
+            }
+            else
+            {
+                QueueEndpointStateLocked(new RespireConnectionStateChange(endpoint, state, null));
+            }
+        }
+        PublishQueuedStates();
+    }
 
     internal void NotifyRecoveryStateChanged(RespireConnectionStateChange change)
     {
@@ -115,11 +177,11 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionState state,
         Exception? error = null)
-        => NotifyCommandStateChanged(
-            Multiplexer,
-            slot,
-            new RespireConnectionStateChange(
-                new RespireEndpoint(Multiplexer.Host, Multiplexer.Port), state, error));
+    {
+        var multiplexer = Multiplexer;
+        NotifyCommandStateChanged(multiplexer, slot,
+            new RespireConnectionStateChange(new(multiplexer.Host, multiplexer.Port), state, error));
+    }
 
     internal void NotifyCommandStateChanged(int slot, RespireConnectionStateChange change)
         => NotifyCommandStateChanged(Multiplexer, slot, change);
@@ -363,7 +425,12 @@ internal sealed class ClientCore : IAsyncDisposable
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
         ClientCache?.Clear();
-        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
+        RespireEndpoint[] commandEndpoints;
+        if (Cluster is { } clusterRouter) commandEndpoints = clusterRouter.GetActiveEndpoints();
+        // A lazy Sentinel client has no data endpoint until a validated generation is published.
+        else if (Sentinel is { } sentinelRouter)
+            commandEndpoints = sentinelRouter.Current is { } generation ? [generation.Endpoint] : [];
+        else commandEndpoints = [Endpoint];
         lock (_stateGate)
         {
             _subscriptionState = RespireConnectionState.Disconnected;
@@ -397,7 +464,8 @@ internal sealed class ClientCore : IAsyncDisposable
             await hub.DisposeAsync().ConfigureAwait(false);
         }
 
-        await DedicatedPool.DisposeAsync().ConfigureAwait(false);
+        if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
+        await _dedicatedPool.DisposeAsync().ConfigureAwait(false);
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
@@ -411,6 +479,6 @@ internal sealed class ClientCore : IAsyncDisposable
             Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
         }
 
-        await Multiplexer.DisposeAsync().ConfigureAwait(false);
+        await _multiplexer.DisposeAsync().ConfigureAwait(false);
     }
 }

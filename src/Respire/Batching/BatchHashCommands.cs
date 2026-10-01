@@ -64,6 +64,9 @@ public interface IBatchHashCommands
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key, string field);
 
+    /// <summary>Gets a binary field's raw bytes, or null when missing. Redis: HGET.</summary>
+    RespirePending<byte[]?> GetBytes(RespireKey key, RespireKey field);
+
     /// <summary>Gets many fields in one round trip; missing fields yield null. Redis: HMGET.</summary>
     RespirePending<string?[]> GetMany(RespireKey key, params ReadOnlySpan<string> fields);
 
@@ -117,6 +120,12 @@ public interface IBatchHashCommands
 
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
     RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields);
+
+    /// <summary>Expiry state for binary fields, in milliseconds. Redis: HPTTL.</summary>
+    RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields);
+
+    /// <summary>Expiry state for one binary field, in milliseconds. Redis: HPTTL.</summary>
+    RespirePending<RespireTtl> Expiry(RespireKey key, RespireKey field);
 
     /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
     RespirePending<HashFieldExpiryResult[]> Expire(
@@ -211,6 +220,14 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
             static (c, v) => ResponseReader.BytesOrNull(in v));
 
+    public RespirePending<byte[]?> GetBytes(RespireKey key, RespireKey field)
+    {
+        var fieldSnapshot = field.Snapshot();
+        return sink.Add<Cmd2, byte[]?>(
+            "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), fieldSnapshot.AsValue()),
+            static (c, v) => ResponseReader.BytesOrNull(in v));
+    }
+
     public RespirePending<string?[]> GetMany(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, string?[]>(
             "HMGET", new Cmd1N(Verbs.HMGet, sink.Client.Key(in key), HashCommands.ToValues(fields)),
@@ -302,6 +319,21 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.TtlArray(in v));
+
+    public RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields)
+        => sink.Add<Cmd1N, RespireTtl[]>(
+            "HPTTL",
+            new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
+            static (c, v) => ResponseReader.TtlArray(in v));
+
+    public RespirePending<RespireTtl> Expiry(RespireKey key, RespireKey field)
+    {
+        var fieldSnapshot = field.Snapshot();
+        return sink.Add<Cmd1N, RespireTtl>(
+            "HPTTL",
+            new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock([fieldSnapshot])),
+            static (c, v) => ResponseReader.TtlArray(in v)[0]);
+    }
 
     public RespirePending<HashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)

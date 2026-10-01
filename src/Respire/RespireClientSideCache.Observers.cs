@@ -12,7 +12,7 @@ internal sealed partial class ClientSideCacheCoordinator
         ArgumentNullException.ThrowIfNull(observer);
         cancellationToken.ThrowIfCancellationRequested();
         key = key.Snapshot();
-        if (!CanTrack(in key))
+        if (_options.TrackingMode == RespireClientTrackingMode.Broadcast && !CanTrack(in key))
             throw new ArgumentException("The physical key is outside the configured broadcast prefixes.", nameof(key));
         var subscription = new RespireClientCacheInvalidationSubscription(this, key, observer);
         lock (_observerGate)

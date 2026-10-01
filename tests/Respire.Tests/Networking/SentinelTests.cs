@@ -549,16 +549,16 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task Create_RejectsSentinelBecauseDiscoveryIsNetworked()
+    public async Task Create_DoesNotContactSentinelBeforeFirstOperation()
     {
-        var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
+        await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
             SentinelPrimaryName = "mymaster",
-        }));
+        });
 
-        await Assert.That(error.Message).Contains("ConnectAsync");
+        await Assert.That(client.IsConnected).IsFalse();
     }
 
     private static byte[] PrimaryReply(int port)

@@ -32,6 +32,56 @@ public sealed class RespireCoordination
         return fence
         """);
 
+    private static readonly RespireScript AcquireHashFieldLease = RespireScript.Create("""
+        local capability = redis.pcall('HPTTL', KEYS[1], 'FIELDS', 1, ARGV[1])
+        if type(capability) == 'table' and capability.err then
+            if string.find(string.lower(capability.err), 'unknown', 1, true) then
+                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
+            end
+            return redis.error_reply(capability.err)
+        end
+        if redis.call('PTTL', KEYS[1]) >= 0 then
+            return redis.error_reply('ERR coordination leases require a hash key without key expiration')
+        end
+        if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then return false end
+        local expiry = redis.pcall('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
+        if type(expiry) == 'table' and expiry.err then
+            redis.call('HDEL', KEYS[1], ARGV[1])
+            return redis.error_reply(expiry.err)
+        end
+        if expiry[1] ~= 1 then
+            redis.call('HDEL', KEYS[1], ARGV[1])
+            return redis.error_reply('ERR coordination lease expiry could not be applied')
+        end
+        return 1
+        """);
+
+    private static readonly RespireScript RenewHashFieldLease = RespireScript.Create("""
+        if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+        local expiry = redis.pcall('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
+        if type(expiry) == 'table' and expiry.err then
+            return redis.error_reply(expiry.err)
+        end
+        return expiry[1] == 1 and 1 or 0
+        """);
+
+    private static readonly RespireScript VerifyHashFieldLease = RespireScript.Create("""
+        if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+        local ttl = redis.pcall('HPTTL', KEYS[1], 'FIELDS', 1, ARGV[1])
+        if type(ttl) == 'table' and ttl.err then
+            if string.find(string.lower(ttl.err), 'unknown', 1, true) then
+                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
+            end
+            return redis.error_reply(ttl.err)
+        end
+        return ttl[1] > 0 and 1 or 0
+        """, readOnly: true);
+
+    private static readonly RespireScript ReleaseHashFieldLease = RespireScript.Create("""
+        if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+        return redis.call('HDEL', KEYS[1], ARGV[1])
+        """);
+
     /// <summary>Immediately tries to acquire a lease with a new fencing token; contention returns an unacquired attempt.</summary>
     /// <param name="key">The lease key, before the client's prefix.</param>
     /// <param name="fencingCounterKey">A distinct, persistent counter dedicated to this lease key. Both keys must share a Cluster slot.</param>
@@ -48,11 +98,129 @@ public sealed class RespireCoordination
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
-        if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
-        if (key == fencingCounterKey) throw new ArgumentException("Lock and fencing counter keys must differ.", nameof(fencingCounterKey));
+        var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
         // Both inputs may wrap caller-owned binary buffers. Snapshot before the first await.
         return AcquireAsync(key.Snapshot(), fencingCounterKey.Snapshot(), milliseconds, cancellationToken);
+    }
+
+    /// <summary>Waits without polling until this client acquires a fenced lease.</summary>
+    /// <param name="key">The lease key, before the client's prefix.</param>
+    /// <param name="fencingCounterKey">A distinct persistent counter key in the same Cluster slot.</param>
+    /// <param name="duration">A positive lease duration of at least one millisecond.</param>
+    /// <param name="cancellationToken">Cancels the wait; an accepted acquisition can still execute and expire naturally.</param>
+    /// <remarks>
+    /// Requires RESP3 client-side caching/tracking. Subscribe-before-check ordering avoids missed
+    /// wakeups; every wake retries the atomic acquisition script, so a notification never grants
+    /// ownership. Notifications are hints and can be coalesced. The lease PTTL schedules one
+    /// expiry wake if Redis delays its invalidation. Reconnect continuity loss wakes waiters to
+    /// recheck. Client tracking must be active on connections to Cluster slot owners.
+    /// Cancellation or connection loss after Redis accepts acquisition can leave an unreturned
+    /// lease until its server-side duration elapses.
+    /// </remarks>
+    public async ValueTask<RespireFencedLock> AcquireFencedLockAsync(
+        RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
+        var leaseKey = key.Snapshot();
+        var counterKey = fencingCounterKey.Snapshot();
+        return await RespireNotificationWaiter.WaitAsync(_client, leaseKey,
+            async token => { _ = await _client.Strings.GetStringAsync(leaseKey, token).ConfigureAwait(false); },
+            token => _client.Keys.ExpiryAsync(leaseKey, token),
+            async token =>
+        {
+            var attempt = await AcquireAsync(leaseKey, counterKey, milliseconds, token).ConfigureAwait(false);
+            if (!attempt.Acquired) return (false, default(RespireFencedLock)!);
+            return (true, attempt.Lock);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
+    {
+        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+        if (milliseconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        if (key == fencingCounterKey)
+            throw new ArgumentException("Lock and fencing counter keys must differ.", nameof(fencingCounterKey));
+        return milliseconds;
+    }
+
+    /// <summary>Immediately tries to create a named lease in a Redis hash field.</summary>
+    /// <param name="hashKey">The hash key, before the client's prefix.</param>
+    /// <param name="field">The binary-safe lease name.</param>
+    /// <param name="duration">A positive lease duration of at least one millisecond.</param>
+    /// <param name="cancellationToken">Cancels this attempt; an accepted lease can remain until expiry.</param>
+    /// <remarks>Requires Redis 7.4 or later and a hash key without key-level expiration.</remarks>
+    public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
+        RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
+    {
+        var milliseconds = ValidateLease(hashKey, duration);
+        cancellationToken.ThrowIfCancellationRequested();
+        hashKey = hashKey.Snapshot();
+        field = field.Snapshot();
+        var owner = RespireLock.NewToken();
+        var started = Stopwatch.GetTimestamp();
+        using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
+            [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+        if (response.IsNull || response.AsInteger() == 0) return null;
+        cancellationToken.ThrowIfCancellationRequested();
+        var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
+        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
+        if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
+        await lease.DisposeAsync().ConfigureAwait(false);
+        return null;
+    }
+
+    /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
+    /// <remarks>Requires RESP3 client-side caching/tracking and Redis 7.4 or later.</remarks>
+    public async ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
+        RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
+    {
+        var milliseconds = ValidateLease(hashKey, duration);
+        cancellationToken.ThrowIfCancellationRequested();
+        hashKey = hashKey.Snapshot();
+        field = field.Snapshot();
+        return await RespireNotificationWaiter.WaitAsync(_client, hashKey,
+            async token => { _ = await _client.Hashes.GetBytesAsync(hashKey, field, token).ConfigureAwait(false); },
+            token => _client.Hashes.ExpiryAsync(hashKey, field, token),
+            async token =>
+            {
+                var lease = await TryAcquireLeaseAsync(hashKey, field, duration, token).ConfigureAwait(false);
+                return lease is null ? (false, default(RespireCoordinationLease)!) : (true, lease);
+            }, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static long ValidateLease(RespireKey hashKey, TimeSpan duration)
+    {
+        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+        if (milliseconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        return milliseconds;
+    }
+
+    internal async ValueTask<bool> RenewHashFieldLeaseAsync(
+        RespireKey hashKey, RespireKey field, RespireLockToken owner, long milliseconds, CancellationToken cancellationToken)
+    {
+        using var response = await _client.Scripts.ExecuteAsync(RenewHashFieldLease, [hashKey],
+            [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
+    }
+
+    internal async ValueTask<bool> VerifyHashFieldLeaseAsync(
+        RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
+    {
+        using var response = await _client.Scripts.ExecuteAsync(VerifyHashFieldLease, [hashKey],
+            [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
+    }
+
+    internal async ValueTask<bool> ReleaseHashFieldLeaseAsync(
+        RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
+    {
+        using var response = await _client.Scripts.ExecuteAsync(ReleaseHashFieldLease, [hashKey],
+            [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
     }
 
     private async ValueTask<RespireFencedLockAttempt> AcquireAsync(

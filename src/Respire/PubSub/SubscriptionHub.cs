@@ -373,9 +373,15 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                 epoch = ++_connectionEpoch;
             }
             RespireEndpoint endpoint;
+            SentinelRouter.Generation? sentinelGeneration = null;
             if (core.Cluster is { } cluster)
             {
                 endpoint = await cluster.GetPubSubEndpointAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else if (core.Sentinel is { } sentinel)
+            {
+                sentinelGeneration = await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+                endpoint = sentinelGeneration.Endpoint;
             }
             else
             {
@@ -385,6 +391,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             var options = core.Options.ToConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
             {
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
+                Generation = sentinelGeneration,
             };
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCancellation.Token);

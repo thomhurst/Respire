@@ -17,7 +17,9 @@ public sealed partial class RespireClient
         RespireValue[]? missingFields = null;
         int[]? missingIndexes = null;
         var missingCount = 0;
+        var cachedCount = 0;
         var key = request.PrimaryKey;
+        var generation = _core.Sentinel?.Current;
         for (var index = 0; index < fieldCount; index++)
         {
             var field = request.Query.GetArgument(index + 1);
@@ -25,6 +27,7 @@ public sealed partial class RespireClient
                 new ClientCacheCommandKey("HGET", key.AsValue(), field), key);
             if (cache.TryGet(in fieldRequest, out var cached))
             {
+                cachedCount++;
                 result[index] = cached.ToOwned();
             }
             else
@@ -34,16 +37,41 @@ public sealed partial class RespireClient
                 (missingIndexes ??= new int[fieldCount])[missingCount++] = index;
             }
         }
+        // A lookup callback can retire the Sentinel generation between fields. Discard
+        // every cached value and rebuild the full physical-key request before dispatch.
+        if (!IsCacheGenerationCurrent(generation))
+        {
+            missingFields ??= new RespireValue[fieldCount];
+            missingIndexes ??= new int[fieldCount];
+            missingCount = fieldCount;
+            for (var index = 0; index < fieldCount; index++)
+            {
+                result[index].Dispose();
+                result[index] = default;
+                missingFields[index] = request.Query.GetArgument(index + 1).Snapshot();
+                missingIndexes[index] = index;
+            }
+            cachedCount = 0;
+            generation = _core.Sentinel?.Current;
+        }
         if (missingFields is null) return ValueTask.FromResult(RespValue.Array(result));
         if (missingCount != missingFields.Length) Array.Resize(ref missingFields, missingCount);
+        RespireValue[]? allFields = null;
+        if (cachedCount != 0)
+        {
+            allFields = new RespireValue[fieldCount];
+            for (var index = 0; index < fieldCount; index++)
+                allFields[index] = request.Query.GetArgument(index + 1).Snapshot();
+        }
         return FetchHashFieldsAndCacheAsync(key.Snapshot(), missingFields, missingIndexes!, result,
-            cache, cancellationToken);
+            cache, cancellationToken, generation, allFields);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> FetchHashFieldsAndCacheAsync(
         RespireKey key, RespireValue[] fields, int[] missingIndexes, RespValue[] result,
-        ClientSideCacheCoordinator cache, CancellationToken cancellationToken)
+        ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        SentinelRouter.Generation? generation, RespireValue[]? allFields)
     {
         // Share only the missing wire fields. Each waiter keeps its own cached values,
         // result ordering, and ownership, even when different full requests join this producer.
@@ -55,7 +83,24 @@ public sealed partial class RespireClient
             : FetchHashFieldsAsync(key, fields, cache, cancellationToken)).ConfigureAwait(false);
         for (var index = 0; index < fields.Length; index++)
             result[missingIndexes[index]] = response.AsArray()[index].ToOwned();
-        return RespValue.Array(result);
+        var combined = RespValue.Array(result);
+        if (allFields is null || IsCacheGenerationCurrent(generation)) return combined;
+        combined.Dispose();
+        return await FetchHashFieldsForCurrentGenerationAsync(key, allFields, cache, cancellationToken).ConfigureAwait(false);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> FetchHashFieldsForCurrentGenerationAsync(
+        RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var generation = _core.Sentinel?.Current;
+            var response = await FetchHashFieldsAsync(key, fields, cache, cancellationToken).ConfigureAwait(false);
+            if (IsCacheGenerationCurrent(generation)) return response;
+            response.Dispose();
+        }
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -74,15 +119,13 @@ public sealed partial class RespireClient
                 new ClientCacheCommandKey("HGET", key.AsValue(), fields[index]), key);
             tokens[index] = cache.BeginRead("HGET", in request);
         }
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 for (var index = 0; index < tokens.Length; index++)
                     tokens[index] = cache.RebaseRead(in tokens[index]);
-                allowInsert = cacheable;
             };
         }
         var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
@@ -101,7 +144,7 @@ public sealed partial class RespireClient
             for (var index = 0; index < fields.Length; index++)
             {
                 var value = response.AsArray()[index];
-                cache.CompleteRead(in tokens[index], in value, allowInsert);
+                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
             }
             return response;
         }

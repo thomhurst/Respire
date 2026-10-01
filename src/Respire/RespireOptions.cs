@@ -126,10 +126,11 @@ public sealed record RespireOptions
     }
 
     /// <summary>
-    /// Redis Sentinel primary service name. When set, <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>
-    /// treats <see cref="Endpoints"/> as Sentinel endpoints and discovers the current primary
-    /// before opening Redis connections. The candidate must confirm its primary role through
-    /// ROLE before ConnectAsync returns; its data-node credentials therefore need ROLE permission.
+    /// Redis Sentinel primary service name. When set, <see cref="Endpoints"/> identifies Sentinel
+    /// nodes. Discovery runs eagerly with ConnectAsync or on the first operation with Create.
+    /// Data connections must confirm a primary ROLE before use; the data credentials need ROLE
+    /// permission. Disconnects and READONLY replies retire the current generation so subsequent
+    /// operations discover a validated primary without replaying accepted commands.
     /// </summary>
     public string? SentinelPrimaryName
     {
@@ -299,6 +300,9 @@ public sealed record RespireOptions
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
 
+        if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+            throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
+
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
@@ -347,12 +351,20 @@ public sealed record RespireOptions
 
         if (ClientSideCache is { } cache)
         {
-            // OPTIN prefixes reads with CACHING YES; Cluster redirects pair ASKING with the read.
-            var needsCommandPair = cache.TrackingMode != RespireClientTrackingMode.Broadcast || UseCluster;
+            // OPTIN Cluster ASK redirects send ASKING, CACHING YES, and the read atomically.
+            var isOptIn = cache.TrackingMode != RespireClientTrackingMode.Broadcast;
+            var requiredInflightCommands = isOptIn ? 2 : 1;
+            if (UseCluster) requiredInflightCommands = isOptIn ? 3 : 2;
+            var requirement = requiredInflightCommands switch
+            {
+                3 => "must be at least three for OPTIN caching with Cluster ASK redirects",
+                2 => "must be at least two for OPTIN caching or Cluster ASK redirects",
+                _ => "must be at least one",
+            };
             Require(
-                !needsCommandPair || MaxInflightCommands >= 2,
+                MaxInflightCommands >= requiredInflightCommands,
                 nameof(MaxInflightCommands),
-                "must be at least two for OPTIN caching or Cluster caching with ASK redirects");
+                requirement);
             Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
             Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
             Require(

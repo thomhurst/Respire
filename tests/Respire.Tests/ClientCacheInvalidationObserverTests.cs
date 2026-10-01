@@ -167,6 +167,37 @@ public class ClientCacheInvalidationObserverTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ThrowingStoppedCallbackCannotSkipSubscriptionOrOwnerCleanup(bool ownerStops)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        using var cancellation = new CancellationTokenSource();
+        var throwing = cache.SubscribeInvalidations("key", _ => { }, cancellation.Token);
+        var peer = cache.SubscribeInvalidations("key", _ => { });
+        using var registration = throwing.Stopped.Register(static () => throw new InvalidOperationException("stopped"));
+
+        if (ownerStops) cache.StopInvalidationObservers();
+        else throwing.Dispose();
+
+        await Assert.That(throwing.IsDisposed).IsTrue();
+        await Assert.That(throwing.Stopped.IsCancellationRequested).IsTrue();
+        await Assert.That(throwing.LastObserverException).IsNotNull();
+        // Disposal already unregistered the cancellation callback, so this must not re-enter it.
+        cancellation.Cancel();
+        if (ownerStops)
+        {
+            await Assert.That(peer.IsDisposed).IsTrue();
+            await Assert.That(peer.Stopped.IsCancellationRequested).IsTrue();
+        }
+        else
+        {
+            await Assert.That(peer.IsDisposed).IsFalse();
+            peer.Dispose();
+        }
+    }
+
+    [Test]
     public async Task SlowObserverKeepsOnePendingWakeUpWithoutDelayingEvictionOrOtherObservers()
     {
         var cache = new ClientSideCacheCoordinator(new());

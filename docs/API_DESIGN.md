@@ -537,8 +537,11 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   after the first, sharing one fallback budget across configured seeds, learned peers, and
   primary ROLE rejection. Each explicit resolution starts fresh; per-candidate deadlines and
   the final underlying error are preserved. Metrics identify the candidate endpoint and
-  `respire.reconnect.scope=sentinel-discovery`. Initial resolution has no returned client for
-  lifecycle subscriptions; ongoing failover remains #396. Dedicated rents use independent
+  `respire.reconnect.scope=sentinel-discovery`. Sentinel supports lazy discovery and reactive
+  generation replacement after disconnect or READONLY. Validated replacements share the same
+  core, retire stale admission, preserve accepted work, and never replay WATCH or ambiguous writes.
+  Endpoint changes emit lifecycle events and `respire.sentinel.failover`; event monitoring remains #549.
+  Dedicated rents use independent
   per-rent budgets; pub/sub shares a budget until all live routes are resubscribed. Cluster
   discovery shares one budget across cached-owner, known-master, topology, seed, tracked,
   and dedicated selection. The first candidate is immediate; fallback after failure consumes

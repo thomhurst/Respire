@@ -35,6 +35,6 @@
     <PackageVersion Include="System.IO.Pipelines" Version="10.0.12" />
     <PackageVersion Include="Testcontainers" Version="4.15.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.15.0" />
-    <PackageVersion Include="TUnit" Version="1.72.4" />
+    <PackageVersion Include="TUnit" Version="1.72.10" />
   </ItemGroup>
 </Project>

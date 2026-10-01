@@ -61,36 +61,7 @@ public sealed partial class RespireClient : IRespireClient
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
         options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
-        if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
-            return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        return await SentinelResolver.ResolveAndConnectPrimaryAsync(
-            options,
-            ConnectSentinelPrimaryAsync,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<RespireClient> ConnectSentinelPrimaryAsync(
-        RespireOptions options, CancellationToken cancellationToken)
-    {
-        var client = await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // Validate on a data connection owned by the candidate before exposing it.
-            using var reply = await client.SendAsync("ROLE", new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-            if (reply.Type != RespDataType.Array)
-                throw new RespireProtocolException("Sentinel primary ROLE must return an array.");
-            var role = reply.AsArray();
-            if (role.Length < 3 || role[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                || role[0].AsString() != "master" || role[1].Type != RespDataType.Integer
-                || role[2].Type != RespDataType.Array)
-                throw new RespireConnectionException("Sentinel candidate did not confirm a valid primary ROLE.");
-            return client;
-        }
-        catch
-        {
-            await client.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
+        return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<RespireClient> ConnectPrimaryAsync(
@@ -199,22 +170,19 @@ public sealed partial class RespireClient : IRespireClient
     {
         ArgumentNullException.ThrowIfNull(options);
         options = options.ValidateAndSnapshot();
-        if (!string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
-        {
-            throw new RespireConfigurationException(
-                "Redis Sentinel discovery requires RespireClient.ConnectAsync because it must query Sentinel " +
-                "before Redis connections are created. Lazy Sentinel failover is not supported yet.");
-        }
-
         return new RespireClient(new ClientCore(options), keyPrefix: null, ownsCore: true);
     }
 
     /// <inheritdoc/>
-    public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
+    public RespireEndpoint Endpoint
+        => _core.Sentinel is { } sentinel
+            ? sentinel.Current?.Endpoint ?? throw new InvalidOperationException(
+                "The Sentinel primary endpoint is unavailable until discovery succeeds. Use ConnectAsync or await the first command.")
+            : _core.Endpoint;
 
     /// <inheritdoc/>
     public bool IsConnected
-        => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
+        => !_core.Disposed && (_core.Sentinel?.IsConnected ?? _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
     /// <summary>Captures owned Cluster retirement diagnostics, or null for a non-Cluster client.</summary>
     /// <remarks>Performs no network I/O. Prefix views share the underlying router's state.
@@ -1121,7 +1089,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         var cluster = _core.Cluster;
-        var pool = cluster is null ? _core.DedicatedPool
+        var pool = cluster is null ? await _core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false)
             : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         // The owning pool must follow the lease through commit/disposal, even if topology changes.
         RespireConnection connection;
@@ -1325,7 +1293,8 @@ public sealed partial class RespireClient : IRespireClient
             return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
         }
 
-        if (cache.TryGet(in resolvedKey, out var cached))
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
         {
             return new ValueTask<TResult>(converter(this, in cached));
         }
@@ -1393,13 +1362,16 @@ public sealed partial class RespireClient : IRespireClient
         RespireKey[]? missingKeys = null;
         int[]? missingIndexes = null;
         var missingCount = 0;
+        var cachedCount = 0;
         int? cachedClusterSlot = null;
+        SentinelRouter.Generation? generation = _core.Sentinel?.Current;
         for (var i = 0; i < keys.Length; i++)
         {
-            var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
+            var resolvedKey = (keysResolved ? keys[i] : ResolveKey(keys[i])).Snapshot();
             ValidateMGetClusterSlot(in resolvedKey, ref cachedClusterSlot);
             if (cache.TryGet(in resolvedKey, out var cached))
             {
+                cachedCount++;
                 result[i] = converter(this, in cached);
             }
             else
@@ -1415,6 +1387,30 @@ public sealed partial class RespireClient : IRespireClient
             }
         }
 
+        // All cached elements must belong to the same live Sentinel generation. If it
+        // retired during lookup/conversion, discard the entire mixed result and read again.
+        if (!IsCacheGenerationCurrent(generation))
+        {
+            missingKeys ??= new RespireKey[keys.Length];
+            missingIndexes ??= new int[keys.Length];
+            missingCount = keys.Length;
+            for (var i = 0; i < keys.Length; i++)
+            {
+                missingKeys[i] = keysResolved ? keys[i] : ResolveKey(keys[i]);
+                missingIndexes[i] = i;
+            }
+            cachedCount = 0;
+            generation = _core.Sentinel?.Current;
+        }
+
+        RespireKey[]? allKeys = null;
+        if (missingCount != 0 && cachedCount != 0)
+        {
+            allKeys = new RespireKey[keys.Length];
+            for (var i = 0; i < keys.Length; i++)
+                allKeys[i] = (keysResolved ? keys[i] : ResolveKey(keys[i])).Snapshot();
+        }
+
         return missingCount == 0
             ? new ValueTask<TResult[]>(result)
             : GetManyAndCacheAsync(
@@ -1424,8 +1420,17 @@ public sealed partial class RespireClient : IRespireClient
                 missingCount,
                 cache,
                 cancellationToken,
-                converter);
+                converter,
+                allKeys,
+                generation);
     }
+
+    // Retirement is read last: Invalidate retires the still-current generation before it
+    // flushes the cache, so a retirement racing the identity/connectivity reads is still seen.
+    private bool IsCacheGenerationCurrent(SentinelRouter.Generation? generation)
+        => _core.Sentinel is null || generation is not null
+            && ReferenceEquals(generation, _core.Sentinel.Current) && generation.Multiplexer.IsConnected
+            && !generation.IsRetired;
 
     private void ValidateMGetClusterSlot(in RespireKey key, ref int? clusterSlot)
     {
@@ -1478,21 +1483,21 @@ public sealed partial class RespireClient : IRespireClient
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter, bool transferResponse = false)
     {
-        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached))
+        var generation = _core.Sentinel?.Current;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached)
+            && IsCacheGenerationCurrent(generation))
             return converter(this, in cached);
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
         var released = false;
         var returned = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 token = cache.RebaseRead(in token);
-                allowInsert = cacheable;
             };
         }
 
@@ -1501,7 +1506,7 @@ public sealed partial class RespireClient : IRespireClient
             response = await SendTrackedAsync(
                 "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
             released = true;
-            cache.CompleteRead(in token, in response, allowInsert);
+            cache.CompleteRead(in token, in response, allowInsert: true);
             var result = converter(this, in response);
             returned = transferResponse;
             return result;
@@ -1516,15 +1521,18 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
+    private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
         RespireKey[] missingKeys,
         TResult[] result,
         int[] missingIndexes,
         int missingCount,
         ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken,
-        ResponseConverter<RespireClient, TResult> converter)
-        => cache.CoalesceConcurrentMisses
+        ResponseConverter<RespireClient, TResult> converter,
+        RespireKey[]? allKeys,
+        SentinelRouter.Generation? generation)
+    {
+        var fetchedResult = await (cache.CoalesceConcurrentMisses
             ? GetManySharedAndCacheAsync(missingKeys, result, missingIndexes, missingCount, cache, cancellationToken, converter)
             : FetchManyAndCacheAsync(missingKeys, missingCount, cache, cancellationToken,
                 (Client: this, Result: result, Indexes: missingIndexes, Converter: converter),
@@ -1534,7 +1542,41 @@ public sealed partial class RespireClient : IRespireClient
                     for (var index = 0; index < values.Length; index++)
                         state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
                     return state.Result;
-                });
+                })).ConfigureAwait(false);
+
+        return allKeys is null || IsCacheGenerationCurrent(generation)
+            ? fetchedResult
+            : await FetchManyForCurrentGenerationAsync(allKeys, cache, cancellationToken, converter).ConfigureAwait(false);
+    }
+
+    private async ValueTask<TResult[]> FetchManyForCurrentGenerationAsync<TResult>(
+        RespireKey[] keys, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        while (true)
+        {
+            var generation = _core.Sentinel?.Current;
+            var result = new TResult[keys.Length];
+            var indexes = new int[keys.Length];
+            for (var index = 0; index < indexes.Length; index++) indexes[index] = index;
+            var fetchedResult = await (cache.CoalesceConcurrentMisses
+                ? GetManySharedAndCacheAsync(keys, result, indexes, keys.Length, cache, cancellationToken, converter)
+                : FetchManyAndCacheAsync(keys, keys.Length, cache, cancellationToken,
+                    (Client: this, Result: result, Indexes: indexes, Converter: converter),
+                    static ((RespireClient Client, TResult[] Result, int[] Indexes,
+                        ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
+                    {
+                        var values = response.AsArray();
+                        if (values.Length != state.Indexes.Length)
+                            throw new RespireProtocolException(
+                                $"MGET returned {values.Length} values for {state.Indexes.Length} keys.");
+                        for (var index = 0; index < values.Length; index++)
+                            state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
+                        return state.Result;
+                    })).ConfigureAwait(false);
+            if (IsCacheGenerationCurrent(generation)) return fetchedResult;
+        }
+    }
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -1568,6 +1610,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken, TState state, ResponseConverter<TState, TResult> converter,
         bool transferResponse = false)
     {
+        var generation = _core.Sentinel?.Current;
         if (cache.CoalesceConcurrentMisses && cache.TryPeek(in missingKeys[0], out var firstCached))
         {
             var cachedValues = new RespValue[missingCount];
@@ -1581,7 +1624,7 @@ public sealed partial class RespireClient : IRespireClient
                     break;
                 }
             }
-            if (allCached)
+            if (allCached && IsCacheGenerationCurrent(generation))
             {
                 var cached = RespValue.Array(cachedValues);
                 return converter(state, in cached);
@@ -1599,18 +1642,15 @@ public sealed partial class RespireClient : IRespireClient
         var response = default(RespValue);
         var completed = 0;
         var returned = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 for (var i = 0; i < tokens.Length; i++)
                 {
                     tokens[i] = cache.RebaseRead(in tokens[i]);
                 }
-
-                allowInsert = cacheable;
             };
         }
 
@@ -1629,7 +1669,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 var index = completed;
                 ref readonly var value = ref values[index];
-                cache.CompleteRead(in tokens[index], in value, allowInsert);
+                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
                 completed++;
             }
 
@@ -1651,7 +1691,7 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        Action<bool>? onRedirect = null)
+        Action? onRedirect = null)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -1662,7 +1702,7 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, onRedirect).ConfigureAwait(false);
         }
 
-        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var connection = core.Multiplexer.GetConnection();
         var response = await SendTrackedOnConnectionAsync(
             operation, connection, command, cancellationToken, sendAsking: false).ConfigureAwait(false);
@@ -1681,7 +1721,7 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        Action<bool>? onRedirect)
+        Action? onRedirect)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -1708,7 +1748,7 @@ public sealed partial class RespireClient : IRespireClient
                     connection = await cluster.GetReplacementConnectionAsync(
                         sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
                     discoveryPending = false;
-                    onRedirect?.Invoke(!sendAsking);
+                    onRedirect?.Invoke();
                     continue;
                 }
 
@@ -1731,7 +1771,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
-                onRedirect?.Invoke(!sendAsking);
+                onRedirect?.Invoke();
             }
         }
         catch (Exception error)
@@ -1765,6 +1805,11 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (sendAsking)
         {
+            if (!_broadcastTracking)
+            {
+                return ClusterRouter.SendTrackedAskingAsync(
+                    connection, in command, cancellationToken, operation);
+            }
             return ClusterRouter.SendAskingAsync(
                 connection, in command, cancellationToken, operation);
         }
@@ -1852,7 +1897,8 @@ public sealed partial class RespireClient : IRespireClient
             if (cache.ReuseHashFields && operation == "HMGET" && query.Query.ArgumentCount >= 2
                 && cache.CanTrack(query.PrimaryKey))
                 return CachedHashGetManyAsync(cache, query, cancellationToken);
-            if (cache.TryGet(in query, out var cached))
+            var generation = core.Sentinel?.Current;
+            if (cache.TryGet(in query, out var cached) && IsCacheGenerationCurrent(generation))
             {
                 return new ValueTask<RespValue>(cached);
             }
@@ -1871,7 +1917,7 @@ public sealed partial class RespireClient : IRespireClient
                 cancellationToken,
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
-        else if (!core.Multiplexer.IsInitialized)
+        else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
             response = SendAfterConnectAsync(operation, command, cancellationToken);
         }
@@ -1921,18 +1967,18 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)) return cached;
+        var generation = _core.Sentinel?.Current;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)
+            && IsCacheGenerationCurrent(generation)) return cached;
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 token = cache.RebaseRead(in token);
-                allowInsert = cacheable;
             };
         }
 
@@ -1941,7 +1987,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             response = await SendTrackedAsync(
                 operation, snapshot, cancellationToken, onRedirect).ConfigureAwait(false);
-            cache.CompleteRead(in token, in response, allowInsert);
+            cache.CompleteRead(in token, in response, allowInsert: true);
             completed = true;
             return response;
         }
@@ -2036,7 +2082,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
             var connection = core.Multiplexer.GetConnection();
             return await SendOnConnectionAsync(
@@ -2260,7 +2306,7 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, storedProcedureName);
         }
 
-        if (!core.Multiplexer.IsInitialized)
+        if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
             return SendFireAndForgetAfterConnectAsync(
                 operation, command, cancellationToken, storedProcedureName);
@@ -2294,7 +2340,7 @@ public sealed partial class RespireClient : IRespireClient
                 return;
             }
 
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var connection = core.Multiplexer.GetConnection();
             if (RespireCommand.MayCloseWithoutReply(operation))
             {
@@ -2331,7 +2377,7 @@ public sealed partial class RespireClient : IRespireClient
         => RespireTelemetry.IsEnabled
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName)
-            : connection.SendFireAndForgetAsync(in command, cancellationToken);
+            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -2353,7 +2399,7 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         try
         {
-            await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation).ConfigureAwait(false);
             telemetry.Complete(
                 operation,
                 connection.Host,
@@ -2539,6 +2585,174 @@ public sealed partial class RespireClient : IRespireClient
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
             : connection.SendCheckedAsync(in command, cancellationToken, operation);
 
+    /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
+    internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return SendClusterBulkStreamAsync(operation, cluster, command, cancellationToken);
+        }
+
+        if (!core.Multiplexer.IsInitialized)
+        {
+            return SendBulkStreamAfterConnectAsync(operation, command, cancellationToken);
+        }
+
+        return SendBulkStreamOnConnectionAsync(
+            operation, core.Multiplexer.GetConnection(), command, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendBulkStreamAfterConnectAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        return await SendBulkStreamOnConnectionAsync(
+            operation, _core.Multiplexer.GetConnection(), command, cancellationToken).ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendClusterBulkStreamAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
+        try
+        {
+            var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            var sendAsking = false;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await SendBulkStreamOnConnectionAsync(
+                        operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+                }
+                catch (RespireConnectionRetiredException retirement)
+                    when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    cluster.RecordRejection(ref discovery, connection, retirement);
+                    _core.ClientCache?.FlushForContinuityLoss();
+                    discoveryPending = true;
+                    connection = await cluster.GetReplacementConnectionAsync(
+                        sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
+                }
+                catch (RespireServerException error)
+                    when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                {
+                    _core.ClientCache?.FlushForContinuityLoss();
+                    cluster.RecordRejection(ref discovery, connection, error);
+                    discoveryPending = true;
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                        .ConfigureAwait(false);
+                    discoveryPending = false;
+                    sendAsking = error.Code == RespireErrorCodes.Ask;
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            throw;
+        }
+        finally { discovery?.Finish(); }
+    }
+
+    private ValueTask<Stream?> SendBulkStreamOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking = false)
+        where TCommand : struct, IRespCommand
+    {
+        if (RespireTelemetry.IsEnabled)
+        {
+            return SendBulkStreamOnConnectionInstrumentedAsync(
+                operation, connection, command, cancellationToken, sendAsking);
+        }
+
+        if (sendAsking)
+        {
+            return ClusterRouter.SendAskingBulkStreamAsync(
+                connection, in command, cancellationToken, operation);
+        }
+
+        return connection.SendBulkStreamAsync(in command, cancellationToken, operation);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendBulkStreamOnConnectionInstrumentedAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        var previousActivity = Activity.Current;
+        var telemetry = RespireTelemetry.StartOperation(
+            operation, connection.Host, connection.Port, core.Options.Database);
+        var telemetryCompleted = 0;
+        void CompleteTelemetry(Exception? error)
+        {
+            if (Interlocked.Exchange(ref telemetryCompleted, 1) == 0)
+            {
+                telemetry.Complete(operation, connection.Host, connection.Port, core.Options.Database,
+                    error: error, connection: connection);
+            }
+        }
+
+        try
+        {
+            var stream = sendAsking
+                ? await ClusterRouter.SendAskingBulkStreamAsync(
+                    connection, in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false)
+                : await connection.SendBulkStreamAsync(
+                    in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false);
+            if (stream is null)
+            {
+                CompleteTelemetry(null);
+            }
+
+            return stream;
+        }
+        catch (Exception ex)
+        {
+            CompleteTelemetry(ex);
+            throw;
+        }
+        finally
+        {
+            if (!ReferenceEquals(Activity.Current, previousActivity))
+            {
+                Activity.Current = previousActivity;
+            }
+        }
+    }
+
     // Endpoint-pinned fan-outs can retry a rejected target without replaying accepted peers.
     // Do not use this for WATCH or connection-scoped CLIENT operations, whose socket is part of their contract.
     internal async ValueTask<RespValue> SendToClusterTargetAsync<TCommand>(
@@ -2661,20 +2875,25 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            var telemetry = RespireTelemetry.StartOperation(
+            var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
+            var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
                 operation,
-                core.Multiplexer.Host,
-                core.Multiplexer.Port,
+                core.Endpoint,
                 core.Options.Database,
-                storedProcedureName: storedProcedureName);
+                storedProcedureName: storedProcedureName) : default;
             RespireConnection? connection = null;
+            DedicatedConnectionPool? pool = null;
             var returned = false;
             try
             {
-                connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
+                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null)
+                    telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                        core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
                 var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
                     .ConfigureAwait(false);
-                core.DedicatedPool.Return(connection);
+                pool.Return(connection);
                 returned = true;
                 if (response.IsError)
                 {
@@ -2693,13 +2912,16 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            new RespireEndpoint(core.Multiplexer.Host, core.Multiplexer.Port)))
+                            core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
                     : null;
+                if (connection is null)
+                    RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
+                        sentinelStarted, timeoutError ?? ex, storedProcedureName);
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
                     // The connection may still be mid-block server-side; don't return it to the pool.
-                    await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;
@@ -2833,7 +3055,7 @@ public sealed partial class RespireClient : IRespireClient
             return await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         }
 
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         return _core.Multiplexer.GetConnection();
     }
 
@@ -2852,6 +3074,8 @@ public sealed partial class RespireClient : IRespireClient
             return true;
         }
 
+        if (_core.Sentinel is not null)
+            await _core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -2887,28 +3111,36 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        if (core.Multiplexer.HasReliableCorrectionOrdering)
+        if ((core.Sentinel is null || core.Sentinel.IsConnected) && core.Multiplexer.HasReliableCorrectionOrdering)
         {
             return;
         }
 
         if (core.Options.CommandTimeout is not { } timeout)
         {
+            if (core.Sentinel is not null)
+                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        Infrastructure.RespireConnectionMultiplexer? selected = null;
         try
         {
-            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
+            if (core.Sentinel is not null)
+                await core.EnsureConnectedAsync(timeoutSource.Token).ConfigureAwait(false);
+            selected = core.Multiplexer;
+            await selected.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // No cache command is sent until identity setup completes, so timing this stage out
             // leaves no cache mutation to correct.
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
-                core.Multiplexer.CaptureConnectionWait());
+                selected?.CaptureConnectionWait() ?? (core.Sentinel is null
+                    ? core.Multiplexer.CaptureConnectionWait()
+                    : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)));
         }
         catch (RespireTimeoutException ex)
         {
@@ -2988,17 +3220,20 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
-        var telemetry = RespireTelemetry.StartOperation(
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
             script.EvalShaOperation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            core.Endpoint,
             core.Options.Database,
-            storedProcedureName: script.Sha1);
+            storedProcedureName: script.Sha1) : default;
         RespireConnection? connection = null;
         try
         {
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             connection = core.Multiplexer.GetConnection();
+            if (core.Sentinel is not null)
+                telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
+                    core.Options.Database, storedProcedureName: script.Sha1, started: sentinelStarted);
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
@@ -3006,6 +3241,9 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception ex)
         {
+            if (connection is null)
+                RespireTelemetry.RecordUnroutedFailure(script.EvalShaOperation, core.Options.Database,
+                    sentinelStarted, ex, script.Sha1);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }
@@ -3045,13 +3283,16 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
-                if (!core.Multiplexer.HasReliableCorrectionOrdering)
+                var multiplexer = core.Sentinel is { } sentinel
+                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    : core.Multiplexer;
+                if (core.Sentinel is null && !multiplexer.HasReliableCorrectionOrdering)
                 {
                     throw new InvalidOperationException(
                         "Reliable correction ordering must be initialized before a tracked script starts.");
                 }
 
-                connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
+                connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -3083,12 +3324,18 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
+            // Initialize the captured generation: failover may have retired the preflight generation.
+            if (_core.Sentinel is not null)
+                await multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
 
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
+            // Initialize the captured generation: failover may have retired the preflight generation.
+            if (_core.Sentinel is not null)
+                await multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -3347,7 +3594,10 @@ public sealed partial class RespireClient : IRespireClient
 
         await using var correction = core.Cluster is { } cluster && identity.Connection is { } original
             ? cluster.GetCorrectionLease(original) : null;
-        var pool = correction?.Pool ?? (core.Cluster is { } routerPool
+        await using var sentinelCorrection = core.Sentinel is { } sentinel
+            ? sentinel.GetCorrectionLease(identity.Connection
+                ?? throw new InvalidOperationException("Sentinel corrections require the original connection identity.")) : null;
+        var pool = sentinelCorrection?.Pool ?? correction?.Pool ?? (core.Cluster is { } routerPool
             ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
         // A cold control connection may need SELECT/AUTH while the server is paused.
         // The fence cannot abandon those commands before it reaches CLIENT KILL.
@@ -3635,6 +3885,8 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             args.CopyTo(tail, 1 + keys.Length);
+            if (core.Sentinel is not null && connectionIdentity.Connection is null)
+                await core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
             var multiplexer = connectionIdentity.Connection?.Multiplexer
                 ?? (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
                     ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
@@ -3645,7 +3897,8 @@ public sealed partial class RespireClient : IRespireClient
                 await multiplexer.SendToAllConnectionsAsync(command,
                     connectionIdentity.RequiresAsking, CancellationToken.None).ConfigureAwait(false);
             }
-            catch (RespireConnectionRetiredException) when (core.Cluster is not null && connectionIdentity.Connection is not null)
+            catch (RespireConnectionRetiredException) when (
+                (core.Cluster is not null || core.Sentinel is not null) && connectionIdentity.Connection is not null)
             {
                 // Retirement rejected new acceptance. Wait for the old FIFO and every owed
                 // kill barrier before sending the idempotent correction on its original peer.
@@ -3657,8 +3910,10 @@ public sealed partial class RespireClient : IRespireClient
                     if (multiplexer.HasPendingCorrectionFences)
                         await multiplexer.FenceRetiredConnectionsAsync().ConfigureAwait(false);
                 }
-                await using var lease = core.Cluster.GetCorrectionLease(connectionIdentity.Connection);
-                var control = await lease.Pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+                await using var lease = core.Cluster?.GetCorrectionLease(connectionIdentity.Connection);
+                await using var sentinelLease = core.Sentinel?.GetCorrectionLease(connectionIdentity.Connection);
+                var pool = sentinelLease?.Pool ?? lease!.Pool;
+                var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
                 try
                 {
                     using var reply = connectionIdentity.RequiresAsking
@@ -3666,7 +3921,7 @@ public sealed partial class RespireClient : IRespireClient
                         : await control.SendAsync(command, CancellationToken.None, armCommandDeadline: false).ConfigureAwait(false);
                     if (reply.IsError) throw ResponseReader.ServerError(in reply, "EVAL");
                 }
-                finally { lease.Pool.Return(control); }
+                finally { pool.Return(control); }
             }
         }
         finally
@@ -3702,6 +3957,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
+            && core.Sentinel is null
             && core.Multiplexer.IsInitialized
             && (core.ClientCache is null
                 || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
@@ -3801,6 +4057,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
+            && core.Sentinel is null
             && core.Multiplexer.IsInitialized
             && (core.ClientCache is null
                 || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
