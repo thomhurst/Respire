@@ -340,6 +340,7 @@ internal sealed partial class ClusterRouter
             {
                 while (!_stopDiscovery.IsCancellationRequested)
                 {
+                    var intervalStarted = TopologyRefreshClock.GetTimestamp();
                     using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
                     var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
                     var timer = interval is { } delay && delay > TimeSpan.Zero
@@ -354,7 +355,13 @@ internal sealed partial class ClusterRouter
                         ReferenceEquals(completed, signal) || signal.IsCompletedSuccessfully,
                         out var wasSignaled, out var delayMilliseconds, out var force);
                     if (wasSignaled && delayMilliseconds > 0 && !force)
-                        force = await WaitForTopologyRefreshDelayAsync(delayMilliseconds).ConfigureAwait(false);
+                    {
+                        var periodicRemaining = interval is { } configuredInterval && configuredInterval > TimeSpan.Zero
+                            ? configuredInterval - TopologyRefreshClock.GetElapsedTime(intervalStarted)
+                            : (TimeSpan?)null;
+                        force = await WaitForTopologyRefreshDelayAsync(delayMilliseconds, periodicRemaining)
+                            .ConfigureAwait(false);
+                    }
                     if (_stopDiscovery.IsCancellationRequested) return;
                     try
                     {
@@ -382,23 +389,32 @@ internal sealed partial class ClusterRouter
         await Task.Delay(interval, TopologyRefreshClock, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds)
+    private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds, TimeSpan? periodicRemaining = null)
     {
         var debounce = TimeSpan.FromMilliseconds(delayMilliseconds);
         var started = TopologyRefreshClock.GetTimestamp();
+        var periodicStarted = TopologyRefreshClock.GetTimestamp();
         while (delayMilliseconds > 0)
         {
             var elapsed = TopologyRefreshClock.GetElapsedTime(started);
             var remaining = debounce - elapsed;
             if (remaining <= TimeSpan.Zero) return false;
+            var periodicDelay = periodicRemaining is { } configuredRemaining
+                ? configuredRemaining - TopologyRefreshClock.GetElapsedTime(periodicStarted)
+                : (TimeSpan?)null;
+            if (periodicDelay is { } remainingPeriodic && remainingPeriodic <= TimeSpan.Zero) return true;
             using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
             var delay = Task.Delay(remaining, TopologyRefreshClock, waitCancellation.Token);
             var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
-            var completed = await Task.WhenAny(delay, signal).ConfigureAwait(false);
+            var periodic = periodicDelay is { } waitForPeriodic
+                ? Task.Delay(waitForPeriodic, TopologyRefreshClock, waitCancellation.Token)
+                : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
+            var completed = await Task.WhenAny(delay, signal, periodic).ConfigureAwait(false);
             await waitCancellation.CancelAsync().ConfigureAwait(false);
-            try { await Task.WhenAll(delay, signal).ConfigureAwait(false); }
+            try { await Task.WhenAll(delay, signal, periodic).ConfigureAwait(false); }
             catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
             if (_stopDiscovery.IsCancellationRequested) return false;
+            if (ReferenceEquals(completed, periodic)) return true;
             TakeTopologyRefreshSignal(
                 ReferenceEquals(completed, signal) || signal.IsCompletedSuccessfully,
                 out var wasSignaled, out var nextDelay, out var force);

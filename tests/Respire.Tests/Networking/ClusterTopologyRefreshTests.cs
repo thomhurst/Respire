@@ -36,6 +36,29 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task PeriodicDeadlineInterruptsMovedDebounce()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(50),
+            Endpoints = [new RespireEndpoint("127.0.0.1", 1)],
+        });
+        var clock = new ManualTopologyRefreshClock();
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
+        var method = typeof(ClusterRouter).GetMethod("WaitForTopologyRefreshDelayAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var wait = (Task<bool>)method.Invoke(router, [5_000, TimeSpan.FromMilliseconds(50)])!;
+
+        var periodic = await clock.NextTimerAsync(TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(2));
+        periodic.Fire();
+
+        await Assert.That(await wait).IsTrue();
+    }
+
+    [Test]
     public async Task LongRefreshIntervalUsesTimerSafeSegments()
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
