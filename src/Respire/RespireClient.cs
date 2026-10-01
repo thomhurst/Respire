@@ -390,7 +390,8 @@ public sealed partial class RespireClient : IRespireClient
 
     private bool TryPrefixGeneratedKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
     {
-        if (!RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        if (!operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+            || !RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
         {
             prefixedArguments = [];
             return false;
@@ -875,7 +876,8 @@ public sealed partial class RespireClient : IRespireClient
         var validated = ValidateClusterRawKeys(operation, arguments);
         if (validated.Known)
             return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
-        if (RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        if (operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+            && RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
             return layout.Count > 0
                 ? firstArgumentIndex + layout.Start
                 : layout.Extra >= 0 ? firstArgumentIndex + layout.Extra : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
