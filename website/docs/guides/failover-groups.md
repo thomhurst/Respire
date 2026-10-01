@@ -1,13 +1,14 @@
 ---
-title: Standalone failover groups
+title: Failover groups
 ---
 
-`RespireFailoverGroup` monitors independent standalone Redis deployments and selects a healthy
-endpoint for new operations. Lower candidate priorities win. The group uses bounded `PING`
+`RespireFailoverGroup` monitors independent standalone Redis or Redis Cluster deployments and selects a healthy
+deployment for new operations. Lower candidate priorities win. The group uses bounded health
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
-Health means the endpoint answers `PING` within `ProbeTimeout`. The group does not inspect
+Health means a standalone endpoint answers `PING` within `ProbeTimeout`. Cluster candidates use the
+`CLUSTER INFO` probe described below. The group does not inspect
 application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
 `-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
@@ -67,6 +68,30 @@ all candidate clients alive until disposal, so in-flight calls are not interrupt
 Pub/sub subscriptions also stay on their original deployment and must be recreated after a
 switch.
 
+For a Cluster deployment, set `UseCluster = true` and provide one or more seed endpoints. Each
+candidate owns a separate `RespireClient`, so slot maps and `MOVED`/`ASK` recovery stay within the
+selected Cluster. Status, switch events, logs, and metrics identify a Cluster candidate by its first
+configured seed endpoint. That value stays the same when the Cluster topology changes, even when the
+client routes commands through another node.
+
+A Cluster candidate is healthy when `CLUSTER INFO` reports `cluster_state:ok` within
+`ProbeTimeout`, instead of answering `PING`. Redis reports `cluster_state:fail` when a hash slot has
+no reachable primary, so a partial Cluster outage triggers failover even while some nodes still
+respond. The probe runs on one node, so it does not detect a primary that only this client cannot
+reach. The candidate's user needs permission to run `CLUSTER INFO`.
+
+Each Cluster candidate must be a separate Cluster. Duplicate detection compares only the configured
+seed endpoints. Two candidates whose seeds differ but whose nodes belong to the same Cluster pass
+validation and provide no deployment redundancy.
+
+```csharp
+new RespireFailoverCandidate(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
+}, Priority: 0);
+```
+
 ## Metrics
 
 The group records these instruments on the `Respire` meter:
@@ -92,5 +117,5 @@ detection or failback. Design consistency, replication, and write ownership at t
 layer. Client-side caching is rejected because cache entries cannot be shared safely across
 independent deployments.
 
-Sentinel and Cluster candidates are not accepted yet. They are tracked as separate follow-up
-work under [multi-endpoint failover](https://github.com/thomhurst/Respire/issues/426).
+Sentinel candidates are not accepted yet. They are tracked as a follow-up under
+[multi-endpoint failover](https://github.com/thomhurst/Respire/issues/426).
