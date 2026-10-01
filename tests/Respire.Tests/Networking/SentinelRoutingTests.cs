@@ -2145,12 +2145,12 @@ public class SentinelRoutingTests
         primary.CloseConnectionAfterCommand = primary.CommandsSeen + 1;
         await Assert.That(async () => await client.SetAsync("lost", "value").AsTask().WaitAsync(Limit))
             .Throws<RespireConnectionException>();
-        var first = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+        var first = await ReadFenceTimerAsync(clock, TimeSpan.FromSeconds(1));
         await Assert.That(first.Delay).IsEqualTo(TimeSpan.FromSeconds(1));
         await Assert.That(generation.Multiplexer.HasPendingCorrectionFences).IsTrue();
         await Assert.That(generation.Retirement.IsCompleted).IsFalse();
         first.Fire();
-        var second = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+        var second = await ReadFenceTimerAsync(clock, TimeSpan.FromSeconds(2));
         await Assert.That(second.Delay).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(generation.CountedAsRetired).IsTrue();
         var actualRetirement = generation.Retirement;
@@ -2372,6 +2372,16 @@ public class SentinelRoutingTests
             var timer = new FenceTimer(callback, state, dueTime);
             Timers.Writer.TryWrite(timer);
             return timer;
+        }
+    }
+
+    private static async Task<FenceTimer> ReadFenceTimerAsync(FenceClock clock, TimeSpan delay)
+    {
+        using var timeout = new CancellationTokenSource(Limit);
+        while (true)
+        {
+            var timer = await clock.Timers.Reader.ReadAsync(timeout.Token);
+            if (timer.Delay == delay) return timer;
         }
     }
 
