@@ -17,7 +17,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Creates a Bloom filter.</summary>
     public async ValueTask<bool> BloomReserveAsync(RespireKey key, double errorRate, long capacity, RespireBloomReserveOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ValidateErrorRate(errorRate);
+        ValidateErrorRate(errorRate, nameof(errorRate));
         if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
         using var result = await _commands.BloomReserveAsync(key, errorRate, capacity, (options ?? new()).ToArguments(), cancellationToken).ConfigureAwait(false);
         return IsOk(result);
@@ -189,19 +189,16 @@ public sealed class RespireProbabilisticClient
     /// <summary>Initializes Count-Min Sketch for the selected error rate and probability.</summary>
     public async ValueTask CountMinInitializeByProbabilityAsync(RespireKey key, double errorRate, double probability, CancellationToken cancellationToken = default)
     {
-        ValidateErrorRate(errorRate);
-        ValidateErrorRate(probability);
+        ValidateErrorRate(errorRate, nameof(errorRate));
+        ValidateErrorRate(probability, nameof(probability));
         using var result = await _commands.CountMinInitializeByProbabilityAsync(key, errorRate, probability, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Increments one or more Count-Min Sketch item estimates.</summary>
     public async ValueTask<long[]> CountMinIncrementAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(increments);
-        if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
-        var args = new List<RespireValue>(checked(increments.Count * 2));
-        foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
-        using var result = await _commands.CountMinIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
+        var args = BuildIncrementArguments(increments);
+        using var result = await _commands.CountMinIncrementAsync(key, args, cancellationToken).ConfigureAwait(false);
         return ReadIntegers(result);
     }
 
@@ -221,10 +218,11 @@ public sealed class RespireProbabilisticClient
     public async ValueTask CountMinMergeAsync(RespireKey destination, IReadOnlyList<RespireKey> sources, RespireCountMinMergeOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateKeys(sources);
-        var args = new List<RespireValue>(checked(sources.Count + 8));
-        foreach (var source in sources) args.Add(source);
-        args.AddRange((options ?? new()).ToArguments(sources.Count));
-        using var result = await _commands.CountMinMergeAsync(destination, sources.Count, [.. args], cancellationToken).ConfigureAwait(false);
+        var optionArguments = (options ?? new()).ToArguments(sources.Count);
+        var args = new RespireValue[checked(sources.Count + optionArguments.Length)];
+        for (var index = 0; index < sources.Count; index++) args[index] = sources[index];
+        optionArguments.CopyTo(args, sources.Count);
+        using var result = await _commands.CountMinMergeAsync(destination, sources.Count, args, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Creates a Top-K sketch.</summary>
@@ -239,22 +237,15 @@ public sealed class RespireProbabilisticClient
     {
         ValidateItems(items);
         using var result = await _commands.TopKAddAsync(key, [.. items], cancellationToken).ConfigureAwait(false);
-        var evicted = new byte[]?[result.Count];
-        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsBytes();
-        return evicted;
+        return ReadNullableBytes(result);
     }
 
     /// <summary>Increments item counts in a Top-K sketch.</summary>
     public async ValueTask<byte[]?[]> TopKIncrementAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(increments);
-        if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
-        var args = new List<RespireValue>(checked(increments.Count * 2));
-        foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
-        using var result = await _commands.TopKIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
-        var evicted = new byte[]?[result.Count];
-        for (var index = 0; index < evicted.Length; index++) evicted[index] = result[index].IsNull ? null : result[index].AsBytes();
-        return evicted;
+        var args = BuildIncrementArguments(increments);
+        using var result = await _commands.TopKIncrementAsync(key, args, cancellationToken).ConfigureAwait(false);
+        return ReadNullableBytes(result);
     }
 
     /// <summary>Checks whether each item is currently in the Top-K list.</summary>
@@ -390,7 +381,35 @@ public sealed class RespireProbabilisticClient
     }
 
     private static RespireProbabilisticDumpChunk ParseDumpChunk(RespireResult result)
-        => new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
+    {
+        if (result.Type != RespDataType.Array || result.Count != 2)
+            throw new InvalidOperationException("Unexpected SCANDUMP reply: expected an iterator and a data chunk.");
+        return new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
+    }
+
+    private static RespireValue[] BuildIncrementArguments(IReadOnlyDictionary<RespireValue, long> increments)
+    {
+        ArgumentNullException.ThrowIfNull(increments);
+        if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
+        var args = new RespireValue[checked(increments.Count * 2)];
+        var index = 0;
+        foreach (var (item, amount) in increments)
+        {
+            if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments));
+            ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments));
+            args[index++] = item;
+            args[index++] = amount;
+        }
+
+        return args;
+    }
+
+    private static byte[]?[] ReadNullableBytes(RespireResult result)
+    {
+        var values = new byte[]?[result.Count];
+        for (var index = 0; index < values.Length; index++) values[index] = result[index].IsNull ? null : result[index].AsBytes();
+        return values;
+    }
 
     /// <summary>
     /// Reads a t-digest double. RESP2 replies spell infinities as <c>inf</c>/<c>-inf</c>, which
@@ -432,9 +451,9 @@ public sealed class RespireProbabilisticClient
     }
     private static long[] ReadIntegers(RespireResult result) { var values = new long[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsInteger(); return values; }
 
-    private static void ValidateErrorRate(double value)
+    private static void ValidateErrorRate(double value, string parameterName)
     {
-        if (!double.IsFinite(value) || value <= 0 || value >= 1) throw new ArgumentOutOfRangeException(nameof(value));
+        if (!double.IsFinite(value) || value <= 0 || value >= 1) throw new ArgumentOutOfRangeException(parameterName);
     }
 
     private static void ValidateItems(IReadOnlyList<RespireValue> items)
