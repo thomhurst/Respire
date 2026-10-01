@@ -111,4 +111,41 @@ public class SemaphoreWireTests
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(2);
     }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisposalWaitsForBusyRenewalThenReleasesPermit()
+    {
+        var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+                var call = Interlocked.Increment(ref evalCount);
+                if (call == 2) renewalStarted.TrySetResult();
+                return call == 2;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{dispose}:semaphore", capacity: 1).TryAcquireAsync()).Permit;
+        var renewal = permit.ResetExpiryAsync(TimeSpan.FromSeconds(10)).AsTask();
+        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(Volatile.Read(ref evalCount)).IsEqualTo(2);
+        var renewalCommand = server.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && command.Contains("semaphore", StringComparison.Ordinal));
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[renewalCommand]);
+        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(2))).IsTrue();
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, deadline.Token);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[^1]);
+        using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!permit.IsReleased) await Task.Delay(10, releaseDeadline.Token);
+    }
 }

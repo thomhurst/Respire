@@ -208,6 +208,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private long _validUntil;
     private long _expiryTicks;
     private int _released;
+    private int _disposeReleaseScheduled;
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
@@ -321,21 +322,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (Volatile.Read(ref _released) != 0) return false;
-            try
-            {
-                using var response = await _client.Scripts.ExecuteAsync(
-                    RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
-                var removed = response.AsInteger() == 1;
-                Interlocked.Exchange(ref _released, 1);
-                return removed;
-            }
-            catch
-            {
-                if (await ReleaseBestEffortAsync().ConfigureAwait(false))
-                    Interlocked.Exchange(ref _released, 1);
-                throw;
-            }
+            return await ReleaseUnderGateAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -347,8 +334,59 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         using var timeout = new CancellationTokenSource(DisposeReleaseTimeout);
-        try { _ = await ReleaseAsync(timeout.Token).ConfigureAwait(false); }
+        var entered = false;
+        try
+        {
+            try
+            {
+                await _operationGate.WaitAsync(timeout.Token).ConfigureAwait(false);
+                entered = true;
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                if (Interlocked.Exchange(ref _disposeReleaseScheduled, 1) == 0)
+                    _ = ReleaseAfterOperationAsync();
+                return;
+            }
+            _ = await ReleaseUnderGateAsync(timeout.Token).ConfigureAwait(false);
+        }
         catch (Exception) { }
+        finally
+        {
+            if (entered) _operationGate.Release();
+        }
+    }
+
+    private async Task ReleaseAfterOperationAsync()
+    {
+        try { await _operationGate.WaitAsync().ConfigureAwait(false); }
+        catch (Exception) { return; }
+        try
+        {
+            using var timeout = new CancellationTokenSource(DisposeReleaseTimeout);
+            try { _ = await ReleaseUnderGateAsync(timeout.Token).ConfigureAwait(false); }
+            catch (Exception) { }
+        }
+        finally { _operationGate.Release(); }
+    }
+
+    private async ValueTask<bool> ReleaseUnderGateAsync(CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _released) != 0) return false;
+        try
+        {
+            using var response = await _client.Scripts.ExecuteAsync(
+                RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
+            var removed = response.AsInteger() == 1;
+            Interlocked.Exchange(ref _released, 1);
+            return removed;
+        }
+        catch
+        {
+            if (await ReleaseBestEffortAsync().ConfigureAwait(false))
+                Interlocked.Exchange(ref _released, 1);
+            throw;
+        }
     }
 
     private ValueTask<bool> ReleaseBestEffortAsync()
