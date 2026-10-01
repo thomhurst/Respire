@@ -339,8 +339,11 @@ public sealed class RespireCoordination
         }
         catch
         {
-            await BestEffortReleaseHashFieldLeaseAsync(
-                hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
+            if (concreteClient is null || execution is not null)
+            {
+                await BestEffortReleaseHashFieldLeaseAsync(
+                    hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
+            }
             throw;
         }
 
@@ -457,7 +460,6 @@ public sealed class RespireCoordination
                 originalFailure ??= error;
             }
 
-            var monitoringTimedOut = false;
             if (originalCorrection is not null)
             {
                 var probeDelay = TimeSpan.FromMilliseconds(100);
@@ -483,25 +485,35 @@ public sealed class RespireCoordination
                 {
                     try { await originalCorrection.ConfigureAwait(false); }
                     catch (Exception error) { originalFailure ??= error; }
+
+                    if (client.Core.Cluster is not null)
+                    {
+                        try
+                        {
+                            using var currentOwnerRelease = await client.Scripts.ExecuteAsync(
+                                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception error)
+                        {
+                            originalFailure ??= error;
+                        }
+                    }
                 }
                 else
                 {
                     ObserveCorrectionFailure(originalCorrection);
                 }
-                monitoringTimedOut = monitoringTimeout.IsCancellationRequested;
             }
 
-            if (!monitoringTimedOut)
+            try
             {
-                try
-                {
-                    correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
-                        client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
-                }
-                catch (Exception error)
-                {
-                    originalFailure ??= error;
-                }
+                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
+                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
             }
         }
         else

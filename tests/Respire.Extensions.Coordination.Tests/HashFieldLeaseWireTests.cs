@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -260,7 +261,8 @@ public class HashFieldLeaseWireTests
         var pending = new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(5, timeout.Token);
+        while (!server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            await Task.Delay(5, timeout.Token);
         await Task.Delay(50, timeout.Token);
         cancellation.Cancel();
 
@@ -272,6 +274,34 @@ public class HashFieldLeaseWireTests
         await Assert.That(acquireIndex >= 0 && cleanupIndex > acquireIndex).IsTrue();
         var owner = server.ReceivedArguments[acquireIndex][5];
         await Assert.That(server.ReceivedArguments[cleanupIndex][5]).IsEquivalentTo(owner);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CancellationDuringCorrectionOrderingBootstrapSkipsLeaseCleanup()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("CLIENT ID", StringComparison.Ordinal),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        using var cancellation = new CancellationTokenSource();
+        var pending = new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Any(command => command.StartsWith("CLIENT ID", StringComparison.Ordinal)))
+            await Task.Delay(5, timeout.Token);
+        cancellation.Cancel();
+
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]
@@ -360,6 +390,48 @@ public class HashFieldLeaseWireTests
 
     [Test]
     [NotInParallel]
+    public async Task UncertainAcquisitionCleanupAlsoTargetsCurrentClusterOwner()
+    {
+        await using var currentOwner = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? "*0\r\n"u8.ToArray()
+                : command.StartsWith("EVAL ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray()
+                : command == "GET registry" ? "$-1\r\n"u8.ToArray()
+                : null,
+        };
+        var slot = ClusterHash.GetSlot("registry");
+        await using var oldOwner = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? "*0\r\n"u8.ToArray()
+                : command.StartsWith("GET registry", StringComparison.Ordinal)
+                    || command.StartsWith("EVAL ", StringComparison.Ordinal)
+                    ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{currentOwner.Port}\r\n")
+                    : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", oldOwner.Port)],
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
+        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        await client.GetStringAsync("registry");
+        await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
+            "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity);
+
+        await Assert.That(oldOwner.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(currentOwner.ReceivedCommands.Any(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UncertainCleanupRechecksSentinelWhileOldPrimaryCorrectionIsPending()
     {
         await using var oldPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
@@ -442,7 +514,8 @@ public class HashFieldLeaseWireTests
         var pending = new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(5, timeout.Token);
+        while (!server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            await Task.Delay(5, timeout.Token);
         cancellation.Cancel();
 
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3)))
