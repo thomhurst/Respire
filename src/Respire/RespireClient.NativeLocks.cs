@@ -136,7 +136,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }

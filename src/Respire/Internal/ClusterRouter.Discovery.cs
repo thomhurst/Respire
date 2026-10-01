@@ -50,6 +50,7 @@ internal sealed partial class ClusterRouter
         internal Task<bool>? SharedTask;
         internal int Waiters;
         internal bool Completed;
+        internal IDisposable? DiscoveryLease;
     }
 
     private Task<bool> RefreshReadOnlySharedAsync(
@@ -69,9 +70,13 @@ internal sealed partial class ClusterRouter
             }
             if (_sharedRefreshTask is null)
             {
+                var discoveryLease = discovery?.Hold();
                 var newFlight = new ReadOnlyRefreshFlight(
                     CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token), slot,
-                    new RespireEndpoint(source.Host, source.Port));
+                    new RespireEndpoint(source.Host, source.Port))
+                {
+                    DiscoveryLease = discoveryLease,
+                };
                 start = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 newFlight.SharedTask = start.Task;
                 _sharedRefreshTask = start.Task;
@@ -87,7 +92,7 @@ internal sealed partial class ClusterRouter
         }
         if (start is not null)
             _ = CompleteSharedRefreshAsync(start, async () =>
-                await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery: null).ConfigureAwait(false), flight);
+                await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery).ConfigureAwait(false), flight);
         return AwaitReadOnlyRefreshAsync(task, waiterToken, flight);
     }
 
@@ -158,6 +163,7 @@ internal sealed partial class ClusterRouter
                 }
             }
             readOnlyFlight?.Cancellation.Dispose();
+            readOnlyFlight?.DiscoveryLease?.Dispose();
         }
     }
 
@@ -176,7 +182,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            scope.SetTerminalError(error);
+            if (scope.Round is { } round) round.TerminalError = error;
             if (error is RespireConfigurationException) throw;
             if (error is OperationCanceledException or RespireException or IOException)
             {
@@ -615,21 +621,26 @@ internal sealed partial class ClusterRouter
         internal bool HasPendingFailure => _failure is not null;
         internal Exception? PendingFailure => _failure;
 
-        internal void RecordCommandFailure(Exception error, bool discoveryPending)
+        internal void RecordCommandFailure(Exception error, bool discoveryPending, CancellationToken callerToken = default)
         {
+            // A canceled waiter does not own the result of a shared recovery flight. The
+            // flight records its own terminal outcome when its work completes.
+            if (error is OperationCanceledException && callerToken.IsCancellationRequested) return;
             // Retirement rejects a command before admission, including when the command's
             // redirect cap prevents another retry. Application errors after admission do not
             // change the outcome of an otherwise successful discovery episode.
             if (discoveryPending || error is RespireConnectionRetiredException) TerminalError = error;
         }
 
-        internal void RecordCommandFailure(Exception error, bool discoveryPending, int? commandSlot, bool noRedirect = false)
+        internal void RecordCommandFailure(Exception error, bool discoveryPending, int? commandSlot,
+            bool noRedirect = false, CancellationToken callerToken = default)
         {
+            if (error is OperationCanceledException && callerToken.IsCancellationRequested) return;
             // A route can reject the final send after selection succeeded. Reaching the command's
             // redirect cap ends recovery unsuccessfully even when the policy still permits retries.
             // NoRedirect and unkeyed READONLY deliberately remain ordinary command errors.
             var routingRejected = !noRedirect && error is RespireServerException rejection && CanRecover(rejection, commandSlot);
-            RecordCommandFailure(error, discoveryPending || routingRejected);
+            RecordCommandFailure(error, discoveryPending || routingRejected, callerToken);
         }
 
         // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
