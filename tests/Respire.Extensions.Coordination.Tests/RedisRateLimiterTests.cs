@@ -385,6 +385,7 @@ public class RedisRateLimiterTests
         var newest = limiter.AcquireAsync(1).AsTask();
         using var evicted = await oldest.WaitAsync(TimeSpan.FromSeconds(1));
         await Assert.That(evicted.IsAcquired).IsFalse();
+        await Assert.That(evicted.TryGetMetadata(MetadataName.RetryAfter, out _)).IsFalse();
         using var granted = await newest.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(granted.IsAcquired).IsTrue();
     }

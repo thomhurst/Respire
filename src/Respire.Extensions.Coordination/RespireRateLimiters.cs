@@ -251,7 +251,7 @@ internal sealed class RedisRateLimiter : RateLimiter
                     removed.Value.Node = null;
                     _queuedPermits -= removed.Value.PermitCount;
                     removed.Value.Registration.Unregister();
-                    removed.Value.Completion.TrySetResult(new RedisRateLimitLease(false, TimeSpan.Zero));
+                    removed.Value.Completion.TrySetResult(new RedisRateLimitLease(false, null));
                 }
             }
             request.Node = _queueOrder == QueueProcessingOrder.NewestFirst
