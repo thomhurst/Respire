@@ -61,6 +61,8 @@ public sealed class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(vector);
         var selected = options ?? new RespireSearchQueryOptions();
+        if (selected.Dialect is < 2)
+            throw new ArgumentOutOfRangeException(nameof(options), selected.Dialect, "Vector KNN queries require dialect 2 or later.");
         var parameters = new Dictionary<string, RespireValue>(StringComparer.Ordinal);
         foreach (var parameter in selected.Parameters) parameters[parameter.Key] = parameter.Value;
         parameters["vector"] = vector.Vector;
