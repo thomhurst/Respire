@@ -330,6 +330,30 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ClientDisposalInterruptsPendingClusterNotificationAck()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, topology, resp3: false);
+        Configure(second, topology, resp3: false);
+        var client = CreateClusterClient(first.Port, resp3: false);
+        var pendingAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.SuppressReply = command =>
+        {
+            if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return false;
+            pendingAck.TrySetResult();
+            return true;
+        };
+
+        var activation = client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0)).AsTask();
+        await pendingAck.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await activation.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task RollbackKeepsAcknowledgedSharedConnectionsOpen()
     {
         await using var first = new FakeRespServer(20);

@@ -97,6 +97,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if ((uint)slot >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
         var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+        var owner = Volatile.Read(ref _slots[slot]);
+        if (owner is null || owner.IsRetired || !owner.IsConnected
+            || owner.Host != connection.Host || owner.Port != connection.Port)
+            throw new RespireConnectionException("Redis Cluster did not provide a connected owner for the notification slot.");
         return new RespireEndpoint(connection.Host, connection.Port);
     }
 
@@ -1544,10 +1548,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 retiredNode = previous;
             }
             topologyVersion = _topologyVersion;
-            topologyEndpoints = HasCompleteTopology()
-                ? _masters.Where(static master => !master.IsRetired)
-                    .Select(static master => Endpoint(master)).Distinct().ToArray()
-                : null;
+            topologyEndpoints = _masters.Where(static master => !master.IsRetired)
+                .Select(static master => Endpoint(master)).Append(Endpoint(node)).Distinct().ToArray();
         }
 
         if (retiredNode is not null)

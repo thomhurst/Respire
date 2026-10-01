@@ -306,13 +306,25 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
     }
 
-    private void InterruptPublishedConnection(List<Task> interruptedDisposals)
+    private void InterruptPublishedConnection(
+        List<Task> interruptedDisposals, HashSet<RespireConnection> interrupted)
     {
         InterruptPrimaryConnections(interruptedDisposals);
         var connection = Volatile.Read(ref _connection);
         if (connection is not null && DetachConnection(connection) is { } disposal)
         {
             interruptedDisposals.Add(disposal);
+        }
+
+        RespireConnection[] notificationConnections;
+        lock (_gate)
+            notificationConnections = _notificationNodes.Values
+                .Select(static node => node.Connection).Where(static candidate => candidate is not null)
+                .Select(static candidate => candidate!).ToArray();
+        foreach (var notificationConnection in notificationConnections)
+        {
+            if (!interrupted.Add(notificationConnection)) continue;
+            interruptedDisposals.Add(notificationConnection.DisposeAsync().AsTask());
         }
     }
 
@@ -748,7 +760,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         // reconnect can publish a replacement after the first snapshot, so keep detaching every
         // connection that appears until the gate is ours.
         List<Task> interruptedDisposals = [];
-        InterruptPublishedConnection(interruptedDisposals);
+        HashSet<RespireConnection> interruptedNotificationConnections = [];
+        InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
         var controlGateAcquired = false;
         var shardedControlGateAcquired = false;
         while (!controlGateAcquired || !shardedControlGateAcquired)
@@ -759,13 +772,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                 shardedControlGateAcquired = await _shardedControlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
             if (!controlGateAcquired || !shardedControlGateAcquired)
             {
-                InterruptPublishedConnection(interruptedDisposals);
+                InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
             }
         }
 
         try
         {
-            InterruptPublishedConnection(interruptedDisposals);
+            InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
 
             List<RespireSubscription> subscriptions = [];
             RespireConnection[] notificationConnections;
@@ -811,7 +824,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             await _connectionGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                InterruptPublishedConnection(interruptedDisposals);
+                InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
                 await Task.WhenAll(interruptedDisposals).ConfigureAwait(false);
             }
             finally
