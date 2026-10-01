@@ -1743,13 +1743,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _masterSlotCounts = contractedCounts;
         Volatile.Write(ref _masters, contracted);
 
-        if (_nodeStateHandlers.Remove(node, out var handler))
+        // ASK-protected zero-slot transports remain live and may still publish topology
+        // notifications. DetachGenerationsLocked removes these handlers when protection ends.
+        if (!_redirectVersions.ContainsKey(node))
         {
-            node.SlotStateChanged -= handler;
-        }
-        if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
-        {
-            node.MaintenanceNotificationReceived -= maintenanceHandler;
+            if (_nodeStateHandlers.Remove(node, out var handler))
+                node.SlotStateChanged -= handler;
+            if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+                node.MaintenanceNotificationReceived -= maintenanceHandler;
         }
 
         return true;

@@ -62,6 +62,58 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task RedirectProtectedZeroSlotNodeKeepsItsMaintenanceHandler()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("redirect-protected-test", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("redirect-protected-test", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.SetSlotOwner(0, source);
+        router.GetOrCreateNode(sourceEndpoint, observe: true, redirect: true);
+
+        var malformedSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == RespireTelemetry.SourceName
+                    && instrument.Name == "respire.cluster.slot_migrations.skipped")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            var isSource = false;
+            var isMalformed = false;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.address" && Equals(tag.Value, sourceEndpoint.Host))
+                    isSource = true;
+                if (tag.Key == "reason" && Equals(tag.Value, "malformed"))
+                    isMalformed = true;
+            }
+            if (isSource && isMalformed) malformedSeen.TrySetResult();
+        });
+        listener.Start();
+
+        var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.TopologyChanged += () => topologyChanged.TrySetResult();
+        var connection = new object();
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]));
+        await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(targetEndpoint.Port);
+        await Assert.That(source.IsRetired).IsFalse();
+
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "invalid")]));
+        await malformedSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task NodeRetiredHandlerCanDisposeTheRouterFromTheSmigratedWorker()
     {
         var options = Options(6379);
