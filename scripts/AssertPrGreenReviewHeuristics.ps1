@@ -367,15 +367,42 @@ function Test-IsClaudeReviewComment {
     return $body -match '(?i)\breview\b'
 }
 
+# A reply only answers a blocking Claude review when it carries this marker and
+# comes from a login the caller has verified as a maintainer. Any other later
+# comment ("thanks", "when will this merge?") must not clear the gate.
+$script:ReviewDispositionMarker = '<!-- REVIEW_DISPOSITION -->'
+
+function Test-IsReviewDispositionComment {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Comment,
+        [AllowNull()][string[]]$AuthorizedLogins
+    )
+
+    $login = Get-CommentAuthorLogin $Comment
+    if (Test-IsBotLogin $login) { return $false }
+    if (@($AuthorizedLogins | Where-Object { $_ -eq $login }).Count -eq 0) { return $false }
+    return ([string]$Comment.body).Contains($script:ReviewDispositionMarker)
+}
+
 function Get-UnansweredClaudeReviewReason {
     [CmdletBinding()]
     param(
-        [AllowNull()][object[]]$Comments
+        [AllowNull()][object[]]$Comments,
+        [AllowNull()][string[]]$AuthorizedLogins
     )
 
+    $present = @($Comments | Where-Object { $null -ne $_ })
+
+    # Fail closed: a Claude review without a usable timestamp cannot be ordered
+    # against later replies, so it must not be silently dropped.
+    $undated = @($present | Where-Object { (Test-IsClaudeReviewComment $_) -and ($null -eq (Get-CommentCreatedAt $_)) })
+    if ($undated.Count -gt 0) {
+        return "$($undated.Count) Claude review comment(s) have no parseable creation time"
+    }
+
     $ordered = @(
-        $Comments |
-            Where-Object { $null -ne $_ } |
+        $present |
             Where-Object { $null -ne (Get-CommentCreatedAt $_) } |
             Sort-Object { Get-CommentCreatedAt $_ }
     )
@@ -401,11 +428,11 @@ function Get-UnansweredClaudeReviewReason {
 
     $reviewedAt = Get-CommentCreatedAt $latestReview
     $reply = $ordered | Where-Object {
-        (-not (Test-IsBotLogin (Get-CommentAuthorLogin $_))) -and ((Get-CommentCreatedAt $_) -gt $reviewedAt)
+        ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
     } | Select-Object -First 1
     if ($null -ne $reply) {
         return $null
     }
 
-    return "latest Claude review comment ($($reviewedAt.ToString('u'))) has no later reply: $reason"
+    return "latest Claude review comment ($($reviewedAt.ToString('u'))) has no later maintainer reply marked $($script:ReviewDispositionMarker): $reason"
 }

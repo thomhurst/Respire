@@ -1177,7 +1177,7 @@ $claudeCommentCases = @(
         Name = 'allows Claude review answered by a later human reply'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
-            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' 'Follow-up: fixed in abc123; head-of-line blocking tracked in #686.')
+            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' "Follow-up: fixed in abc123; head-of-line blocking tracked in #686.`n`n<!-- REVIEW_DISPOSITION -->")
         )
         Blocks = $false
     },
@@ -1194,7 +1194,7 @@ $claudeCommentCases = @(
         Name = 'blocks newer Claude review after an earlier reply'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $claudeFindings),
-            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' 'Addressed in def456.'),
+            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' "Addressed in def456.`n<!-- REVIEW_DISPOSITION -->"),
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings)
         )
         Blocks = $true
@@ -1203,7 +1203,7 @@ $claudeCommentCases = @(
         Name = 'allows CLEAR verdict without a reply'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $claudeFindings),
-            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' 'Addressed in def456.'),
+            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' "Addressed in def456.`n<!-- REVIEW_DISPOSITION -->"),
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview)
         )
         Blocks = $false
@@ -1216,6 +1216,38 @@ $claudeCommentCases = @(
         Blocks = $false
     },
     @{
+        Name = 'blocks unmarked maintainer reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
+            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' 'Thanks, when will this merge?')
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks marked reply from a login without write access'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
+            (New-TestComment 'drive-by-user' '2026-10-01T10:30:00Z' "All fine.`n<!-- REVIEW_DISPOSITION -->")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks marked reply posted before the latest review'
+        Comments = @(
+            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' "Addressed.`n<!-- REVIEW_DISPOSITION -->"),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks Claude review with missing timestamp'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $clearReview),
+            [pscustomobject]@{ login = 'github-actions[bot]'; createdAt = $null; body = $claudeFindings }
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'reads REST user.login shape'
         Comments = @(
             [pscustomobject]@{ user = [pscustomobject]@{ login = 'github-actions[bot]' }; created_at = '2026-10-01T10:00:00Z'; body = $claudeFindings }
@@ -1225,7 +1257,8 @@ $claudeCommentCases = @(
 )
 
 foreach ($case in $claudeCommentCases) {
-    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments
+    $authorized = if ($case.ContainsKey('Authorized')) { $case.Authorized } else { @('thomhurst') }
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins $authorized
     $blocks = [bool]$reason
     if ($blocks -ne $case.Blocks) {
         throw "Case '$($case.Name)' expected Blocks=$($case.Blocks), got Blocks=$blocks (reason: $reason)"
