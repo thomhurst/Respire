@@ -229,8 +229,10 @@ Sentinel event monitors apply the same policy to their own subscription connecti
 Scheduled retries and exhaustion use the same instruments with
 `respire.reconnect.scope = sentinel-monitor`. An exhausted monitor stops observing that
 Sentinel's events and logs a warning; discovery still runs on demand when commands observe a
-disconnect or `READONLY`. The next validated primary publication gives each exhausted monitor a
-fresh budget, so one long Sentinel outage does not remove event monitoring for the life of the client.
+disconnect or `READONLY`. A validated primary publication gives each exhausted monitor a fresh
+budget, so one long Sentinel outage does not remove event monitoring for the life of the client. A
+publication that lands while the monitor is still spending its retries counts too: the monitor then
+resumes as soon as it exhausts, rather than waiting for a second publication.
 
 ## Cluster discovery fallback
 

@@ -279,6 +279,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         var attempt = 0;
         var subscribedBefore = false;
+        // Captured when a reconnect episode starts, not when the monitor parks: a publication
+        // that lands while the last attempts are failing must still grant the fresh budget.
+        var rearm = CurrentMonitorRearm();
         while (!cancellationToken.IsCancellationRequested)
         {
             var subscriptionReconnectExhausted = false;
@@ -290,6 +293,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
+                rearm = CurrentMonitorRearm();
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
@@ -334,13 +338,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // which would bypass the configured budget. Discovery still runs on demand, and the
                 // next validated publication grants a fresh budget, so one long outage does not
                 // remove this Sentinel's fast path for the life of the client.
-                Task rearm;
-                lock (_gate) rearm = _monitorRearm.Task;
+                // The episode's rearm task is already complete when a publication happened while
+                // the final attempts were failing, so the monitor resumes without a second one.
                 try { await rearm.WaitAsync(cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
                 SafeLog(endpoint, static (logger, endpoint) => logger.LogInformation(
                     "Sentinel event monitor at {Endpoint} resumes after a new primary was published", endpoint));
                 attempt = 0;
+                rearm = CurrentMonitorRearm();
                 continue;
             }
             attempt++;
@@ -349,6 +354,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
         }
+    }
+
+    private Task CurrentMonitorRearm()
+    {
+        lock (_gate) return _monitorRearm.Task;
     }
 
     private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)

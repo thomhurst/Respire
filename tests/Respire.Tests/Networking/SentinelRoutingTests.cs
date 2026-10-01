@@ -401,11 +401,59 @@ public class SentinelRoutingTests
         await Assert.That(logger.Resumptions).IsGreaterThanOrEqualTo(1);
     }
 
+    [Test]
+    public async Task MonitorResumesWhenAPublicationLandedDuringItsFinalRetry()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var unreachable = new FakeRespServer();
+        var deadPort = unreachable.Port;
+        await unreachable.DisposeAsync();
+        var logger = new MonitorExhaustionLogger(deadPort);
+        // A distinctive delay identifies the dead monitor's retry timer on the gated clock.
+        var retryDelay = TimeSpan.FromSeconds(7);
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port), new("127.0.0.1", deadPort)],
+            LoggerFactory = logger,
+            ReconnectPolicy = new()
+            {
+                InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1,
+            },
+        });
+        var router = client.Core.Sentinel!;
+        var clock = new FenceClock();
+        router.Clock = clock;
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        // The dead monitor's first subscription failed; its one retry waits on the gated clock.
+        var retry = await ReadFenceTimerAsync(clock, retryDelay);
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+
+        // A primary is published before the dead monitor exhausts its budget and parks.
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {promoted.Port}");
+        await WaitForEndpointAsync(client, promoted.Port);
+        await Assert.That(logger.Exhaustions).IsEqualTo(0);
+        retry.Fire();
+
+        // That publication already granted the fresh budget, so the monitor does not wait for another.
+        await logger.WaitForResumptionsAsync(1);
+        await Assert.That(logger.Exhaustions).IsEqualTo(1);
+        await ReadFenceTimerAsync(clock, retryDelay);
+    }
+
     private sealed class MonitorExhaustionLogger(int port) : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _exhaustions;
         private int _resumptions;
         internal int Resumptions => Volatile.Read(ref _resumptions);
+        internal int Exhaustions => Volatile.Read(ref _exhaustions);
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
         public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
         public void Dispose() { }
@@ -427,6 +475,12 @@ public class SentinelRoutingTests
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             while (Volatile.Read(ref _exhaustions) < count) await Task.Delay(10, timeout.Token);
+        }
+
+        internal async Task WaitForResumptionsAsync(int count)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (Volatile.Read(ref _resumptions) < count) await Task.Delay(10, timeout.Token);
         }
     }
 
