@@ -60,6 +60,17 @@ public class ProbabilisticClientTests
     }
 
     [Test]
+    public async Task CountMinIncrementRejectsNonPositiveAmountsBeforeSending()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+        var increments = new Dictionary<RespireValue, long> { ["item"] = 0 };
+
+        await Assert.That(async () => await probabilistic.CountMinIncrementAsync("sketch", increments))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task TopKEvictionResultsPreserveBinaryBytes()
     {
         await using var server = Server();
@@ -79,8 +90,8 @@ public class ProbabilisticClientTests
         var incrementEvictions = await probabilistic.TopKIncrementAsync("sketch", increments);
 
         await Assert.That(evicted.Length).IsEqualTo(1);
-        await Assert.That(evicted[0]).IsEquivalentTo(new byte[] { 0xFF, 0x00 });
-        await Assert.That(incrementEvictions[0]).IsEquivalentTo(new byte[] { 0xFF, 0x00 });
+        await Assert.That(evicted[0]!.SequenceEqual(new byte[] { 0xFF, 0x00 })).IsTrue();
+        await Assert.That(incrementEvictions[0]!.SequenceEqual(new byte[] { 0xFF, 0x00 })).IsTrue();
     }
 
     [Test]
@@ -91,6 +102,18 @@ public class ProbabilisticClientTests
 
         await Assert.That(async () => await probabilistic.TDigestTrimmedMeanAsync("digest", 0.5, 0.5))
             .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task InvalidTopKDecayAndTDigestCompressionAreRejected()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.TopKReserveAsync("sketch", 10,
+            new() { Decay = double.NaN })).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.TDigestCreateAsync("digest",
+            new() { Compression = 1001 })).Throws<ArgumentOutOfRangeException>();
     }
 
     private static FakeRespServer Server()

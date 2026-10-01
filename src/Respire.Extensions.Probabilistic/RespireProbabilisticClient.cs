@@ -199,7 +199,7 @@ public sealed class RespireProbabilisticClient
         ArgumentNullException.ThrowIfNull(increments);
         if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
         var args = new List<RespireValue>(checked(increments.Count * 2));
-        foreach (var (item, amount) in increments) { ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
+        foreach (var (item, amount) in increments) { if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments)); ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments)); args.Add(item); args.Add(amount); }
         using var result = await _commands.CountMinIncrementAsync(key, [.. args], cancellationToken).ConfigureAwait(false);
         return ReadIntegers(result);
     }

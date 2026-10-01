@@ -140,7 +140,7 @@ public sealed record RespireTopKReserveOptions
         var decay = Decay ?? 0.9;
         if (width <= 0) throw new ArgumentOutOfRangeException(nameof(Width));
         if (depth <= 0) throw new ArgumentOutOfRangeException(nameof(Depth));
-        if (decay <= 0 || decay >= 1) throw new ArgumentOutOfRangeException(nameof(Decay));
+        if (!double.IsFinite(decay) || decay <= 0 || decay >= 1) throw new ArgumentOutOfRangeException(nameof(Decay));
         return [width, depth, decay];
     }
 }
@@ -155,7 +155,7 @@ public sealed record RespireTDigestOptions
     internal RespireValue[] ToArguments(bool allowOverride)
     {
         var args = new List<RespireValue>();
-        if (Compression is { } compression) { if (compression <= 0) throw new ArgumentOutOfRangeException(nameof(Compression)); args.Add("COMPRESSION"); args.Add(compression); }
+        if (Compression is { } compression) { if (compression is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(Compression)); args.Add("COMPRESSION"); args.Add(compression); }
         if (Override) { if (!allowOverride) throw new ArgumentException("OVERRIDE is only valid for TDIGEST.MERGE.", nameof(Override)); args.Add("OVERRIDE"); }
         return [.. args];
     }
