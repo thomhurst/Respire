@@ -122,6 +122,14 @@ public sealed record RespireOptions
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
     /// <summary>
+    /// Bounds how stale replica read topology can be. A connection's <c>ROLE</c> check is reused
+    /// for this long, Sentinel replica discovery refreshes at most this often, and a replica that
+    /// failed a connection or role check is skipped for this long. Defaults to one second;
+    /// <see cref="TimeSpan.Zero"/> revalidates on every read.
+    /// </summary>
+    public TimeSpan ReplicaRefreshInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
     /// learned hash slots are routed directly on later commands.
     /// </summary>
@@ -326,6 +334,10 @@ public sealed record RespireOptions
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
 
         Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, or ReplicaPreferred");
+        Require(
+            ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
+            nameof(ReplicaRefreshInterval),
+            "must be between zero and one hour");
         if (ReadFrom != RespireReadFrom.Primary && UseCluster)
             throw new RespireConfigurationException("RespireOptions.ReadFrom is not supported with Redis Cluster yet.");
         if (UseCluster && ReplicaEndpoints.Count != 0)

@@ -30,6 +30,22 @@ public class RespireOptionsTests
     }
 
     [Test]
+    public async Task ReplicaRefreshIntervalMustBeBetweenZeroAndOneHour()
+    {
+        await Assert.That(() => RespireClient.Create(ValidOptions() with { ReplicaRefreshInterval = TimeSpan.FromMilliseconds(-1) }))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(() => RespireClient.Create(ValidOptions() with { ReplicaRefreshInterval = TimeSpan.FromHours(2) }))
+            .ThrowsExactly<RespireConfigurationException>();
+
+        await using var client = RespireClient.Create(ValidOptions() with
+        {
+            ReplicaEndpoints = [new("replica")],
+            ReplicaRefreshInterval = TimeSpan.Zero,
+        });
+        await Assert.That(client.Core.ReadRouter.RefreshInterval).IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task StructuredOptionsRejectClusterAndSentinelBeforeConnecting()
     {
         var options = ValidOptions() with { UseCluster = true, SentinelPrimaryName = "mymaster" };

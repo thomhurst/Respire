@@ -116,6 +116,8 @@ stream claim/replay, typed GETDEL/GETEX, subscription-options, and runtime-type 
 Decorators should forward each member to the wrapped implementation; test doubles should provide
 an explicit implementation. Existing implementations that inherited the removed throwing defaults
 now fail to compile until those members are supplied. Client calls keep the same signatures.
+`IRespireClient.WithReadFrom` follows the same rule: it has no throwing default, so custom clients,
+decorators, and test doubles must implement it (decorators forward it to the wrapped client).
 
 ```csharp
 // The connected client also exposes these APIs through its interface.

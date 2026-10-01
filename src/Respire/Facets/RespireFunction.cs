@@ -4,7 +4,10 @@ using Respire.Internal;
 
 namespace Respire;
 
-/// <summary>A named Redis function. Read-only calls use FCALL_RO; no replica routing is implied.</summary>
+/// <summary>
+/// A named Redis function. Read-only calls use FCALL_RO, which a replica read view can route to a
+/// replica. A library reload after "Function not found" retries once on the primary.
+/// </summary>
 public sealed class RespireFunction
 {
     internal RespireFunction(string name, bool readOnly, RespireFunctionLibrary? library)

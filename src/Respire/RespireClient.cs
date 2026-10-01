@@ -24,6 +24,8 @@ public sealed partial class RespireClient : IRespireClient
     private readonly bool _ownsCore;
     private readonly bool _broadcastTracking;
     private readonly RespireReadFrom _readFrom;
+    private static readonly bool s_getIsReadOnly = ReadOnlyCommandCatalog.Contains("GET");
+    private static readonly bool s_mgetIsReadOnly = ReadOnlyCommandCatalog.Contains("MGET");
 
     private RespireClient(ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null)
     {
@@ -1458,7 +1460,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var cache = _core.ClientCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
-        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains("GET"))
+        if (_readFrom != RespireReadFrom.Primary && s_getIsReadOnly)
             return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
         if (cache is null)
         {
@@ -1481,7 +1483,7 @@ public sealed partial class RespireClient : IRespireClient
         bool keysResolved = false)
     {
         var cache = _core.ClientCache;
-        if (_readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains("MGET"))
+        if (_readFrom != RespireReadFrom.Primary && s_mgetIsReadOnly)
         {
             var arguments = new RespireValue[keys.Length];
             int? clusterSlot = null;
@@ -2070,7 +2072,10 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var routeRead = _readFrom != RespireReadFrom.Primary && ReadOnlyCommandCatalog.Contains(operation);
+        var readKind = _readFrom == RespireReadFrom.Primary
+            ? ReadCommandKind.None
+            : ReadOnlyCommandCatalog.Classify(operation);
+        var routeRead = readKind != ReadCommandKind.None;
         if (!routeRead && flags == RespireCommandFlags.None
             && cache is not null
             && cache.TryCreateQuery(operation, in command, out var query))
@@ -2102,7 +2107,7 @@ public sealed partial class RespireClient : IRespireClient
         ValueTask<RespValue> response;
         if (routeRead)
         {
-            response = SendReadFromAsync(operation, command, cancellationToken);
+            response = SendReadFromAsync(operation, command, readKind, affinity: null, cancellationToken);
         }
         else if (core.Cluster is { } cluster)
         {
@@ -2129,20 +2134,37 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     private async ValueTask<RespValue> SendReadFromAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken)
+        string operation, TCommand command, ReadCommandKind readKind, ReadAffinity? affinity,
+        CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        // Scan cursors are server-local, so successive pages must reach the replica that issued them.
-        var connection = await _core.ReadRouter.GetConnectionAsync(
-            _readFrom, cancellationToken, stable: IsCursorRead(operation)).ConfigureAwait(false);
+        // Scan cursors are server-local, so successive pages must reach the server that issued them.
+        var connection = readKind == ReadCommandKind.CursorRead
+            ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity, cancellationToken).ConfigureAwait(false)
+            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
     }
 
-    private static bool IsCursorRead(string operation)
-        => operation.Equals("SCAN", StringComparison.OrdinalIgnoreCase)
-            || operation.Equals("HSCAN", StringComparison.OrdinalIgnoreCase)
-            || operation.Equals("SSCAN", StringComparison.OrdinalIgnoreCase)
-            || operation.Equals("ZSCAN", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Sends one page of a cursor enumeration. Under a replica read policy, every page of the
+    /// enumeration owning <paramref name="affinity"/> reaches the server that issued its cursor.
+    /// </summary>
+    internal ValueTask<RespValue> SendCursorPageAsync<TCommand>(
+        string operation, TCommand command, ReadAffinity affinity, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        return _readFrom != RespireReadFrom.Primary
+            && ReadOnlyCommandCatalog.Classify(operation) == ReadCommandKind.CursorRead
+            ? SendReadFromAsync(operation, command, ReadCommandKind.CursorRead, affinity, cancellationToken)
+            : SendAsync(operation, command, cancellationToken);
+    }
+
+    /// <summary>This client, or a view of it that sends every command to the primary.</summary>
+    internal RespireClient PrimaryReadView
+        => _readFrom == RespireReadFrom.Primary
+            ? this
+            : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: RespireReadFrom.Primary);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
