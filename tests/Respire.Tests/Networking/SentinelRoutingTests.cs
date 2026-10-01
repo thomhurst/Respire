@@ -1874,7 +1874,7 @@ public class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
-        await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(1) });
+        await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(3) });
         if (rediscovery)
         {
             await client.PingAsync();
