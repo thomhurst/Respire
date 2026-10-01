@@ -483,6 +483,66 @@ public class SentinelRoutingTests
         await ReadFenceTimerAsync(clock, retryDelay);
     }
 
+    [Test]
+    public async Task RepeatedNotificationRediscoveryFailuresWarnOnlyOnce()
+    {
+        await using var original = Primary();
+        await using var unavailable = new FakeRespServer(64, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null,
+        };
+        await using var recovered = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var logger = new RediscoveryLogger();
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            LoggerFactory = logger,
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
+        });
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        Volatile.Write(ref port, unavailable.Port);
+
+        // Every rediscovery fails ROLE validation until Sentinel names a real primary.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}");
+        using (var timeout = new CancellationTokenSource(Limit))
+            while (logger.Failures.Count < 3) await Task.Delay(5, timeout.Token);
+        Volatile.Write(ref port, recovered.Port);
+        await WaitForEndpointAsync(client, recovered.Port);
+        using (var timeout = new CancellationTokenSource(Limit))
+            while (logger.Recoveries == 0) await Task.Delay(5, timeout.Token);
+
+        var levels = logger.Failures.ToArray();
+        await Assert.That(levels[0]).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+        await Assert.That(levels.Skip(1).All(level => level == Microsoft.Extensions.Logging.LogLevel.Debug)).IsTrue();
+    }
+
+    private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
+    {
+        private int _recoveries;
+        internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures { get; } = new();
+        internal int Recoveries => Volatile.Read(ref _recoveries);
+        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (message.StartsWith("Sentinel notification-triggered primary discovery failed", StringComparison.Ordinal))
+                Failures.Enqueue(level);
+            else if (message.StartsWith("Sentinel notification-triggered primary discovery succeeded after", StringComparison.Ordinal))
+                Interlocked.Increment(ref _recoveries);
+        }
+    }
+
     private sealed class MonitorExhaustionLogger(int port) : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _exhaustions;

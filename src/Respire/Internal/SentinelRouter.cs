@@ -597,6 +597,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private async Task RediscoverFromNotificationAsync()
     {
         var failures = 0;
+        // Consecutive failed attempts. Only the first of a run logs a warning, so a long Sentinel
+        // outage without a ReconnectPolicy does not repeat it every 30 seconds.
+        var consecutiveFailures = 0;
         while (!_lifetime.IsCancellationRequested)
         {
             var succeeded = false;
@@ -605,12 +608,17 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 await GetGenerationAsync(_lifetime.Token, forceDiscovery: true).ConfigureAwait(false);
                 succeeded = true;
+                if (consecutiveFailures > 0)
+                    SafeLog(consecutiveFailures, static (logger, count) => logger.LogInformation(
+                        "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)", count));
+                consecutiveFailures = 0;
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                SafeLog(error, static (logger, error)
-                    => logger.LogWarning(error, "Sentinel notification-triggered primary discovery failed"));
+                SafeLog((error, attempt: ++consecutiveFailures), static (logger, state) => logger.Log(
+                    state.attempt == 1 ? LogLevel.Warning : LogLevel.Debug, state.error,
+                    "Sentinel notification-triggered primary discovery failed (consecutive failure {Attempt})", state.attempt));
             }
 
             lock (_gate)

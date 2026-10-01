@@ -152,6 +152,61 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task EveryOrderingOfSwitchDownAndGapHintsKeepsTheMergeInvariants()
+    {
+        var c = new RespireEndpoint("10.0.0.3", 6381);
+        SentinelHint[] hints =
+        [
+            new("a-to-b", NewPrimary, OldPrimary),
+            new("b-to-c", c, NewPrimary),
+            // Built as the router builds them: a switch without a parsed target must rediscover.
+            new("untargeted-switch", OldPrimary: OldPrimary, MustRediscover: true),
+            new("master-down", MustRediscover: true),
+            new("gap", MustRediscover: true),
+        ];
+        var orderings = 0;
+        foreach (var subset in Subsets(hints.Length))
+        foreach (var order in Permutations(subset))
+        {
+            orderings++;
+            var offered = order.Select(index => hints[index]).ToArray();
+            var coalescer = new SentinelNotificationCoalescer();
+            coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+            foreach (var hint in offered) coalescer.Offer(in hint, targetIsCurrent: false);
+            var pending = coalescer.Pending!.Value;
+            var label = string.Join(" > ", offered.Select(hint => hint.Key));
+
+            // A fault, a gap or an untargeted switch can never be satisfied by an earlier discovery.
+            if (offered.Any(hint => hint.MustRediscover))
+                await Assert.That(pending.MustRediscover).IsTrue().Because(label);
+            // Arrival order cannot rank two different targets, so neither may end the worker early.
+            if (offered.Select(hint => hint.Target).OfType<RespireEndpoint>().Distinct().Count() > 1)
+                await Assert.That(pending.MustRediscover).IsTrue().Because(label);
+            // A down event or a gap never erases a pending switch source.
+            if (offered.Any(hint => hint.OldPrimary is not null))
+                await Assert.That(pending.OldPrimary).IsNotNull().Because(label);
+            // A target shortcut is only possible for a hint whose target was actually offered.
+            if (!pending.MustRediscover)
+                await Assert.That(offered.Any(hint => hint.Target == pending.Target)).IsTrue().Because(label);
+        }
+        await Assert.That(orderings).IsEqualTo(325);
+
+        static IEnumerable<int[]> Subsets(int count)
+        {
+            for (var mask = 1; mask < 1 << count; mask++)
+                yield return Enumerable.Range(0, count).Where(index => (mask & (1 << index)) != 0).ToArray();
+        }
+
+        static IEnumerable<int[]> Permutations(int[] items)
+        {
+            if (items.Length <= 1) { yield return items; yield break; }
+            for (var index = 0; index < items.Length; index++)
+                foreach (var rest in Permutations([.. items[..index], .. items[(index + 1)..]]))
+                    yield return [items[index], .. rest];
+        }
+    }
+
+    [Test]
     public async Task MatchingPendingAndLaterTargetsDoNotForceRediscovery()
     {
         var pending = new SentinelHint("a", NewPrimary, OldPrimary);
