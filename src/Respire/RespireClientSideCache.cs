@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -405,7 +406,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             var key = primaryKey.AsKey().Snapshot();
             Invalidate(in key);
-            return new MutationFence(key, FlushAll: false);
+            return new MutationFence(key, Keys: null, KeyCount: 0, FlushAll: false);
+        }
+
+        if (IsMultiKeyMutation(operation)
+            && command.TryGetClientCacheKey(operation, out var arguments)
+            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout))
+        {
+            return BeginMultiKeyMutation(in arguments, layout);
         }
 
         return BeginUnknownMutation();
@@ -423,10 +431,46 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             Invalidate(in key);
         }
+        else if (fence.Keys is { } keys)
+        {
+            for (var index = 0; index < fence.KeyCount; index++)
+                Invalidate(in keys[index]);
+        }
         else if (fence.FlushAll)
         {
             Flush(continuityLost: false);
         }
+    }
+
+    private MutationFence BeginMultiKeyMutation(
+        in ClientCacheCommandKey arguments, RawCommandKeyLayouts.KeyLayout layout)
+    {
+        if (layout.Count == 1)
+        {
+            var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
+            Invalidate(in key);
+            return new MutationFence(key, Keys: null, KeyCount: 0, FlushAll: false);
+        }
+
+        var keys = new RespireKey[layout.Count];
+        var keyCount = 0;
+        for (var index = 0; index < layout.Count; index++)
+        {
+            var key = arguments.GetArgument(layout.Start + index * layout.Stride).AsKey().Snapshot();
+            var duplicate = false;
+            for (var previous = 0; previous < keyCount; previous++)
+            {
+                if (keys[previous] != key) continue;
+                duplicate = true;
+                break;
+            }
+
+            if (duplicate) continue;
+            keys[keyCount++] = key;
+            Invalidate(in key);
+        }
+
+        return new MutationFence(Key: null, keys, keyCount, FlushAll: false);
     }
 
     internal void HandlePush(in RespValue push)
@@ -759,6 +803,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "XADD" or "XACK" or "XDEL" or "XTRIM" or "XSETID" or
             "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
             "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD" or "VADD" or "VREM" or "VSETATTR";
+
+    private static bool IsMultiKeyMutation(string operation)
+        => operation is "MSET" or "MSETNX" or "MSETEX" or "DEL" or "UNLINK" or "JSON.MSET";
 
     internal readonly record struct ReadToken(
         InflightRead State,
@@ -1143,10 +1190,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         Expiration,
     }
 
-    internal readonly record struct MutationFence(RespireKey? Key, bool FlushAll)
+    internal readonly record struct MutationFence(RespireKey? Key, RespireKey[]? Keys, int KeyCount, bool FlushAll)
     {
-        internal static MutationFence All => new(Key: null, FlushAll: true);
+        internal static MutationFence All => new(Key: null, Keys: null, KeyCount: 0, FlushAll: true);
 
-        internal bool IsRequired => Key is not null || FlushAll;
+        internal bool IsRequired => Key is not null || Keys is not null || FlushAll;
     }
 }

@@ -631,6 +631,12 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 /// <summary>MSETEX numkeys key value... options — routes by the first key after numkeys.</summary>
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, args);
+        return true;
+    }
+
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         if (args.Length > 1)

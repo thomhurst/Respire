@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using Respire.Internal;
 
 namespace Respire.Commands;
 
@@ -16,7 +17,7 @@ internal static class RawCommandKeyLayouts
     private enum LayoutKind
     {
         None, First, FirstTwo, All, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
-        AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
+        AllExceptLast, CountedPairs, Triples, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
     private readonly record struct Definition(LayoutKind Kind, bool Deferred);
 
@@ -71,6 +72,7 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");
         AddImmediate(LayoutKind.CountedPairs, "MSETEX");
+        AddImmediate(LayoutKind.Triples, "JSON.MSET");
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
@@ -109,6 +111,57 @@ internal static class RawCommandKeyLayouts
         }
         layout = default;
         return false;
+    }
+
+    internal static bool TryGetMutationLayout(
+        string operation, in ClientCacheCommandKey args, out KeyLayout layout)
+    {
+        if (!Layouts.TryGetValue(operation, out var definition))
+        {
+            layout = default;
+            return false;
+        }
+
+        switch (definition.Kind)
+        {
+            case LayoutKind.All:
+                if (args.ArgumentCount < 1)
+                {
+                    layout = default;
+                    return false;
+                }
+                layout = new(0, args.ArgumentCount);
+                return true;
+            case LayoutKind.Pairs:
+                if (args.ArgumentCount < 2 || args.ArgumentCount % 2 != 0)
+                {
+                    layout = default;
+                    return false;
+                }
+                layout = new(0, args.ArgumentCount / 2, 2);
+                return true;
+            case LayoutKind.CountedPairs:
+                if (args.ArgumentCount == 0
+                    || !args.GetArgument(0).TryGetInt64(out var count)
+                    || count < 1 || count > (args.ArgumentCount - 1) / 2)
+                {
+                    layout = default;
+                    return false;
+                }
+                layout = new(1, (int)count, 2);
+                return true;
+            case LayoutKind.Triples:
+                if (args.ArgumentCount < 3 || args.ArgumentCount % 3 != 0)
+                {
+                    layout = default;
+                    return false;
+                }
+                layout = new(0, args.ArgumentCount / 3, 3);
+                return true;
+            default:
+                layout = default;
+                return false;
+        }
     }
 
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)
@@ -166,6 +219,9 @@ internal static class RawCommandKeyLayouts
                 return new(0, args.Length - 1);
             case LayoutKind.CountedPairs:
                 return Counted(args, 0, stride: 2);
+            case LayoutKind.Triples:
+                Require(args.Length >= 3 && args.Length % 3 == 0);
+                return new(0, args.Length / 3, 3);
             case LayoutKind.CountedAfterTimeout:
                 return Counted(args, 1);
             case LayoutKind.StreamRead:
