@@ -14,21 +14,29 @@ internal sealed partial class SubscriptionHub
         internal readonly ByteRouteDictionary<List<RespireSubscription>>[] Routes = [new(), new(), new()];
         internal RespireConnection? Connection;
         internal long Epoch;
+        // Highest epoch handed to a connection. A failed replacement restores Epoch to the
+        // previous connection's value, so new epochs come from here and are never reused.
+        internal long IssuedEpoch;
         internal volatile bool Retired;
         internal DateTimeOffset? InterruptedAt;
     }
 
+    private sealed record NotificationTopology(long Version, RespireEndpoint[] Endpoints, bool Authoritative);
+
     // Both dictionaries and node route tables use _gate. Never await while holding it.
     private readonly Dictionary<RespireEndpoint, ClusterNotificationNode> _notificationNodes = [];
     private readonly Dictionary<RespireSubscription, HashSet<RespireEndpoint>> _notificationCoverage = [];
-    private readonly Dictionary<RespireSubscription, int> _notificationReconciliationAttempts = [];
+    // Reconciliation failures per subscription, counted against the endpoint that failed.
+    private readonly Dictionary<RespireSubscription, (RespireEndpoint? Endpoint, int Count)> _notificationReconciliationAttempts = [];
     private readonly HashSet<RespireEndpoint> _notificationDisconnectedEndpoints = [];
     private readonly HashSet<RespireEndpoint> _notificationExhaustedEndpoints = [];
     private long _notificationTopologyVersion;
+    private NotificationTopology? _latestNotificationTopology;
 
     private async ValueTask ActivateClusterNotificationsAsync(
         RespireSubscription subscription, CancellationToken cancellationToken)
     {
+        var observedTopologyVersion = Volatile.Read(ref _notificationTopologyVersion);
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken).ConfigureAwait(false);
         var touched = new HashSet<RespireEndpoint>();
         var uncertain = new HashSet<RespireEndpoint>();
@@ -79,9 +87,27 @@ internal sealed partial class SubscriptionHub
                 }
             }
             cancellationToken.ThrowIfCancellationRequested();
+
+            // A topology change published while these routes were acknowledged is reconciled
+            // asynchronously only after this activation releases the control gate. Apply it
+            // here so SubscribeAsync never completes while a current owner is unsubscribed.
+            while (true)
+            {
+                NotificationTopology? latest;
+                lock (_gate) latest = _latestNotificationTopology;
+                if (latest is null || latest.Version <= observedTopologyVersion) break;
+                observedTopologyVersion = latest.Version;
+                await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
+                    latest.Authoritative, new StrongBox<RespireEndpoint?>()).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
         }
         catch
         {
+            lock (_gate)
+            {
+                if (_notificationCoverage.TryGetValue(subscription, out var coverage)) touched.UnionWith(coverage);
+            }
             await RollbackNotificationActivationAsync(subscription, touched, uncertain).ConfigureAwait(false);
             throw;
         }
@@ -209,7 +235,10 @@ internal sealed partial class SubscriptionHub
         }
         var node = existing ?? new ClusterNotificationNode(endpoint);
         node.Retired = false;
-        var epoch = Volatile.Read(ref node.Epoch) + 1;
+        // Callers hold _controlGate, so epoch issuance for a node is serialized.
+        var previousEpoch = Volatile.Read(ref node.Epoch);
+        var epoch = Math.Max(node.IssuedEpoch, previousEpoch) + 1;
+        node.IssuedEpoch = epoch;
         var options = core.Options.ToConnectionOptions(
             (in RespValue value) => OnNotificationPush(node, epoch, in value)) with
         {
@@ -238,7 +267,10 @@ internal sealed partial class SubscriptionHub
                 if (ReferenceEquals(node.Connection, connection) && Volatile.Read(ref node.Epoch) == epoch)
                 {
                     node.Connection = null;
-                    Interlocked.Exchange(ref node.Epoch, epoch - 1);
+                    // Restore the previous epoch so its watcher keeps ownership of recovery.
+                    // The next replacement draws a fresh epoch from IssuedEpoch, so late pushes
+                    // from this discarded socket can never pass that replacement's fence.
+                    Interlocked.Exchange(ref node.Epoch, previousEpoch);
                 }
             }
             try { await connection.DisposeAsync().ConfigureAwait(false); }
@@ -584,6 +616,11 @@ internal sealed partial class SubscriptionHub
             if (version <= current) return;
             if (Interlocked.CompareExchange(ref _notificationTopologyVersion, version, current) == current) break;
         }
+        lock (_gate)
+        {
+            if (_latestNotificationTopology is null || _latestNotificationTopology.Version < version)
+                _latestNotificationTopology = new NotificationTopology(version, endpoints, authoritative);
+        }
         if (authoritative)
         {
             // An endpoint absent from a complete map has left the cluster. Forget its terminal
@@ -632,11 +669,15 @@ internal sealed partial class SubscriptionHub
                     catch (Exception error)
                     {
                         TryLogWarning(error, "Cluster notification topology reconciliation failed");
+                        // Each failing endpoint gets the policy's full attempt budget. A failure
+                        // against a different endpoint, such as a newer topology replacing an
+                        // unreachable primary, starts a new count.
                         int subscriptionAttempt;
                         lock (_gate)
                         {
-                            subscriptionAttempt = _notificationReconciliationAttempts.GetValueOrDefault(subscription) + 1;
-                            _notificationReconciliationAttempts[subscription] = subscriptionAttempt;
+                            subscriptionAttempt = _notificationReconciliationAttempts.TryGetValue(subscription, out var prior)
+                                && prior.Endpoint == failingEndpoint.Value ? prior.Count + 1 : 1;
+                            _notificationReconciliationAttempts[subscription] = (failingEndpoint.Value, subscriptionAttempt);
                         }
                         (failures ??= []).Add((subscription, failingEndpoint.Value, error, subscriptionAttempt));
                     }
@@ -851,11 +892,13 @@ internal sealed partial class SubscriptionHub
         {
             _notificationCoverage.Remove(subscription);
             _notificationReconciliationAttempts.Remove(subscription);
-            // Report the endpoint as exhausted only when no live notification socket serves it;
-            // a rejected SUBSCRIBE on a healthy socket is not a connection outage.
+            // Report the endpoint as exhausted only when no notification node remains for it. A
+            // rejected SUBSCRIBE is not a connection outage, and a node still serving other
+            // subscriptions owns its endpoint's health: its watcher reconnects a socket this
+            // failure closed and reports exhaustion only if its own attempts run out.
             if (endpoint is { } failed
                 && !ContainsServerRejection(error)
-                && !(_notificationNodes.TryGetValue(failed, out var failedNode) && failedNode.Connection is { IsConnected: true }))
+                && !_notificationNodes.ContainsKey(failed))
             {
                 _notificationDisconnectedEndpoints.Add(failed);
                 _notificationExhaustedEndpoints.Add(failed);

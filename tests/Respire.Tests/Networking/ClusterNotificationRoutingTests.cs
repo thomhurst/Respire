@@ -546,6 +546,134 @@ public class ClusterNotificationRoutingTests
             .IsEqualTo(2);
     }
 
+    [Test]
+    public async Task ReconciliationAttemptsAreCountedPerFailingEndpoint()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        var secondRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        foreach (var (server, rejected) in new (FakeRespServer, TaskCompletionSource?)[] { (second, secondRejected), (third, null) })
+        {
+            Configure(server, () => topology, resp3: false);
+            var configured = server.ReplyOverride!;
+            server.ReplyOverride = (connectionId, command) =>
+            {
+                if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return configured(connectionId, command);
+                rejected?.TrySetResult();
+                return "-NOPERM denied\r\n"u8.ToArray();
+            };
+        }
+        await using var client = CreateClusterClient(first.Port, resp3: false, new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(200),
+            MaxDelay = TimeSpan.FromMilliseconds(200),
+            JitterRatio = 0,
+            MaxAttempts = 2,
+        });
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // One failure against the second primary, then a newer topology replaces it.
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await secondRejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        topology = Topology(first.Port, third.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(1);
+        await Assert.That(third.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReconciliationExhaustionKeepsSharedPrimaryRecoverable()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
+        var tenantDescriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var stableReplays = 0;
+        var stableReplayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Configure(second, () => topology, resp3: false, command =>
+        {
+            if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableReplays) == 2)
+                stableReplayed.TrySetResult();
+        });
+        second.SuppressReply = command => command == $"PSUBSCRIBE {tenantDescriptor}";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromMilliseconds(1),
+                MaxDelay = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0,
+                MaxAttempts = 1,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var tenant = await client.SubscribeAsync(tenantDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Both subscriptions gain the second primary. The tenant SUBSCRIBE times out, which
+        // closes the socket the stable subscription shares, and exhausts only the tenant one.
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(await tenant.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await stableReplayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+        await stable.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ActivationAppliesTopologyChangePublishedBeforeItsFinalAck()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        Configure(third, () => topology, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var secondAckPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.SuppressReply = command =>
+        {
+            if (command != $"PSUBSCRIBE {descriptor}") return false;
+            secondAckPending.TrySetResult();
+            return true;
+        };
+        var activation = client.SubscribeAsync(descriptor).AsTask();
+        await secondAckPending.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port, third.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var ackIndex = second.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
+        await second.SendRawAsync(Confirmation("psubscribe", descriptor.ToString(), resp3: false),
+            second.ReceivedConnectionIds[ackIndex]);
+
+        await using var subscription = await activation.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(third.ReceivedCommands).Contains($"PSUBSCRIBE {descriptor}");
+    }
+
     private static void Configure(FakeRespServer server, byte[] topology, bool resp3)
         => Configure(server, () => topology, resp3);
 

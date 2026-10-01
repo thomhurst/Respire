@@ -134,9 +134,12 @@ Pub/Sub connections for notification descriptors:
   healthy primaries continues. `ConnectionStateChanged` reports endpoint-specific reconnect
   state; `Connected` for an endpoint follows acknowledgement of its current notification routes.
 - `ReconnectPolicy.MaxAttempts` bounds both per-primary reconnects and the attempts to subscribe
-  a primary that topology discovery adds. When the limit is reached, affected subscriptions
-  complete with `ReconnectExhausted`. An exhausted primary stays unavailable to new notification
-  subscriptions until it leaves the discovered topology or the client is recreated.
+  a primary that topology discovery adds. Each failing primary gets the full attempt budget. When
+  the limit is reached, affected subscriptions complete with `ReconnectExhausted`. A primary that
+  cannot be reached stays unavailable to new notification subscriptions until it leaves the
+  discovered topology or the client is recreated. A subscription rejected by a reachable primary
+  (for example `NOPERM`), or one that fails on a connection other subscriptions still use, ends
+  only that subscription.
 
 Every primary must have the needed `notify-keyspace-events` flags configured by the deployment.
 Respire does not read or change this setting. Redis can acknowledge a subscription while emitting
