@@ -368,7 +368,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         var started = Stopwatch.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(100);
-        while (Volatile.Read(ref _released) == 0 && Stopwatch.GetElapsedTime(started) < DisposeReleaseRetryLimit
+        while (Volatile.Read(ref _released) == 0 && Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
             && RemainingEstimate != TimeSpan.Zero)
         {
             var released = await TryReleaseAfterDisposeAsync().ConfigureAwait(false);
@@ -386,7 +386,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     private async ValueTask<bool?> TryReleaseAfterDisposeAsync()
     {
-        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        using var timeout = new CancellationTokenSource(RespireSemaphore.BestEffortCleanupTimeout);
         try
         {
             using var response = await _client.Scripts.ExecuteAsync(
