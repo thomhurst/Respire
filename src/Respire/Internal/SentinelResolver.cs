@@ -90,7 +90,9 @@ internal static class SentinelResolver
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                     error, cancellationToken, connectTimeoutSource.Token))
                 {
-                    throw new OperationCanceledException(error.Message, error, cancellationToken);
+                    throw new RespireTimeoutException(
+                        "CONNECT", options.ConnectTimeout, error,
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
                 }
                 catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
                     && connectTimeoutSource.IsCancellationRequested)
@@ -109,7 +111,8 @@ internal static class SentinelResolver
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
             catch (OperationCanceledException error) when (
-                discoveryTimeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
             {
                 throw new RespireTimeoutException(
                     "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, error,

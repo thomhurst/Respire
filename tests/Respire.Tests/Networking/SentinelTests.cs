@@ -594,9 +594,11 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromSeconds(2),
             ConnectTimeout = TimeSpan.FromSeconds(3),
-        })).ThrowsExactly<RespireTimeoutException>();
+        })).ThrowsExactly<RespireConnectionException>();
 
-        await Assert.That(error!.CommandName).IsNotEqualTo("SENTINEL GET-MASTER-ADDR-BY-NAME");
+        await Assert.That(error!.InnerException).IsTypeOf<RespireTimeoutException>();
+        await Assert.That(((RespireTimeoutException)error.InnerException!).CommandName)
+            .IsNotEqualTo("SENTINEL GET-MASTER-ADDR-BY-NAME");
     }
 
     [Test]

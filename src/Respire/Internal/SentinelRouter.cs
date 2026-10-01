@@ -33,6 +33,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private bool _gapRefreshQueued;
     private Generation? _gapGeneration;
     private RespireEndpoint _gapSentinel;
+    private long _switchRefreshVersion;
+    private RespireEndpoint? _pendingSwitchPrimary;
+    private RespireEndpoint? _pendingSwitchPrevious;
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
@@ -81,7 +84,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal async ValueTask<Generation> GetGenerationAsync(
         CancellationToken cancellationToken, RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? expectedPrimary = null, RespireEndpoint? rejectedPrimary = null,
-        bool refreshAfterSubscriptionGap = false)
+        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
@@ -141,6 +144,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (replacement.IsRetired)
                     throw new RespireConnectionException("Sentinel primary changed before its generation was published.");
                 var old = Current;
+                if (switchRefreshVersion is { } version && version != _switchRefreshVersion)
+                    throw new SupersededSentinelRefreshException();
                 // Retirement during this discovery means a switch event owns the next refresh.
                 // A generation that was already retired at the gap may be replaced here.
                 var supersededGap = refreshAfterSubscriptionGap && expectedGeneration is not null
@@ -168,6 +173,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                             new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
                             new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                     QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
+                }
+                if (switchRefreshVersion == _switchRefreshVersion)
+                {
+                    _pendingSwitchPrimary = null;
+                    _pendingSwitchPrevious = null;
                 }
             }
             if (unchanged is not null)
@@ -318,18 +328,34 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private void OnSentinelPrimaryChanged(RespireEndpoint sentinel, RespireEndpoint oldPrimary, RespireEndpoint newPrimary)
     {
-        Generation? current;
         RespireEndpoint? previousPrimary;
+        long version;
         lock (_gate)
         {
-            current = Current;
+            if (_disposed) return;
+            var current = Current;
+            if (current is { IsRetired: false } && SentinelResolver.SameEndpoint(current.Endpoint, newPrimary)) return;
+            if (_pendingSwitchPrimary is { } duplicateTarget
+                && SentinelResolver.SameEndpoint(duplicateTarget, newPrimary)
+                && _pendingSwitchPrevious is { } duplicatePrevious
+                && SentinelResolver.SameEndpoint(duplicatePrevious, oldPrimary)) return;
+
+            // Keep newer events received while an earlier event refresh is waiting for discovery.
+            // This covers rapid A->B->C changes and switchbacks such as A->B->A.
+            var followsPending = _pendingSwitchPrimary is { } pending
+                && SentinelResolver.SameEndpoint(oldPrimary, pending);
+            var reversesPending = _pendingSwitchPrevious is { } prior
+                && SentinelResolver.SameEndpoint(newPrimary, prior);
             if (current is { IsRetired: false }
-                && SentinelResolver.SameEndpoint(current.Endpoint, newPrimary)) return;
-            if (current is not null && !SentinelResolver.SameEndpoint(current.Endpoint, oldPrimary)) return;
-            previousPrimary = current?.Endpoint;
+                && !SentinelResolver.SameEndpoint(current.Endpoint, oldPrimary)
+                && !followsPending && !reversesPending) return;
+            previousPrimary = _pendingSwitchPrevious ?? current?.Endpoint;
+            _pendingSwitchPrevious = previousPrimary;
+            _pendingSwitchPrimary = newPrimary;
+            version = ++_switchRefreshVersion;
             if (current is { IsRetired: false }) Invalidate(current);
         }
-        TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, newPrimary, previousPrimary));
+        TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, newPrimary, previousPrimary, switchRefreshVersion: version));
     }
 
     private void OnSentinelSubscriptionGap(RespireEndpoint sentinel)
@@ -362,7 +388,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private async Task RefreshAfterSentinelEventAsync(
         RespireEndpoint sentinel, RespireEndpoint? expectedPrimary, RespireEndpoint? rejectedPrimary,
-        bool refreshAfterSubscriptionGap = false)
+        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null)
     {
         var attempt = 0;
         var delay = TimeSpan.FromMilliseconds(250);
@@ -371,7 +397,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary, rejectedPrimary,
-                    refreshAfterSubscriptionGap)
+                    refreshAfterSubscriptionGap, switchRefreshVersion)
                     .ConfigureAwait(false);
                 return;
             }
