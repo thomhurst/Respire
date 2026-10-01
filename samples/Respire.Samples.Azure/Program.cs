@@ -22,5 +22,16 @@ var options = new RespireOptions
 var services = new ServiceCollection();
 services.AddRespire(_ => options);
 
-// Resolve and use IRespireClient from the application's service provider when connected to Azure.
-Console.WriteLine($"Configured Azure Managed Redis at {endpoint} using {AzureManagedRedisCredentialProvider.Scope}.");
+await using var serviceProvider = services.BuildServiceProvider();
+var client = serviceProvider.GetRequiredService<IRespireClient>();
+
+// Set RUN_AZURE_REDIS_SAMPLE=1 to issue a command against the configured Azure endpoint.
+if (Environment.GetEnvironmentVariable("RUN_AZURE_REDIS_SAMPLE") == "1")
+{
+    await client.PingAsync();
+    Console.WriteLine($"Connected to Azure Managed Redis at {endpoint}.");
+}
+else
+{
+    Console.WriteLine($"Configured Azure Managed Redis at {endpoint}. Set RUN_AZURE_REDIS_SAMPLE=1 to connect.");
+}
