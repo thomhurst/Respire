@@ -62,6 +62,29 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task ElapsedConfirmedRenewalUpdatesLocalExpiryWhenCleanupFails()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            "-ERR cleanup failed\r\n"u8.ToArray());
+        server.DelayReply(3, 50);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var semaphore = new RespireSemaphore(client, "{renew}:elapsed", capacity: 1);
+        await using var attempt = await semaphore.TryAcquireAsync();
+        await Assert.That(attempt.Permit.Expiry).IsNull();
+
+        await Assert.That(await attempt.Permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(1))).IsFalse();
+
+        await Assert.That(attempt.Permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(1));
+        await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(attempt.Permit.IsReleased).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UnansweredFenceDoesNotDelayCanceledAcquisition()
     {
         // Suppresses the acquire and the correction's CLIENT KILL barrier (but not the SKIPME

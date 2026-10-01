@@ -370,10 +370,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
                 var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
                 var renewed = response.AsInteger() == 1;
-                if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero))
+                if (renewed)
                 {
                     Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
-                    Interlocked.Exchange(ref _validUntil, remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
+                    Interlocked.Exchange(ref _validUntil,
+                        remaining is { } validRemaining && validRemaining > TimeSpan.Zero
+                            ? AddTimestampDuration(completed, validRemaining)
+                            : remaining.HasValue ? completed : long.MaxValue);
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
                     Volatile.Write(ref _finiteOutcomeUncertain, 0);
                 }
