@@ -12,6 +12,9 @@ dotnet add package Respire.Extensions.Azure
 dotnet add package Azure.Identity
 ```
 
+Azure Managed Redis endpoints use the regional hostname `<cache-name>.<region>.redis.azure.net` and
+TLS port 10000.
+
 Add the managed identity or service principal to the Redis resource's Authentication page as a
 Redis user. The Redis username is that identity's **object ID**. The access token must target
 `https://redis.azure.com/.default`; `AzureManagedRedisCredentialProvider` requests this scope and
@@ -35,7 +38,7 @@ var provider = new AzureManagedRedisCredentialProvider(credential, redisUserObje
 
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
-    Endpoints = { new RespireEndpoint("my-cache.redis.azure.net", 10000) },
+    Endpoints = { new RespireEndpoint("my-cache.eastus.redis.azure.net", 10000) },
     UseTls = true,
     Protocol = RespProtocol.Resp3,
     CredentialProvider = provider,
@@ -58,7 +61,7 @@ var services = new ServiceCollection();
 
 services.AddRespire(options =>
 {
-    options.Endpoints.Add(new RespireEndpoint("my-cache.redis.azure.net", 10000));
+    options.Endpoints.Add(new RespireEndpoint("my-cache.eastus.redis.azure.net", 10000));
     options.UseTls = true;
     options.Protocol = RespProtocol.Resp3;
     options.CredentialProvider = provider;

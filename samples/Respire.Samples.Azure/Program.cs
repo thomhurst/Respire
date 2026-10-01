@@ -8,7 +8,7 @@ using Respire.Extensions.DependencyInjection;
 // Connecting requires AZURE_MANAGED_REDIS_HOST and AZURE_MANAGED_REDIS_USER_OBJECT_ID; without
 // RUN_AZURE_REDIS_SAMPLE the sample only demonstrates configuration with placeholder values.
 var connect = Environment.GetEnvironmentVariable("RUN_AZURE_REDIS_SAMPLE") == "1";
-var endpoint = GetSetting("AZURE_MANAGED_REDIS_HOST", "my-cache.redis.azure.net");
+var endpoint = GetSetting("AZURE_MANAGED_REDIS_HOST", "my-cache.eastus.redis.azure.net");
 var redisUserObjectId = GetSetting(
     "AZURE_MANAGED_REDIS_USER_OBJECT_ID", "<managed-identity-or-service-principal-object-id>");
 
