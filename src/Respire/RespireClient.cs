@@ -334,10 +334,10 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
-        if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
+        if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken, command.CacheMutation);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken)
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, command.CacheMutation)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -359,10 +359,10 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
-        if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
+        if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken, command.CacheMutation);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken)
+            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken, command.CacheMutation)
             : ValueTask.FromException(prefixError);
     }
 
@@ -543,12 +543,13 @@ public sealed partial class RespireClient : IRespireClient
         string command,
         RespireValue[] args,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown)
     {
         ValidateResultFlags(flags);
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args);
+            operation, words, firstArgumentIndex, args, cacheMutation);
         var isBlocking = RespireCommand.IsBlocking(
             operation,
             RespireCommand.Classify(operation),
@@ -593,13 +594,14 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask ExecuteRawFireAndForgetAsync(
         string command,
         RespireValue[] args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown)
     {
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args);
+            operation, words, firstArgumentIndex, args, cacheMutation);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
@@ -838,7 +840,8 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         string[] words,
         int firstArgumentIndex,
-        RespireValue[] args)
+        RespireValue[] args,
+        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown)
     {
         var tokens = new RespireValue[words.Length + args.Length];
         for (var i = 0; i < words.Length; i++)
@@ -850,7 +853,7 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = GetRawRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
-        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex));
+        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)

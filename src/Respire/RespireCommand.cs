@@ -9,13 +9,19 @@ namespace Respire;
 /// </summary>
 public readonly struct RespireCommand
 {
+    private const int SourceMask = 0xFF;
+    private const int CacheMutationShift = 8;
+    private const int CacheMutationMask = 0xF << CacheMutationShift;
+    private const int ReadOnlyMetadataFlag = 1 << 12;
     private readonly Verb _verb;
+    private readonly int _sourceAndMutationMetadata;
 
-    internal RespireCommand(string name, RespireCommandSource sources, bool isReadOnly = false)
+    internal RespireCommand(string name, RespireCommandSource sources,
+        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown, bool isReadOnly = false)
     {
         Name = name;
-        Sources = sources;
-        IsReadOnly = isReadOnly;
+        _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
+            | (isReadOnly ? ReadOnlyMetadataFlag : 0);
         _verb = new Verb(name);
         Behavior = Classify(name);
     }
@@ -24,7 +30,7 @@ public readonly struct RespireCommand
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name;
-        Sources = RespireCommandSource.None;
+        _sourceAndMutationMetadata = 0;
         _verb = default;
         Behavior = default;
     }
@@ -33,14 +39,18 @@ public readonly struct RespireCommand
     public string Name { get; }
 
     /// <summary>Command references in which this command was found.</summary>
-    public RespireCommandSource Sources { get; }
+    public RespireCommandSource Sources => (RespireCommandSource)(_sourceAndMutationMetadata & SourceMask);
 
     /// <summary>
     /// Whether all audited providers explicitly mark this command read-only.
     /// False includes unknown metadata and caller-supplied commands; it does not prove a command writes.
     /// This metadata does not change routing, blocking behavior, or connection affinity.
     /// </summary>
-    public bool IsReadOnly { get; }
+    public bool IsReadOnly => (_sourceAndMutationMetadata & ReadOnlyMetadataFlag) != 0;
+
+    /// <summary>How this command affects keys tracked by client-side caching.</summary>
+    public RespireCacheMutation CacheMutation
+        => (RespireCacheMutation)((_sourceAndMutationMetadata & CacheMutationMask) >> CacheMutationShift);
 
     internal Verb Verb => _verb;
 
@@ -58,7 +68,7 @@ public readonly struct RespireCommand
     /// This does not declare the command read-only or associate it with an official command source.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
-    public static RespireCommand Create(string name)
+    public static RespireCommand Create(string name, RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         foreach (var character in name)
@@ -69,7 +79,8 @@ public readonly struct RespireCommand
             }
         }
 
-        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None);
+        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None, cacheMutation,
+            isReadOnly: cacheMutation == RespireCacheMutation.ReadOnly);
     }
 
     /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>

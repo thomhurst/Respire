@@ -32,7 +32,7 @@ internal static class RawCommandKeyLayouts
             "PING", "ECHO", "TIME");
         Add(LayoutKind.First,
             "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
-            "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY",
+            "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY", "DELEX", "DELIFEQ",
             "INCRBYFLOAT", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
             "PEXPIRE", "EXPIREAT", "PEXPIREAT", "EXPIRETIME", "PEXPIRETIME", "PERSIST", "DUMP",
             "RESTORE", "HGET", "HSET", "HSETNX", "HMGET", "HMSET", "HGETALL",
@@ -48,7 +48,7 @@ internal static class RawCommandKeyLayouts
             "GEOPOS", "GEOSEARCH", "XADD", "XACK", "XDEL", "XTRIM", "XLEN",
             "XRANGE", "XREVRANGE", "XPENDING", "XCLAIM", "XAUTOCLAIM", "OBJECT ENCODING", "OBJECT FREQ",
             "OBJECT IDLETIME", "OBJECT REFCOUNT", "MEMORY USAGE", "XINFO STREAM", "XINFO GROUPS", "XINFO CONSUMERS", "XGROUP CREATE",
-            "XGROUP SETID", "XGROUP DESTROY", "XGROUP CREATECONSUMER", "XGROUP DELCONSUMER");
+            "XGROUP SETID", "XGROUP DESTROY", "XGROUP CREATECONSUMER", "XGROUP DELCONSUMER", "XSETID");
         Add(LayoutKind.FirstTwo,
             "RENAME", "RENAMENX", "COPY", "LCS", "SMOVE", "LMOVE", "RPOPLPUSH",
             "ZRANGESTORE", "GEOSEARCHSTORE");
@@ -89,7 +89,8 @@ internal static class RawCommandKeyLayouts
             "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO", "CF.SCANDUMP", "CF.LOADCHUNK",
             "CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.QUERY", "CMS.INFO",
             "TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY", "TOPK.QUERY", "TOPK.COUNT", "TOPK.LIST", "TOPK.INFO",
-            "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD", "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK", "TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN", "TDIGEST.INFO");
+            "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD", "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK", "TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN", "TDIGEST.INFO",
+            "VADD", "VREM", "VSETATTR");
         AddImmediate(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
@@ -113,6 +114,10 @@ internal static class RawCommandKeyLayouts
     /// <summary>Whether <paramref name="operation"/> has an explicit key layout.</summary>
     internal static bool HasLayout(string operation) => Layouts.ContainsKey(operation);
 
+    /// <summary>Whether the registered layout identifies exactly one key in the first argument.</summary>
+    internal static bool HasSingleFirstKeyLayout(string operation)
+        => Layouts.TryGetValue(operation, out var definition) && definition.Kind == LayoutKind.First;
+
     internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
     {
         if (Layouts.TryGetValue(operation, out var definition))
@@ -125,10 +130,8 @@ internal static class RawCommandKeyLayouts
     }
 
     /// <summary>
-    /// Non-throwing layout lookup for client-side cache mutation fences. Only shapes whose keys can be
-    /// located from the argument count (and an optional leading count) are supported; every other kind
-    /// returns <see langword="false"/> so the caller falls back to a full-cache fence. Validation shares
-    /// <see cref="TryShape"/> and <see cref="TryCounted"/> with <see cref="Parse"/>, so the two cannot drift.
+    /// Non-throwing layout lookup for client-side cache mutation fences. Malformed or unsupported shapes
+    /// return <see langword="false"/> so the caller falls back to a full-cache fence.
     /// </summary>
     internal static bool TryGetMutationLayout(
         string operation, in ClientCacheCommandKey args, out KeyLayout layout)
@@ -136,14 +139,59 @@ internal static class RawCommandKeyLayouts
         layout = default;
         if (!Layouts.TryGetValue(operation, out var definition)) return false;
         var length = args.ArgumentCount;
-        return definition.Kind switch
+        switch (definition.Kind)
         {
-            LayoutKind.All or LayoutKind.Pairs or LayoutKind.Triples => TryShape(definition.Kind, length, out layout),
-            LayoutKind.CountedPairs => TryCounted(length, 0,
-                length > 0 && args.GetArgument(0).TryGetInt64(out var count) ? count : null,
-                allowZero: false, stride: 2, out layout),
-            _ => false,
-        };
+            case LayoutKind.None:
+                layout = new(0, 0);
+                return true;
+            case LayoutKind.First:
+                layout = new(0, 1);
+                return length > 0;
+            case LayoutKind.FirstTwo:
+                layout = new(0, 2);
+                return length >= 2;
+            case LayoutKind.AfterFirst:
+                if (length == 1 && args.GetArgument(0).EqualsAsciiIgnoreCase("HELP"))
+                {
+                    layout = new(0, 0);
+                    return true;
+                }
+                layout = new(1, 1);
+                return length >= 2;
+            case LayoutKind.AllExceptLast:
+                layout = new(0, length - 1);
+                return length >= 2;
+            case LayoutKind.All:
+            case LayoutKind.Pairs:
+            case LayoutKind.Triples:
+                return TryShape(definition.Kind, length, out layout);
+            case LayoutKind.BitOp:
+                layout = new(1, length - 1);
+                return length >= 3;
+            case LayoutKind.Counted:
+                return TryCountedArguments(args, length, 0, allowZero: false, stride: 1, out layout);
+            case LayoutKind.CountedAfterName:
+                return TryCountedArguments(args, length, 1, allowZero: true, stride: 1, out layout);
+            case LayoutKind.CountedWithDestination:
+                if (!TryCountedArguments(args, length, 1, allowZero: false, stride: 1, out layout)) return false;
+                layout = layout with { Extra = 0 };
+                return true;
+            case LayoutKind.CountedPairs:
+                return TryCountedArguments(args, length, 0, allowZero: false, stride: 2, out layout);
+            case LayoutKind.CountedAfterTimeout:
+                return TryCountedArguments(args, length, 1, allowZero: false, stride: 1, out layout);
+            default:
+                layout = default;
+                return false;
+        }
+    }
+
+    private static bool TryCountedArguments(in ClientCacheCommandKey args, int length, int countIndex,
+        bool allowZero, int stride, out KeyLayout layout)
+    {
+        var count = length > countIndex && args.GetArgument(countIndex).TryGetInt64(out var value)
+            ? value : (long?)null;
+        return TryCounted(length, countIndex, count, allowZero, stride, out layout);
     }
 
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)

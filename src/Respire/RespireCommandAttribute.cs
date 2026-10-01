@@ -12,4 +12,8 @@ public sealed class RespireCommandAttribute(string name) : Attribute
 {
     /// <summary>The command token, such as <c>JSON.GET</c>.</summary>
     public string Name { get; } = name;
+
+    /// <summary>Declares how this command affects keys tracked by client-side caching.</summary>
+    /// <remarks>Unknown commands invalidate the full local cache.</remarks>
+    public RespireCacheMutation Mutation { get; set; }
 }

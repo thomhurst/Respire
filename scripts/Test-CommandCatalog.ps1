@@ -55,6 +55,19 @@ try {
         $isReadOnly = $declarations[0].Groups['arguments'].Value.Contains('isReadOnly: true')
         if ($isReadOnly -ne $entry.Value) { throw "Incorrect read-only metadata for $($entry.Key)." }
     }
+    $mutationExpectations = @{
+        GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
+        'KEYDB.NHGET' = 'Mutation'
+    }
+    foreach ($entry in $mutationExpectations.GetEnumerator()) {
+        $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +
+            [regex]::Escape($entry.Key) + '", (?<arguments>[^;]+)\);\r?$'
+        $declarations = [regex]::Matches($first, $pattern)
+        if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
+        if (-not $declarations[0].Groups['arguments'].Value.Contains("RespireCacheMutation.$($entry.Value)")) {
+            throw "Incorrect cache mutation metadata for $($entry.Key)."
+        }
+    }
     Write-Host 'Command catalog generation checks passed.'
 }
 finally {

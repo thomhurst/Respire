@@ -125,6 +125,9 @@ internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 
+    /// <summary>Returns cache mutation metadata for the command.</summary>
+    RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.GetCacheMutation(operation);
+
     /// <summary>Returns the command's primary routing key when it is represented explicitly.</summary>
     bool TryGetPrimaryKey(out RespireValue key)
     {
