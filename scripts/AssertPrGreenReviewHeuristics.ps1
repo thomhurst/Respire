@@ -358,13 +358,14 @@ function Test-IsClaudeReviewComment {
         return $true
     }
 
-    # Comments posted before the marker existed: every other github-actions
-    # comment on a PR is an automated report with a fixed heading.
-    if ($body -match '(?m)^\s*#{1,3}\s*\S*\s*Integration Test Results\b') {
-        return $false
-    }
+    # Older Claude comments had a bold or Markdown heading that began with Review.
+    # Do not classify other github-actions reports from the word "review" in their body.
+    $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+    if ($firstLine.Count -eq 0) { return $false }
 
-    return $body -match '(?i)\breview\b'
+    $title = $firstLine[0].Trim() -replace '^#{1,3}\s*', ''
+    $title = $title -replace '^(?:\*\*|__)\s*', '' -replace '\s*(?:\*\*|__)\s*$', ''
+    return $title -match '(?i)^Review(?:\s|:|$)'
 }
 
 # A reply only answers a blocking Claude review when it carries this marker and

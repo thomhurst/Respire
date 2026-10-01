@@ -1174,6 +1174,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks legacy Claude review with Markdown heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Review: PR 678`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'allows Claude review answered by a later human reply'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
@@ -1212,6 +1219,13 @@ $claudeCommentCases = @(
         Name = 'ignores integration reports when no Claude review exists'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $integrationReport)
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'ignores unrelated github-actions report that mentions review'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' "## Build report`n`nThis report mentions review metadata.")
         )
         Blocks = $false
     },
