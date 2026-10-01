@@ -1,4 +1,5 @@
 using System.Text;
+using Respire.Commands;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -142,6 +143,26 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task CatalogReadOnlyFunctionUsesReplicaPolicy()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole, ":1\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        using var result = await client.WithReadFrom(RespireReadFrom.Replica)
+            .ExecuteAsync(RespireCommands.Scripting.FCALL_RO, ["read-function", 0]);
+
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "FCALL_RO read-function 0"]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task ValidatedReplicaConnectionServesReadsWithoutRepeatingRole()
     {
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
@@ -164,6 +185,40 @@ public class ReadEndpointRoutingTests
         await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal)))
             .IsEqualTo(8);
+    }
+
+    [Test]
+    public async Task ReplicaMultiplexerRoundRobinUsesEachSelectedConnection()
+    {
+        var getConnectionIds = new System.Collections.Concurrent.ConcurrentBag<int>();
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(2, ReplicaRole)
+        {
+            ReplyOverride = (connectionId, command) =>
+            {
+                if (command.StartsWith("GET ", StringComparison.Ordinal))
+                {
+                    getConnectionIds.Add(connectionId);
+                    return Bulk("replica");
+                }
+
+                return null;
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 2,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        for (var index = 0; index < 4; index++)
+            await view.GetStringAsync($"key-{index}");
+
+        await Assert.That(getConnectionIds.Distinct().Count()).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
     }
 
     [Test]
@@ -196,6 +251,47 @@ public class ReadEndpointRoutingTests
         await Assert.That(firstScans + secondScans).IsEqualTo(4);
         await Assert.That(firstScans == 0 || secondScans == 0).IsTrue();
     }
+
+    [Test]
+    public async Task CursorReadsKeepReplicaSelectedAfterFirstPageFallback()
+    {
+        var recovered = 0;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var firstCandidate = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? Volatile.Read(ref recovered) == 0 ? PrimaryRole : ReplicaRole
+                : command.StartsWith("SCAN ", StringComparison.Ordinal) ? ScanReply("99") : null,
+        };
+        await using var secondCandidate = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SCAN ", StringComparison.Ordinal)
+                ? ScanReply("1")
+                : null,
+        };
+        var first = firstCandidate.Port < secondCandidate.Port ? firstCandidate : secondCandidate;
+        var second = ReferenceEquals(first, firstCandidate) ? secondCandidate : firstCandidate;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        using (await view.ExecuteAsync("SCAN", ["0"])) { }
+        Volatile.Write(ref recovered, 1);
+        using (await view.ExecuteAsync("SCAN", ["1"])) { }
+
+        await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("SCAN ", StringComparison.Ordinal)))
+            .IsEqualTo(0);
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    private static byte[] ScanReply(string cursor)
+        => Encoding.ASCII.GetBytes($"*2\r\n${cursor.Length}\r\n{cursor}\r\n*0\r\n");
 
     private static byte[] Bulk(string value)
         => Encoding.ASCII.GetBytes($"${Encoding.ASCII.GetByteCount(value)}\r\n{value}\r\n");

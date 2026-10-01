@@ -2294,9 +2294,16 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-
-            var connection = core.Multiplexer.GetConnection();
+            RespireConnection connection;
+            if (ReadOnlyCommandCatalog.Contains(operation) && _readFrom != RespireReadFrom.Primary)
+            {
+                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                connection = core.Multiplexer.GetConnection();
+            }
             return await SendOnConnectionAsync(
                     operation, connection, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
