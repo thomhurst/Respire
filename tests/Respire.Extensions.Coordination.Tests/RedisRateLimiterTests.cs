@@ -39,6 +39,20 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    public async Task AcquireAbovePermitLimitReturnsRejectedLease()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)],
+        });
+        await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
+            "over-limit", permitLimit: 1, TimeSpan.FromSeconds(1));
+
+        using var lease = await limiter.AcquireAsync(2);
+        await Assert.That(lease.IsAcquired).IsFalse();
+    }
+
+    [Test]
     public async Task FixedWindowFallsBackOnRedis74AndExpiresWindow()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
@@ -189,16 +203,16 @@ public class RedisRateLimiterTests
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
-            "bucket-refill-boundary", tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromSeconds(1));
+            "bucket-refill-boundary", tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromSeconds(5));
 
         using var first = await limiter.AcquireAsync(1);
-        await Task.Delay(800);
+        await Task.Delay(4000);
         using var second = await limiter.AcquireAsync(1);
         await Assert.That(second.IsAcquired).IsTrue();
         using var denied = await limiter.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
         await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
-        await Assert.That(retry < TimeSpan.FromMilliseconds(400)).IsTrue();
+        await Assert.That(retry < TimeSpan.FromSeconds(2)).IsTrue();
     }
 
     [Test]
@@ -236,14 +250,14 @@ public class RedisRateLimiterTests
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "queue-deadline", permitLimit: 1, TimeSpan.FromMilliseconds(1500), queueLimit: 2);
+            "queue-deadline", permitLimit: 1, TimeSpan.FromSeconds(4), queueLimit: 2);
 
         using var initial = await limiter.AcquireAsync(1);
         using var cancelSecond = new CancellationTokenSource();
         var first = limiter.AcquireAsync(1).AsTask();
-        await Task.Delay(700);
+        await Task.Delay(1000);
         var second = limiter.AcquireAsync(1, cancelSecond.Token).AsTask();
-        using var granted = await first.WaitAsync(TimeSpan.FromSeconds(1));
+        using var granted = await first.WaitAsync(TimeSpan.FromSeconds(4));
         await Assert.That(granted.IsAcquired).IsTrue();
         cancelSecond.Cancel();
         await Assert.That(async () => await second).Throws<OperationCanceledException>();

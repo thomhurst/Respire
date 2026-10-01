@@ -178,9 +178,10 @@ internal sealed class RedisRateLimiter : RateLimiter
 
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
-        if (permitCount < 0 || permitCount > _permitLimit) throw new ArgumentOutOfRangeException(nameof(permitCount));
+        if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+        if (permitCount > _permitLimit) return new RedisRateLimitLease(false, TimeSpan.Zero);
         if (permitCount == 0) return new RedisRateLimitLease(true, TimeSpan.Zero);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
@@ -225,15 +226,24 @@ internal sealed class RedisRateLimiter : RateLimiter
             cancellationToken.ThrowIfCancellationRequested();
             if (permitCount > _queueLimit || (_queueOrder == QueueProcessingOrder.OldestFirst
                 && permitCount > _queueLimit - _queuedPermits)) return denied;
-            while (_queueOrder == QueueProcessingOrder.NewestFirst && permitCount > _queueLimit - _queuedPermits)
+            if (_queueOrder == QueueProcessingOrder.NewestFirst && permitCount > _queueLimit - _queuedPermits)
             {
-                var removed = _queue.Last!;
-                if (removed.Value.IsProcessing) return denied;
-                _queue.RemoveLast();
-                removed.Value.Node = null;
-                _queuedPermits -= removed.Value.PermitCount;
-                removed.Value.Registration.Unregister();
-                removed.Value.Completion.TrySetResult(new RedisRateLimitLease(false, TimeSpan.Zero));
+                var removablePermits = 0;
+                for (var node = _queue.Last; node is not null && !node.Value.IsProcessing; node = node.Previous)
+                    removablePermits += node.Value.PermitCount;
+                if (permitCount > _queueLimit - _queuedPermits + removablePermits) return denied;
+                while (permitCount > _queueLimit - _queuedPermits)
+                {
+                    var removed = _queue.Last!;
+                    // Capacity was preflighted above; the processing request cannot be
+                    // reached before enough removable tail permits have been evicted.
+                    if (removed.Value.IsProcessing) throw new InvalidOperationException("Queue capacity preflight was inconsistent.");
+                    _queue.RemoveLast();
+                    removed.Value.Node = null;
+                    _queuedPermits -= removed.Value.PermitCount;
+                    removed.Value.Registration.Unregister();
+                    removed.Value.Completion.TrySetResult(new RedisRateLimitLease(false, TimeSpan.Zero));
+                }
             }
             request.Node = _queueOrder == QueueProcessingOrder.NewestFirst
                 ? _queue.AddFirst(request)

@@ -32,10 +32,23 @@ public class RedisRateLimiterBenchmarks
         local width = 60000
         local segment = 6000
         local bucket = math.floor(now / segment) * segment
+        local bucketEnd = bucket + segment
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - width)
-        local count = redis.call('ZCARD', KEYS[1])
+        local entries = redis.call('ZRANGE', KEYS[1], 0, -1)
+        local count = 0
+        for _, entry in ipairs(entries) do
+            local separator = string.find(entry, ':', 1, true)
+            count = count + tonumber(string.sub(entry, separator + 1))
+        end
         if count >= 2147483647 then return 0 end
-        redis.call('ZADD', KEYS[1], bucket, ARGV[1])
+        local current = redis.call('ZRANGEBYSCORE', KEYS[1], bucketEnd, bucketEnd)
+        local segmentCount = 0
+        if #current > 0 then
+            local separator = string.find(current[1], ':', 1, true)
+            segmentCount = tonumber(string.sub(current[1], separator + 1))
+            redis.call('ZREM', KEYS[1], current[1])
+        end
+        redis.call('ZADD', KEYS[1], bucketEnd, bucket .. ':' .. (segmentCount + 1))
         redis.call('PEXPIRE', KEYS[1], width * 2)
         return 1
         """);
@@ -50,7 +63,7 @@ public class RedisRateLimiterBenchmarks
         last = last + math.floor(elapsed / 1000) * 1000
         if tokens < 1 then return 0 end
         tokens = tokens - 1
-        redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', now)
+        redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
         redis.call('PEXPIRE', KEYS[1], 42949674000)
         return 1
         """);
