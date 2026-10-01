@@ -36,7 +36,8 @@ internal sealed partial class SubscriptionHub
     private async ValueTask ActivateClusterNotificationsAsync(
         RespireSubscription subscription, CancellationToken cancellationToken)
     {
-        var observedTopologyVersion = Volatile.Read(ref _notificationTopologyVersion);
+        long observedTopologyVersion;
+        lock (_gate) observedTopologyVersion = _notificationTopologyVersion;
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken).ConfigureAwait(false);
         var touched = new HashSet<RespireEndpoint>();
         var uncertain = new HashSet<RespireEndpoint>();
@@ -603,23 +604,23 @@ internal sealed partial class SubscriptionHub
         {
             core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                 node.Endpoint, RespireConnectionState.Connected, null));
-            await connectionToDispose.DisposeAsync().ConfigureAwait(false);
+            // Route state is already committed; a failed close must not abort callers that
+            // still have to complete or unsubscribe other routes.
+            try { await connectionToDispose.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception error) { TryLogDebug(error, "Closing a retired cluster notification connection failed"); }
         }
     }
 
     internal void NotifyTopologyChanged(long version, RespireEndpoint[] endpoints, bool authoritative)
     {
         if (_disposed) return;
-        while (true)
-        {
-            var current = Volatile.Read(ref _notificationTopologyVersion);
-            if (version <= current) return;
-            if (Interlocked.CompareExchange(ref _notificationTopologyVersion, version, current) == current) break;
-        }
+        // Publish the version and its snapshot together so activation never observes a newer
+        // version without the endpoints that belong to it.
         lock (_gate)
         {
-            if (_latestNotificationTopology is null || _latestNotificationTopology.Version < version)
-                _latestNotificationTopology = new NotificationTopology(version, endpoints, authoritative);
+            if (version <= _notificationTopologyVersion) return;
+            _latestNotificationTopology = new NotificationTopology(version, endpoints, authoritative);
+            Volatile.Write(ref _notificationTopologyVersion, version);
         }
         if (authoritative)
         {
@@ -884,8 +885,14 @@ internal sealed partial class SubscriptionHub
         {
             ClusterNotificationNode? node;
             lock (_gate) _notificationNodes.TryGetValue(coveredEndpoint, out node);
-            if (node is not null)
-                await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+            if (node is null) continue;
+            // Release can remove coverage before it fails. The subscription must still reach its
+            // terminal state, because no later reconciliation pass can rediscover it.
+            try { await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false); }
+            catch (Exception releaseError)
+            {
+                TryLogDebug(releaseError, "Releasing an exhausted cluster notification subscription failed");
+            }
         }
         var disconnected = false;
         lock (_gate)

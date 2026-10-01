@@ -816,7 +816,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             foreach (var connection in notificationConnections)
             {
                 try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception error) { core.Logger?.LogDebug(error, "Closing a cluster notification connection failed"); }
+                catch (Exception error) { TryLogDebug(error, "Closing a cluster notification connection failed"); }
             }
 
             foreach (var subscription in subscriptions)
