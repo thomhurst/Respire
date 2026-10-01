@@ -233,7 +233,8 @@ public class ClientSideCacheCoordinatorTests
     [Test]
     public async Task MutationLayoutsAgreeWithRoutingLayouts()
     {
-        string[] operations = ["MSET", "MSETNX", "MSETEX", "DEL", "UNLINK", "JSON.MSET"];
+        string[] operations = ["MSET", "MSETNX", "MSETEX", "DEL", "UNLINK", "JSON.MSET",
+            "RENAME", "RENAMENX", "SMOVE", "LMOVE", "RPOPLPUSH"];
         RespireValue[][] inputs =
         [
             [], ["a"], ["a", "b"], ["a", "b", "c"], ["a", "b", "c", "d"], ["a", "b", "c", "d", "e", "f"],
@@ -259,6 +260,93 @@ public class ClientSideCacheCoordinatorTests
             await Assert.That(actual).IsEqualTo(expected)
                 .Because($"{operation} [{string.Join(", ", input.Select(value => value.ToString()))}]");
         }
+    }
+
+    [Test]
+    public async Task DestinationOnlyMutationLayoutsInvalidateDestinationAndRetainSources()
+    {
+        var cases = new (string Operation, RespireCommand Descriptor, RespireValue[] Arguments,
+            string Destination, string[] Sources)[]
+        {
+            ("COPY", RespireCommands.Key.COPY, ["copy-source", "copy-destination"],
+                "copy-destination", ["copy-source"]),
+            ("BITOP", RespireCommands.Bitmap.BITOP, ["OR", "bit-destination", "bit-source-a", "bit-source-b"],
+                "bit-destination", ["bit-source-a", "bit-source-b"]),
+            ("ZDIFFSTORE", RespireCommands.SortedSet.ZDIFFSTORE,
+                ["diff-destination", 2, "diff-source-a", "diff-source-b"],
+                "diff-destination", ["diff-source-a", "diff-source-b"]),
+            ("ZRANGESTORE", RespireCommands.SortedSet.ZRANGESTORE,
+                ["range-destination", "range-source", 0, -1],
+                "range-destination", ["range-source"]),
+            ("GEOSEARCHSTORE", RespireCommands.Geo.GEOSEARCHSTORE,
+                ["geo-destination", "geo-source", "FROMMEMBER", "origin", "BYRADIUS", 1, "m"],
+                "geo-destination", ["geo-source"]),
+        };
+
+        foreach (var item in cases)
+        {
+            var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+            Insert(cache, item.Destination, "old-destination");
+            foreach (var source in item.Sources) Insert(cache, source, "cached-source");
+            Insert(cache, "unrelated", "retained");
+            var command = new CatalogCommand(item.Descriptor, item.Arguments);
+
+            var fence = cache.BeforeCommand(item.Operation, in command);
+
+            await Assert.That(cache.TryGet(new RespireKey(item.Destination), out _)).IsFalse()
+                .Because($"{item.Operation} must fence its destination before execution");
+            foreach (var source in item.Sources)
+                await Assert.That(Read(cache, source)).IsEqualTo("cached-source")
+                    .Because($"{item.Operation} reads source {source}");
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+
+            Insert(cache, item.Destination, "racing-read");
+            cache.CompleteMutation(in fence);
+
+            await Assert.That(cache.TryGet(new RespireKey(item.Destination), out _)).IsFalse()
+                .Because($"{item.Operation} must fence a racing destination read after execution");
+            foreach (var source in item.Sources)
+                await Assert.That(Read(cache, source)).IsEqualTo("cached-source");
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+    }
+
+    [Test]
+    public async Task RenameMutationInvalidatesBothKeys()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "rename-source", "old-source");
+        Insert(cache, "rename-destination", "old-destination");
+        Insert(cache, "unrelated", "retained");
+        var command = new CatalogCommand(RespireCommands.Key.RENAME, ["rename-source", "rename-destination"]);
+
+        var fence = cache.BeforeCommand("RENAME", in command);
+
+        await Assert.That(cache.TryGet(new RespireKey("rename-source"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("rename-destination"), out _)).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+
+        Insert(cache, "rename-source", "racing-source");
+        Insert(cache, "rename-destination", "racing-destination");
+        cache.CompleteMutation(in fence);
+
+        await Assert.That(cache.TryGet(new RespireKey("rename-source"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("rename-destination"), out _)).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+    }
+
+    [Test]
+    public async Task ClusterSlotStatsPreservesClientCache()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "unrelated", "retained");
+        var command = new CatalogCommand(RespireCommands.Cluster.CLUSTER_SLOT_STATS,
+            ["SLOTSRANGE", 0, 16383]);
+
+        var fence = cache.BeforeCommand("CLUSTER SLOT-STATS", in command);
+
+        await Assert.That(fence.IsRequired).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
     }
 
     [Test]

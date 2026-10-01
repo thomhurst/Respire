@@ -68,7 +68,11 @@ public readonly struct RespireCommand
     /// This does not declare the command read-only or associate it with an official command source.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
-    public static RespireCommand Create(string name, RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown)
+    public static RespireCommand Create(string name)
+        => Create(name, RespireCacheMutation.Unknown);
+
+    /// <summary>Creates a caller-supplied command descriptor with an explicit cache mutation policy.</summary>
+    public static RespireCommand Create(string name, RespireCacheMutation cacheMutation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         foreach (var character in name)
@@ -79,8 +83,7 @@ public readonly struct RespireCommand
             }
         }
 
-        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None, cacheMutation,
-            isReadOnly: cacheMutation == RespireCacheMutation.ReadOnly);
+        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None, cacheMutation);
     }
 
     /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>

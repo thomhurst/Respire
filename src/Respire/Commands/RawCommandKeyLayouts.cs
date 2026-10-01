@@ -148,7 +148,13 @@ internal static class RawCommandKeyLayouts
                 layout = new(0, 1);
                 return length > 0;
             case LayoutKind.FirstTwo:
-                layout = new(0, 2);
+                // COPY writes its second key; range and geo stores write their first key.
+                layout = operation switch
+                {
+                    "COPY" => new(0, 0, Extra: 1),
+                    "ZRANGESTORE" or "GEOSEARCHSTORE" => new(0, 0, Extra: 0),
+                    _ => new(0, 2),
+                };
                 return length >= 2;
             case LayoutKind.AfterFirst:
                 if (length == 1 && args.GetArgument(0).EqualsAsciiIgnoreCase("HELP"))
@@ -166,7 +172,8 @@ internal static class RawCommandKeyLayouts
             case LayoutKind.Triples:
                 return TryShape(definition.Kind, length, out layout);
             case LayoutKind.BitOp:
-                layout = new(1, length - 1);
+                // BITOP reads source keys but changes only its destination.
+                layout = new(0, 0, Extra: 1);
                 return length >= 3;
             case LayoutKind.Counted:
                 return TryCountedArguments(args, length, 0, allowZero: false, stride: 1, out layout);

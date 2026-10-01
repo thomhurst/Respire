@@ -52,6 +52,19 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task CreatePreservesOneArgumentOverloadAndKeepsCallerMetadataUnaudited()
+    {
+        var oneArgumentOverload = typeof(RespireCommand).GetMethod(
+            nameof(RespireCommand.Create), [typeof(string)]);
+        await Assert.That(oneArgumentOverload).IsNotNull();
+
+        var callerCommand = RespireCommand.Create("CUSTOM.GET", RespireCacheMutation.ReadOnly);
+        await Assert.That(callerCommand.CacheMutation).IsEqualTo(RespireCacheMutation.ReadOnly);
+        await Assert.That(callerCommand.IsReadOnly).IsFalse();
+        await Assert.That(callerCommand.Sources).IsEqualTo(RespireCommandSource.None);
+    }
+
+    [Test]
     public async Task Catalog_ContainsEveryAuditedCommandExactlyOnce()
     {
         var commands = RespireCommands.All.ToArray();

@@ -235,7 +235,7 @@ public static class RespireCommands
         public static readonly RespireCommand CLUSTER_SLAVES = new("CLUSTER SLAVES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
 
         /// <summary><c>CLUSTER SLOT-STATS</c>.</summary>
-        public static readonly RespireCommand CLUSTER_SLOT_STATS = new("CLUSTER SLOT-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SLOT_STATS = new("CLUSTER SLOT-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
 
         /// <summary><c>CLUSTER SLOTS</c>.</summary>
         public static readonly RespireCommand CLUSTER_SLOTS = new("CLUSTER SLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
@@ -2769,6 +2769,7 @@ public static class RespireCommands
             "CLUSTER INFO",
             "CLUSTER KEYSLOT",
             "CLUSTER LINKS",
+            "CLUSTER SLOT-STATS",
             "CLUSTER MYID",
             "CLUSTER MYSHARDID",
             "CLUSTER NODES",
