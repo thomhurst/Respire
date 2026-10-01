@@ -90,7 +90,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionStateChange>? DedicatedStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
-    internal event Action<long, RespireEndpoint[]>? TopologyChanged;
+    // Arguments: topology version, known primary endpoints, and whether that endpoint set is
+    // authoritative. A non-authoritative set (one cached owner cleared, or a redirect onto a
+    // partial map) cannot prove that an omitted primary has left the cluster.
+    internal event Action<long, RespireEndpoint[], bool>? TopologyChanged;
 
     internal async ValueTask<RespireEndpoint> GetSlotOwnerEndpointAsync(
         int slot, CancellationToken cancellationToken)
@@ -1414,6 +1417,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
                 out topologyChanged);
             publishedTopologyVersion = topologyChanged ? ++_topologyVersion : _topologyVersion;
+            // Discovery publishes the primaries that own slots in the reply. A primary omitted
+            // from a partial map has lost its slots (usually mid-failover) and is dropped; its
+            // promoted replica appears in a later discovery.
             publishedEndpoints = Enumerable.Range(0, _masters.Length)
                 .Where(index => _masterSlotCounts[index] != 0 && !_masters[index].IsRetired)
                 .Select(index => Endpoint(_masters[index])).Distinct().ToArray();
@@ -1443,7 +1449,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 NodeRetired?.Invoke(node);
             }
         }
-        if (topologyChanged) TopologyChanged?.Invoke(publishedTopologyVersion, publishedEndpoints);
+        if (topologyChanged) TopologyChanged?.Invoke(publishedTopologyVersion, publishedEndpoints, true);
     }
 
     // A replica that serves several slot ranges is listed once per range. Merge those entries by
@@ -1531,6 +1537,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer? retiredNode = null;
         long topologyVersion;
         RespireEndpoint[]? topologyEndpoints;
+        bool topologyAuthoritative;
         lock (_nodesGate)
         {
             if (_retiringNodes.ContainsKey(node) || node.IsRetired)
@@ -1551,19 +1558,21 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             topologyVersion = _topologyVersion;
             topologyEndpoints = _masters.Where(static master => !master.IsRetired)
                 .Select(static master => Endpoint(master)).Append(Endpoint(node)).Distinct().ToArray();
+            topologyAuthoritative = HasCompleteTopology();
         }
 
         if (retiredNode is not null)
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints);
+        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
     }
 
     private void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
         long topologyVersion;
+        RespireEndpoint[] topologyEndpoints;
         lock (_nodesGate)
         {
             if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
@@ -1578,13 +1587,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 retiredNode = node;
             }
+            // Clearing one cached owner proves nothing about other primaries. Publish the
+            // remaining known set as non-authoritative so healthy routes are kept.
+            topologyEndpoints = _masters.Where(static master => !master.IsRetired)
+                .Select(static master => Endpoint(master)).Distinct().ToArray();
         }
 
         if (retiredNode is not null)
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        TopologyChanged?.Invoke(topologyVersion, []);
+        TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, false);
     }
 
     // Every slot publication carries its discovery-order fence under _nodesGate.

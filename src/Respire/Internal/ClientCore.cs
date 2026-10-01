@@ -144,11 +144,11 @@ internal sealed class ClientCore : IAsyncDisposable
         PublishQueuedStates();
     }
 
-    private void NotifySubscriptionTopologyChanged(long version, RespireEndpoint[] endpoints)
+    private void NotifySubscriptionTopologyChanged(long version, RespireEndpoint[] endpoints, bool authoritative)
     {
         SubscriptionHub? hub;
         lock (_hubGate) hub = _hub;
-        hub?.NotifyTopologyChanged(version, endpoints);
+        hub?.NotifyTopologyChanged(version, endpoints, authoritative);
     }
 
     internal void NotifyRecoveryStateChanged(RespireConnectionStateChange change)

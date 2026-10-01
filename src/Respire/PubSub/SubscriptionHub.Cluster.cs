@@ -434,7 +434,7 @@ internal sealed partial class SubscriptionHub
         }
     }
 
-    private void RequestShardedRecovery(long topologyVersion, RespireEndpoint[] endpoints)
+    private void RequestShardedRecovery(long topologyVersion, RespireEndpoint[] endpoints, bool authoritative)
         => RequestShardedRecovery();
 
     // An ASK route intentionally differs from the router's slot owner until migration

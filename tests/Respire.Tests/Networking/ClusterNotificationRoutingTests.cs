@@ -275,7 +275,7 @@ public class ClusterNotificationRoutingTests
         {
             if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
                 throw new InvalidOperationException("Injected reconnect telemetry failure.");
-            if (tags.ToArray().Any(tag => tag.Key == "respire.pubsub.gap.reason"))
+            if (tags.ToArray().Any(tag => tag.Key == "respire.subscription.gap.reason"))
                 throw new InvalidOperationException("Injected delivery-gap telemetry failure.");
         });
         telemetryListener.Start();
@@ -490,6 +490,60 @@ public class ClusterNotificationRoutingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (third.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {stableDescriptor}") < 2)
             await Task.Delay(10, deadline.Token);
+    }
+
+    [Test]
+    public async Task ClearingOneSlotOwnerKeepsAllPrimaryRoutes()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, topology, resp3: false);
+        Configure(second, topology, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var router = client.Core.Cluster!;
+        var clearSlotOwner = router.GetType().GetMethod("ClearSlotOwner",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        clearSlotOwner.Invoke(router, [0, router.GetMultiplexer(new("127.0.0.1", first.Port))]);
+        await Task.Delay(250);
+
+        foreach (var server in new[] { first, second })
+            await Assert.That(server.ReceivedCommands).DoesNotContain($"PUNSUBSCRIBE {descriptor}");
+    }
+
+    [Test]
+    public async Task TopologyReconciliationHonorsReconnectAttemptLimit()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var configured = second.ReplyOverride!;
+        second.ReplyOverride = (connectionId, command) => command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)
+            ? "-NOPERM denied\r\n"u8.ToArray()
+            : configured(connectionId, command);
+        await using var client = CreateClusterClient(first.Port, resp3: false, new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(1),
+            MaxDelay = TimeSpan.FromMilliseconds(1),
+            JitterRatio = 0,
+            MaxAttempts = 2,
+        });
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(2);
     }
 
     private static void Configure(FakeRespServer server, byte[] topology, bool resp3)
