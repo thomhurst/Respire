@@ -44,7 +44,8 @@ public sealed class RespireCoordination
         """;
 
     internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create(ReadCountdownLatchSource, readOnly: true);
-    private static readonly RespireScript ReadCountdownLatchCompatibility = RespireScript.Create(ReadCountdownLatchSource);
+    private static readonly RespireScript ReadCountdownLatchCompatibility =
+        RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
 
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>

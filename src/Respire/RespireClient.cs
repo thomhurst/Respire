@@ -3251,7 +3251,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var mutationFence = cache is null || script.IsReadOnly ? default : cache.BeginUnknownMutation();
+        var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
         var response = ExecuteScriptCoreAsync(script, tail, cancellationToken);
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
