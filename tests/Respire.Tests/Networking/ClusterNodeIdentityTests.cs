@@ -62,6 +62,58 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task NodeRetiredHandlerCanDisposeTheRouterFromTheSmigratedWorker()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.GetMultiplexer(targetEndpoint);
+        router.SetSlotOwner(0, source);
+        var disposed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Synchronous disposal from the worker's own callback must not wait for that worker.
+        router.NodeRetired += _ => disposed.TrySetResult(router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
+
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]));
+
+        await Assert.That(await disposed.Task.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+        await router.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task SmigratedSlotListsBoundEnumeratedRanges()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var target = router.GetMultiplexer(targetEndpoint);
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+        router.SetSlotOwner(16383, source);
+
+        // Repeated full ranges exceed the slot count in enumeration and are rejected outright.
+        var repeated = string.Join(',', Enumerable.Repeat("0-16383", 2));
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, repeated)])));
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+
+        // Small overlaps stay within the bound and move each slot once.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 2, Migrations: [new(sourceEndpoint, targetEndpoint, "0-1,1,0-1")])));
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(16383), source)).IsTrue();
+    }
+
+    [Test]
     public async Task SmigratedSequenceIdsAreScopedToTheReceivingConnection()
     {
         var options = Options(6379);

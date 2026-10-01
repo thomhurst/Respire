@@ -2069,7 +2069,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         // superseded generation; ClientCore's later disposal of it is idempotent.
         await Task.WhenAll(dedicatedPools.Select(pool => pool.DisposeAsync().AsTask())
             .Concat(nodes.Select(node => node.DisposeAsync().AsTask()))).ConfigureAwait(false);
-        await _smigratedWorker.ConfigureAwait(false);
+        // A NodeRetired handler on the worker can dispose the client; joining the worker from
+        // inside it would deadlock. The completed channel ends the worker after that handler.
+        if (!IsOnSmigratedWorker) await _smigratedWorker.ConfigureAwait(false);
         await retirements.ConfigureAwait(false);
     }
 }

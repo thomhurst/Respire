@@ -45,6 +45,9 @@ internal sealed partial class ClusterRouter
     // Accessed only by the worker under _nodesGate. A window disappears with its connection.
     private readonly ConditionalWeakTable<object, SmigratedSequenceWindow> _smigratedSequences = new();
     private Task _smigratedWorker = Task.CompletedTask;
+    private static readonly AsyncLocal<ClusterRouter?> SmigratedWorkerContext = new();
+
+    private bool IsOnSmigratedWorker => ReferenceEquals(SmigratedWorkerContext.Value, this);
 
     private void StartSmigratedWorker()
         => _smigratedWorker = Task.Run(ProcessSmigratedNotificationsAsync);
@@ -74,6 +77,9 @@ internal sealed partial class ClusterRouter
     // token: a registration on _stopDiscovery would make disposal's CancelAsync asynchronous.
     private async Task ProcessSmigratedNotificationsAsync()
     {
+        // NodeRetired handlers run on this worker and may synchronously dispose the client.
+        // DisposeAsync reads this flag so it does not join the worker that is calling it.
+        SmigratedWorkerContext.Value = this;
         await foreach (var item in _smigratedNotifications.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             try
@@ -169,6 +175,9 @@ internal sealed partial class ClusterRouter
         if (string.IsNullOrEmpty(value)) return false;
         var parsed = new List<int>();
         var seenSlots = new HashSet<int>();
+        // Bound enumeration, not just retained slots: repeated full ranges in one bounded string
+        // could otherwise cost hundreds of millions of lookups on the single worker.
+        var enumerated = 0;
         var remaining = value.AsSpan();
         while (!remaining.IsEmpty)
         {
@@ -180,7 +189,8 @@ internal sealed partial class ClusterRouter
             if (!int.TryParse(first, NumberStyles.None, CultureInfo.InvariantCulture, out var start)
                 || !int.TryParse(last, NumberStyles.None, CultureInfo.InvariantCulture, out var end)
                 || start is < 0 or >= ClusterHash.SlotCount
-                || end < start || end >= ClusterHash.SlotCount)
+                || end < start || end >= ClusterHash.SlotCount
+                || (enumerated += end - start + 1) > ClusterHash.SlotCount)
                 return false;
             for (var slot = start; slot <= end; slot++)
                 if (seenSlots.Add(slot)) parsed.Add(slot);
