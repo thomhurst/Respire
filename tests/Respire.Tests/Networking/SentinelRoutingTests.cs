@@ -79,6 +79,81 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task DownEventDuringSwitchRediscoveryTriggersAnotherDiscovery()
+    {
+        await using var original = Primary();
+        await using var intermediate = Primary();
+        await using var promoted = Primary();
+        await using var fallback = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var monitorCommand = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        Volatile.Write(ref port, promoted.Port);
+        sentinel.SuppressReply = command => command == discovery;
+
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {intermediate.Port}");
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {intermediate.Port} 127.0.0.1 {promoted.Port}");
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown",
+            $"master mymaster 127.0.0.1 {promoted.Port}");
+
+        Volatile.Write(ref port, fallback.Port);
+        sentinel.SuppressReply = null;
+        // The pending discovery uses the Sentinel command connection, which may differ from its
+        // event monitor connection. Reply to the blocked query with the switch target explicitly.
+        var queryIndex = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command == discovery);
+        var queryConnection = sentinel.ReceivedConnectionIds[queryIndex];
+        await sentinel.SendRawAsync(AddressReply(promoted.Port), queryConnection);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+        await WaitForEndpointAsync(client, fallback.Port);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(fallback.Port);
+    }
+
+    [Test]
+    public async Task DuplicateSwitchNotificationRetriesFailedRediscovery()
+    {
+        await using var original = Primary();
+        await using var unavailable = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null,
+        };
+        await using var recovered = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var monitorCommand = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        Volatile.Write(ref port, unavailable.Port);
+        sentinel.SuppressReply = command => command == discovery;
+        var switchText = $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}";
+
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
+        Volatile.Write(ref port, recovered.Port);
+        sentinel.SuppressReply = null;
+
+        var queryConnection = sentinel.ReceivedConnectionIds[^1];
+        await sentinel.SendRawAsync(AddressReply(unavailable.Port), queryConnection);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+        await WaitForEndpointAsync(client, recovered.Port);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(recovered.Port);
+    }
+
+    [Test]
     [Arguments("unused")]
     [Arguments("failed-validation")]
     [Arguments("published")]
@@ -2041,6 +2116,33 @@ public class SentinelRoutingTests
             await Task.Delay(5, timeout.Token);
     }
 
+    private static async Task WaitForCommandCountAsync(FakeRespServer server, string command, int count)
+    {
+        using var timeout = new CancellationTokenSource(Limit);
+        while (server.ReceivedCommands.Count(value => value == command) < count)
+            await Task.Delay(5, timeout.Token);
+    }
+
+    private static async Task WaitForEndpointAsync(RespireClient client, int port)
+    {
+        using var timeout = new CancellationTokenSource(Limit);
+        while (true)
+        {
+            try
+            {
+                if (client.Endpoint.Port == port) return;
+            }
+            catch (InvalidOperationException) { }
+            await Task.Delay(5, timeout.Token);
+        }
+    }
+
+    private static Task SendSentinelMessageAsync(FakeRespServer sentinel, int connectionId, string channel, string message)
+    {
+        var frame = Encoding.UTF8.GetBytes($"*3\r\n$7\r\nmessage\r\n${Encoding.UTF8.GetByteCount(channel)}\r\n{channel}\r\n${Encoding.UTF8.GetByteCount(message)}\r\n{message}\r\n");
+        return sentinel.SendRawAsync(frame, connectionId);
+    }
+
     private static RespireOptions Options(int sentinelPort) => new()
     {
         Endpoints = [new("127.0.0.1", sentinelPort)], SentinelPrimaryName = "mymaster",
@@ -2059,9 +2161,14 @@ public class SentinelRoutingTests
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
                 ? AddressReply(primaryPort())
-                : command == "SUBSCRIBE +switch-master +sdown +odown"
-                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
-                    : "*0\r\n"u8.ToArray(),
+                : command switch
+                {
+                    "SUBSCRIBE +switch-master" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
+                    "SUBSCRIBE +sdown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:1\r\n"u8.ToArray(),
+                    "SUBSCRIBE +odown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:1\r\n"u8.ToArray(),
+                    "SUBSCRIBE +switch-master +sdown +odown" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray(),
+                    _ => "*0\r\n"u8.ToArray(),
+                },
         };
 
     private static byte[] AddressReply(int port)
