@@ -457,13 +457,16 @@ public sealed class RespireCoordination
                 originalFailure ??= error;
             }
 
+            var monitoringTimedOut = false;
             if (originalCorrection is not null)
             {
                 var probeDelay = TimeSpan.FromMilliseconds(100);
-                while (!originalCorrection.IsCompleted)
+                using var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+                while (!originalCorrection.IsCompleted && !monitoringTimeout.IsCancellationRequested)
                 {
-                    await Task.WhenAny(originalCorrection, Task.Delay(probeDelay)).ConfigureAwait(false);
+                    await Task.WhenAny(originalCorrection, Task.Delay(probeDelay, monitoringTimeout.Token)).ConfigureAwait(false);
                     if (originalCorrection.IsCompleted) break;
+                    if (monitoringTimeout.IsCancellationRequested) break;
                     try
                     {
                         correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
@@ -476,18 +479,29 @@ public sealed class RespireCoordination
                     probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
                 }
 
-                try { await originalCorrection.ConfigureAwait(false); }
-                catch (Exception error) { originalFailure ??= error; }
+                if (originalCorrection.IsCompleted)
+                {
+                    try { await originalCorrection.ConfigureAwait(false); }
+                    catch (Exception error) { originalFailure ??= error; }
+                }
+                else
+                {
+                    ObserveCorrectionFailure(originalCorrection);
+                }
+                monitoringTimedOut = monitoringTimeout.IsCancellationRequested;
             }
 
-            try
+            if (!monitoringTimedOut)
             {
-                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
-                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
-            }
-            catch (Exception error)
-            {
-                originalFailure ??= error;
+                try
+                {
+                    correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
+                        client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    originalFailure ??= error;
+                }
             }
         }
         else
