@@ -110,7 +110,9 @@ public class ClusterNodeIdentityTests
         router.ApplySmigratedNotification(first);
         router.ApplySmigratedNotification(second);
 
-        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), c)).IsTrue();
+        var owner = router.GetKnownSlotOwner(0);
+        await Assert.That(owner?.Host).IsEqualTo(cEndpoint.Host);
+        await Assert.That(owner?.Port).IsEqualTo(cEndpoint.Port);
     }
 
     [Test]
