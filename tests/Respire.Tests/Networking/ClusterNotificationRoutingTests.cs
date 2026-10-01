@@ -1040,6 +1040,109 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ReplayReconciliationDoesNotConsumeOtherSubscriptionsRetryBudget()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        var delayedDescriptor = RespireChannel.KeySpacePrefix("delayed:", 0);
+        var rejectedDescriptor = RespireChannel.KeySpacePrefix("rejected:", 0);
+        var delayedAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejectedAdded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replayRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejectDelayed = true;
+        var rejectReplay = false;
+        Configure(second, () => topology, resp3: false);
+        second.SuppressReply = command =>
+        {
+            if (command != $"PSUBSCRIBE {delayedDescriptor}" || !Volatile.Read(ref rejectDelayed)) return false;
+            delayedAttempt.TrySetResult();
+            return true;
+        };
+        var configured = second.ReplyOverride!;
+        second.ReplyOverride = (connectionId, command) =>
+        {
+            if (Volatile.Read(ref rejectReplay) && command == $"PSUBSCRIBE {rejectedDescriptor}")
+            {
+                replayRejected.TrySetResult();
+                return "-NOPERM denied\r\n"u8.ToArray();
+            }
+            if (command == $"PSUBSCRIBE {rejectedDescriptor}") rejectedAdded.TrySetResult();
+            return configured(connectionId, command);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromSeconds(10),
+                MaxDelay = TimeSpan.FromSeconds(10),
+                JitterRatio = 0,
+                MaxAttempts = 2,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var clock = new NotificationRecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var delayed = await hub.SubscribeAsync(
+            SubscriptionKind.Pattern, [delayedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await using var rejected = await hub.SubscribeAsync(
+            SubscriptionKind.Pattern, [rejectedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        hub.NotifyTopologyChanged(1,
+            [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
+            authoritative: true);
+        await delayedAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await rejectedAdded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await clock.NextAsync(); // Keep the delayed subscription retry pending.
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {rejectedDescriptor}")).IsEqualTo(1);
+
+        Volatile.Write(ref rejectDelayed, false);
+        Volatile.Write(ref rejectReplay, true);
+        var rejectedConnectionIndex = second.ReceivedCommands.ToList()
+            .FindLastIndex(command => command == $"PSUBSCRIBE {rejectedDescriptor}");
+        second.CloseConnection(second.ReceivedConnectionIds[rejectedConnectionIndex]);
+        (await clock.NextAsync()).Fire();
+        await replayRejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(500);
+
+        await Assert.That(delayed.Completion.IsCompleted).IsFalse();
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {delayedDescriptor}")).IsEqualTo(1);
+    }
+
+    private sealed class NotificationRecoveryClock : TimeProvider
+    {
+        private readonly global::System.Threading.Channels.Channel<NotificationRecoveryTimer> _timers =
+            global::System.Threading.Channels.Channel.CreateUnbounded<NotificationRecoveryTimer>();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new NotificationRecoveryTimer(callback, state);
+            _timers.Writer.TryWrite(timer);
+            return timer;
+        }
+
+        internal Task<NotificationRecoveryTimer> NextAsync()
+            => _timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private sealed class NotificationRecoveryTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private int _finished;
+        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _finished, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
+    }
+
+    [Test]
     public async Task AllPrimaryActivationSubscribesPrimaryAddedSinceCachedTopology()
     {
         await using var first = new FakeRespServer(20);

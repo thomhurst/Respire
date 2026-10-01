@@ -71,6 +71,7 @@ internal sealed partial class SubscriptionHub
     // Endpoints whose topology reconciliation failed with an outage. Their recovery is reported
     // only after a later pass acknowledges the route, not when a socket merely reconnects.
     private readonly HashSet<RespireEndpoint> _notificationRetryingEndpoints = [];
+    private readonly HashSet<RespireSubscription> _scheduledNotificationReconciliationSubscriptions = [];
     private long _notificationTopologyVersion;
     private NotificationTopology? _latestNotificationTopology;
     private bool _notificationReconciliationScheduled;
@@ -863,7 +864,8 @@ internal sealed partial class SubscriptionHub
 
     private async Task ReconcileNotificationsAsync(
         long version, RespireEndpoint[]? endpoints, bool authoritative, int attempt = 0,
-        RespireSubscription? onlySubscription = null)
+        IReadOnlyCollection<RespireSubscription>? selectedSubscriptions = null,
+        bool skipSubscriptionsWithPendingRetry = false)
     {
         var retryFullPass = false;
         List<(RespireSubscription Subscription, TimeSpan Delay)>? subscriptionRetries = null;
@@ -878,8 +880,10 @@ internal sealed partial class SubscriptionHub
                 RespireSubscription[] subscriptions;
                 lock (_gate)
                 {
-                    if (onlySubscription is { } selected)
-                        subscriptions = _notificationSubscriptions.ContainsKey(selected) ? [selected] : [];
+                    if (selectedSubscriptions is { } selected)
+                        subscriptions = selected.Where(subscription =>
+                            _notificationSubscriptions.TryGetValue(subscription, out var state)
+                            && (!skipSubscriptionsWithPendingRetry || state.FailedAttempts == 0)).ToArray();
                     else
                         subscriptions = [.. _notificationSubscriptions.Keys];
                 }
@@ -935,11 +939,22 @@ internal sealed partial class SubscriptionHub
                 if (failures is not null)
                 {
                     var policy = core.Options.ReconnectPolicy;
+                    HashSet<RespireEndpoint> exhaustedEndpoints;
+                    lock (_gate) exhaustedEndpoints = [.. _notificationExhaustedEndpoints];
                     foreach (var (subscription, endpoint, error, subscriptionAttempt) in failures)
                     {
-                        if (policy?.IsExhausted(subscriptionAttempt) == true)
+                        if (policy?.IsExhausted(subscriptionAttempt) == true
+                            || (endpoint is { } failedEndpoint && exhaustedEndpoints.Contains(failedEndpoint)))
+                        {
                             await ExhaustNotificationSubscriptionAsync(subscription, endpoint, error, subscriptionAttempt)
                                 .ConfigureAwait(false);
+                            if (endpoint is { } exhaustedEndpoint && !ContainsServerRejection(error))
+                            {
+                                lock (_gate)
+                                    if (_notificationExhaustedEndpoints.Contains(exhaustedEndpoint))
+                                        exhaustedEndpoints.Add(exhaustedEndpoint);
+                            }
+                        }
                         else
                         {
                             var delay = NotificationReconnectDelay(subscriptionAttempt);
@@ -990,6 +1005,10 @@ internal sealed partial class SubscriptionHub
         {
             latest = _latestNotificationTopology;
             version = _notificationTopologyVersion;
+            foreach (var (subscription, state) in _notificationSubscriptions)
+                if (state.ReplayRejectedAt is not null && state.FailedAttempts == 0)
+                    _scheduledNotificationReconciliationSubscriptions.Add(subscription);
+            if (_scheduledNotificationReconciliationSubscriptions.Count == 0) return;
             if (_notificationReconciliationScheduled)
             {
                 if (version != _scheduledNotificationReconciliationVersion
@@ -1012,12 +1031,20 @@ internal sealed partial class SubscriptionHub
     {
         while (true)
         {
-            lock (_gate) _notificationReconciliationHasExaminedSubscriptions = false;
-            await ReconcileNotificationsAsync(version, topology?.Endpoints, topology?.Authoritative ?? false)
+            RespireSubscription[] subscriptions;
+            lock (_gate)
+            {
+                _notificationReconciliationHasExaminedSubscriptions = false;
+                subscriptions = [.. _scheduledNotificationReconciliationSubscriptions];
+                _scheduledNotificationReconciliationSubscriptions.Clear();
+            }
+            await ReconcileNotificationsAsync(version, topology?.Endpoints, topology?.Authoritative ?? false,
+                    selectedSubscriptions: subscriptions, skipSubscriptionsWithPendingRetry: true)
                 .ConfigureAwait(false);
             lock (_gate)
             {
-                if (!_notificationReconciliationScheduledAgain)
+                if (!_notificationReconciliationScheduledAgain
+                    && _scheduledNotificationReconciliationSubscriptions.Count == 0)
                 {
                     _notificationReconciliationScheduled = false;
                     return;
@@ -1257,7 +1284,8 @@ internal sealed partial class SubscriptionHub
         try { await Task.Delay(delay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
         if (!_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
-            await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt, onlySubscription)
+            await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt,
+                    selectedSubscriptions: onlySubscription is { } selected ? [selected] : null)
                 .ConfigureAwait(false);
     }
 
