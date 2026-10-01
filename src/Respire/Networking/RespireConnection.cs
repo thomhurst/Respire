@@ -2741,6 +2741,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
+        // Stop refresh deadlines and provider work while accepted transport frames drain.
+        _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);

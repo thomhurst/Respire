@@ -341,6 +341,7 @@ public class CredentialProviderTests
     [Arguments("delay")]
     [Arguments("provider")]
     [Arguments("enqueue")]
+    [Arguments("auth-enqueued")]
     public async Task RetirementDuringRenewalPreservesAcceptedReply(string phase)
     {
         var clock = new Clock();
@@ -359,7 +360,8 @@ public class CredentialProviderTests
             });
         retiringConnection = connection;
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
-        server.SuppressReply = command => command == "PING";
+        server.SuppressReply = command => command == "PING"
+            || phase == "auth-enqueued" && command == "AUTH user second";
         var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await UntilAsync(() => server.ReceivedCommands.Contains("PING"));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
@@ -372,17 +374,26 @@ public class CredentialProviderTests
             retirement = connection.RetireAsync();
             provider.Pending!.TrySetResult(provider.Current);
         }
+        if (phase == "auth-enqueued")
+        {
+            await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
+            retirement = connection.RetireAsync();
+            clock.Advance(TimeSpan.FromSeconds(60));
+        }
         await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
         await Assert.That(retirement).IsNotNull();
         await Assert.That(retirement!.IsCompleted).IsFalse();
         await Assert.That(connection.IsConnected).IsTrue();
         await Assert.That(accepted.IsCompleted).IsFalse();
         await server.SendRawAsync(FakeRespServer.PongReply);
+        if (phase == "auth-enqueued") await server.SendRawAsync(FakeRespServer.OkReply);
         using var reply = await accepted.WaitAsync(Limit);
         await Assert.That(reply.AsString()).IsEqualTo("PONG");
         await retirement.WaitAsync(Limit);
         await Assert.That(connection.DrainedSuccessfully).IsTrue();
-        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "PING" });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(phase == "auth-enqueued"
+            ? new[] { "AUTH user first", "PING", "AUTH user second" }
+            : new[] { "AUTH user first", "PING" });
         await Assert.That(provider.Calls).IsEqualTo(phase == "delay" ? 1 : 2);
     }
 
