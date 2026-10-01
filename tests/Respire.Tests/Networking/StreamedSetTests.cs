@@ -15,6 +15,8 @@ namespace Respire.Tests.Networking;
 
 public sealed class StreamedSetTests
 {
+    private const int MaximumStreamingBufferCapacity = 256 * 1024;
+
     [Test]
     public async Task SetStreamSendsFiftyMegabytesWithBoundedBufferMemory()
     {
@@ -32,7 +34,9 @@ public sealed class StreamedSetTests
         await Assert.That(source.Position).IsEqualTo(length);
         await Assert.That(server.ValueLength).IsEqualTo(length);
         await Assert.That(source.MaximumReadSize).IsLessThanOrEqualTo(RespireConnection.StreamChunkSize);
-        await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(64 * 1024);
+        // Far below the payload size. The bound allows for the shared write-buffer pool handing
+        // out an array up to two buckets larger than requested while parallel tests return buffers.
+        await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(MaximumStreamingBufferCapacity);
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
     }
@@ -82,7 +86,9 @@ public sealed class StreamedSetTests
 
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.ValueLength).IsEqualTo(length);
-        await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(64 * 1024);
+        // Far below the payload size. The bound allows for the shared write-buffer pool handing
+        // out an array up to two buckets larger than requested while parallel tests return buffers.
+        await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(MaximumStreamingBufferCapacity);
     }
 
     [Test]
