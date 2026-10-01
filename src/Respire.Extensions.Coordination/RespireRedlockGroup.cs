@@ -163,6 +163,9 @@ internal sealed class RespireRedlockNodes
         if (validity <= TimeSpan.Zero) return null;
         // ValidateDeadline proved started + duration fits; completed + validity cannot exceed it.
         var validUntil = TryAddDuration(completed, validity, out var deadline) ? deadline : long.MaxValue;
+        // A coarse clock can truncate a small positive validity to zero ticks; such a lease would
+        // already read as expired, so it is not reported as acquired.
+        if (validUntil <= completed) return null;
         return new RespireRedlockLease(duration, validity, validUntil);
     }
 

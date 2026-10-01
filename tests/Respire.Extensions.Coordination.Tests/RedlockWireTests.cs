@@ -101,6 +101,41 @@ public class RedlockWireTests
     }
 
     [Test]
+    public async Task ValidityBelowOneClockTickIsNotReportedAsAcquired()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        // At 100 Hz, the 2.95 ms validity of a 5 ms lease truncates to zero timestamp ticks.
+        var group = new RespireRedlockGroup(nodes.Clients, timeProvider: new ManualClock(frequency: 100));
+        await using var attempt = await group.TryAcquireAsync("redlock:coarse", TimeSpan.FromMilliseconds(5));
+        await Assert.That(attempt.Acquired).IsFalse();
+        foreach (var server in nodes.Servers)
+            await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task QuorumSurvivesOneNodeThatNeverReplies()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        nodes.Servers[2].SuppressReply = static command => command.StartsWith("SET ", StringComparison.Ordinal);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromMilliseconds(100) });
+        await using var attempt = await group.TryAcquireAsync("redlock:silent", TimeSpan.FromSeconds(10));
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(attempt.Lock.Validity < TimeSpan.FromSeconds(10) - TimeSpan.FromMilliseconds(100)).IsTrue();
+    }
+
+    [Test]
+    public async Task CallerCancellationDuringAcquisitionReleasesEveryNode()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayAcquireMs: 500);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.That(async () => await group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        foreach (var server in nodes.Servers)
+            await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task NodeTimeoutBeyondTheTimerRangeIsRejected()
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
@@ -121,7 +156,7 @@ public class RedlockWireTests
         public RespireClient[] Clients { get; }
         public int CommandsSeen => Servers.Sum(static server => server.CommandsSeen);
 
-        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0)
+        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, int delayAcquireMs = 0)
         {
             var servers = new FakeRespServer[3];
             var clients = new RespireClient[3];
@@ -133,6 +168,7 @@ public class RedlockWireTests
                     ReplyOverride = (_, command) => reply(node, command)
                         ?? (command.StartsWith("DELEX ", StringComparison.Ordinal) ? One : Ok),
                 };
+                if (delayAcquireMs > 0) servers[i].DelayReply(0, delayAcquireMs);
                 if (delayReleaseMs > 0) servers[i].DelayReply(1, delayReleaseMs);
                 clients[i] = await FakeRespServer.ConnectClientAsync(servers[i].Port);
             }
@@ -147,14 +183,15 @@ public class RedlockWireTests
         }
     }
 
-    private sealed class ManualClock : TimeProvider
+    private sealed class ManualClock(long frequency = TimeSpan.TicksPerSecond) : TimeProvider
     {
-        private long _timestamp = TimeSpan.TicksPerSecond;
+        private readonly long _frequency = frequency;
+        private long _timestamp = frequency;
 
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long TimestampFrequency => _frequency;
 
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
 
-        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks * _frequency / TimeSpan.TicksPerSecond);
     }
 }
