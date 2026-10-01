@@ -129,13 +129,21 @@ internal sealed partial class ClusterRouter
                     _hasTopologyRefreshTimestamp = true;
                 }
                 if (readOnlyFlight is not null) readOnlyFlight.Completed = true;
+                if (ReferenceEquals(_sharedRefreshTask, completion.Task)) _sharedRefreshTask = null;
+                if (readOnlyFlight is not null && ReferenceEquals(_readOnlyRefreshFlight, readOnlyFlight))
+                    _readOnlyRefreshFlight = null;
             }
             completion.TrySetResult(result);
         }
         catch (Exception error)
         {
             lock (_sharedRefreshGate)
+            {
                 if (readOnlyFlight is not null) readOnlyFlight.Completed = true;
+                if (ReferenceEquals(_sharedRefreshTask, completion.Task)) _sharedRefreshTask = null;
+                if (readOnlyFlight is not null && ReferenceEquals(_readOnlyRefreshFlight, readOnlyFlight))
+                    _readOnlyRefreshFlight = null;
+            }
             completion.TrySetException(error);
         }
         finally
@@ -322,6 +330,7 @@ internal sealed partial class ClusterRouter
 
     private void StartTopologyRefreshWorker()
     {
+        if (Volatile.Read(ref _topologyRefreshStarted) != 0 || _stopDiscovery.IsCancellationRequested) return;
         lock (_topologyRefreshWorkerGate)
         {
             if (_topologyRefreshStarted != 0 || _stopDiscovery.IsCancellationRequested) return;
