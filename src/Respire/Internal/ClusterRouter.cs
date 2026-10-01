@@ -902,11 +902,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection connection,
         in TCommand command,
         CancellationToken cancellationToken,
-        string? commandName = null,
-        bool distinguishUnsubmittedCancellation = false)
+        string? commandName = null)
         where TCommand : struct, Respire.Protocol.IRespCommand
-        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
-            distinguishUnsubmittedCancellation);
+        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName);
 
     internal static ValueTask<Respire.Protocol.RespValue> SendTrackedAskingAsync<TCommand>(
         RespireConnection connection,

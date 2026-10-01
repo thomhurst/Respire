@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -264,7 +265,7 @@ public class LockCommandTests
     public async Task RespireLock_ConcurrentReleasesShareTheInFlightResult()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 1000);
+        server.DelayCommand("DELEX ", 1000);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
@@ -281,7 +282,7 @@ public class LockCommandTests
     public async Task RespireLock_CancelledReleaseConservativelyStopsProtectedWork()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 500);
+        server.DelayCommand("DELEX ", 500);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         await using var keepAlive = await mutex.KeepAliveAsync();
@@ -362,7 +363,7 @@ public class LockCommandTests
             ":41\r\n"u8.ToArray(),
             "+PONG\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 1000);
+        server.DelayCommand("PING", 1000);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -400,7 +401,7 @@ public class LockCommandTests
             ":41\r\n"u8.ToArray(),
             "+PONG\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 3000);
+        server.DelayCommand("PING", 3000);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -444,6 +445,197 @@ public class LockCommandTests
             $"SET resource {token} NX PX 30000",
             $"DELEX resource IFEQ {token}",
         });
+    }
+
+    [Test]
+    public async Task RespireLock_ReleaseWithUnexpectedClientIdErrorDoesNotFallBack()
+    {
+        // Only permission or unsupported-command replies select the unfenced release; any other
+        // CLIENT ID failure surfaces before a delete is submitted and leaves the lock retryable.
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID"
+                ? "-ERR CLIENT ID failed\r\n"u8.ToArray()
+                : LockReply(command),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(DelexCount(server)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task RespireLock_JoinerRetriesWhenStarterCancelsBeforeSubmission()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => LockReply(command),
+        };
+        server.DelayCommand("PING", 1000);
+        await using var client = await ConnectWithSingleInflightSlotAsync(server);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await client.EnsureReliableCorrectionOrderingAsync();
+        var ping = client.PingAsync().AsTask();
+        await WaitForCommandAsync(server, "PING");
+        using var starterCancellation = new CancellationTokenSource();
+
+        // The starter parks on the full in-flight ring, before its delete is enqueued.
+        var starter = mutex.ReleaseAsync(starterCancellation.Token).AsTask();
+        var joiner = mutex.ReleaseAsync().AsTask();
+        await Task.Delay(50);
+        await Assert.That(starter.IsCompleted).IsFalse();
+        await Assert.That(joiner.IsCompleted).IsFalse();
+        await starterCancellation.CancelAsync();
+
+        await Assert.That(async () => await starter).Throws<OperationCanceledException>();
+        await Assert.That(await joiner.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await ping;
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(DelexCount(server)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_ConcurrentJoinersAllRetryAfterStarterCancelsBeforeSubmission()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => LockReply(command),
+        };
+        server.DelayCommand("PING", 1000);
+        await using var client = await ConnectWithSingleInflightSlotAsync(server);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await client.EnsureReliableCorrectionOrderingAsync();
+        var ping = client.PingAsync().AsTask();
+        await WaitForCommandAsync(server, "PING");
+        using var starterCancellation = new CancellationTokenSource();
+
+        var starter = mutex.ReleaseAsync(starterCancellation.Token).AsTask();
+        var joiners = new[] { mutex.ReleaseAsync().AsTask(), mutex.ReleaseAsync().AsTask(), mutex.ReleaseAsync().AsTask() };
+        await Task.Delay(50);
+        await starterCancellation.CancelAsync();
+
+        await Assert.That(async () => await starter).Throws<OperationCanceledException>();
+        // Whichever joiner restarts the release first, the others follow that attempt or see
+        // its result; none inherits the starter's cancellation.
+        var outcomes = await Task.WhenAll(joiners).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(outcomes.Count(outcome => outcome == LockReleaseOutcome.Released)).IsGreaterThanOrEqualTo(1);
+        await Assert.That(outcomes.All(outcome => outcome is LockReleaseOutcome.Released or LockReleaseOutcome.AlreadyReleased))
+            .IsTrue();
+        await ping;
+        await Assert.That(DelexCount(server)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_JoinerCancellationEndsOnlyItsOwnWait()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => LockReply(command),
+        };
+        server.DelayCommand("DELEX ", 500);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        var starter = mutex.ReleaseAsync().AsTask();
+        await WaitForCommandAsync(server, "DELEX ");
+        using var joinerCancellation = new CancellationTokenSource();
+        var joiner = mutex.ReleaseAsync(joinerCancellation.Token).AsTask();
+        await joinerCancellation.CancelAsync();
+
+        await Assert.That(async () => await joiner.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(starter.IsCompleted).IsFalse();
+        await Assert.That(await starter.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(DelexCount(server)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_FenceFailureAfterUncertainReleaseIsLoggedWithoutMaskingTheError()
+    {
+        var logger = new CapturingLoggerFactory();
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT KILL ID 41"
+                ? "-ERR fence denied\r\n"u8.ToArray()
+                : LockReply(command),
+        };
+        server.DelayCommand("DELEX ", 1000);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            LoggerFactory = logger,
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        var release = mutex.ReleaseAsync(cancellation.Token).AsTask();
+        await WaitForCommandAsync(server, "DELEX ");
+        await cancellation.CancelAsync();
+
+        // The caller sees its own cancellation, not the fence's server error.
+        await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT KILL ID 41")).IsTrue();
+        await Assert.That(logger.Warnings.Any(warning => warning is RespireServerException)).IsTrue();
+    }
+
+    [Test]
+    public async Task RespireLock_ReleaseCancelledWhileOpeningRedirectTargetRemainsRetryable()
+    {
+        var targetAccept = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(4, targetAccept.Task, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => LockReply(command),
+        };
+        await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
+        var moved = Encoding.ASCII.GetBytes(
+            $"-MOVED {Respire.Internal.ClusterHash.GetSlot("resource")} 127.0.0.1:{target.Port}\r\n");
+        var seedDeletes = 0;
+        seed.ReplyOverride = (_, command) =>
+            command.StartsWith("CLUSTER ", StringComparison.Ordinal) ? topology
+            : command.StartsWith("DELEX ", StringComparison.Ordinal)
+                ? Interlocked.Increment(ref seedDeletes) == 1 ? moved : ":1\r\n"u8.ToArray()
+            : LockReply(command);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        // MOVED definitively rejects the first delete; the redirect target never answers its
+        // connection setup, so cancellation lands before any delete reaches it.
+        var release = mutex.ReleaseAsync(cancellation.Token).AsTask();
+        await WaitForCommandAsync(seed, "DELEX ");
+        await Task.Delay(100);
+        await Assert.That(release.IsCompleted).IsFalse();
+        await cancellation.CancelAsync();
+
+        await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(DelexCount(target)).IsEqualTo(0);
+
+        targetAccept.TrySetResult();
+        await Assert.That(await mutex.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(LockReleaseOutcome.Released);
     }
 
     [Test]
@@ -1045,6 +1237,54 @@ public class LockCommandTests
         while (server.CommandsSeen < count)
         {
             await Task.Delay(10, timeout.Token);
+        }
+    }
+
+    // Replies keyed by command text, so tests do not depend on how many setup commands run first.
+    // Null keeps the scripted reply (+OK).
+    private static byte[]? LockReply(string command)
+    {
+        if (command == "CLIENT ID") return ":41\r\n"u8.ToArray();
+        if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+        if (command == "PING") return "+PONG\r\n"u8.ToArray();
+        if (command.StartsWith("DELEX ", StringComparison.Ordinal)) return ":1\r\n"u8.ToArray();
+        return null;
+    }
+
+    private static int DelexCount(FakeRespServer server)
+        => server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal));
+
+    // One connection with one in-flight slot: a parked PING keeps later commands waiting for
+    // capacity, which is before they are enqueued.
+    private static ValueTask<RespireClient> ConnectWithSingleInflightSlotAsync(FakeRespServer server)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            MaxInflightCommands = 1,
+        });
+
+    private sealed class CapturingLoggerFactory : ILoggerFactory, ILogger
+    {
+        private readonly List<Exception?> _warnings = [];
+
+        public IReadOnlyList<Exception?> Warnings
+        {
+            get { lock (_warnings) return _warnings.ToArray(); }
+        }
+
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel != LogLevel.Warning) return;
+            lock (_warnings) _warnings.Add(exception);
         }
     }
 

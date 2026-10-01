@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -27,6 +28,34 @@ public sealed partial class RespireClient
     {
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; } = connectionIdentity;
         internal ValueTask<bool> Response { get; set; }
+
+        /// <summary>
+        /// Whether a lock command may have been written and is still unanswered. Cleared after a
+        /// definitive rejection (MOVED, ASK, or a retired connection) so a failure while
+        /// obtaining the next connection is known to precede any new submission. Read only after
+        /// <see cref="Response"/> completes.
+        /// </summary>
+        internal bool CommandMayBeOutstanding { get; set; }
+    }
+
+    /// <summary>
+    /// Fences the connection that carried an uncertain lock command without letting a fence
+    /// failure replace the caller's original error. A failure is logged, because the latent
+    /// command may still run after the caller has treated ownership as lost.
+    /// </summary>
+    internal async ValueTask TryFenceLockConnectionAsync(TrackedConnectionIdentity identity, string operation)
+    {
+        try
+        {
+            await FenceCorrectionConnectionAsync(identity).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            _core.Logger?.LogWarning(error,
+                "Could not fence Redis client {ServerClientId} at {Endpoint} after an uncertain {Operation}; " +
+                "the command may still execute. Ownership was already treated as lost.",
+                identity.ServerClientId, identity.Endpoint, operation);
+        }
     }
 
     internal async ValueTask<bool> ExecuteLockAsync(
@@ -101,12 +130,15 @@ public sealed partial class RespireClient
             {
                 try
                 {
+                    execution.CommandMayBeOutstanding = true;
                     return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RespireConnectionRetiredException error) when (
                     _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
+                    // Retirement rejected the command before execution.
+                    execution.CommandMayBeOutstanding = false;
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = requireIdentity
@@ -120,6 +152,8 @@ public sealed partial class RespireClient
                 catch (RespireServerException error) when (
                     _core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    // MOVED and ASK are definitive: this node did not run the command.
+                    execution.CommandMayBeOutstanding = false;
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = requireIdentity
@@ -176,8 +210,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELEX", connection,
-                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking,
-                            cancellationToken, distinguishUnsubmittedCancellation: true)
+                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELEX"))
@@ -191,8 +224,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELIFEQ", connection,
-                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking,
-                            cancellationToken, distinguishUnsubmittedCancellation: true)
+                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELIFEQ"))
@@ -207,27 +239,24 @@ public sealed partial class RespireClient
         try
         {
             return await SendLockIntegerAsync(script.EvalShaOperation, connection,
-                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking,
-                    cancellationToken, script.Sha1, milliseconds is null)
+                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking, cancellationToken, script.Sha1)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
             return await SendLockIntegerAsync(script.EvalOperation, connection,
-                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking,
-                    cancellationToken, script.Sha1, milliseconds is null)
+                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking, cancellationToken, script.Sha1)
                 .ConfigureAwait(false);
         }
     }
 
     private async ValueTask<bool> SendLockIntegerAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, bool sendAsking,
-        CancellationToken cancellationToken, string? storedProcedureName = null,
-        bool distinguishUnsubmittedCancellation = false)
+        CancellationToken cancellationToken, string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         var reply = await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-                storedProcedureName, sendAsking, distinguishUnsubmittedCancellation)
+                storedProcedureName, sendAsking)
             .ConfigureAwait(false);
         try { return reply.AsInteger() >= 1; }
         finally { reply.Dispose(); }

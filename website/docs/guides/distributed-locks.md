@@ -156,6 +156,14 @@ must be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, o
 Disposal suppresses connection, timeout, cancellation, and disposed-client cleanup failures because
 expiry remains the final safety net.
 
+If `ReleaseAsync` is cancelled or times out before the delete is sent, the handle still owns the
+lock and you can call `ReleaseAsync` again. If the delete may already have reached Redis, the
+handle treats ownership as lost: it cancels the keep-alive token and fences the connection with
+`CLIENT KILL`. Fencing is used only when a release can be cancelled or time out. If the user may not
+run `CLIENT ID` or `CLIENT KILL`, Respire falls back to a plain compare-and-delete. Concurrent
+`ReleaseAsync` calls share one release. A caller that joined another caller's release stops waiting
+when its own token is cancelled, and the shared release keeps running.
+
 ## Manage owner tokens directly
 
 Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` when the token must be

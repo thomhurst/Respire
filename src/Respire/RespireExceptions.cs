@@ -238,5 +238,10 @@ public sealed class RespireTimeoutException : RespireException
            diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
 }
 
+/// <summary>
+/// Cancellation observed while a command waited for in-flight capacity, before it was enqueued.
+/// It is still an <see cref="OperationCanceledException"/> for ordinary callers; lock release
+/// uses it as proof that no delete was sent.
+/// </summary>
 internal sealed class RespireCommandNotSubmittedException(OperationCanceledException error)
     : OperationCanceledException(error.Message, error, error.CancellationToken);

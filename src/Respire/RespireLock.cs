@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace Respire;
 
 /// <summary>The result of releasing a managed distributed lock.</summary>
@@ -63,7 +65,7 @@ public sealed class RespireLock : IAsyncDisposable
     private RespireLockKeepAlive? _ownedKeepAlive;
     private int _ownedKeepAliveDisposed;
     private readonly object _releaseSync = new();
-    private Task<LockReleaseOutcome>? _releaseTask;
+    private ReleaseAttempt? _releaseAttempt;
 
     internal RespireLock(
         ILockCommands locks,
@@ -259,110 +261,134 @@ public sealed class RespireLock : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">
     /// Cancels release. Cancellation before command submission preserves ownership and allows retry;
-    /// after submission, an uncertain outcome fails closed.
+    /// after submission, an uncertain outcome fails closed. A caller that joined another caller's
+    /// in-flight release stops waiting when its own token is cancelled, but the shared release
+    /// continues.
     /// </param>
     /// <returns>
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
-        TaskCompletionSource<LockReleaseOutcome> start;
-        Task<LockReleaseOutcome> releaseTask;
+        var attempt = EnterRelease(cancellationToken, out var outcome, out var started);
+        if (attempt is null)
+        {
+            return ValueTask.FromResult(outcome);
+        }
+
+        return started
+            ? new ValueTask<LockReleaseOutcome>(attempt.Task)
+            : JoinReleaseAsync(attempt, cancellationToken);
+    }
+
+    /// <summary>
+    /// Returns the release attempt this caller should await, starting one when the lock is held,
+    /// or <see langword="null"/> with the final <paramref name="outcome"/> when release finished.
+    /// </summary>
+    private ReleaseAttempt? EnterRelease(
+        CancellationToken cancellationToken, out LockReleaseOutcome outcome, out bool started)
+    {
+        ReleaseAttempt attempt;
         lock (_releaseSync)
         {
-            var state = Volatile.Read(ref _state);
-            if (state == StateReleased)
+            started = false;
+            outcome = default;
+            switch (Volatile.Read(ref _state))
             {
-                return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
-            }
-
-            if (state == StateNotOwned)
-            {
-                return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
-            }
-
-            if (state == StateReleasing)
-            {
-                return JoinReleaseAsync(_releaseTask!, cancellationToken);
+                case StateReleased:
+                    outcome = LockReleaseOutcome.AlreadyReleased;
+                    return null;
+                case StateNotOwned:
+                    outcome = LockReleaseOutcome.NotOwned;
+                    return null;
+                case StateReleasing:
+                    return _releaseAttempt!;
             }
 
             Volatile.Write(ref _state, StateReleasing);
-            start = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            releaseTask = _releaseTask = start.Task;
+            attempt = _releaseAttempt = new ReleaseAttempt();
         }
 
         // Start outside _releaseSync so the first caller's synchronous prefix never runs under it.
         // CompleteReleaseAsync routes every outcome to the shared task, so nothing is unobserved.
-        _ = CompleteReleaseAsync(start, cancellationToken);
-        return new ValueTask<LockReleaseOutcome>(releaseTask);
+        _ = CompleteReleaseAsync(attempt, cancellationToken);
+        started = true;
+        return attempt;
     }
 
     private async ValueTask<LockReleaseOutcome> JoinReleaseAsync(
-        Task<LockReleaseOutcome> releaseTask, CancellationToken cancellationToken)
+        ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
-        try
+        // Each pass follows a newer attempt only after the previous one was cancelled before
+        // submission and ownership was restored. This caller then starts the next attempt with
+        // its own token or joins one another caller started, so the loop ends when an attempt
+        // completes or this caller's token is cancelled.
+        while (true)
         {
-            return await releaseTask.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested && Volatile.Read(ref _state) == StateHeld)
-        {
-            // The starter cancelled before submission and ownership was restored.
-            return await ReleaseAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                // The joiner's token ends only its own wait; the shared release keeps running.
+                return await attempt.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested && attempt.OwnershipRestored)
+            {
+            }
+
+            var next = EnterRelease(cancellationToken, out var outcome, out var started);
+            if (next is null)
+            {
+                return outcome;
+            }
+
+            if (started)
+            {
+                return await next.Task.ConfigureAwait(false);
+            }
+
+            attempt = next;
         }
     }
 
-    private async Task CompleteReleaseAsync(
-        TaskCompletionSource<LockReleaseOutcome> completion, CancellationToken cancellationToken)
+    private async Task CompleteReleaseAsync(ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
-        try { completion.TrySetResult(await ReleaseCoreAsync(cancellationToken).ConfigureAwait(false)); }
-        catch (OperationCanceledException error) { completion.TrySetCanceled(error.CancellationToken); }
-        catch (Exception error) { completion.TrySetException(error); }
+        try { attempt.TrySetResult(await ReleaseCoreAsync(attempt, cancellationToken).ConfigureAwait(false)); }
+        catch (OperationCanceledException error) { attempt.TrySetCanceled(error.CancellationToken); }
+        catch (Exception error) { attempt.TrySetException(error); }
     }
 
-    private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
+    private async Task<LockReleaseOutcome> ReleaseCoreAsync(
+        ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
-        var managed = _locks as IManagedLockCommands;
-        var outcomeUncertain = 0;
         try
         {
-            var released = managed is not null
-                ? await managed.ReleaseManagedAsync(Key, Token, () =>
-                    {
-                        // Stop protected work now; the fence that follows can wait on a control connection.
-                        Interlocked.Exchange(ref outcomeUncertain, 1);
-                        MarkOwnershipLost();
-                    }, cancellationToken).ConfigureAwait(false)
+            var released = _locks is IManagedLockCommands managed
+                // Stop protected work as soon as the outcome is uncertain; the fence that
+                // follows can wait on a control connection.
+                ? await managed.ReleaseManagedAsync(Key, Token, MarkOwnershipLost, cancellationToken)
+                    .ConfigureAwait(false)
                 : await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
+            lock (_releaseSync)
+            {
+                Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
+                _releaseAttempt = null;
+            }
+
             SignalLeaseChanged();
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
+        }
+        catch (LockReleaseNotSubmittedException notSubmitted)
+        {
+            // Positive proof from the managed release that no delete reached Redis.
+            RestoreOwnership(attempt);
+            ExceptionDispatchInfo.Throw(notSubmitted.InnerException!);
+            throw; // Unreachable: ExceptionDispatchInfo.Throw never returns.
         }
         catch (RespireServerException)
         {
             // A server error is a definitive reply: the compare-and-DEL did not complete, so
             // this handle may still own the key and can safely retry.
-            lock (_releaseSync)
-            {
-                Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing);
-                _releaseTask = null;
-            }
-
-            SignalLeaseChanged();
-            throw;
-        }
-        catch (Exception) when (managed is not null && Volatile.Read(ref outcomeUncertain) == 0)
-        {
-            // Managed release reports uncertainty once the delete may have been submitted, so any
-            // other failure, including cancellation, proves no delete ran.
-            lock (_releaseSync)
-            {
-                Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing);
-                _releaseTask = null;
-            }
-
-            // Wake a keep-alive waiting for the release outcome.
-            SignalLeaseChanged();
+            RestoreOwnership(attempt);
             throw;
         }
         catch
@@ -372,12 +398,26 @@ public sealed class RespireLock : IAsyncDisposable
             lock (_releaseSync)
             {
                 Volatile.Write(ref _state, StateNotOwned);
-                _releaseTask = null;
+                _releaseAttempt = null;
             }
 
             SignalLeaseChanged();
             throw;
         }
+    }
+
+    private void RestoreOwnership(ReleaseAttempt attempt)
+    {
+        lock (_releaseSync)
+        {
+            // A keep-alive that reached the lease deadline meanwhile keeps the lock NotOwned.
+            attempt.OwnershipRestored =
+                Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing) == StateReleasing;
+            _releaseAttempt = null;
+        }
+
+        // Wake a keep-alive waiting for the release outcome.
+        SignalLeaseChanged();
     }
 
     /// <summary>
@@ -445,6 +485,14 @@ public sealed class RespireLock : IAsyncDisposable
 
     private static TimeSpan NormalizeDuration(TimeSpan duration)
         => TimeSpan.FromMilliseconds((long)duration.TotalMilliseconds);
+
+    /// <summary>One shared release; joiners read <see cref="OwnershipRestored"/> after it completes.</summary>
+    private sealed class ReleaseAttempt()
+        : TaskCompletionSource<LockReleaseOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
+    {
+        /// <summary>Set before completion when the attempt failed without submitting a delete.</summary>
+        internal volatile bool OwnershipRestored;
+    }
 
     private bool TryMarkOwnershipLost()
     {
@@ -524,34 +572,11 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                 _lifetime.Token.ThrowIfCancellationRequested();
                 if (_lock.IsReleasing)
                 {
-                    // A release can outlast the lease. Keep the caller's cancellation token
-                    // bounded by the last known lease deadline while waiting for its outcome.
-                    var releaseRemaining = _lock.RemainingUntilLeaseExpiry;
-                    if (releaseRemaining <= TimeSpan.Zero)
-                    {
-                        MarkOwnershipUncertain();
-                        return;
-                    }
-
-                    using var releaseOutcome = CancellationTokenSource.CreateLinkedTokenSource(
-                        _lifetime.Token, leaseChanged);
-                    try
-                    {
-                        await DelayInChunksAsync(releaseRemaining, releaseOutcome.Token).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (
-                        leaseChanged.IsCancellationRequested && !_lifetime.IsCancellationRequested)
+                    if (await WaitForReleaseOutcomeAsync(leaseChanged).ConfigureAwait(false))
                     {
                         continue;
                     }
 
-                    _lifetime.Token.ThrowIfCancellationRequested();
-                    if (leaseChanged.IsCancellationRequested)
-                    {
-                        continue;
-                    }
-
-                    MarkOwnershipUncertain();
                     return;
                 }
 
@@ -585,6 +610,41 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         {
             _lock.KeepAliveStopped();
         }
+    }
+
+    /// <summary>
+    /// Waits for an in-flight release to settle without renewing. A release can outlast the
+    /// lease, so the wait is bounded by the last known lease deadline. Returns
+    /// <see langword="true"/> when the release outcome changed the lease and the loop should
+    /// re-evaluate, or <see langword="false"/> after the deadline passed and ownership was
+    /// marked uncertain.
+    /// </summary>
+    private async ValueTask<bool> WaitForReleaseOutcomeAsync(CancellationToken leaseChanged)
+    {
+        var remaining = _lock.RemainingUntilLeaseExpiry;
+        if (remaining > TimeSpan.Zero)
+        {
+            using var releaseOutcome = CancellationTokenSource.CreateLinkedTokenSource(
+                _lifetime.Token, leaseChanged);
+            try
+            {
+                await DelayInChunksAsync(remaining, releaseOutcome.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                leaseChanged.IsCancellationRequested && !_lifetime.IsCancellationRequested)
+            {
+                return true;
+            }
+
+            _lifetime.Token.ThrowIfCancellationRequested();
+            if (leaseChanged.IsCancellationRequested)
+            {
+                return true;
+            }
+        }
+
+        MarkOwnershipUncertain();
+        return false;
     }
 
     internal static TimeSpan GetRenewalDelay(TimeSpan duration, TimeSpan remaining)

@@ -2710,14 +2710,11 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        bool sendAsking = false,
-        bool distinguishUnsubmittedCancellation = false)
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
         => sendAsking
-            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
-                distinguishUnsubmittedCancellation)
-            : connection.SendCheckedAsync(in command, cancellationToken, operation,
-                distinguishUnsubmittedCancellation);
+            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
+            : connection.SendCheckedAsync(in command, cancellationToken, operation);
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
@@ -2927,15 +2924,12 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
-        bool sendAsking = false,
-        bool distinguishUnsubmittedCancellation = false)
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsEnabled
             ? SendOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
-                distinguishUnsubmittedCancellation)
-            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
-                distinguishUnsubmittedCancellation);
+                operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -2946,8 +2940,7 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName,
-        bool sendAsking,
-        bool distinguishUnsubmittedCancellation)
+        bool sendAsking)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -2960,8 +2953,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var response = await SendOnConnectionCoreAsync(
-                    operation, connection, command, cancellationToken, sendAsking,
-                    distinguishUnsubmittedCancellation)
+                    operation, connection, command, cancellationToken, sendAsking)
                 .ConfigureAwait(false);
             telemetry.Complete(
                 operation,
