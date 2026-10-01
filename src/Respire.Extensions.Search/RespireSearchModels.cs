@@ -271,7 +271,7 @@ public sealed record RespireSearchAggregateOptions
     /// <summary>Field and expression pairs to add to rows.</summary>
     public IReadOnlyDictionary<string, string> Apply { get; init; } = new Dictionary<string, string>();
     /// <summary>Sort expressions, such as <c>@price DESC</c>.</summary>
-    public IReadOnlyList<string> SortBy { get; init; } = [];
+    public IReadOnlyList<RespireSearchAggregateSort> SortBy { get; init; } = [];
     /// <summary>Group-by stages with their reducer functions.</summary>
     public IReadOnlyList<RespireSearchAggregateGroup> Groups { get; init; } = [];
     /// <summary>Explicitly ordered pipeline stages for operations with dependencies.</summary>
@@ -311,7 +311,7 @@ public sealed record RespireSearchAggregateOptions
                         AddGroup(args, group.Group);
                         break;
                     case RespireSearchAggregateSort sort:
-                        AddSort(args, [sort.Expression]);
+                        AddSort(args, [sort]);
                         break;
                     case RespireSearchAggregateLimit stageLimit:
                         AddLimit(args, stageLimit.Offset, stageLimit.Count);
@@ -337,27 +337,22 @@ public sealed record RespireSearchAggregateOptions
         return [.. args];
     }
 
-    private static void AddSort(List<RespireValue> args, IReadOnlyList<string> expressions)
+    private static void AddSort(List<RespireValue> args, IReadOnlyList<RespireSearchAggregateSort> sorts)
     {
-        var tokens = new List<string>();
-        foreach (var expression in expressions)
+        args.Add("SORTBY");
+        args.Add(sorts.Count * 2);
+        foreach (var sort in sorts)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(expression);
-            var trimmed = expression.Trim();
-            var directionStart = trimmed.LastIndexOfAny([' ', '\t', '\r', '\n']);
-            var direction = directionStart < 0 ? string.Empty : trimmed[(directionStart + 1)..];
-            if (directionStart >= 0 && (direction.Equals("ASC", StringComparison.OrdinalIgnoreCase)
-                || direction.Equals("DESC", StringComparison.OrdinalIgnoreCase)))
+            ArgumentNullException.ThrowIfNull(sort);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sort.Field);
+            args.Add(sort.Field);
+            args.Add(sort.Direction switch
             {
-                var field = trimmed[..directionStart].TrimEnd();
-                ArgumentException.ThrowIfNullOrWhiteSpace(field);
-                tokens.Add(field);
-                tokens.Add(direction.ToUpperInvariant());
-            }
-            else tokens.Add(trimmed);
+                RespireSearchSortDirection.Ascending => "ASC",
+                RespireSearchSortDirection.Descending => "DESC",
+                _ => throw new ArgumentOutOfRangeException(nameof(sort.Direction)),
+            });
         }
-        args.Add("SORTBY"); args.Add(tokens.Count);
-        foreach (var token in tokens) args.Add(token);
     }
 
     private static void AddLimit(List<RespireValue> args, int offset, int count)
@@ -399,8 +394,8 @@ public sealed record RespireSearchAggregateApply(string Expression, string Alias
 /// <summary>Groups rows at this point in the pipeline.</summary>
 public sealed record RespireSearchAggregateGroupStage(RespireSearchAggregateGroup Group) : RespireSearchAggregateStage;
 
-/// <summary>Sorts rows at this point in the pipeline, for example <c>@price DESC</c>.</summary>
-public sealed record RespireSearchAggregateSort(string Expression) : RespireSearchAggregateStage;
+/// <summary>Sorts rows at this point in the pipeline.</summary>
+public sealed record RespireSearchAggregateSort(string Field, RespireSearchSortDirection Direction = RespireSearchSortDirection.Ascending) : RespireSearchAggregateStage;
 
 /// <summary>Limits rows at this point in the pipeline.</summary>
 /// <param name="Offset">Number of rows to skip.</param>

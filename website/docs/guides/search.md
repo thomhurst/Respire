@@ -37,7 +37,7 @@ var found = await search.SearchAsync("books", new RespireSearchQuery(expression,
 var groups = await search.AggregateAsync("books", "*", new RespireSearchAggregateOptions
 {
     Groups = [new(["@category"], [new("COUNT", [], "count")])],
-    SortBy = ["@count DESC"],
+    SortBy = [new("@count", RespireSearchSortDirection.Descending)],
 });
 
 var nearest = await search.VectorSearchAsync("books",

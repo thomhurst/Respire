@@ -27,7 +27,10 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var result = await search.AggregateAsync("idx", "*", new() { SortBy = ["@count DESC"] });
+        var result = await search.AggregateAsync("idx", "*", new()
+        {
+            SortBy = [new("@count", RespireSearchSortDirection.Descending)],
+        });
 
         await Assert.That(server.ReceivedCommands.Contains("FT.AGGREGATE idx * SORTBY 2 @count DESC")).IsTrue();
         var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
@@ -90,7 +93,10 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.AggregateAsync("idx", "*", new() { SortBy = ["@my field DESC"] });
+        await search.AggregateAsync("idx", "*", new()
+        {
+            SortBy = [new("@my field", RespireSearchSortDirection.Descending)],
+        });
 
         var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
         await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@my field", "DESC"], CollectionOrdering.Matching);
@@ -131,7 +137,7 @@ public class SearchClientTests
         {
             Stages =
             [
-                new RespireSearchAggregateSort("@price DESC"),
+                new RespireSearchAggregateSort("@price", RespireSearchSortDirection.Descending),
                 new RespireSearchAggregateLimit(0, 5),
                 new RespireSearchAggregateGroupStage(new(["@category"], [])),
             ],
