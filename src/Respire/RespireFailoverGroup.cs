@@ -405,14 +405,28 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             _gate.Release();
         }
 
-        if (_monitor is { } monitor)
+        List<Exception>? failures = null;
+        try
         {
-            try { await monitor.ConfigureAwait(false); }
-            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+            if (_monitor is { } monitor)
+            {
+                try { await monitor.ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+            foreach (var candidate in _candidates)
+            {
+                try { await candidate.Client.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
         }
-        foreach (var candidate in _candidates) await candidate.Client.DisposeAsync().ConfigureAwait(false);
-        _stop.Dispose();
-        _gate.Dispose();
+        finally
+        {
+            _stop.Dispose();
+            _gate.Dispose();
+        }
+        if (failures is { Count: 1 }) throw failures[0];
+        if (failures is { Count: > 1 }) throw new AggregateException(failures);
     }
 
     private sealed class CandidateState(RespireClient client, int priority, int order)
