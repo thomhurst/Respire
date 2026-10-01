@@ -87,7 +87,7 @@ public class FencedLockWireTests
     {
         await using var server = new FakeRespServer(
             ":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), "-ERR injected release failure\r\n"u8.ToArray());
-        server.DelayReply(3, 250);
+        server.DelayReply(1, 250);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var attempt = await new RespireCoordination(client)
             .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
