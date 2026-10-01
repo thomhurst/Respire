@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -182,19 +183,34 @@ public class ByteRouteDictionaryTests
     }
 
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task Utf8Lookup_DoesNotAllocate()
     {
         var routes = new ByteRouteDictionary<int>();
         routes.Add("notifications", 42);
         var name = "notifications"u8.ToArray();
+        _ = MeasureLookups(routes, name, allocate: false);
+        _ = MeasureLookups(routes, name, allocate: true);
 
-        _ = routes.TryGetValue(name, out _, out _);
+        // Concurrent GC can perturb the thread allocation counter. See docs/ALLOCATION_MEASUREMENT.md.
+        var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureLookups(routes, name, allocate: false), MeasureLookups(routes, name, allocate: true)));
+        await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(1_000 * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureLookups(ByteRouteDictionary<int> routes, byte[] name, bool allocate)
+    {
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
             _ = routes.TryGetValue(name, out _, out _);
+            if (allocate) GC.KeepAlive(AllocateControl());
         }
-
-        await Assert.That(GC.GetAllocatedBytesForCurrentThread() - before).IsEqualTo(0);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateControl() => new byte[37];
 }
