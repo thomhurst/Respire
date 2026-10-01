@@ -1176,7 +1176,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 in command, source, out startedBatch, discardRepliesBefore,
                 retainRepliesBefore: false, armCommandDeadline);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer && IsReroutable<TCommand>())
         {
             ReclaimUnpublished(source);
             return multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
@@ -1570,7 +1570,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ScheduleFlush(startedBatch);
             return await source.Task.ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer)
+        catch (RespireConnectionRetiredException) when (RetiredSendReroute is { } multiplexer && IsReroutable<TCommand>())
         {
             return await multiplexer.GetConnection().SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline,
@@ -1758,6 +1758,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
+    // Credential renewal AUTH belongs to the socket whose session it renews; its worker stops on
+    // retirement. Rerouting it would change a replacement socket's authentication silently.
+    private static bool IsReroutable<TCommand>() where TCommand : struct, IRespCommand
+        => typeof(TCommand) != typeof(CredentialRenewalAuthCommand);
+
     /// <summary>
     /// Re-stamps a source enqueued after a capacity wait with the effective deadline computed
     /// when the send began. This also carries a maintenance-relaxed deadline across reroutes.
@@ -1766,7 +1771,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     private static void ClampDeadline(PendingResponse source, long deadline)
     {
-        if (deadline != 0) source.Deadline = deadline;
+        if (deadline != 0) source.Deadline = PlainDeadline(deadline);
     }
 
     /// <summary>
@@ -1787,6 +1792,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             await WaitForMaintenanceCapacityAsync(capacityAvailable, deadline, commandName, cancellationToken).ConfigureAwait(false);
             return;
         }
+        deadline = PlainDeadline(deadline);
         var remaining = deadline - Environment.TickCount64;
         if (remaining <= 0)
         {

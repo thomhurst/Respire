@@ -119,24 +119,37 @@ internal sealed partial class RespireConnection
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
 
+    // Marks a deadline that a reroute already extended by the relaxed-timeout allowance, so a
+    // later MOVING handoff in the same send cannot add it again. TickCount64 never reaches this bit;
+    // ClampDeadline and the capacity waits strip it before use.
+    private const long RelaxedRerouteDeadline = 1L << 62;
+
+    private static long PlainDeadline(long deadline) => deadline & ~RelaxedRerouteDeadline;
+
     private long GetReroutedCommandDeadline(long deadline)
     {
-        if (deadline == 0 || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
+        if (deadline == 0 || (deadline & RelaxedRerouteDeadline) != 0
+            || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
         var window = Volatile.Read(ref _maintenanceState)?.GetWindow(Environment.TickCount64);
         return window is not null && deadline > window.Started
             && _maintenanceOptions.MaintenanceRelaxedTimeout > normal
-            ? deadline + (long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds
+            ? (deadline + (long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds)
+                | RelaxedRerouteDeadline
             : deadline;
     }
 
     private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, long deadline,
         string? commandName, CancellationToken cancellationToken)
     {
+        // An already relaxed rerouted deadline must not be relaxed again by this socket's window.
+        var alreadyRelaxed = (deadline & RelaxedRerouteDeadline) != 0;
+        deadline = PlainDeadline(deadline);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
-            var timeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
+            var windowTimeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
+            var timeout = alreadyRelaxed ? _commandTimeout.Value : windowTimeout;
             var remaining = deadline + (long)(timeout - _commandTimeout.Value).TotalMilliseconds - now;
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
@@ -147,7 +160,8 @@ internal sealed partial class RespireConnection
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
-                var resumedTimeout = MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
+                var resumedTimeout = alreadyRelaxed ? _commandTimeout!.Value
+                    : MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
                 var resumedRemaining = deadline + (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds - resumedAt;
                 if (resumedRemaining <= 0)
                     throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,

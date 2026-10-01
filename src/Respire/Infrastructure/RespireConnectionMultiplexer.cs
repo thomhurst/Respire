@@ -1183,19 +1183,21 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var remainingMilliseconds = Math.Max(0, deadline - Environment.TickCount64);
             await Task.WhenAll(drains).WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds)).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (Exception error)
         {
-            _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+            // Any unclean exit, not only the grace deadline, aborts and later fences the old
+            // sockets that did not drain; a faulted drain must not leave them open.
+            if (error is TimeoutException)
+                _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+            else
+                _logger?.LogWarning(error, "MOVING handoff drain of old sockets failed; aborting remaining old sockets");
             foreach (var connection in old)
             {
                 if (connection is null || connection.DrainedSuccessfully) continue;
                 RetireConnection(connection);
-                await connection.DisposeAsync().ConfigureAwait(false);
+                try { await connection.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception disposeError) { _logger?.LogDebug(disposeError, "Aborting an old MOVING socket failed"); }
             }
-        }
-        catch (Exception error)
-        {
-            _logger?.LogDebug(error, "MOVING handoff drain of old sockets failed");
         }
 
         try { await Task.WhenAll(drains).ConfigureAwait(false); }
