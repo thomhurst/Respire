@@ -1568,20 +1568,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return;
         }
 
-        Action<int, RespireConnectionStateChange> handler =
-            (slot, change) =>
+        Action<int, RespireConnectionStateChange> handler = (slot, change) =>
+        {
+            if (change.State == RespireConnectionState.Reconnecting)
             {
-                if (change.State == RespireConnectionState.Reconnecting)
-                {
-                    lock (_nodesGate) _lastSmigratedSequences.Remove(node);
-                }
-                SlotStateChanged?.Invoke(node, slot, change);
-                // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
-                // Once a forced refresh is queued, skip the master scan for the rest of the burst.
-                if (change.State == RespireConnectionState.Disconnected
-                    && !_topologyRefresh.HasPendingForcedRequest
-                    && Array.IndexOf(Volatile.Read(ref _masters), node) >= 0) SignalPrimaryDisconnectRefresh();
-            };
+                lock (_nodesGate) _smigratedSequences.Remove(node);
+            }
+            SlotStateChanged?.Invoke(node, slot, change);
+            // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
+            // Once a forced refresh is queued, skip the master scan for the rest of the burst.
+            if (change.State == RespireConnectionState.Disconnected
+                && !_topologyRefresh.HasPendingForcedRequest
+                && Array.IndexOf(Volatile.Read(ref _masters), node) >= 0) SignalPrimaryDisconnectRefresh();
+        };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
         Action<RespireConnectionMultiplexer, MaintenanceNotification> maintenanceHandler = QueueSmigratedNotification;
@@ -1660,7 +1659,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Every slot publication carries its discovery-order fence under _nodesGate.
     private void PublishSlotLocked(int slot, RespireConnectionMultiplexer? node, long version)
     {
-        _slotVersions[slot] = version;
+        Volatile.Write(ref _slotVersions[slot], version);
         Volatile.Write(ref _slots[slot], node);
     }
 
@@ -1709,7 +1708,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
         {
             node.MaintenanceNotificationReceived -= maintenanceHandler;
-            _lastSmigratedSequences.Remove(node);
+            _smigratedSequences.Remove(node);
         }
 
         return true;
@@ -1796,7 +1795,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 _nodeStateHandlers.Remove(node);
                 if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
                     node.MaintenanceNotificationReceived -= maintenanceHandler;
-                _lastSmigratedSequences.Remove(node);
+                _smigratedSequences.Remove(node);
             }
         }
         return retiredNodes;
