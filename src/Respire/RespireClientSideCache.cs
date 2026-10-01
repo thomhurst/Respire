@@ -536,7 +536,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "TS.RANGE" or "TS.READ" or "TS.REVRANGE" or "TIMESERIES.REFRESHCLUSTER" or
             "FT.AGGREGATE" or "FT.ALIASLIST" or "FT.CURSOR" or "FT.CURSOR DEL" or
             "FT.CURSOR GC" or "FT.CURSOR READ" or "FT.DICTDUMP" or "FT.EXPLAIN" or
-            "FT.EXPLAINCLI" or "FT.INFO" or "FT.PROFILE" or "FT.SEARCH" or
+            "FT.EXPLAINCLI" or "FT.HYBRID" or "FT.INFO" or "FT.PROFILE" or "FT.SEARCH" or
             "FT.SPELLCHECK" or "FT.SUGGET" or "FT.SUGLEN" or "FT.SYNDUMP" or "FT.TAGVALS" or
             "JSON.DEBUG" or "LOLWUT" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
