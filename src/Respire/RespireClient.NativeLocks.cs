@@ -30,12 +30,32 @@ public sealed partial class RespireClient
         internal ValueTask<bool> Response { get; set; }
 
         /// <summary>
-        /// Whether a lock command may have been written and is still unanswered. Cleared after a
-        /// definitive rejection (MOVED, ASK, or a retired connection) so a failure while
-        /// obtaining the next connection is known to precede any new submission. Read only after
+        /// The single submission state for a lock command: whether it may have been written and is
+        /// still unanswered. The routing loop sets it before each send and clears it on proof that
+        /// the attempt never ran: MOVED, ASK, a retired connection, or a transport report that the
+        /// command was not enqueued (see <see cref="LockCommands.IsUnsubmitted"/>). A failure
+        /// while obtaining the next connection therefore keeps it cleared. Read only after
         /// <see cref="Response"/> completes.
         /// </summary>
         internal bool CommandMayBeOutstanding { get; set; }
+    }
+
+    private int _unfencedLockReleaseLogged;
+
+    /// <summary>
+    /// Logs once per client that lock releases run without the <c>CLIENT KILL</c> fence because
+    /// the server or ACL denied <c>CLIENT ID</c> or <c>CLIENT KILL</c>. Releases still fail closed;
+    /// only the fence that stops a latent delete is unavailable.
+    /// </summary>
+    internal void LogUnfencedLockReleaseOnce(RespireServerException error)
+    {
+        if (Interlocked.Exchange(ref _unfencedLockReleaseLogged, 1) == 0)
+        {
+            _core.Logger?.LogWarning(error,
+                "Lock releases run without connection fencing because CLIENT ID or CLIENT KILL was denied. " +
+                "An uncertain release still treats ownership as lost, but its delete may run later. " +
+                "Grant the client and client|id/client|kill permissions to restore fencing.");
+        }
     }
 
     /// <summary>
@@ -165,6 +185,12 @@ public sealed partial class RespireClient
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     // Publish the identity before any write on the redirected connection can be sent.
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                }
+                catch (Exception error) when (LockCommands.IsUnsubmitted(error))
+                {
+                    // The transport proved this attempt never reached Redis.
+                    execution.CommandMayBeOutstanding = false;
+                    throw;
                 }
             }
         }

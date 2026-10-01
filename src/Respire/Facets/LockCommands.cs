@@ -318,8 +318,10 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         {
             return await execution.Response.ConfigureAwait(false);
         }
-        catch (Exception error) when (!execution.CommandMayBeOutstanding || IsUnsubmitted(error))
+        catch (Exception error) when (!execution.CommandMayBeOutstanding)
         {
+            // The routing loop is the single source of truth for submission: it cleared the flag
+            // only on proof that no delete reached Redis.
             throw new LockReleaseNotSubmittedException(
                 error is RespireCommandNotSubmittedException { InnerException: OperationCanceledException cause }
                     ? cause
@@ -334,8 +336,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             // The delete may have reached Redis. Report that before fencing so ownership loss is
             // visible while the fence waits for its control connection.
             onOutcomeUncertain();
-            if (fenced && execution.ConnectionIdentity.ServerClientId > 0
-                && error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+            if (fenced && execution.ConnectionIdentity.ServerClientId > 0 && IsFenceableUncertainty(error))
             {
                 // A fence failure is logged and must not replace the release error.
                 await client.TryFenceLockConnectionAsync(execution.ConnectionIdentity, "lock release")
@@ -345,6 +346,15 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             throw;
         }
     }
+
+    /// <summary>
+    /// Whether an uncertain release left its connection alive with the delete possibly still
+    /// queued, so <c>CLIENT KILL</c> is needed to stop it. Connection failures and abandoned waits
+    /// qualify. Other errors (a protocol fault, a disposed client) have already torn the
+    /// connection down, so there is nothing left to fence; ownership is still treated as lost.
+    /// </summary>
+    private static bool IsFenceableUncertainty(Exception error)
+        => error is OperationCanceledException or RespireTimeoutException or RespireConnectionException;
 
     /// <summary>
     /// Starts the compare-and-delete. Identity tracking and fencing are set up only when the
@@ -369,7 +379,9 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             {
                 // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
                 // Other server errors propagate. An uncertain outcome still fails closed, and a
-                // latent compare-and-delete cannot match another owner's token.
+                // latent compare-and-delete cannot match another owner's token. Operators are told
+                // once that the fence is unavailable.
+                client.LogUnfencedLockReleaseOnce(error);
             }
         }
 
@@ -378,8 +390,8 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             .ConfigureAwait(false), false);
     }
 
-    // Cancellation or a command timeout while waiting for in-flight capacity happens before the
-    // command is enqueued, so nothing was written.
+    // Transport proof that an attempt was never enqueued: cancellation or a command timeout while
+    // waiting for in-flight capacity, or a connection retired before it accepted the command.
     internal static bool IsUnsubmitted(Exception error)
         => error is RespireCommandNotSubmittedException
             or Respire.Networking.RespireConnectionRetiredException

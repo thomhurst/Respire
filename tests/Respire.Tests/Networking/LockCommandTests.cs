@@ -456,6 +456,35 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_UnfencedReleaseFallbackIsLoggedOncePerClient()
+    {
+        var logger = new CapturingLoggerFactory();
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID"
+                ? "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray()
+                : LockReply(command),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            LoggerFactory = logger,
+        });
+        using var cancellation = new CancellationTokenSource();
+
+        // A cancellable token makes the release fenceable, so CLIENT ID is attempted and denied.
+        var first = await client.Locks.AcquireOrThrowAsync("first", TimeSpan.FromSeconds(30));
+        await Assert.That(await first.ReleaseAsync(cancellation.Token)).IsEqualTo(LockReleaseOutcome.Released);
+        var second = await client.Locks.AcquireOrThrowAsync("second", TimeSpan.FromSeconds(30));
+        await Assert.That(await second.ReleaseAsync(cancellation.Token)).IsEqualTo(LockReleaseOutcome.Released);
+
+        await Assert.That(DelexCount(server)).IsEqualTo(2);
+        await Assert.That(logger.Warnings.Count(warning => warning is RespireServerException)).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RespireLock_ReleaseWithUnexpectedClientIdErrorDoesNotFallBack()
     {
         // Only permission or unsupported-command replies select the unfenced release; any other
@@ -963,6 +992,80 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_KeepAliveSurvivesReleaseThatStartsDuringRenewalAndIsNotSubmitted()
+    {
+        var commands = new CoordinatedLockCommands(waitForRelease: true);
+        var clock = new GatedLockClock();
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner",
+            TimeSpan.FromMilliseconds(500),
+            clock.GetTimestamp(),
+            clock);
+        var keepAlive = await mutex.KeepAliveAsync();
+        try
+        {
+            var renewal = await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // A manual reset holds the extension gate, so the keep-alive renewal queues behind it.
+            var manualReset = mutex.ResetExpiryAsync(TimeSpan.FromMilliseconds(500)).AsTask();
+            await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            renewal.Fire();
+            await Task.Delay(100);
+
+            // The release starts after the keep-alive read the lease, so its renewal stops at
+            // the handle instead of reaching Redis.
+            var release = mutex.ReleaseAsync().AsTask();
+            await commands.ReleaseStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            commands.CompleteFirstExtension();
+            await Assert.That(await manualReset.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+            await Task.Delay(100);
+            await Assert.That(keepAlive.OwnershipLost).IsFalse();
+
+            commands.RejectPendingReleaseBeforeSubmission();
+            await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Task.Delay(100);
+
+            await Assert.That(mutex.IsReleased).IsFalse();
+            await Assert.That(keepAlive.OwnershipLost).IsFalse();
+            await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsFalse();
+        }
+        finally
+        {
+            commands.CompletePendingRelease();
+            await keepAlive.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task RespireLock_KeepAliveLeaseSnapshotReportsReleaseInsteadOfElapsedLease()
+    {
+        var commands = new CoordinatedLockCommands(waitForRelease: true);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner",
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+
+        var held = mutex.GetKeepAliveRemaining(out var releasingWhileHeld);
+        await Assert.That(releasingWhileHeld).IsFalse();
+        await Assert.That(held).IsGreaterThan(TimeSpan.Zero);
+
+        var release = mutex.ReleaseAsync().AsTask();
+        await commands.ReleaseStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        mutex.GetKeepAliveRemaining(out var releasing);
+        await Assert.That(releasing).IsTrue();
+
+        commands.CompletePendingRelease();
+        await Assert.That(await release).IsEqualTo(LockReleaseOutcome.Released);
+        var afterRelease = mutex.GetKeepAliveRemaining(out var releasingAfter);
+        await Assert.That(releasingAfter).IsFalse();
+        await Assert.That(afterRelease).IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task RespireLock_StoppingKeepAliveWaitsForRenewalAndPreservesRelease()
     {
         var commands = new CoordinatedLockCommands();
@@ -1412,6 +1515,10 @@ public class LockCommandTests
         public void CompleteFence() => _fence.TrySetResult();
 
         public void CompletePendingRelease() => _pendingRelease.TrySetResult(true);
+
+        // What the managed release reports when its delete was cancelled before submission.
+        public void RejectPendingReleaseBeforeSubmission()
+            => _pendingRelease.TrySetException(new LockReleaseNotSubmittedException(new OperationCanceledException()));
 
         public void CompleteRaceExtension() => _raceExtension.TrySetResult();
 

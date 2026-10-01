@@ -257,7 +257,10 @@ public sealed class RespireLock : IAsyncDisposable
     /// Idempotent: later calls return <see cref="LockReleaseOutcome.AlreadyReleased"/> without
     /// touching the server. Concurrent callers share one in-flight release, governed by the
     /// cancellation token of the caller that starts it. When that caller cancels before the command
-    /// is submitted, the other callers retry with their own tokens.
+    /// is submitted, the other callers retry with their own tokens. Any other failure, including a
+    /// timeout or connection error before submission, is reported to every caller that shares the
+    /// release; when it happened before submission the handle still owns the lock, so any caller
+    /// can call <see cref="ReleaseAsync"/> again.
     /// </summary>
     /// <param name="cancellationToken">
     /// Cancels release. Cancellation before command submission preserves ownership and allows retry;
@@ -333,6 +336,9 @@ public sealed class RespireLock : IAsyncDisposable
             catch (OperationCanceledException) when (
                 !cancellationToken.IsCancellationRequested && attempt.OwnershipRestored)
             {
+                // The starter cancelled before submission. RestoreOwnership sets OwnershipRestored
+                // under _releaseSync before CompleteReleaseAsync completes the task, so this read
+                // cannot miss it. Fall through and start or join the next attempt.
             }
 
             var next = EnterRelease(cancellationToken, out var outcome, out var started);
@@ -466,6 +472,18 @@ public sealed class RespireLock : IAsyncDisposable
 
     internal bool IsReleasing => Volatile.Read(ref _state) == StateReleasing;
 
+    /// <summary>
+    /// Reads the remaining lease and whether a release is in flight from one state snapshot.
+    /// <see cref="RemainingEstimate"/> reports zero while releasing, so reading it separately
+    /// after <see cref="IsReleasing"/> could mistake a just-started release for an elapsed lease.
+    /// </summary>
+    internal TimeSpan GetKeepAliveRemaining(out bool releasing)
+    {
+        var state = Volatile.Read(ref _state);
+        releasing = state == StateReleasing;
+        return state == StateHeld ? RemainingUntilLeaseExpiry : TimeSpan.Zero;
+    }
+
     internal async ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
     {
         var token = await _locks.GetOwnerTokenAsync(Key, cancellationToken).ConfigureAwait(false);
@@ -570,7 +588,11 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                 }
 
                 _lifetime.Token.ThrowIfCancellationRequested();
-                if (_lock.IsReleasing)
+                // One state read: a release that starts between two reads must not look like an
+                // elapsed lease, or the keep-alive would mark ownership lost and stop a release
+                // that later proves it never submitted its delete from restoring ownership.
+                var remaining = _lock.GetKeepAliveRemaining(out var releasing);
+                if (releasing)
                 {
                     if (await WaitForReleaseOutcomeAsync(leaseChanged).ConfigureAwait(false))
                     {
@@ -580,7 +602,6 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                     return;
                 }
 
-                var remaining = _lock.RemainingEstimate;
                 if (remaining <= TimeSpan.Zero)
                 {
                     MarkOwnershipUncertain();
@@ -589,6 +610,13 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
 
                 if (!await RenewBeforeDeadlineAsync(remaining).ConfigureAwait(false))
                 {
+                    if (_lock.IsReleasing || leaseChanged.IsCancellationRequested)
+                    {
+                        // A release started after the snapshot, so the renewal stopped at the
+                        // handle. Re-evaluate: wait for that release, or stop if it ended ownership.
+                        continue;
+                    }
+
                     Volatile.Write(ref _ownershipLost, 1);
                     await _lifetime.CancelAsync().ConfigureAwait(false);
                     return;
