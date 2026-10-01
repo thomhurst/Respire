@@ -391,6 +391,40 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task RetirementWakesStreamedSetDrainingStalledEarlierWrite()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = null,
+            });
+        // The peer never reads, so an earlier large frame stalls in the socket write.
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        const int payload = 32 * 1024 * 1024;
+        var header = Encoding.ASCII.GetBytes($"*3\r\n$3\r\nSET\r\n$7\r\nblocker\r\n${payload}\r\n");
+        var frame = new byte[header.Length + payload + 2];
+        header.CopyTo(frame, 0);
+        "\r\n"u8.CopyTo(frame.AsSpan(frame.Length - 2));
+        var blocker = connection.SendAsync(new RawCommand(frame)).AsTask();
+
+        var source = new PausedStream();
+        var command = new StreamedSetCommand((RespireValue)"queued", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await Task.Delay(200);
+        await Assert.That(set.IsCompleted).IsFalse();
+
+        _ = connection.RetireAsync();
+        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+        await Assert.That(source.ReadStarted.Task.IsCompleted).IsFalse();
+        await Assert.That(blocker.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task ThrowingSourceClosesConnectionAndClientRecovers()
     {
         await using var server = new FakeRespServer(2, "+OK\r\n"u8.ToArray())

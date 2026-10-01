@@ -56,6 +56,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         private readonly CancellationTokenSource _source = new();
         private readonly Timer _timer;
         private readonly Action? _maintenanceChanged;
+        private readonly Lock _scheduleGate = new();
+        // Bumped by every maintenance change; a Schedule that read an older value recomputes
+        // instead of installing (or acting on) a stale deadline.
+        private int _version;
         private int _disposed;
 
         internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
@@ -80,13 +84,44 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // there); fire the timer so Schedule recomputes the deadline on a pool thread.
         private void Recheck()
         {
-            try { _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
-            catch (ObjectDisposedException) { }
+            lock (_scheduleGate)
+            {
+                _version++;
+                try { _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
+                catch (ObjectDisposedException) { }
+            }
         }
 
         private void Schedule()
         {
-            if (Volatile.Read(ref _disposed) != 0) return;
+            while (true)
+            {
+                if (Volatile.Read(ref _disposed) != 0) return;
+                var version = Volatile.Read(ref _version);
+                var delay = ComputeDelay();
+                lock (_scheduleGate)
+                {
+                    // A maintenance change raced this calculation; the newest state must win.
+                    if (version != _version) continue;
+                    if (delay is { } next)
+                    {
+                        try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
+                        catch (ObjectDisposedException) { }
+                        return;
+                    }
+                }
+
+                // Cancel outside the gate: registrations run the caller's continuations inline.
+                try { _source.Cancel(); }
+                catch (ObjectDisposedException) { }
+                catch (AggregateException) { }
+                return;
+            }
+        }
+
+        // Null once the effective deadline has passed.
+        private TimeSpan? ComputeDelay()
+        {
             var now = Environment.TickCount64;
             var remaining = _deadline - now;
             long window = 0;
@@ -97,20 +132,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var timeout = _connection.MaintenanceTimeout(normal, now, out window, out _, _deadline);
                 remaining += (long)(timeout - normal).TotalMilliseconds;
             }
-            if (remaining <= 0)
-            {
-                try { _source.Cancel(); }
-                catch (ObjectDisposedException) { }
-                catch (AggregateException) { }
-                return;
-            }
+            if (remaining <= 0) return null;
 
             var sleep = Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds);
             // Recheck when the window closes so a restored, shorter deadline is enforced.
             if (window > 0) sleep = Math.Min(sleep, window);
-            var delay = TimeSpan.FromMilliseconds(sleep);
-            try { _timer.Change(delay, Timeout.InfiniteTimeSpan); }
-            catch (ObjectDisposedException) { }
+            return TimeSpan.FromMilliseconds(sleep);
         }
 
         public void Dispose()
@@ -1598,7 +1625,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             if (schedule) ScheduleFlush(startedBatch: false);
-            if (write is not null) await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (write is null) continue;
+            var drained = write.WaitAsync(cancellationToken);
+            // Nothing of this frame is written yet, so retirement can still reject it for a retry
+            // on the replacement; a stalled earlier write must not pin it to this connection.
+            if (await Task.WhenAny(drained, _retiredSignal.Task).ConfigureAwait(false) != drained)
+            {
+                _ = drained.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                ThrowIfRetired();
+            }
+            await drained.ConfigureAwait(false);
         }
     }
 
