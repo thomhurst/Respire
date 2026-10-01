@@ -201,7 +201,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private async Task MonitorSentinelCoreAsync(RespireEndpoint endpoint)
     {
         var attempts = 0;
-        var hadSubscription = false;
         var options = core.Options with
         {
             Endpoints = new List<RespireEndpoint> { endpoint },
@@ -230,8 +229,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 await using var client = await RespireClient.ConnectAsync(options, _lifetime.Token).ConfigureAwait(false);
                 await using var subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], _lifetime.Token).ConfigureAwait(false);
-                if (hadSubscription) OnSentinelSubscriptionGap(endpoint);
-                hadSubscription = true;
+                OnSentinelSubscriptionGap(endpoint);
                 attempts = 0;
                 await foreach (var message in subscription.WithCancellation(_lifetime.Token).ConfigureAwait(false))
                 {

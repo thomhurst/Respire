@@ -694,7 +694,8 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task SwitchMasterEventUsesLatestValidatedPrimaryWhenSuperseded()
+    [NotInParallel]
+    public async Task MonitorSubscriptionReconcilesPrimaryAndIgnoresStaleSwitchEvent()
     {
         await using var previous = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var replacement = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
@@ -710,24 +711,22 @@ public class SentinelTests
         await client.PingAsync();
         await WaitUntilAsync(() => staleSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1
             && reportingSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
-        var commandIndex = reportingSentinel.ReceivedCommands.ToList()
-            .FindIndex(command => command == "SUBSCRIBE +switch-master");
-        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", previous.Port, replacement.Port),
-            reportingSentinel.ReceivedConnectionIds[commandIndex]);
-
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
         await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
-        await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
-
+        var reportingLookups = reportingSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+        var staleLookups = staleSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+        var commandIndex = reportingSentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master");
         await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", previous.Port, 6390),
             reportingSentinel.ReceivedConnectionIds[commandIndex]);
         await Task.Delay(50);
         await Assert.That(client.Core.Sentinel!.Current!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replacement.Port));
         await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(reportingLookups);
+        await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(staleLookups);
     }
 
     [Test]
