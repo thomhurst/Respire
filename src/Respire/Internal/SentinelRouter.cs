@@ -150,7 +150,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // endpoint was published after that event, for example by an earlier refresh
             // for the same switch reported by another Sentinel.
             if (rejectedPrimary is { } rejected && previousHealthy && !SentinelResolver.SameEndpoint(previous!.Endpoint, rejected))
+            {
+                ClearPendingSwitchForAcceptedGenerationLocked(
+                    switchRefreshVersion ?? pendingSwitchVersion, previous.Endpoint);
                 return previous;
+            }
             if (expectedPrimary is { } expected && previousHealthy && SentinelResolver.SameEndpoint(previous!.Endpoint, expected))
             {
                 if (_pendingSwitchPrimary is { } matchingPending && SentinelResolver.SameEndpoint(expected, matchingPending))
@@ -177,17 +181,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     throw new SupersededSentinelRefreshException();
                 // Retirement during this discovery means a switch event owns the next refresh.
                 // A generation that was already retired at the gap may be replaced here.
-                var supersededGap = refreshAfterSubscriptionGap && expectedGeneration is not null
-                    && (!ReferenceEquals(old, expectedGeneration) || expectedGeneration.IsRetired && !expectedWasRetired);
+                var supersededGap = refreshAfterSubscriptionGap
+                    && (!ReferenceEquals(old, expectedGeneration)
+                        || expectedGeneration is { IsRetired: true } && !expectedWasRetired);
                 var supersededSwitch = pendingSwitchVersion is { } pendingVersion
                     && pendingVersion != _switchRefreshVersion;
-                var staleGapCandidate = refreshAfterSubscriptionGap && _hasConfirmedSentinelSwitch
-                    && old is { IsRetired: false } && old.Multiplexer.IsConnected
-                    && !SentinelResolver.SameEndpoint(old.Endpoint, replacement.Endpoint);
                 var staleSwitchCandidate = switchRefreshVersion is not null && expectedPrimary is { } announced
                     && old is { IsRetired: false } && old.Multiplexer.IsConnected
                     && !SentinelResolver.SameEndpoint(replacement.Endpoint, announced);
-                if (supersededGap || supersededSwitch || staleGapCandidate || staleSwitchCandidate)
+                if (supersededGap || supersededSwitch || staleSwitchCandidate)
                 {
                     if (old is { IsRetired: false } && old.Multiplexer.IsConnected) unchanged = old;
                     else throw new SupersededSentinelRefreshException();
@@ -218,6 +220,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     ClearPendingSwitchLocked();
                 if (switchRefreshVersion == _switchRefreshVersion)
                     ClearPendingSwitchLocked();
+                else
+                    ClearPendingSwitchForAcceptedGenerationLocked(pendingSwitchVersion, replacement.Endpoint);
             }
             if (unchanged is not null)
             {
@@ -433,6 +437,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         _pendingSwitchPrimary = null;
         _pendingSwitchPrevious = null;
         _switchRefreshVersion++;
+    }
+
+    private void ClearPendingSwitchForAcceptedGenerationLocked(long? capturedVersion, RespireEndpoint endpoint)
+    {
+        if (capturedVersion == _switchRefreshVersion
+            && _pendingSwitchPrimary is { } pending
+            && !SentinelResolver.SameEndpoint(endpoint, pending))
+        {
+            ClearPendingSwitchLocked();
+        }
     }
 
     private void OnSentinelSubscriptionGap(RespireEndpoint sentinel)
