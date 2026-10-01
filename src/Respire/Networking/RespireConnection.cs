@@ -2736,7 +2736,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// before anything was appended or reserved. A generic close becomes
     /// <see cref="RespireConnectionClosedBeforeSendException"/>, which keeps the close reason's
     /// message and cause, so callers that must prove a command was not sent (lock release) can
-    /// tell it from a failure of an in-flight command. Specific close reasons are rethrown as is.
+    /// tell it from a failure of an in-flight command. Authentication failures are retained as
+    /// the inner cause because this rejection happened before enqueue. Other specific close
+    /// reasons are rethrown as is.
     /// </summary>
     private Exception ClosedBeforeEnqueue()
     {
@@ -2746,9 +2748,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
         }
 
-        return reason.GetType() == typeof(RespireConnectionException)
-            ? new RespireConnectionClosedBeforeSendException(reason.Message, reason.InnerException)
-            : reason;
+        return reason is RespireAuthenticationException
+            ? new RespireConnectionClosedBeforeSendException(reason.Message, reason)
+            : reason.GetType() == typeof(RespireConnectionException)
+                ? new RespireConnectionClosedBeforeSendException(reason.Message, reason.InnerException)
+                : reason;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
