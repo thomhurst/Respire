@@ -36,6 +36,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private long _switchRefreshVersion;
     private RespireEndpoint? _pendingSwitchPrimary;
     private RespireEndpoint? _pendingSwitchPrevious;
+    private bool _hasConfirmedSentinelSwitch;
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
@@ -84,7 +85,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal async ValueTask<Generation> GetGenerationAsync(
         CancellationToken cancellationToken, RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? expectedPrimary = null, RespireEndpoint? rejectedPrimary = null,
-        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null)
+        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null,
+        RespireEndpoint? additionalRejectedPrimary = null, bool allowRejectedPrimaryFromPreferred = false)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
@@ -144,11 +146,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 return previous;
             }
             var expectedWasRetired = expectedGeneration?.IsRetired == true;
-            var preservePrevious = refreshAfterSubscriptionGap && previousHealthy;
+            var preservePrevious = (refreshAfterSubscriptionGap || switchRefreshVersion is not null) && previousHealthy;
             if (!preservePrevious && previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, ConnectGenerationAsync, linked.Token, _discovery,
-                preferredSentinel, expectedPrimary, rejectedPrimary).ConfigureAwait(false);
+                preferredSentinel, expectedPrimary, rejectedPrimary, additionalRejectedPrimary,
+                allowRejectedPrimaryFromPreferred).ConfigureAwait(false);
             unpublished = replacement;
             Generation? unchanged = null;
             lock (_gate)
@@ -164,7 +167,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // A generation that was already retired at the gap may be replaced here.
                 var supersededGap = refreshAfterSubscriptionGap && expectedGeneration is not null
                     && (!ReferenceEquals(old, expectedGeneration) || expectedGeneration.IsRetired && !expectedWasRetired);
-                if (supersededGap)
+                var staleGapCandidate = refreshAfterSubscriptionGap && _hasConfirmedSentinelSwitch
+                    && old is { IsRetired: false } && old.Multiplexer.IsConnected
+                    && !SentinelResolver.SameEndpoint(old.Endpoint, replacement.Endpoint);
+                var staleSwitchCandidate = switchRefreshVersion is not null && expectedPrimary is { } announced
+                    && old is { IsRetired: false } && old.Multiplexer.IsConnected
+                    && !SentinelResolver.SameEndpoint(replacement.Endpoint, announced);
+                if (supersededGap || staleGapCandidate || staleSwitchCandidate)
                 {
                     if (old is { IsRetired: false } && old.Multiplexer.IsConnected) unchanged = old;
                     else throw new SupersededSentinelRefreshException();
@@ -180,6 +189,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     if (old is not null) Invalidate(old);
                     Volatile.Write(ref _current, replacement);
                     unpublished = null;
+                    if (switchRefreshVersion is not null) _hasConfirmedSentinelSwitch = true;
                     // Publication owns this measurement even if disposal suppresses later health
                     // callbacks. Keep meter listeners outside discovery to permit observer disposal.
                     if (old is not null && old.Endpoint != replacement.Endpoint)
@@ -352,6 +362,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private void OnSentinelPrimaryChanged(RespireEndpoint sentinel, RespireEndpoint oldPrimary, RespireEndpoint newPrimary)
     {
         RespireEndpoint? previousPrimary;
+        RespireEndpoint? rejectedPrimary;
+        RespireEndpoint? additionalRejectedPrimary = null;
+        var allowRejectedPrimaryFromPreferred = false;
         long version;
         lock (_gate)
         {
@@ -372,16 +385,25 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && _pendingSwitchPrevious is { } prior
                 && SentinelResolver.SameEndpoint(newPrimary, prior);
             if (_pendingSwitchPrimary is not null && !followsPending && !reversesPending) return;
+            var currentDoesNotMatchEvent = current is { IsRetired: false }
+                && !SentinelResolver.SameEndpoint(current.Endpoint, oldPrimary);
             if (current is { IsRetired: false }
-                && !SentinelResolver.SameEndpoint(current.Endpoint, oldPrimary)
-                && !followsPending && !reversesPending) return;
+                && currentDoesNotMatchEvent && !followsPending && !reversesPending && _hasConfirmedSentinelSwitch) return;
             previousPrimary = oldPrimary;
+            rejectedPrimary = currentDoesNotMatchEvent ? current!.Endpoint : oldPrimary;
+            if (currentDoesNotMatchEvent)
+            {
+                additionalRejectedPrimary = oldPrimary;
+                allowRejectedPrimaryFromPreferred = true;
+            }
             _pendingSwitchPrevious = previousPrimary;
             _pendingSwitchPrimary = newPrimary;
             version = ++_switchRefreshVersion;
-            if (current is { IsRetired: false }) Invalidate(current);
+            if (current is { IsRetired: false } && !currentDoesNotMatchEvent) Invalidate(current);
         }
-        TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, newPrimary, previousPrimary, switchRefreshVersion: version));
+        TrackRefresh(RefreshAfterSentinelEventAsync(sentinel, newPrimary, rejectedPrimary,
+            switchRefreshVersion: version, additionalRejectedPrimary: additionalRejectedPrimary,
+            allowRejectedPrimaryFromPreferred: allowRejectedPrimaryFromPreferred));
     }
 
     private void ClearPendingSwitchLocked()
@@ -422,7 +444,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private async Task RefreshAfterSentinelEventAsync(
         RespireEndpoint sentinel, RespireEndpoint? expectedPrimary, RespireEndpoint? rejectedPrimary,
-        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null)
+        bool refreshAfterSubscriptionGap = false, long? switchRefreshVersion = null,
+        RespireEndpoint? additionalRejectedPrimary = null, bool allowRejectedPrimaryFromPreferred = false)
     {
         var attempt = 0;
         var delay = TimeSpan.FromMilliseconds(250);
@@ -431,7 +454,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary, rejectedPrimary,
-                    refreshAfterSubscriptionGap, switchRefreshVersion)
+                    refreshAfterSubscriptionGap, switchRefreshVersion, additionalRejectedPrimary,
+                    allowRejectedPrimaryFromPreferred)
                     .ConfigureAwait(false);
                 return;
             }

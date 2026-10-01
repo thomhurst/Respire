@@ -726,9 +726,47 @@ public class SentinelTests
         await Task.Delay(50);
         await Assert.That(client.Core.Sentinel!.Current!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replacement.Port));
         await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(reportingLookups);
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsGreaterThan(reportingLookups);
         await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(staleLookups);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task LaterSwitchEventReconcilesMissedTransitionAndIgnoresLaggingEvent()
+    {
+        await using var first = CreatePrimary();
+        await using var middle = CreatePrimary();
+        await using var replacement = CreatePrimary();
+        var primaryPort = first.Port;
+        await using var sentinel = CreateSentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => sentinel.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitor = sentinel.ReceivedConnectionIds[sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+        var lookups = sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+
+        Volatile.Write(ref primaryPort, replacement.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", middle.Port, replacement.Port), monitor);
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == replacement.Port);
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"))
+            .IsGreaterThan(lookups);
+
+        var confirmedLookups = sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, middle.Port), monitor);
+        await Task.Delay(100);
+        await Assert.That(client.Core.Sentinel!.Current!.Endpoint.Port).IsEqualTo(replacement.Port);
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"))
+            .IsEqualTo(confirmedLookups);
     }
 
     [Test]

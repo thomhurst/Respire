@@ -16,7 +16,9 @@ internal static class SentinelResolver
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? expectedPrimary = null,
-        RespireEndpoint? rejectedPrimary = null)
+        RespireEndpoint? rejectedPrimary = null,
+        RespireEndpoint? additionalRejectedPrimary = null,
+        bool allowRejectedPrimaryFromPreferred = false)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -69,11 +71,15 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
-                    && !(expectedPrimary is { } expected && SameEndpoint(primary, expected)
-                        && preferredSentinel is { } reportingSentinel && SameEndpoint(endpoint, reportingSentinel)))
+                var isRejectedPrimary = rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
+                    || additionalRejectedPrimary is { } additionalRejected && SameEndpoint(primary, additionalRejected);
+                var isPreferredSentinel = preferredSentinel is { } reportingSentinel
+                    && SameEndpoint(endpoint, reportingSentinel);
+                if (isRejectedPrimary
+                    && !(expectedPrimary is { } expected && SameEndpoint(primary, expected) && isPreferredSentinel)
+                    && !(allowRejectedPrimaryFromPreferred && isPreferredSentinel))
                     throw new RespireConnectionException(
-                        $"Sentinel at {endpoint} still reports previous primary {rejected} after a switch event.");
+                        $"Sentinel at {endpoint} reports rejected primary {primary} after a switch event.");
                 discoveryCompleted = true;
                 var primaryOptions = options with
                 {
