@@ -82,6 +82,35 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task CancellableRenewalDoesNotRequireClientFencePermissions()
+    {
+        await using var server = new FakeRespServer(20);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLIENT ID" => "-NOPERM client identity denied\r\n"u8.ToArray(),
+            _ when command.StartsWith("CLIENT KILL", StringComparison.Ordinal) => "-NOPERM client kill denied\r\n"u8.ToArray(),
+            _ when command.StartsWith("EVALSHA ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var semaphore = new RespireSemaphore(client, "{renew}:acl", capacity: 1);
+        await using var attempt = await semaphore.TryAcquireAsync();
+        var clientIdCount = server.ReceivedCommands.Count(command => command == "CLIENT ID");
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.That(await attempt.Permit.ResetExpiryAsync(TimeSpan.FromSeconds(30), cancellation.Token)).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT ID")).IsEqualTo(clientIdCount);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(2);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UncertainRenewalRefusesLaterRenewals()
     {
         await using var server = new FakeRespServer(
