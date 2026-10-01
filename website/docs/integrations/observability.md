@@ -147,8 +147,8 @@ the Sentinel seed is never substituted as the executing Redis server. Blocking, 
 and correction-identity timeouts before data-peer selection likewise carry endpoint-less
 connecting diagnostics; a selected physical connection retains its own diagnostic identity.
 
-`ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
-Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
+`ConnectionStateChanged` reports the retired endpoint and validated replacement for Sentinel
+handoffs triggered by events, disconnects, or `READONLY` replies. Prefix views share these events. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
 discovery and reconnection to the same endpoint do not increment it. Published failover
 measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run

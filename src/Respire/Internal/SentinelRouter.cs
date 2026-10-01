@@ -25,10 +25,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         ? [new RespireEndpoint("localhost", 26379)] : core.Options.Endpoints);
     private readonly HashSet<Generation> _owned = [];
     private readonly HashSet<DedicatedConnectionPool> _correctionPools = [];
+    private readonly Dictionary<string, Task> _notificationMonitors = new(StringComparer.OrdinalIgnoreCase);
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
     private Task _notifications = Task.CompletedTask;
+    private Task _notificationMonitorSupervisor = Task.CompletedTask;
+    private Task? _notificationRediscovery;
+    private bool _notificationPending;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -112,6 +116,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
+                StartNotificationMonitoringLocked();
             }
             return replacement;
         }
@@ -173,6 +178,183 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             && fields[0].AsString() == "master"
             && fields[1].Type == RespDataType.Integer
             && fields[2].Type == RespDataType.Array;
+    }
+
+    private void StartNotificationMonitoringLocked()
+    {
+        if (_notificationMonitorSupervisor != Task.CompletedTask) return;
+        _notificationMonitorSupervisor = Task.Run(MonitorSentinelsAsync);
+    }
+
+    private async Task MonitorSentinelsAsync()
+    {
+        try
+        {
+            while (!_lifetime.IsCancellationRequested)
+            {
+                foreach (var endpoint in _discovery.Snapshot())
+                {
+                    var key = endpoint.Host + ":" + endpoint.Port;
+                    lock (_gate)
+                    {
+                        if (_disposed) return;
+                        if (_notificationMonitors.TryGetValue(key, out var monitor) && !monitor.IsCompleted) continue;
+                        _notificationMonitors[key] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
+                    }
+                }
+                await Task.Delay(TimeSpan.FromSeconds(1), Clock, _lifetime.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+    }
+
+    private async Task MonitorSentinelAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        var attempt = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var client = await RespireClient.ConnectAsync(CreateSentinelMonitorOptions(core.Options, endpoint), cancellationToken).ConfigureAwait(false);
+                var subscription = await client.SubscribeAsync(
+                    ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    attempt = 0;
+                    await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
+                        ObserveSentinelNotification(endpoint, message);
+                    if (!cancellationToken.IsCancellationRequested)
+                        await subscription.Completion.ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        try { await client.DisposeAsync().ConfigureAwait(false); }
+                        catch (Exception) { }
+                    }
+                    try { await subscription.DisposeAsync().ConfigureAwait(false); }
+                    catch (Exception) when (cancellationToken.IsCancellationRequested) { }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                try { core.Logger?.LogWarning(error, "Sentinel event monitor failed at {Endpoint}", endpoint); }
+                catch (Exception) { }
+            }
+
+            attempt++;
+            var policy = core.Options.ReconnectPolicy;
+            if (policy?.IsExhausted(attempt) == true)
+            {
+                try { core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}", endpoint); }
+                catch (Exception) { }
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+                return;
+            }
+            var delay = policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
+            try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+        }
+    }
+
+    internal static RespireOptions CreateSentinelMonitorOptions(RespireOptions options, RespireEndpoint endpoint)
+    {
+        var authDisabled = options.SentinelPassword is { Length: 0 };
+        var useSeparateCredentials = options.SentinelUsername is not null || options.SentinelPassword is not null;
+        return options with
+        {
+            Endpoints = [endpoint],
+            UseCluster = false,
+            SentinelPrimaryName = null,
+            Username = authDisabled ? null : options.SentinelUsername ?? options.Username,
+            Password = authDisabled ? null : options.SentinelPassword ?? options.Password,
+            CredentialProvider = authDisabled ? null : options.SentinelCredentialProvider
+                ?? (useSeparateCredentials ? null : options.CredentialProvider),
+            SentinelUsername = null,
+            SentinelPassword = null,
+            SentinelCredentialProvider = null,
+            SentinelUseTls = null,
+            SentinelTlsOptions = null,
+            UseTls = options.SentinelUseTls ?? options.UseTls,
+            TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
+            ClientName = null,
+            Database = 0,
+            Protocol = options.SentinelCredentialProvider is not null
+                || (!useSeparateCredentials && options.CredentialProvider is not null)
+                ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ClientSideCache = null,
+            ThreadPoolMonitoring = false,
+            Connections = 1,
+        };
+    }
+
+    private void ObserveSentinelNotification(RespireEndpoint sentinel, in RespireMessage message)
+    {
+        if (message.Kind != RespireMessageKind.Message) return;
+        var channel = message.Channel.ToString();
+        var fields = message.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var serviceName = core.Options.SentinelPrimaryName;
+        if (serviceName is null || fields.Length == 0) return;
+        var switchHint = channel == "+switch-master" && fields.Length >= 5
+            && fields[0].Equals(serviceName, StringComparison.Ordinal);
+        var masterDownHint = (channel is "+sdown" or "+odown") && fields.Length >= 4
+            && fields[0] == "master" && fields[1].Equals(serviceName, StringComparison.Ordinal);
+        var relatedDownEvent = (channel is "+sdown" or "+odown") && fields.Length >= 4
+            && (masterDownHint || fields.Length >= 6 && fields[0] == "slave"
+                && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
+        if (!switchHint && !relatedDownEvent) return;
+        if (channel == "+switch-master"
+            && (!int.TryParse(fields[2], out var oldPort) || oldPort is < 1 or > 65535
+                || !int.TryParse(fields[4], out var newPort) || newPort is < 1 or > 65535)) return;
+        if (relatedDownEvent)
+        {
+            try { core.Logger?.LogInformation("Sentinel {Channel} hint for service {Service} from {Sentinel}", channel, serviceName, sentinel); }
+            catch (Exception) { }
+        }
+        if (switchHint || masterDownHint) QueueNotificationRediscovery();
+    }
+
+    private void QueueNotificationRediscovery()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _notificationPending = true;
+            if (_notificationRediscovery is { IsCompleted: false }) return;
+            _notificationPending = false;
+            if (Current is { IsRetired: false } current) Invalidate(current);
+            _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
+        }
+    }
+
+    private async Task RediscoverFromNotificationAsync()
+    {
+        while (!_lifetime.IsCancellationRequested)
+        {
+            try { await GetGenerationAsync(_lifetime.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                try { core.Logger?.LogWarning(error, "Sentinel notification-triggered primary discovery failed"); }
+                catch (Exception) { }
+            }
+
+            lock (_gate)
+            {
+                if (_disposed) return;
+                if (!_notificationPending)
+                {
+                    _notificationRediscovery = null;
+                    return;
+                }
+                _notificationPending = false;
+                if (Current is { IsRetired: false } current) Invalidate(current);
+            }
+        }
     }
 
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)
@@ -311,6 +493,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         try
         {
             await _lifetime.CancelAsync().ConfigureAwait(false);
+            Task[] monitorTasks;
+            lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values];
+            Exception? disposeError = null;
+            try { await Task.WhenAll(monitorTasks).ConfigureAwait(false); }
+            catch (Exception error) { disposeError = error; }
             await _discoveryGate.WaitAsync().ConfigureAwait(false);
             _discoveryGate.Release();
             Generation[] owned;
@@ -324,13 +511,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             // Start every owned cleanup before observing failures, then join retirement too.
             // A failing correction or connection must not strand another generation.
-            Exception? disposeError = null;
             try
             {
                 await CleanupTasks.WhenAllAsync(corrections.Select(pool => pool.DisposeAsync().AsTask())
                     .Concat(owned.Select(generation => generation.DisposeAsync().AsTask()))).ConfigureAwait(false);
             }
-            catch (Exception error) { disposeError = error; }
+            catch (Exception error) { disposeError = disposeError is null ? error : new AggregateException(disposeError, error).Flatten(); }
             try { await CleanupTasks.WhenAllAsync(owned.Select(generation => generation.Retirement)).ConfigureAwait(false); }
             catch (Exception error)
             {

@@ -14,6 +14,55 @@ public class SentinelTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    public async Task SentinelMonitorOptionsUseSentinelStaticCredentialsAndTransport()
+    {
+        var dataTls = new SslClientAuthenticationOptions { TargetHost = "redis.example" };
+        var sentinelTls = new SslClientAuthenticationOptions { TargetHost = "sentinel.example" };
+        var endpoint = new RespireEndpoint("sentinel.example", 26379);
+        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            Endpoints = [new("redis.example", 6379)],
+            Username = "data-user",
+            Password = "data-password",
+            UseTls = true,
+            TlsOptions = dataTls,
+            SentinelUsername = "sentinel-user",
+            SentinelPassword = "sentinel-password",
+            SentinelUseTls = false,
+            SentinelTlsOptions = sentinelTls,
+            SentinelPrimaryName = "mymaster",
+        }, endpoint);
+
+        await Assert.That(options.Endpoints).IsEquivalentTo([endpoint]);
+        await Assert.That(options.Username).IsEqualTo("sentinel-user");
+        await Assert.That(options.Password).IsEqualTo("sentinel-password");
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions).IsSameReferenceAs(sentinelTls);
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(options.SentinelPrimaryName).IsNull();
+    }
+
+    [Test]
+    public async Task SentinelMonitorOptionsUseSentinelProviderWithResp3()
+    {
+        var dataCredentials = new FixedCredentials("data-user", "data-password");
+        var sentinelCredentials = new FixedCredentials("sentinel-user", "sentinel-password");
+        var endpoint = new RespireEndpoint("sentinel.example", 26379);
+        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            Endpoints = [new("redis.example", 6379)],
+            CredentialProvider = dataCredentials,
+            SentinelCredentialProvider = sentinelCredentials,
+            SentinelUseTls = true,
+            SentinelPrimaryName = "mymaster",
+        }, endpoint);
+
+        await Assert.That(options.CredentialProvider).IsSameReferenceAs(sentinelCredentials);
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(options.UseTls).IsTrue();
+    }
+
+    [Test]
     [Arguments("*1\r\n$5\r\nslave\r\n")]
     [Arguments("*2\r\n$8\r\nsentinel\r\n*0\r\n")]
     [Arguments("+master\r\n")]

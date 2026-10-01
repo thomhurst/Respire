@@ -462,9 +462,13 @@ that server-side ordering obligation; a time or attempt cap could discard it bef
 server acknowledges the fence. Repeated failovers during an outage can therefore grow retained
 state until the fences succeed or client disposal aborts cleanup.
 
-This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
-remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
-monitor proactively moves an otherwise healthy connection before a failure is observed.
+Respire also subscribes to `+switch-master`, `+sdown`, and `+odown` on configured and discovered
+Sentinels after the first primary is validated. These events are hints: Respire resolves the
+service again and confirms the candidate with `ROLE` before publishing a replacement. Discovery
+uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect independently;
+client disposal stops and joins their work. Pub/Sub delivery is at-most-once, so later commands
+still use the existing reactive discovery path when a monitor misses an event. Accepted commands
+are never replayed during handoff.
 
 ## Read from replicas
 
