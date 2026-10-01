@@ -140,6 +140,18 @@ internal sealed class FakeRespServer : IAsyncDisposable
         await SendAllAsync(socket, frame);
     }
 
+    public void CloseConnections()
+    {
+        Socket[] sockets;
+        lock (_receivedCommands) sockets = _clientSockets.ToArray();
+        foreach (var socket in sockets)
+        {
+            try { socket.Close(0); }
+            catch (SocketException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
     private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> frame)
     {
         while (!frame.IsEmpty)

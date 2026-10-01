@@ -3227,6 +3227,13 @@ public sealed partial class RespireClient : IRespireClient
         bool RequiresAsking = false,
         RespireConnection? Connection = null);
 
+    internal async ValueTask<bool> HasDifferentSentinelGenerationAsync(TrackedConnectionIdentity identity)
+    {
+        if (identity.Connection is null || _core.Sentinel is not { } sentinel) return false;
+        var current = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
+        return !ReferenceEquals(current.Multiplexer, identity.Connection.Multiplexer);
+    }
+
     internal sealed class TrackedScriptExecution
     {
         internal TrackedScriptExecution(
@@ -3968,10 +3975,23 @@ public sealed partial class RespireClient : IRespireClient
             args.CopyTo(tail, 1 + keys.Length);
             if (core.Sentinel is not null && connectionIdentity.Connection is null)
                 await core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
-            var multiplexer = connectionIdentity.Connection?.Multiplexer
-                ?? (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
-                    ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
-                    : core.Multiplexer);
+            var multiplexer = connectionIdentity.Connection?.Multiplexer;
+            if (multiplexer is null)
+            {
+                if (core.Sentinel is { } sentinel)
+                {
+                    multiplexer = sentinel.Current?.Multiplexer
+                        ?? throw new RespireConnectionException("Sentinel primary is unavailable for correction execution.");
+                }
+                else if (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null)
+                {
+                    multiplexer = cluster.GetMultiplexer(connectionIdentity.Endpoint);
+                }
+                else
+                {
+                    multiplexer = core.Multiplexer;
+                }
+            }
             var command = new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]);
             try
             {

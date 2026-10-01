@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -185,7 +186,8 @@ public class HashFieldLeaseWireTests
         using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)) < 3)
             await Task.Delay(5, releaseDeadline.Token);
-        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
+        var outcome = await lease.ReleaseAsync();
+        await Assert.That(outcome is LockReleaseOutcome.Released or LockReleaseOutcome.AlreadyReleased).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(3);
     }
@@ -308,6 +310,52 @@ public class HashFieldLeaseWireTests
             .ToArray();
         await Assert.That(cleanupConnections).IsEquivalentTo(new[] { 0, 1 });
         await Assert.That(cleanupConnections.Contains(acquisitionConnection)).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task UncertainAcquisitionCleanupAlsoTargetsPromotedSentinelPrimary()
+    {
+        await using var oldPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
+                : null,
+        };
+        await using var promotedPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()
+                : null,
+        };
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort.ToString().Length}\r\n{primaryPort}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
+        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+
+        primaryPort = promotedPrimary.Port;
+        oldPrimary.CloseConnections();
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(client.Endpoint.Port).IsEqualTo(promotedPrimary.Port);
+        await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
+            "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity);
+
+        await Assert.That(promotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]

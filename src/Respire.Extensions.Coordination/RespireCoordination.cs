@@ -392,7 +392,7 @@ public sealed class RespireCoordination
         return milliseconds;
     }
 
-    private async ValueTask BestEffortReleaseHashFieldLeaseAsync(
+    internal async ValueTask BestEffortReleaseHashFieldLeaseAsync(
         RespireKey hashKey,
         RespireKey field,
         RespireLockToken owner,
@@ -408,8 +408,8 @@ public sealed class RespireCoordination
                 return;
             }
 
-            var correction = concreteClient.ExecuteOnAllConnectionsAsync(
-                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
+            var correction = CorrectHashFieldLeaseAsync(
+                concreteClient, hashKey, field, owner, connectionIdentity);
             try
             {
                 await correction.WaitAsync(timeout.Token).ConfigureAwait(false);
@@ -423,6 +423,44 @@ public sealed class RespireCoordination
         {
             // The owner-checked lease expires naturally if cleanup cannot reach Redis.
         }
+    }
+
+    private static async Task CorrectHashFieldLeaseAsync(
+        RespireClient client,
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient.TrackedConnectionIdentity connectionIdentity)
+    {
+        Exception? originalFailure = null;
+        if (connectionIdentity.Connection is not null)
+        {
+            try
+            {
+                await client.ExecuteOnAllConnectionsAsync(
+                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                originalFailure = error;
+            }
+
+            if (await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
+            {
+                // The original generation preserves FIFO ordering for its accepted acquisition.
+                // Release the same owner field on the promoted generation as well.
+                await client.ExecuteOnAllConnectionsAsync(
+                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            await client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+        }
+
+        if (originalFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
     }
 
     private static void ObserveCorrectionFailure(Task correction)
