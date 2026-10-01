@@ -155,10 +155,12 @@ internal sealed class RespireRedlockNodes
     /// deadline share one completion timestamp, so the deadline equals the start plus the
     /// duration less drift, however long the process paused between samples.
     /// </summary>
-    internal RespireRedlockLease? TryCreateLease(bool[] results, TimeSpan duration, long started)
+    internal RespireRedlockLease? TryCreateLease(bool[] results, TimeSpan duration, long started,
+        long? previousValidUntil = null)
     {
         if (results.Count(static success => success) < Quorum) return null;
         var completed = Clock.GetTimestamp();
+        if (previousValidUntil is { } previousDeadline && completed >= previousDeadline) return null;
         var validity = CalculateValidity(duration, Clock.GetElapsedTime(started, completed), _driftFactor);
         if (validity <= TimeSpan.Zero) return null;
         // ValidateDeadline proved started + duration fits; completed + validity cannot exceed it.
@@ -316,6 +318,7 @@ public sealed class RespireRedlock : IAsyncDisposable
         try
         {
             if (IsReleased) return false;
+            var previousLease = Volatile.Read(ref _lease);
             var started = _nodes.Clock.GetTimestamp();
             _nodes.ValidateDeadline(started, duration, nameof(duration));
             bool[] renewed;
@@ -331,7 +334,7 @@ public sealed class RespireRedlock : IAsyncDisposable
                 throw;
             }
 
-            if (_nodes.TryCreateLease(renewed, duration, started) is { } lease)
+            if (_nodes.TryCreateLease(renewed, duration, started, previousLease.ValidUntil) is { } lease)
             {
                 Volatile.Write(ref _lease, lease);
                 return true;
