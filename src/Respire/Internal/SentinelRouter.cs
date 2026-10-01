@@ -43,7 +43,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
     // budget wait on it, because a published generation proves Sentinel discovery works again.
     private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private string? _masterDownKey;
+    private readonly string _masterDownKey = "master-down:" + core.Options.SentinelPrimaryName;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -434,8 +434,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // +odown text carries changing quorum counts; key master-down hints by service so
                 // repeated reports of one outage coalesce while discovery is active.
-                QueueNotificationRediscovery(new SentinelHint(
-                    _masterDownKey ??= "master-down:" + core.Options.SentinelPrimaryName, MustRediscover: true));
+                QueueNotificationRediscovery(new SentinelHint(_masterDownKey, MustRediscover: true));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);

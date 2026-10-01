@@ -573,6 +573,7 @@ public class SentinelRoutingTests
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
         var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var discoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         var queued = router.QueuedNotificationCount;
         sentinel.SuppressReply = command => command == discovery;
 
@@ -580,6 +581,7 @@ public class SentinelRoutingTests
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {promoted.Port}");
         await WaitForQueuedNotificationsAsync(router, queued + 1);
+        await WaitForCommandCountAsync(sentinel, discovery, discoveries + 1);
         using var retiredTimeout = new CancellationTokenSource(Limit);
         while (!current.IsRetired) await Task.Delay(10, retiredTimeout.Token);
         await Assert.That(current.IsRetired).IsTrue();
@@ -1664,6 +1666,7 @@ public class SentinelRoutingTests
         });
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Protocol = RespProtocol.Resp3 });
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
         using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
         await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
     }
@@ -1681,6 +1684,7 @@ public class SentinelRoutingTests
         await using var primary = Primary((_, command) => command == "EVAL" ? Encoding.ASCII.GetBytes(reply) : null);
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
         using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
         await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
     }
@@ -2488,6 +2492,7 @@ public class SentinelRoutingTests
         if (rediscovery)
         {
             await client.PingAsync();
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
             var generation = client.Core.Sentinel!.Current!;
             using var error = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in error);

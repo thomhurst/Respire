@@ -33,8 +33,9 @@ public class SentinelFailoverIntegrationTests
         client.Endpoint.Should().Be(oldPrimary);
         (await client.SetAsync("sentinel-failover:before", "written", cancellationToken: deadline.Token)).Should().BeTrue();
 
-        // Allow the router supervisor to attach its subscriptions to discovered Sentinels.
-        await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
+        var sentinelRouter = client.Core.Sentinel!;
+        while (sentinelRouter.SuccessfulMonitorSubscriptions < fixture.SentinelEndpoints.Count)
+            await Task.Delay(20, deadline.Token);
 
         await fixture.StopDataNodeAsync(0, deadline.Token);
         while (!EndpointIs(client, promotedPrimary)) await Task.Delay(100, deadline.Token);
