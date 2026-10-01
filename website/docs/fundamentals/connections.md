@@ -297,13 +297,27 @@ An alias does not change an existing connection's TLS certificate/SNI name. Conf
 that explicit value remains authoritative. Configured seed connections are reused when
 topology identifies their aliases.
 
-Cluster topology refresh runs every 60 seconds by default. Set
-`ClusterTopologyRefreshInterval` to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to
-disable periodic refresh. The router still refreshes after primary connection loss (at most once
-per second while a primary keeps failing to reconnect) and coalesces refresh work triggered by
-redirects or concurrent `READONLY` recoveries. Refresh uses one bounded discovery round and keeps
-the last published slot map when discovery fails. Replica endpoints, node IDs, and aliases from
-`CLUSTER SLOTS` stay current in router metadata; command routing still uses primaries.
+Cluster topology refresh runs every 60 seconds by default, which is a behavior change for
+existing Cluster clients. The background worker starts after the first connection, so `Create`
+stays lazy. Each periodic refresh sends one `CLUSTER SLOTS` to one node, and the interval is
+shortened by up to 10% of random jitter so that many clients started together do not refresh in
+step. On large fleets, a longer interval reduces `CLUSTER SLOTS` load.
+
+Set `ClusterTopologyRefreshInterval` to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to
+disable the periodic timer. This disables only the timer. The router still refreshes when:
+
+- a primary connection is lost (at most once per second while a primary keeps failing to reconnect);
+- a `MOVED` redirect arrives (debounced for 5 seconds from the first redirect, so a stream of
+  redirects cannot postpone the refresh);
+- a refresh failed (retried with backoff from 5 to 60 seconds until one succeeds).
+
+These timings are fixed. A redirect-driven refresh reuses a refresh that succeeded within the last
+5 seconds. Refresh work triggered by redirects, disconnects, or concurrent `READONLY` recoveries is
+coalesced into one flight. One refresh pass is bounded to 60 seconds whatever the interval, tries
+connected nodes and configured seeds before other known nodes, and keeps the last published slot
+map when discovery fails. Replica endpoints, node IDs, and aliases from `CLUSTER SLOTS` stay current
+in router metadata and are used as refresh fallbacks when every primary and seed fails; command
+routing still uses primaries (reading from replicas is out of scope).
 
 ## Redis Sentinel
 

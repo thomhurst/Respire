@@ -21,16 +21,18 @@ public class ClusterTopologyRefreshTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(50),
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
 
         await Assert.That(seed.ReceivedCommands).IsEmpty();
         await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
 
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
         var timer = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(timer.DueTime).IsLessThanOrEqualTo(TimeSpan.FromMilliseconds(50));
+        clock.Advance(TimeSpan.FromMilliseconds(50));
         timer.Fire();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
@@ -40,40 +42,50 @@ public class ClusterTopologyRefreshTests
     [Test]
     public async Task PeriodicDeadlineInterruptsMovedDebounce()
     {
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            return Topology(seed.Port, seed.Port);
+        };
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(50),
-            Endpoints = [new RespireEndpoint("127.0.0.1", 1)],
+            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(500),
+            ClusterTopologyRefreshClock = clock,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        var clock = new ManualTopologyRefreshClock();
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
-        var method = typeof(ClusterRouter).GetMethod("WaitForTopologyRefreshDelayAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var wait = (Task<bool>)method.Invoke(router, [5_000, TimeSpan.FromMilliseconds(50)])!;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        var periodic = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var periodic = await clock.NextTimerAsync(TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(2));
-        periodic.Fire();
+        router.SignalMovedTopologyRefresh();
+        var rearmed = await clock.NextTimerAsync(periodic.DueTime).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        rearmed.Fire();
 
-        await Assert.That(await wait).IsTrue();
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
     public async Task LongRefreshIntervalUsesTimerSafeSegments()
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = TimeSpan.FromDays(90),
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        var clock = new ManualTopologyRefreshClock();
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         var firstSegment = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -102,17 +114,17 @@ public class ClusterTopologyRefreshTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = new ManualTopologyRefreshClock(),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = new ManualTopologyRefreshClock();
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         router.SignalTopologyRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalTopologyRefresh(force: true);
         await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         await Task.Delay(50);
         router.SignalTopologyRefresh(force: true);
         await fourthRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -123,31 +135,43 @@ public class ClusterTopologyRefreshTests
     {
         var refreshes = 0;
         var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thirdRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
             if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref refreshes) == 2) secondRefresh.TrySetResult();
+            var count = Interlocked.Increment(ref refreshes);
+            if (count == 2) secondRefresh.TrySetResult();
+            if (count >= 3) thirdRefresh.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = new ManualTopologyRefreshClock();
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         router.SignalPrimaryDisconnectRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalPrimaryDisconnectRefresh();
         router.SignalPrimaryDisconnectRefresh();
-        await Task.Delay(200);
-
+        var spacing = await clock.NextTimerAsync(TimeSpan.FromSeconds(1)).WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
         await Assert.That(Volatile.Read(ref refreshes)).IsEqualTo(2);
+
+        // The suppressed disconnects are not lost: one trailing refresh runs when the spacing ends,
+        // even with the periodic timer disabled.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        spacing.Fire();
+        await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
+        await Assert.That(Volatile.Read(ref refreshes)).IsEqualTo(3);
     }
 
     [Test]
@@ -165,28 +189,28 @@ public class ClusterTopologyRefreshTests
             if (count >= 3) thirdRefresh.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
+        // The manual clock never ends the MOVED debounce on its own.
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        // The manual clock never ends the MOVED debounce on its own.
-        var clock = new ManualTopologyRefreshClock();
-        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         router.SignalPrimaryDisconnectRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
-        await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
-        var lastSignal = typeof(ClusterRouter).GetField("_lastPrimaryDisconnectRefreshSignal",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        lastSignal.SetValue(router, System.Diagnostics.Stopwatch.GetTimestamp());
-        // Force the spacing branch while the worker is known to be inside MOVED debounce.
+        router.SignalMovedTopologyRefresh();
+        _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
+        // Inside the spacing window: the worker re-arms for the end of the window, not the debounce.
         router.SignalPrimaryDisconnectRefresh();
+        var spacing = await clock.NextTimerAsync(TimeSpan.FromSeconds(1)).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        spacing.Fire();
 
         await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
@@ -209,24 +233,24 @@ public class ClusterTopologyRefreshTests
             }
             return null;
         };
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        var clock = new ManualTopologyRefreshClock();
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalTopologyRefresh(force: true);
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         var secondDelayTask = clock.NextTimerAsync(TimeSpan.FromSeconds(5));
         var nextEvent = await Task.WhenAny(secondDelayTask, unexpectedRefresh.Task).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(ReferenceEquals(nextEvent, secondDelayTask)).IsTrue();
@@ -250,25 +274,25 @@ public class ClusterTopologyRefreshTests
             if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        var clock = new ManualTopologyRefreshClock();
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
         clock.Advance(TimeSpan.FromSeconds(1));
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(4)).WaitAsync(TimeSpan.FromSeconds(2));
         clock.Advance(TimeSpan.FromSeconds(1));
-        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        router.SignalMovedTopologyRefresh();
         var finalDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(3)).WaitAsync(TimeSpan.FromSeconds(2));
         clock.Advance(TimeSpan.FromSeconds(3));
         finalDelay.Fire();
@@ -279,16 +303,16 @@ public class ClusterTopologyRefreshTests
     public async Task WatchedMovedRouteSchedulesTopologyRefresh()
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
+            ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        var clock = new ManualTopologyRefreshClock();
         var router = client.Core.Cluster!;
-        router.TopologyRefreshClock = clock;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
         var connection = await router.GetConnectionAsync(0, CancellationToken.None, discovery: null);
 
@@ -439,16 +463,54 @@ public class ClusterTopologyRefreshTests
 
         var buildCandidates = typeof(ClusterRouter).GetMethod("GetTopologyRefreshCandidates",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var candidates = ((System.Collections.IEnumerable)buildCandidates.Invoke(router, null)!)
-            .Cast<RespireConnectionMultiplexer>().ToList();
-        var orderCandidates = typeof(ClusterRouter).GetMethod("OrderTopologyRefreshCandidates",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-        var ordered = ((System.Collections.IEnumerable)orderCandidates.Invoke(null, [candidates])!)
-            .Cast<RespireConnectionMultiplexer>().ToList();
-        var connectedCount = ordered.Count(node => node.IsConnected && !node.IsRetired);
-        await Assert.That(connectedCount).IsEqualTo(2);
-        await Assert.That(ordered.Take(connectedCount).All(node => node.IsConnected && !node.IsRetired)).IsTrue();
-        await Assert.That(ordered.Skip(connectedCount).All(node => !node.IsConnected || node.IsRetired)).IsTrue();
+        var candidates = (List<ClusterRouter.TopologyRefreshCandidate>)buildCandidates.Invoke(router, null)!;
+        var ordered = ClusterRouter.OrderTopologyRefreshCandidates(candidates);
+
+        // One connected node first, then the disconnected configured seed, so several stalled
+        // connected nodes cannot use up the deadline before the seed is tried. The remaining
+        // connected node follows, and lazy fallbacks go last.
+        await Assert.That(ordered.Count).IsEqualTo(3);
+        await Assert.That(ordered[0].IsConnected).IsTrue();
+        await Assert.That(ordered[1].IsConfiguredSeed).IsTrue();
+        await Assert.That(ordered[1].Endpoint).IsEqualTo(seedEndpoint);
+        await Assert.That(ordered[1].IsConnected).IsFalse();
+        await Assert.That(ordered[2].IsConnected).IsTrue();
+    }
+
+    [Test]
+    public async Task HealthyRefreshDoesNotCreateReplicaTransports()
+    {
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var replicaEndpoint = new RespireEndpoint("127.0.0.1", 1);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            return Topology(seed.Port, replicaEndpoint.Port);
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        await Assert.That(router.GetReplicas().Single().Endpoint).IsEqualTo(replicaEndpoint);
+
+        router.SignalTopologyRefresh(force: true);
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+        lock (router.NodeStateGate)
+        {
+            // A connected primary answered first, so no transport exists for the replica or its alias.
+            if (identities.TryGet(replicaEndpoint) is not null || identities.TryGet(new RespireEndpoint("replica", 1)) is not null)
+                throw new InvalidOperationException("A healthy refresh created a replica transport.");
+        }
     }
 
     [Test]
@@ -522,51 +584,82 @@ public class ClusterTopologyRefreshTests
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
-        var refreshTask = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var flightCancellation = new CancellationTokenSource();
-        var flightType = typeof(ClusterRouter).GetNestedType(
-            "ReadOnlyRefreshFlight", System.Reflection.BindingFlags.NonPublic)!;
-        var flight = Activator.CreateInstance(flightType,
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
-            binder: null,
-            args: [flightCancellation, ClusterHash.GetSlot("key"), new RespireEndpoint("127.0.0.1", seed.Port)],
-            culture: null)!;
-        flightType.GetField("SharedTask", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .SetValue(flight, refreshTask.Task);
-        flightType.GetField("Waiters", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .SetValue(flight, 1);
-        var sharedGate = typeof(ClusterRouter).GetField("_sharedRefreshGate",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
-        lock (sharedGate)
-        {
-            typeof(ClusterRouter).GetField("_sharedRefreshTask",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .SetValue(router, refreshTask.Task);
-            typeof(ClusterRouter).GetField("_readOnlyRefreshFlight",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .SetValue(router, flight);
-        }
+        var flight = ClusterRouter.RefreshFlight.ForReadOnly(ClusterHash.GetSlot("key"),
+            new RespireEndpoint("127.0.0.1", seed.Port), flightCancellation, discoveryLease: null);
+        flight.Waiters = 1;
+        var sharedGate = SharedRefreshGate(router);
+        lock (sharedGate) SharedRefreshField.SetValue(router, flight);
 
         router.SignalTopologyRefresh(force: true);
-        var waiters = flightType.GetField("Waiters", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
-            while ((int)waiters.GetValue(flight)! < 2) await Task.Delay(1, timeout.Token);
+            while (Volatile.Read(ref flight.Waiters) < 2) await Task.Delay(1, timeout.Token);
+        await Task.Delay(50);
+        // The READONLY repair does not answer a topology request.
+        await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(1);
+
         lock (sharedGate)
         {
-            flightType.GetField("Completed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .SetValue(flight, true);
-            typeof(ClusterRouter).GetField("_sharedRefreshTask",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .SetValue(router, null);
-            typeof(ClusterRouter).GetField("_readOnlyRefreshFlight",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .SetValue(router, null);
+            flight.Completed = true;
+            SharedRefreshField.SetValue(router, null);
         }
-        refreshTask.SetResult(true);
+        flight.Completion.SetResult(true);
 
         await fullRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(2);
     }
+
+    [Test]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    public async Task CancelledReadOnlyWaiterAbandonsFlightOnlyWhenLast(int waiters, bool expectAbandoned)
+    {
+        var policy = new RespireReconnectPolicy { InitialDelay = TimeSpan.Zero, MaxAttempts = 3 };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", 1)],
+            ReconnectPolicy = policy,
+        });
+        var router = client.Core.Cluster!;
+        using var flightCancellation = new CancellationTokenSource();
+        var flight = ClusterRouter.RefreshFlight.ForReadOnly(0, new RespireEndpoint("127.0.0.1", 1),
+            flightCancellation, discoveryLease: null);
+        // This caller is one of the waiters.
+        flight.Waiters = waiters;
+        var sharedGate = SharedRefreshGate(router);
+        lock (sharedGate) SharedRefreshField.SetValue(router, flight);
+        var round = new ClusterRouter.DiscoveryRound(router, policy);
+        using var caller = new CancellationTokenSource();
+        await caller.CancelAsync();
+
+        var awaitShared = typeof(ClusterRouter).GetMethod("AwaitSharedRefreshAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var wait = (Task<bool>)awaitShared.Invoke(router, [flight, caller.Token, round])!;
+        await Assert.That(async () => await wait).Throws<OperationCanceledException>();
+
+        bool published;
+        lock (sharedGate) published = ReferenceEquals(SharedRefreshField.GetValue(router), flight);
+        await Assert.That(flight.Abandoned).IsEqualTo(expectAbandoned);
+        await Assert.That(flightCancellation.IsCancellationRequested).IsEqualTo(expectAbandoned);
+        // An abandoned flight never stays joinable.
+        await Assert.That(published).IsEqualTo(!expectAbandoned);
+
+        // A surviving flight owns the shared outcome; an abandoned one leaves it to this caller.
+        var canceled = new OperationCanceledException(caller.Token);
+        round.RecordCommandFailure(canceled, discoveryPending: true, callerToken: caller.Token);
+        await Assert.That(ReferenceEquals(round.TerminalError, canceled)).IsEqualTo(expectAbandoned);
+        round.Finish();
+    }
+
+    private static readonly System.Reflection.FieldInfo SharedRefreshField = typeof(ClusterRouter).GetField(
+        "_sharedRefresh", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+    private static object SharedRefreshGate(ClusterRouter router) => typeof(ClusterRouter).GetField(
+        "_sharedRefreshGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+        .GetValue(router)!;
 
     [Test]
     public async Task IncompleteRefreshKeepsPublishedTopologyAndReplicaMetadata()

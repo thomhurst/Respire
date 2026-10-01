@@ -112,6 +112,22 @@ public class ExceptionErgonomicsTests
     }
 
     [Test]
+    public async Task Create_WithInfiniteCommandTimeout_ThrowsConfigurationException()
+    {
+        // Topology refresh derives per-candidate deadlines from CommandTimeout ?? ConnectTimeout,
+        // so both must stay positive and finite.
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new RespireEndpoint("localhost")],
+            CommandTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task Create_WithInfiniteClusterTopologyRefreshInterval_DisablesPeriodicRefresh()
     {
         var options = new RespireOptions

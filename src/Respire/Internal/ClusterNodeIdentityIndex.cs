@@ -77,6 +77,12 @@ internal sealed class ClusterNodeIdentityIndex
         ValidateInvariants();
     }
 
+    internal RespireConnectionMultiplexer? TryGet(RespireEndpoint endpoint)
+    {
+        AssertAccess();
+        return _nodes.TryGetValue(endpoint, out var existing) ? existing : null;
+    }
+
     internal RespireConnectionMultiplexer GetOrCreate(RespireEndpoint endpoint)
     {
         AssertAccess();

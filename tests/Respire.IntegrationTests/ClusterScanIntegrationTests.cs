@@ -114,7 +114,30 @@ public class ClusterScanIntegrationTests
         internal string Host => container.Hostname;
         internal int Port(int node) => container.GetMappedPublicPort(basePort + node);
 
+        // The probe listeners release their ports before Docker binds them, so another process can
+        // take one in between. Retry on a fresh range when the bind fails rather than failing the test.
         internal static async Task<ScanCluster> StartAsync()
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try { return await StartOnceAsync(); }
+                catch (Exception error) when (attempt < 3 && IsPortConflict(error)) { }
+            }
+        }
+
+        private static bool IsPortConflict(Exception error)
+        {
+            for (var current = error; current is not null; current = current.InnerException)
+            {
+                if (current.Message.Contains("port is already allocated", StringComparison.OrdinalIgnoreCase)
+                    || current.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
+                    || current.Message.Contains("bind", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        private static async Task<ScanCluster> StartOnceAsync()
         {
             var basePort = FindAvailableClusterPorts();
             var ports = Enumerable.Range(basePort, 6).ToArray();
@@ -124,7 +147,7 @@ public class ClusterScanIntegrationTests
                 .WithPortBinding(ports[4], ports[4]).WithPortBinding(ports[5], ports[5])
                 .WithCreateParameterModifier(parameters =>
                 {
-                    foreach (var binding in parameters.HostConfig.PortBindings.Values.SelectMany(static bindings => bindings))
+                    foreach (var binding in parameters.HostConfig!.PortBindings.Values.SelectMany(static bindings => bindings))
                     {
                         binding.HostIP = "127.0.0.1";
                     }

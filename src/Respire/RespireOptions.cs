@@ -212,10 +212,23 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
-    /// <summary>Interval for background Redis Cluster topology refresh. Null, <see cref="TimeSpan.Zero"/>, or
-    /// <see cref="Timeout.InfiniteTimeSpan"/> disables periodic refresh.</summary>
-    /// <remarks>Primary disconnects and <c>MOVED</c> redirects still trigger refreshes when the periodic timer is disabled.</remarks>
+    /// <summary>Interval for background Redis Cluster topology refresh. Defaults to 60 seconds. Null,
+    /// <see cref="TimeSpan.Zero"/>, or <see cref="Timeout.InfiniteTimeSpan"/> disables the periodic timer;
+    /// other negative values are rejected.</summary>
+    /// <remarks>
+    /// <para>The worker starts after the client first connects, so <c>Create</c> stays lazy. Each periodic
+    /// refresh sends one <c>CLUSTER SLOTS</c> to a single node, and the interval is shortened by up to 10%
+    /// of random jitter so many clients do not refresh in step.</para>
+    /// <para>Disabling the timer disables only periodic refresh. Primary disconnects (at most one refresh
+    /// per second), <c>MOVED</c> redirects (debounced for 5 seconds) and failed-refresh retries (backoff
+    /// from 5 to 60 seconds) still refresh the topology. These timings are fixed. A single refresh pass
+    /// is bounded to 60 seconds regardless of this interval, and a failed pass keeps the last published
+    /// slot map.</para>
+    /// </remarks>
     public TimeSpan? ClusterTopologyRefreshInterval { get; init; } = TimeSpan.FromSeconds(60);
+
+    // Test seam: drives the Cluster topology refresh schedule, debounce and discovery deadlines.
+    internal TimeProvider ClusterTopologyRefreshClock { get; init; } = TimeProvider.System;
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
