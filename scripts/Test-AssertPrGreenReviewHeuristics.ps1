@@ -1181,6 +1181,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks bold legacy Claude review heading with trailing text'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "**Review** — findings`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'allows Claude review answered by a later human reply'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),

@@ -364,8 +364,7 @@ function Test-IsClaudeReviewComment {
     if ($firstLine.Count -eq 0) { return $false }
 
     $title = $firstLine[0].Trim() -replace '^#{1,3}\s*', ''
-    $title = $title -replace '^(?:\*\*|__)\s*', '' -replace '\s*(?:\*\*|__)\s*$', ''
-    return $title -match '(?i)^Review(?:\s|:|$)'
+    return $title -match '(?i)^(?:\*\*|__)?\s*Review(?:\*\*|__)?(?:\s|:|$)'
 }
 
 # A reply only answers a blocking Claude review when it carries this marker and
