@@ -756,23 +756,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return result;
     }
 
-    private async ValueTask<RespireClient?> GetTrackedWireAsync(CancellationToken cancellationToken)
-    {
-        if (_wireClient is not { } wire)
-        {
-            return null;
-        }
-
-        if (wire.RequiresReliableCorrectionOrdering(cancellationToken))
-        {
-            await wire.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-            return wire;
-        }
-
-        return await wire.TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false)
-            ? wire
-            : null;
-    }
+    private ValueTask<RespireClient?> GetTrackedWireAsync(CancellationToken cancellationToken)
+        => _wireClient is { } wire
+            ? wire.GetCorrectionTrackingClientAsync(cancellationToken)
+            : default;
 
     private ValueTask CapRefreshedTtlAsync(
         string key,

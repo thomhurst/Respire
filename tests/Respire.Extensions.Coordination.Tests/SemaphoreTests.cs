@@ -38,11 +38,14 @@ public class SemaphoreTests(RedisTestContainer fixture)
         await using var first = await new RespireSemaphore(client, key, capacity: 2).TryAcquireAsync();
         await using var second = await new RespireSemaphore(client, key, capacity: 2).TryAcquireAsync();
         var changed = new RespireSemaphore(client, key, capacity: 1);
-        var error = await Assert.That(async () => await changed.TryAcquireAsync()).Throws<RespireServerException>();
-        await Assert.That(error!.Message).Contains("capacity cannot change while permits are active");
+        var error = await Assert.That(async () => await changed.TryAcquireAsync())
+            .Throws<RespireSemaphoreCapacityMismatchException>();
+        await Assert.That(error!.RequestedCapacity).IsEqualTo(1);
+        await Assert.That(error.InnerException).IsTypeOf<RespireServerException>();
+        await Assert.That(error.InnerException!.Message).Contains("capacity cannot change while permits are active");
 
         await first.Permit.ReleaseAsync();
-        await Assert.That(async () => await changed.TryAcquireAsync()).Throws<RespireServerException>();
+        await Assert.That(async () => await changed.TryAcquireAsync()).Throws<RespireSemaphoreCapacityMismatchException>();
         await second.Permit.ReleaseAsync();
         await using var afterDrain = await changed.TryAcquireAsync();
         await Assert.That(afterDrain.Acquired).IsTrue();

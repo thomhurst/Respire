@@ -3220,6 +3220,22 @@ public sealed partial class RespireClient : IRespireClient
     internal bool RequiresReliableCorrectionOrdering(CancellationToken cancellationToken)
         => cancellationToken.CanBeCanceled || _core.Options.CommandTimeout is not null;
 
+    /// <summary>
+    /// Returns this client when uncertain script outcomes can be fenced before a corrective
+    /// command: required whenever the command can time out or be canceled, and opportunistic
+    /// otherwise. Returns null when ordering cannot be established without that requirement.
+    /// </summary>
+    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)
+    {
+        if (RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            return this;
+        }
+
+        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;
+    }
+
     internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
     {
         if (_core.Cluster is not null)
@@ -3513,12 +3529,12 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException(requireIdentity ? "CLIENT ID / CLIENT KILL" : "script", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 multiplexer.CaptureConnectionWait());
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException(requireIdentity ? "CLIENT ID / CLIENT KILL" : "script", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
 
@@ -3547,12 +3563,12 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
 
@@ -3580,14 +3596,19 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
+
+    // Names the operation in a tracked-connection timeout. Without identity capture only the script
+    // itself was waiting, so ACL guidance for CLIENT ID / CLIENT KILL would mislead.
+    private static string TrackedConnectionOperation(bool requireIdentity)
+        => requireIdentity ? "CLIENT ID / CLIENT KILL" : "script";
 
     private static TrackedConnectionIdentity GetTrackedConnectionIdentity(
         RespireConnection connection,

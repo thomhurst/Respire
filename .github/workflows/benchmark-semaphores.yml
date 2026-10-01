@@ -48,15 +48,30 @@ jobs:
         run: |
           set -euo pipefail
           # Keep shared feature sources identical across phases so each revision builds.
+          # The copied semaphore source compiles against baseline internals (for example
+          # RespireLock.NewToken and the tracked-script types); the shims below add only the
+          # client members that this PR introduces. Baseline phases benchmark the standard lease,
+          # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
-          # Add baseline-compatible overloads used by the shared candidate semaphore source.
-          # Baseline benchmark phases keep the base revision's client implementation.
           python3 - <<'PY'
           from pathlib import Path
 
           path = Path('baseline/src/Respire/RespireClient.cs')
           source = path.read_text()
+          correction_marker = '    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()\n'
+          correction_shim = ('    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)\n'
+                             '    {\n'
+                             '        if (RequiresReliableCorrectionOrdering(cancellationToken))\n'
+                             '        {\n'
+                             '            await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);\n'
+                             '            return this;\n'
+                             '        }\n'
+                             '        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;\n'
+                             '    }\n\n')
+          assert source.count(correction_marker) == 1
+          source = source.replace(correction_marker, correction_shim + correction_marker, 1)
+          assert source.count('GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)') == 1
           marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
           shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')
@@ -124,6 +139,7 @@ jobs:
           a, candidate, b = [phases[phase][standard] for phase in ('baseline-a', 'candidate', 'baseline-b')]
           am, cm, bm = [case['Statistics']['Mean'] for case in (a, candidate, b)]
           lines += ['', f'Standard lease deltas: candidate/A {(cm/am-1)*100:+.2f}%; candidate/B {(cm/bm-1)*100:+.2f}%; control drift {(bm/am-1)*100:+.2f}%.',
+                    '', 'Baseline phases run the base revision client plus compatibility shims that let the copied semaphore source compile; the shims are not on the measured path.',
                     '', 'Process CPU includes warmup, calibration and background work. Raw launch measurements remain in the JSON artifacts.']
           report = '\n'.join(lines) + '\n'
           Path('results/comparison.md').write_text(report)

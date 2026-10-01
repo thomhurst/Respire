@@ -342,8 +342,94 @@ public class SemaphoreWireTests
             .TryAcquireAsync(cancellationToken: cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(3)).IsTrue();
-        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            .IsEqualTo(2);
+        await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(2);
+
+        // The permit has no expiry, so its release keeps retrying in the background after the
+        // caller has seen the cancellation.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (EvalCommands(server).Length < 3) await Task.Delay(10, deadline.Token);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CapacityMismatchSkipsCleanupAndThrowsTypedException()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            "-ERR semaphore capacity cannot change while permits are active\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var error = await Assert.That(async () => await new RespireSemaphore(client, "{capacity}:mismatch", capacity: 2)
+                .TryAcquireAsync())
+            .Throws<RespireSemaphoreCapacityMismatchException>();
+
+        await Assert.That(error!.RequestedCapacity).IsEqualTo(2);
+        await Assert.That(error.InnerException).IsTypeOf<RespireServerException>();
+        // The error reply is definite: the script refused before adding a permit.
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task OtherAcquireErrorRepliesPropagateWithoutCleanup()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            "-OOM command not allowed when used memory > 'maxmemory'\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var error = await Assert.That(async () => await new RespireSemaphore(client, "{capacity}:oom", capacity: 1)
+                .TryAcquireAsync())
+            .ThrowsExactly<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("OOM");
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisposalCleanupOutlivesTheOldExpiryWhileARenewalIsPending()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            // Answer only the acquire. The renewal and every release stay unanswered.
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) >= 2,
+        };
+        var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        try
+        {
+            var permit = (await new RespireSemaphore(client, "{dispose}:pending-renewal", capacity: 1)
+                .TryAcquireAsync(TimeSpan.FromMilliseconds(200))).Permit;
+            var renewal = permit.ResetExpiryAsync(null).AsTask();
+            using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+                while (Volatile.Read(ref evalCount) < 2) await Task.Delay(10, sent.Token);
+
+            // Disposal stops waiting for the renewal after one second, when the old 200 ms estimate
+            // has run out. Redis may already have made the permit non-expiring, so release is still sent.
+            await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+            using (var released = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, released.Token);
+            await Assert.That(renewal.IsCompleted).IsFalse();
+
+            await client.DisposeAsync();
+            await Assert.That(async () => await renewal.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsException();
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
     }
 
     [Test]
