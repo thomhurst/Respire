@@ -38,10 +38,13 @@ public sealed class RespireCoordination
         return redis.call('HGET', KEYS[1], 'remaining')
         """);
 
-    internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create("""
+    private const string ReadCountdownLatchSource = """
         local values = redis.call('HMGET', KEYS[1], 'generation', 'remaining', 'channel')
         return {values[1] or '', values[2] or '-1', values[3] or ''}
-        """, readOnly: true);
+        """;
+
+    internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create(ReadCountdownLatchSource, readOnly: true);
+    private static readonly RespireScript ReadCountdownLatchCompatibility = RespireScript.Create(ReadCountdownLatchSource);
 
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
@@ -60,8 +63,7 @@ public sealed class RespireCoordination
     {
         cancellationToken.ThrowIfCancellationRequested();
         var snapshot = key.Snapshot();
-        using var result = await _client.Scripts.ExecuteAsync(
-            ReadCountdownLatch, [snapshot], cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var result = await ReadLatchStateAsync(_client, snapshot, cancellationToken).ConfigureAwait(false);
         var generation = result[0].AsString();
         var remainingText = result[1].AsString();
         var channel = result[2].AsString();
@@ -72,6 +74,27 @@ public sealed class RespireCoordination
             throw new RespireProtocolException("Redis returned invalid countdown-latch state.");
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
+
+    internal static async ValueTask<RespireResult> ReadLatchStateAsync(
+        IRespireClient client, RespireKey key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.Scripts.ExecuteAsync(ReadCountdownLatch, [key], cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RespireServerException error) when (IsUnsupportedReadOnlyScriptCommand(error))
+        {
+            return await client.Scripts.ExecuteAsync(ReadCountdownLatchCompatibility, [key], cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsUnsupportedReadOnlyScriptCommand(RespireServerException error)
+        => error.Code == "ERR"
+            && error.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase)
+            && (error.Message.Contains("EVALSHA_RO", StringComparison.OrdinalIgnoreCase)
+                || error.Message.Contains("EVAL_RO", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Atomically replaces the latch state with a fresh generation and count.</summary>
     /// <param name="key">The latch key, before the client's key prefix.</param>

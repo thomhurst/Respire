@@ -55,9 +55,12 @@ public sealed class RespireCountdownLatch
 
     private async ValueTask<(string Generation, long Remaining)> ReadStateAsync(CancellationToken cancellationToken)
     {
-        using var result = await _client.Scripts.ExecuteAsync(RespireCoordination.ReadCountdownLatch,
-            [_key], cancellationToken: cancellationToken).ConfigureAwait(false);
-        return (result[0].AsString(),
-            long.TryParse(result[1].AsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) ? count : -1);
+        using var result = await RespireCoordination.ReadLatchStateAsync(_client, _key, cancellationToken).ConfigureAwait(false);
+        var generation = result[0].AsString();
+        var remainingText = result[1].AsString();
+        var validRemaining = long.TryParse(remainingText, NumberStyles.None, CultureInfo.InvariantCulture, out var remaining);
+        if (generation == _generation && (!validRemaining || remaining < 0))
+            throw new RespireProtocolException("Redis returned invalid countdown-latch state.");
+        return (generation, validRemaining ? remaining : -1);
     }
 }

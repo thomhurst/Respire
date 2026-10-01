@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Respire.Testing.Containers;
+using Respire.Tests.Networking;
 
 namespace Respire.Extensions.Coordination.Tests;
 
@@ -135,6 +137,8 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         var username = $"latch-no-publish-{Guid.NewGuid():N}";
         const string password = "latch-test-password";
         (await admin.ExecuteAsync("ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-publish")).Dispose();
+        using (var dryRun = await admin.ExecuteAsync("ACL", "DRYRUN", username, "PUBLISH", "channel", "payload"))
+            await Assert.That(dryRun.AsString().Contains("publish", StringComparison.OrdinalIgnoreCase)).IsTrue();
         RespireClient? restricted = null;
         try
         {
@@ -150,7 +154,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             RespireServerException? resetError = null;
             try { _ = await coordination.ResetCountdownLatchAsync(key, 2); }
             catch (RespireServerException error) { resetError = error; }
-            await Assert.That(resetError?.Code).IsEqualTo("ERR");
+            await Assert.That(IsPublishPermissionError(resetError)).IsTrue();
 
             var stillCurrent = await new RespireCoordination(admin).JoinCountdownLatchAsync(key);
             await Assert.That(stillCurrent?.Generation).IsEqualTo(original.Generation);
@@ -158,7 +162,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             RespireServerException? countDownError = null;
             try { _ = await restrictedLatch!.CountDownAsync(); }
             catch (RespireServerException error) { countDownError = error; }
-            await Assert.That(countDownError?.Code).IsEqualTo("ERR");
+            await Assert.That(IsPublishPermissionError(countDownError)).IsTrue();
             using var remaining = await admin.ExecuteAsync("HGET", key, "remaining");
             await Assert.That(remaining.AsString()).IsEqualTo("1");
         }
@@ -167,6 +171,17 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             if (restricted is not null) await restricted.DisposeAsync();
             (await admin.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
         }
+    }
+
+    [Test]
+    public async Task WaitRejectsInvalidRemainingCountForCurrentGeneration()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var latch = await new RespireCoordination(admin).CreateCountdownLatchAsync(key, 1);
+        (await admin.ExecuteAsync("HSET", key, "remaining", "-1")).Dispose();
+
+        await Assert.That(async () => await latch.WaitAsync()).Throws<RespireProtocolException>();
     }
 
     private static ActivityListener SubscribeConfirmationListener(
@@ -187,6 +202,11 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         return listener;
     }
 
+    private static bool IsPublishPermissionError(RespireServerException? error)
+        => error is { Code: "ERR" }
+            && error.Message.Contains("script", StringComparison.OrdinalIgnoreCase)
+            && error.Message.Contains("can't run this command", StringComparison.OrdinalIgnoreCase);
+
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
     {
         Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
@@ -194,4 +214,31 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     });
 
     private static RespireKey Key() => $"{{{Guid.NewGuid():N}}}:latch";
+}
+
+public class CountdownLatchCompatibilityTests
+{
+    [Test]
+    public async Task JoinFallsBackWhenReadOnlyScriptsAreUnsupported()
+    {
+        const string generation = "0123456789abcdef0123456789abcdef";
+        const string channel = "respire:latch:compat";
+        var state = Encoding.ASCII.GetBytes(
+            $"*3\r\n$32\r\n{generation}\r\n$1\r\n1\r\n${channel.Length}\r\n{channel}\r\n");
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal)
+                ? "-ERR unknown command 'EVALSHA_RO', with args beginning with: \r\n"u8.ToArray()
+                : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? state : FakeRespServer.OkReply,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var latch = await new RespireCoordination(client).JoinCountdownLatchAsync("compat-latch");
+
+        await Assert.That(latch?.Generation).IsEqualTo(generation);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
 }
