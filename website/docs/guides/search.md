@@ -44,7 +44,7 @@ var nearest = await search.VectorSearchAsync("books",
     new RespireVectorSearchRequest("embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10));
 
 var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuery(
-    "@title:$term", "embedding", new byte[] { 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
+    "@title:$term", "embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
 {
     Parameters = new Dictionary<string, RespireValue> { ["term"] = "redis" },
     RrfWindow = 50,
