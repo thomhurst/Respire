@@ -88,6 +88,10 @@ internal sealed partial class RespireConnection
     {
         var status = Volatile.Read(ref _maintenanceStatus);
         if (status == MaintenanceInactive || MaintenanceNotification.Parse(in value) is not { } notification) return false;
+        // Order a slot migration against Cluster owner mutations as soon as it is parsed. Reading
+        // the clock later (after state, telemetry or logger callbacks) would let a route change
+        // made meanwhile look older than this notification and be overwritten by it.
+        var slotMutationToken = notification.IsSlotMigration ? ClusterSlotMutationClock.Next() : 0;
         // Servers can replay historical completion notifications during opt-in. They must not
         // become a new maintenance window or a current diagnostic event.
         if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
@@ -117,7 +121,7 @@ internal sealed partial class RespireConnection
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))
                 .Publish(notification);
         }
-        Multiplexer?.PublishMaintenanceNotification(this, notification);
+        Multiplexer?.PublishMaintenanceNotification(this, notification, slotMutationToken);
         return true;
     }
 

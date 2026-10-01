@@ -182,3 +182,11 @@ those drops through `respire.maintenance.notifications.dropped` when delivery re
 These diagnostics are best effort, may finish after connection disposal, and are not an
 acknowledged event stream. Keep listeners short. Malformed notifications and historical
 completion replays during negotiation do not produce maintenance diagnostics.
+
+Cluster clients count `SMIGRATED` notifications that did not update slot ownership proactively
+in `respire.cluster.slot_migrations.skipped`, tagged with `reason`: `queue_full` (the 128-item
+topology queue dropped its oldest notification), `malformed` (an entry with an invalid slot list,
+or entries past the 16384-slot enumeration budget), `duplicate` (a sequence ID already seen on
+the same connection), or `deferral_evicted` (an entry that waited for an earlier migration was
+evicted). Queue drops also log a warning at most once every 30 seconds per client. In every
+case, `MOVED` handling and topology discovery still correct the route.

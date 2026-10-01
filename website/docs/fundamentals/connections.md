@@ -123,9 +123,14 @@ This release implements notifications, diagnostics, timeout relaxation, and proa
 slot updates from `SMIGRATED`. The receive loop queues parsed notifications for a bounded topology
 worker. The worker moves only slots still owned by the advertised source and not reassigned by a
 `MOVED` redirect or discovery since the notification arrived. It ignores sequence IDs already seen
-on the same connection and publishes changed ownership through the normal topology event. If a
+on the same connection and publishes changed ownership through the normal topology event. When
+notifications from different connections arrive out of order (for example `B→C` before `A→B`),
+the later move waits in a small bounded list and applies once the earlier one has. If a
 notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
-and topology discovery remain the fallback.
+and topology discovery remain the fallback. Drops and other skipped notifications are counted
+in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).
+Client disposal waits for a topology callback that is already running, such as a
+`ConnectionStateChanged` handler raised by a migration, so keep those handlers short.
 
 Server support and deployment restrictions are described in the
 [Redis smart client handoff documentation](https://redis.io/docs/latest/develop/clients/sch/).

@@ -7,7 +7,11 @@ namespace Respire.Networking;
 internal sealed record MaintenanceNotification(string Kind, long SequenceId, long? Seconds = null,
     RespireEndpoint? Target = null, MaintenanceSlotMigration[]? Migrations = null)
 {
-    internal bool IsCompletion => Kind is "MIGRATED" or "FAILED_OVER" or "SMIGRATED";
+    internal const string SlotMigratedKind = "SMIGRATED";
+
+    internal bool IsCompletion => Kind is "MIGRATED" or "FAILED_OVER" or SlotMigratedKind;
+    // A completed Cluster slot migration that carries source/target/slot triplets.
+    internal bool IsSlotMigration => Kind == SlotMigratedKind;
     internal string Family => Kind switch
     {
         "MIGRATED" => "MIGRATING",

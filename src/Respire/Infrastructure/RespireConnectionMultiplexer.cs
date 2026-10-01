@@ -10,6 +10,12 @@ using Respire.Protocol;
 
 namespace Respire.Infrastructure;
 
+// The scope is the receiving physical connection. The token orders the push against slot
+// owner mutations (see ClusterSlotMutationClock).
+internal delegate void MaintenanceNotificationHandler(
+    RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification,
+    long slotMutationToken);
+
 /// <summary>
 /// Round-robins commands across a fixed set of fully multiplexed <see cref="RespireConnection"/>s.
 /// Every connection pipelines concurrent commands, so there is no per-command checkout — a dead
@@ -79,13 +85,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
     // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
-    internal event Action<RespireConnectionMultiplexer, object, MaintenanceNotification>? MaintenanceNotificationReceived;
+    internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived;
 
-    internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
+    // slotMutationToken comes from ClusterSlotMutationClock, read by the receive loop as soon as
+    // the push was parsed, before any other maintenance processing could delay it.
+    internal void PublishMaintenanceNotification(
+        object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
     {
         if (IsRetired || Volatile.Read(ref _disposed) != 0) return;
-        MaintenanceNotificationReceived?.Invoke(this, sequenceScope, notification);
+        MaintenanceNotificationReceived?.Invoke(this, sequenceScope, notification, slotMutationToken);
     }
+
+    // Test convenience: stamps the notification as received now.
+    internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
+        => PublishMaintenanceNotification(sequenceScope, notification, ClusterSlotMutationClock.Next());
 
     internal bool IsReconnecting
     {
