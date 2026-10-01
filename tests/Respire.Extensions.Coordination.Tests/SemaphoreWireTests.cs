@@ -62,6 +62,53 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
+    public async Task RenewalReplyOfZeroMarksPermitReleasedWithoutCleanup()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var semaphore = new RespireSemaphore(client, "{renew}:lost", capacity: 1);
+        await using var attempt = await semaphore.TryAcquireAsync();
+
+        await Assert.That(await attempt.Permit.ResetExpiryAsync(null)).IsFalse();
+
+        // Redis proved the permit is gone, so no release is needed to mark it lost.
+        await Assert.That(attempt.Permit.IsReleased).IsTrue();
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(2);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task UncertainRenewalRefusesLaterRenewals()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            "-ERR cleanup failed\r\n"u8.ToArray());
+        var evals = 0;
+        // Leave the first renewal unanswered so its outcome is uncertain.
+        server.SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+            && Interlocked.Increment(ref evals) == 2;
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var semaphore = new RespireSemaphore(client, "{renew}:uncertain", capacity: 1);
+        await using var attempt = await semaphore.TryAcquireAsync();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.That(async () => await attempt.Permit.ResetExpiryAsync(null, cancellation.Token))
+            .Throws<OperationCanceledException>();
+        var sent = EvalCommands(server).Length;
+
+        // The unanswered renewal may still run later and overwrite any newer score.
+        await Assert.That(await attempt.Permit.ResetExpiryAsync(TimeSpan.FromSeconds(30))).IsFalse();
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(sent);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ElapsedConfirmedRenewalUpdatesLocalExpiryWhenCleanupFails()
     {
         await using var server = new FakeRespServer(

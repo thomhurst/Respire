@@ -76,6 +76,9 @@ public sealed class RespireSemaphore
         }
         if (!acquired) return default;
 
+        // The tracked send can wait for a routed connection or follow redirects; the permit
+        // cannot exist before the final send, which StartedTimestamp records.
+        if (trackedExecution is { StartedTimestamp: > 0 } sent) started = Math.Max(started, sent.StartedTimestamp);
         var completed = Stopwatch.GetTimestamp();
         var expiry = FromMilliseconds(milliseconds);
         var remaining = expiry - Stopwatch.GetElapsedTime(started, completed);
@@ -149,8 +152,9 @@ public sealed class RespireSemaphore
             }
             catch (Exception)
             {
-                // Retries exhausted: the release may still win; finite expiry remains the fallback.
-                break;
+                // Retries exhausted without a barrier. A release now could overtake the delayed
+                // acquire and leave an unowned permit, so skip it; finite expiry remains the fallback.
+                return;
             }
         }
 
@@ -427,6 +431,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         try
         {
             if (IsReleased || Volatile.Read(ref _disposeReleaseScheduled) != 0) return false;
+            // An earlier renewal may still execute and overwrite any newer score, so no later
+            // renewal can be confirmed. Fail closed; disposal still retries the owner release.
+            if (Volatile.Read(ref _nonExpiringOutcomeUncertain) != 0
+                || Volatile.Read(ref _finiteOutcomeUncertain) != 0) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
@@ -448,15 +456,25 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     // A prior timed-out renewal can still arrive on another connection and
                     // overwrite this score. Only a confirmed owner-token release resolves that uncertainty.
                 }
-                if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
+                if (!renewed)
+                {
+                    // Redis confirmed this owner holds no permit; no release is needed to prove it.
+                    Interlocked.Exchange(ref _released, 1);
+                    return false;
+                }
+                if ((!remaining.HasValue || remaining.Value > TimeSpan.Zero)
                     && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
             }
-            catch
+            catch (Exception error)
             {
-                if (milliseconds == 0)
-                    Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
-                else
-                    Volatile.Write(ref _finiteOutcomeUncertain, 1);
+                // A server error is a definite reply: that renewal never ran and cannot overwrite later ones.
+                if (error is not RespireServerException)
+                {
+                    if (milliseconds == 0)
+                        Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
+                    else
+                        Volatile.Write(ref _finiteOutcomeUncertain, 1);
+                }
                 if (await ReleaseBestEffortAsync().ConfigureAwait(false))
                     Interlocked.Exchange(ref _released, 1);
                 throw;
