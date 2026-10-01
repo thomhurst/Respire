@@ -397,23 +397,66 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 "the connection protocol, database, or Redis tracking state.");
         }
 
-        if (IsReadOnly(operation))
+        var mutation = operation switch
+        {
+            "TS.CREATE" or "TS.ALTER" => RespireCacheMutation.Mutation,
+            // A series write can update compaction destinations. Rules and MADD also write more
+            // than one series, so preserve the conservative all-cache fence for these commands.
+            "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD" or "TS.CREATERULE" or "TS.DELETERULE"
+                => RespireCacheMutation.Unknown,
+            _ => command.GetCacheMutation(operation),
+        };
+        if (mutation == RespireCacheMutation.ReadOnly)
         {
             return default;
         }
 
-        if (IsSingleKeyMutation(operation) && command.TryGetPrimaryKey(out var primaryKey))
+        if (mutation == RespireCacheMutation.SingleKey
+            && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
+            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in singleKeyArguments, out var singleKeyLayout)
+            && singleKeyLayout.Count == 1 && singleKeyLayout.Extra < 0)
+        {
+            var key = singleKeyArguments.GetArgument(singleKeyLayout.Start).AsKey().Snapshot();
+            Invalidate(in key);
+            return MutationFence.ForKey(key);
+        }
+
+        if (mutation == RespireCacheMutation.SingleKey && command.TryGetPrimaryKey(out var primaryKey))
         {
             var key = primaryKey.AsKey().Snapshot();
             Invalidate(in key);
             return MutationFence.ForKey(key);
         }
 
-        if (IsMultiKeyMutation(operation)
+        if (mutation == RespireCacheMutation.Mutation
+            && RawCommandKeyLayouts.HasSingleFirstKeyLayout(operation)
+            && command.TryGetPrimaryKey(out primaryKey))
+        {
+            var key = primaryKey.AsKey().Snapshot();
+            Invalidate(in key);
+            return MutationFence.ForKey(key);
+        }
+
+        if (mutation == RespireCacheMutation.Mutation
+            && command.TryGetClientCacheKey(operation, out var destinationArguments)
+            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in destinationArguments, out var destinationLayout)
+            && destinationLayout.Extra >= 0)
+        {
+            var destination = destinationArguments.GetArgument(destinationLayout.Extra).AsKey().Snapshot();
+            Invalidate(in destination);
+            return MutationFence.ForKey(destination);
+        }
+
+        if (mutation is RespireCacheMutation.MultiKey or RespireCacheMutation.Mutation
             && command.TryGetClientCacheKey(operation, out var arguments)
             && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout))
         {
-            return BeginMultiKeyMutation(in arguments, layout);
+            if (mutation == RespireCacheMutation.MultiKey || layout.Count > 1 || layout.Extra >= 0)
+                return BeginMultiKeyMutation(in arguments, layout);
+
+            var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
+            Invalidate(in key);
+            return MutationFence.ForKey(key);
         }
 
         return BeginUnknownMutation();
