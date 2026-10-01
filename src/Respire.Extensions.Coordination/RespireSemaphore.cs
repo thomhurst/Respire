@@ -14,7 +14,7 @@ public sealed class RespireSemaphore
 {
     internal static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan DisposeReleaseRetryLimit = TimeSpan.FromMinutes(1);
-    internal static readonly TimeSpan FenceRetryInitialDelay = TimeSpan.FromMilliseconds(100);
+    internal static readonly TimeSpan CleanupRetryInitialDelay = TimeSpan.FromMilliseconds(100);
     private readonly IRespireClient _client;
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
@@ -122,7 +122,7 @@ public sealed class RespireSemaphore
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
     {
         var started = Stopwatch.GetTimestamp();
-        var delay = FenceRetryInitialDelay;
+        var delay = CleanupRetryInitialDelay;
         while (true)
         {
             try
@@ -154,7 +154,42 @@ public sealed class RespireSemaphore
             }
         }
 
-        await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
+        await ReleaseWithRetryAsync(owner, started).ConfigureAwait(false);
+    }
+
+    // Runs only in the background after the barrier; a fenced connection is retired, so the
+    // first attempt may have to wait for a replacement connection.
+    private async ValueTask ReleaseWithRetryAsync(RespireLockToken owner, long started)
+    {
+        var delay = CleanupRetryInitialDelay;
+        while (true)
+        {
+            using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+            try
+            {
+                using var _ = await _client.Scripts.ExecuteAsync(
+                    ReleaseScript, [Key], [owner.Bytes], timeout.Token).ConfigureAwait(false);
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+            catch (RespireServerException error) when (!error.IsTransient)
+            {
+                return;
+            }
+            catch (Exception) when (Stopwatch.GetElapsedTime(started) < DisposeReleaseRetryLimit)
+            {
+                await Task.Delay(delay).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+            }
+            catch (Exception)
+            {
+                // Retries exhausted; finite expiry remains the fallback.
+                return;
+            }
+        }
     }
 
     private static async ValueTask<RespireClient?> GetTrackedWireAsync(

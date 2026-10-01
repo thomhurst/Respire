@@ -153,9 +153,14 @@ public class SemaphoreWireTests
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (EvalCommands(server).Length < 2) await Task.Delay(10, deadline.Token);
-        var commands = server.ReceivedCommands.ToList();        var fences = commands.Select((command, index) => (command, index))
+        var waitStarted = Stopwatch.GetTimestamp();
+        while (EvalCommands(server).Length < 2 && Stopwatch.GetElapsedTime(waitStarted) < TimeSpan.FromSeconds(10))
+            await Task.Delay(10);
+        var commands = server.ReceivedCommands.ToList();
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(2)
+            .Because(string.Join(" | ", server.ReceivedConnectionIds.Zip(commands,
+                (id, command) => $"{id}:{command[..Math.Min(command.Length, 24)]}")));
+        var fences = commands.Select((command, index) => (command, index))
             .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToList();
         var release = commands.FindLastIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
         // The refused barrier is retried, and the release is sent only after it is acknowledged.
