@@ -54,13 +54,14 @@ internal sealed partial class RespireConnection
         using var timeout = new CancellationTokenSource(options.ConnectTimeout, options.CredentialTimeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         RespireCredentials credentials;
+        Task<RespireCredentials>? providerTask = null;
         try
         {
             // Bound even a provider that returns an incomplete task without honoring cancellation.
             // The provider remains caller-owned; cancellation must not dispose it.
             var pending = options.CredentialProvider!.GetCredentialsAsync(linked.Token);
             credentials = pending.IsCompletedSuccessfully ? pending.Result
-                : await pending.AsTask().WaitAsync(linked.Token).ConfigureAwait(false);
+                : await (providerTask = pending.AsTask()).WaitAsync(linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -69,6 +70,10 @@ internal sealed partial class RespireConnection
         }
         catch (Exception)
         {
+            if (providerTask is not null)
+                _ = providerTask.ContinueWith(static task => _ = task.Exception,
+                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             // Provider-owned messages and inner exceptions can contain tokens, including
             // exceptions already typed as RespireAuthenticationException. Do not retain them.
             throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.");
