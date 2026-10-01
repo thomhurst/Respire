@@ -314,7 +314,16 @@ public sealed class RespireCoordination
         var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
         if (validity <= TimeSpan.Zero)
         {
-            using var _ = await _client.Scripts.ExecuteAsync(ReleaseReadWriteLock, [key], [owner.Bytes, role], CancellationToken.None).ConfigureAwait(false);
+            using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            try
+            {
+                using var _ = await _client.Scripts.ExecuteAsync(
+                    ReleaseReadWriteLock, [key], [owner.Bytes, role], cleanupTimeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The server-side lease expires even when best-effort cleanup cannot finish.
+            }
             return default;
         }
         var lease = new RespireReadWriteLock(_client, key, owner, isWriter,
