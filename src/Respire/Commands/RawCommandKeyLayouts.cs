@@ -72,20 +72,21 @@ internal static class RawCommandKeyLayouts
             "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
         // Immediate-only additions do not expand the conservative deferred allowlist.
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
-        AddImmediate(LayoutKind.First,
+        AddPrefixable(LayoutKind.First,
             "JSON.GET", "JSON.SET", "JSON.DEL", "JSON.FORGET", "JSON.CLEAR", "JSON.ARRAPPEND", "JSON.ARRINDEX",
             "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",
             "JSON.ARRINSERT", "JSON.ARRPOP", "JSON.ARRTRIM", "JSON.NUMINCRBY", "JSON.NUMMULTBY", "JSON.OBJKEYS",
             "JSON.OBJLEN", "JSON.STRAPPEND", "JSON.STRLEN", "JSON.TOGGLE", "JSON.TYPE", "JSON.RESP");
         // AfterFirst assumes one subcommand token before the key (JSON.DEBUG MEMORY key, JSON.DEBUG FIELDS key).
-        AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
-        AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
+        AddPrefixable(LayoutKind.AfterFirst, "JSON.DEBUG");
+        AddPrefixable(LayoutKind.None, "JSON.DEBUG HELP");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
-        AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
+        AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX");
+        AddPrefixable(LayoutKind.AllExceptLast, "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");
         AddImmediate(LayoutKind.CountedPairs, "MSETEX");
-        AddImmediate(LayoutKind.Triples, "JSON.MSET");
+        AddPrefixable(LayoutKind.Triples, "JSON.MSET");
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");

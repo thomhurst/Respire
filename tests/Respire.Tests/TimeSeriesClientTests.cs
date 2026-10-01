@@ -436,7 +436,7 @@ public class TimeSeriesClientTests
 
         await Assert.That(Sent(server)).IsEqualTo(
             "TS.INCRBY counter 1.5 TIMESTAMP 5 RETENTION 1000 ENCODING UNCOMPRESSED CHUNK_SIZE 128 DUPLICATE_POLICY SUM IGNORE 1 0.5 LABELS room 1 | " +
-            "TS.DECRBY counter 0.5 TIMESTAMP * | " +
+            "TS.DECRBY counter 0.5 | " +
             "TS.INCRBY counter 2");
     }
 

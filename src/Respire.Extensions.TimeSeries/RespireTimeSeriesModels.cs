@@ -248,8 +248,8 @@ public sealed record RespireTimeSeriesAddOptions
 public sealed record RespireTimeSeriesIncrementOptions
 {
     /// <summary>
-    /// Timestamp of the updated sample. Defaults to the server clock. It must not be earlier than the
-    /// latest sample.
+    /// Timestamp of the updated sample. Defaults to the server clock. <see cref="RespireTimeSeriesTimestamp.Now"/>
+    /// also selects the server clock. An explicit timestamp must not be earlier than the latest sample.
     /// </summary>
     public RespireTimeSeriesTimestamp? Timestamp { get; init; }
     /// <summary>Retention used when this write creates a series.</summary>
@@ -268,7 +268,7 @@ public sealed record RespireTimeSeriesIncrementOptions
     internal RespireValue[] ToArguments()
     {
         var args = new List<RespireValue>();
-        if (Timestamp is { } timestamp)
+        if (Timestamp is { } timestamp && timestamp != RespireTimeSeriesTimestamp.Now)
         {
             args.Add("TIMESTAMP");
             args.Add(timestamp.RequireWrite(nameof(Timestamp)));
