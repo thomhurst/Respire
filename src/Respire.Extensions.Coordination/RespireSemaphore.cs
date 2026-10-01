@@ -211,6 +211,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private int _released;
     private int _disposeReleaseScheduled;
     private int _nonExpiringOutcomeUncertain;
+    private int _finiteOutcomeUncertain;
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
@@ -296,6 +297,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
                     Interlocked.Exchange(ref _validUntil, remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
+                    Volatile.Write(ref _finiteOutcomeUncertain, 0);
                     return Volatile.Read(ref _disposeReleaseScheduled) == 0;
                 }
             }
@@ -303,6 +305,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             {
                 if (milliseconds == 0)
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
+                else
+                    Volatile.Write(ref _finiteOutcomeUncertain, 1);
                 if (await ReleaseBestEffortAsync().ConfigureAwait(false))
                     Interlocked.Exchange(ref _released, 1);
                 throw;
@@ -375,13 +379,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         while (Volatile.Read(ref _released) == 0
             && (RequiresPersistentCleanup
                 || (Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
-                    && RemainingEstimate != TimeSpan.Zero)))
+                    && (RemainingEstimate != TimeSpan.Zero || Volatile.Read(ref _finiteOutcomeUncertain) != 0))))
         {
             var released = await TryReleaseAfterDisposeAsync().ConfigureAwait(false);
             if (released is null or true) return;
 
             if (Volatile.Read(ref _released) != 0
-                || (!RequiresPersistentCleanup && RemainingEstimate == TimeSpan.Zero))
+                || (!RequiresPersistentCleanup && Volatile.Read(ref _finiteOutcomeUncertain) == 0
+                    && RemainingEstimate == TimeSpan.Zero))
             {
                 return;
             }
