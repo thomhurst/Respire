@@ -189,6 +189,32 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task CallerCancellationWhileWaitingForStreamingGatePreservesToken()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        var holder = new PausedStream();
+        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, SetWhen.Always);
+        var firstSet = connection.SendAsync(in first, armCommandDeadline: false, commandName: "SET").AsTask();
+        await holder.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        using var cancellation = new CancellationTokenSource();
+        var second = new StreamedSetCommand(
+            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, SetWhen.Always);
+        var secondSet = connection.SendCheckedAsync(in second, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await secondSet).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+
+        holder.ContinueReading.TrySetResult();
+        using var reply = await firstSet;
+        await Assert.That(reply.AsString()).IsEqualTo("OK");
+    }
+
+    [Test]
     public async Task RetirementDrainsAcceptedStreamedSet()
     {
         await using var server = new CountingSetServer();
@@ -231,7 +257,8 @@ public sealed class StreamedSetTests
         var set = client.Strings.SetAsync("cancel", source, 4, cancellationToken: cancellation.Token).AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
-        await Assert.That(async () => await set).Throws<OperationCanceledException>();
+        var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.Commands.Contains("SET")).IsFalse();
     }

@@ -1309,6 +1309,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             throw ClosedDuringStreamedSet(error);
         }
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
         catch (OperationCanceledException error) when (timeoutCancellation is not null
             && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
         {
@@ -1423,6 +1427,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 CaptureTimeoutDiagnostics(stage: requestStarted
                     ? RespireCommandStage.Writing
                     : RespireCommandStage.WaitingForCapacity));
+        }
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        {
+            if (requestStarted && !requestQueued)
+                Abort(new RespireConnectionException(
+                    $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
+            if (!requestQueued) ReclaimUnpublished(source);
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
         catch (Exception error)
         {
