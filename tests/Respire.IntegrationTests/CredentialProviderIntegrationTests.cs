@@ -103,6 +103,7 @@ public class CredentialProviderIntegrationTests
 
             var active = await ConnectionsAsync(administrators);
             var pooled = initial.First(pair => pair.Value is "get" or "publish");
+            var endpointPrefix = pooled.Key.Split(':')[0] + ":";
             var identity = pooled.Key.Split(':');
             var reconnectCalls = data.Calls;
             using (var killed = await administrators[int.Parse(identity[0])].ExecuteAsync("CLIENT", "KILL", "ID", identity[1]))
@@ -119,7 +120,10 @@ public class CredentialProviderIntegrationTests
             async Task<bool> IsReconnectedAsync()
             {
                 var current = await ConnectionsAsync(administrators);
-                return data.Calls > reconnectCalls && !current.ContainsKey(pooled.Key);
+                return data.Calls > reconnectCalls
+                    && !current.ContainsKey(pooled.Key)
+                    && current.Keys.Any(key => key.StartsWith(endpointPrefix, StringComparison.Ordinal)
+                        && !active.ContainsKey(key));
             }
             try
             {
