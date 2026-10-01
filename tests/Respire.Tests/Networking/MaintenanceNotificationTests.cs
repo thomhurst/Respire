@@ -280,6 +280,28 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task CapacityWakeAfterCommandDeadlineTimesOutBeforeSending()
+    {
+        await using var server = Server();
+        server.SuppressReply = command => command == "PING";
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(200), capacity: 1);
+        var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(server, 3);
+        await server.SendRawAsync(Start("MIGRATING", 11));
+        await WaitForMaintenance(connection);
+
+        var waiting = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await Task.Delay(400);
+        await server.SendRawAsync(Finish("MIGRATED", 11).Concat("+first\r\n"u8.ToArray()).ToArray());
+
+        await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5)); })
+            .Throws<RespireTimeoutException>();
+        using var firstReply = await first.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(firstReply.AsString()).IsEqualTo("first");
+        await Assert.That(server.CommandsSeen).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task CallerCancellationStillWinsDuringMaintenance()
     {
         await using var server = Server();
@@ -536,7 +558,7 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel] // The dropped counter is untagged, so measure it without other publishers.
+    [NotInParallel] // Isolate the bounded process-wide diagnostic listener workload.
     public async Task OverflowDropsAreReportedOnceDeliveryResumes()
     {
         var host = $"maintenance-overflow-{Guid.NewGuid():N}";
@@ -561,7 +583,11 @@ public class MaintenanceNotificationTests
         {
             if (HasTag(tags, "server.address", host) && Interlocked.Add(ref delivered, value) == 257) drained.TrySetResult();
         });
-        using var drops = MeterFor("respire.maintenance.notifications.dropped", (value, _) => Interlocked.Add(ref dropped, value));
+        using var drops = MeterFor("respire.maintenance.notifications.dropped", (value, tags) =>
+        {
+            if (HasTag(tags, "server.address", host) && HasTag(tags, "server.port", 6379))
+                Interlocked.Add(ref dropped, value);
+        });
         var telemetry = new MaintenanceTelemetry(host, 6379, 0, null);
 
         telemetry.Publish(new("MIGRATING", 0, 5));
@@ -593,7 +619,7 @@ public class MaintenanceNotificationTests
 
     private delegate void MeasurementCallback(long value, ReadOnlySpan<KeyValuePair<string, object?>> tags);
 
-    private static bool HasTag(ReadOnlySpan<KeyValuePair<string, object?>> tags, string key, string value)
+    private static bool HasTag(ReadOnlySpan<KeyValuePair<string, object?>> tags, string key, object? value)
     {
         foreach (var tag in tags)
             if (tag.Key == key && Equals(tag.Value, value)) return true;

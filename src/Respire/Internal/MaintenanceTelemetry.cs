@@ -89,7 +89,9 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
             {
                 try
                 {
-                    RespireTelemetry.MaintenanceNotificationsDropped.Add(dropped);
+                    RespireTelemetry.MaintenanceNotificationsDropped.Add(dropped,
+                        new KeyValuePair<string, object?>("server.address", host),
+                        new KeyValuePair<string, object?>("server.port", port));
                     lock (_gate) _dropped -= dropped;
                 }
                 catch (Exception error)

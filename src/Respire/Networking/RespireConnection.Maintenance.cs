@@ -127,6 +127,12 @@ internal sealed partial class RespireConnection
             try
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
+                var resumedAt = Environment.TickCount64;
+                var resumedTimeout = MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
+                var resumedRemaining = deadline + (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds - resumedAt;
+                if (resumedRemaining <= 0)
+                    throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
+                        CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
                 return;
             }
             catch (TimeoutException) { /* Recheck maintenance state before declaring expiry. */ }
