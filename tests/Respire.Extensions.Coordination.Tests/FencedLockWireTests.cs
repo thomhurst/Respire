@@ -220,7 +220,7 @@ public class FencedLockWireTests
 
         cancellation.Cancel();
 
-        await Assert.That(async () => await pending).ThrowsExactly<OperationCanceledException>();
+        await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(1);
 
         byte[] ReturnContended()

@@ -89,7 +89,8 @@ the same hash.
 Hash-field expiration requires Redis 7.4 or later. The containing hash key must have no key-level
 expiry; Redis deletes the whole hash when that expiry elapses. Acquisition rejects expiring hash
 keys before writing the lease field. Older servers fail before the lease field is written, with
-an error that identifies the required Redis feature.
+an error that identifies the required Redis feature. Waiters subscribe to invalidations for the
+whole hash key, so unrelated field changes can wake them and cause another owner-checked attempt.
 
 ```csharp
 using Respire.Extensions.Coordination;
@@ -163,10 +164,14 @@ commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing
 attempt is idempotent through the shared handle and never deletes another owner's lease.
 
 Cancellation, timeout or disconnect can occur after Redis accepted acquisition. Respire
-does not replay that command after uncertain acceptance. It can leave a counter gap and
-an unreturned lease that expires after its server-side duration. A reply arriving after the
-local lease estimate elapses is not returned as acquired. There is no acquisition-owned
-keep-alive loop in this API; explicitly renew within a valid lease when needed.
+does not replay that command after uncertain acceptance. It can leave a counter gap and an
+unreturned lease that expires after its server-side duration. It makes a best-effort
+owner-checked release. If Redis cannot be reached for cleanup, the lease expires after its
+server-side duration. A reply arriving after the local lease estimate elapses is not returned
+as acquired. There is no acquisition-owned keep-alive loop in this API; explicitly renew within
+a valid lease when needed. When renewal or release outcome is uncertain, the handle fails
+closed for its local estimate, but a later explicit renewal or release can ask Redis to settle
+ownership.
 
 ## Multi-node Redlock
 

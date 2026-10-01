@@ -15,11 +15,13 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private LeaseSnapshot _snapshot;
     private int _state;
     private Task<LockReleaseOutcome>? _releaseTask;
+    private int _releasePreviousState;
 
     private const int StateHeld = 0;
     private const int StateReleasing = 1;
     private const int StateReleased = 2;
     private const int StateNotOwned = 3;
+    private const int StateUncertain = 4;
 
     internal RespireCoordinationLease(RespireCoordination coordination,
         RespireKey hashKey, RespireKey field, RespireLockToken owner, TimeSpan duration, long acquiredTimestamp)
@@ -55,7 +57,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Whether this handle was released or its local lease estimate elapsed.</summary>
+    /// <summary>Whether this handle is released, no longer owned, uncertain, or past its local lease estimate.</summary>
     public bool IsReleased => Volatile.Read(ref _state) != StateHeld || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks that this owner still holds the expiring hash field.</summary>
@@ -65,11 +67,12 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     /// <summary>Renews only this owner and preserves the hash field's independent expiry.</summary>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = RespireCoordination.ValidateLease(HashKey, duration);
+        var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (IsReleased) return false;
+            var state = Volatile.Read(ref _state);
+            if (state is StateReleasing or StateReleased or StateNotOwned) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
@@ -86,12 +89,13 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             }
             catch
             {
-                Volatile.Write(ref _state, StateNotOwned);
+                Volatile.Write(ref _state, StateUncertain);
                 throw;
             }
 
             var appliedTicks = checked(milliseconds * TimeSpan.TicksPerMillisecond);
             Volatile.Write(ref _snapshot, new LeaseSnapshot(appliedTicks, started));
+            _ = Interlocked.CompareExchange(ref _state, StateHeld, StateUncertain);
             return true;
         }
         finally
@@ -103,24 +107,27 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     /// <summary>Releases only this owner, leaving unrelated hash fields untouched.</summary>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_releaseSync)
         {
             if (_state == StateReleased) return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
             if (_state == StateNotOwned) return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
-            if (_state == StateReleasing) return new ValueTask<LockReleaseOutcome>(_releaseTask!);
+            if (_state == StateReleasing) return new ValueTask<LockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
+            _releasePreviousState = _state;
             _state = StateReleasing;
-            return new ValueTask<LockReleaseOutcome>(_releaseTask = ReleaseCoreAsync(cancellationToken));
+            _releaseTask = ReleaseCoreAsync();
+            return new ValueTask<LockReleaseOutcome>(_releaseTask.WaitAsync(cancellationToken));
         }
     }
 
-    private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
+    private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
         try
         {
-            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             entered = true;
-            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken)
+            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, CancellationToken.None)
                 .ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
@@ -129,7 +136,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                if (_state == StateReleasing) Volatile.Write(ref _state, StateHeld);
+                if (_state == StateReleasing) Volatile.Write(ref _state, _releasePreviousState);
                 _releaseTask = null;
             }
             throw;
@@ -138,7 +145,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateNotOwned);
+                Volatile.Write(ref _state, StateUncertain);
                 _releaseTask = null;
             }
             throw;

@@ -8,6 +8,43 @@ public sealed class RespireCoordination
 {
     private readonly IRespireClient _client;
 
+    private readonly struct FencedLockWaitTarget(
+        RespireCoordination coordination, RespireKey leaseKey, RespireKey counterKey, long milliseconds)
+        : IRespireNotificationWaitTarget<RespireFencedLock>
+    {
+        public async ValueTask TrackAsync(CancellationToken cancellationToken)
+            => _ = await coordination._client.Strings.GetStringAsync(leaseKey, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+            => coordination._client.Keys.ExpiryAsync(leaseKey, cancellationToken);
+
+        public async ValueTask<(bool Succeeded, RespireFencedLock Result)> TryAsync(CancellationToken cancellationToken)
+        {
+            var attempt = await coordination.AcquireAsync(leaseKey, counterKey, milliseconds, cancellationToken)
+                .ConfigureAwait(false);
+            return attempt.Acquired ? (true, attempt.Lock) : (false, default!);
+        }
+    }
+
+    private readonly struct HashFieldLeaseWaitTarget(
+        RespireCoordination coordination, RespireKey hashKey, RespireKey field, long milliseconds)
+        : IRespireNotificationWaitTarget<RespireCoordinationLease>
+    {
+        public async ValueTask TrackAsync(CancellationToken cancellationToken)
+            => _ = await coordination._client.Hashes.GetBytesAsync(hashKey, field, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+            => coordination._client.Hashes.ExpiryAsync(hashKey, field, cancellationToken);
+
+        public async ValueTask<(bool Succeeded, RespireCoordinationLease Result)> TryAsync(CancellationToken cancellationToken)
+        {
+            var duration = TimeSpan.FromMilliseconds(milliseconds);
+            var lease = await coordination.TryAcquireLeaseAsync(hashKey, field, duration, cancellationToken)
+                .ConfigureAwait(false);
+            return lease is null ? (false, default!) : (true, lease);
+        }
+    }
+
     /// <summary>Creates coordination operations without taking ownership of <paramref name="client"/>.</summary>
     public RespireCoordination(IRespireClient client)
         => _client = client ?? throw new ArgumentNullException(nameof(client));
@@ -144,13 +181,6 @@ public sealed class RespireCoordination
         """);
 
     private static readonly RespireScript AcquireHashFieldLease = RespireScript.Create("""
-        local capability = redis.pcall('HPTTL', KEYS[1], 'FIELDS', 1, ARGV[1])
-        if type(capability) == 'table' and capability.err then
-            if string.find(string.lower(capability.err), 'unknown', 1, true) then
-                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
-            end
-            return redis.error_reply(capability.err)
-        end
         if redis.call('PTTL', KEYS[1]) >= 0 then
             return redis.error_reply('ERR coordination leases require a hash key without key expiration')
         end
@@ -158,6 +188,9 @@ public sealed class RespireCoordination
         local expiry = redis.pcall('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
         if type(expiry) == 'table' and expiry.err then
             redis.call('HDEL', KEYS[1], ARGV[1])
+            if string.find(string.lower(expiry.err), 'unknown', 1, true) then
+                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
+            end
             return redis.error_reply(expiry.err)
         end
         if expiry[1] ~= 1 then
@@ -236,15 +269,9 @@ public sealed class RespireCoordination
         var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
         var leaseKey = key.Snapshot();
         var counterKey = fencingCounterKey.Snapshot();
-        return await RespireNotificationWaiter.WaitAsync(_client, leaseKey,
-            async token => { _ = await _client.Strings.GetStringAsync(leaseKey, token).ConfigureAwait(false); },
-            token => _client.Keys.ExpiryAsync(leaseKey, token),
-            async token =>
-        {
-            var attempt = await AcquireAsync(leaseKey, counterKey, milliseconds, token).ConfigureAwait(false);
-            if (!attempt.Acquired) return (false, default(RespireFencedLock)!);
-            return (true, attempt.Lock);
-        }, cancellationToken).ConfigureAwait(false);
+        return await RespireNotificationWaiter.WaitAsync<FencedLockWaitTarget, RespireFencedLock>(
+            _client, leaseKey, new FencedLockWaitTarget(this, leaseKey, counterKey, milliseconds), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
@@ -261,25 +288,45 @@ public sealed class RespireCoordination
     /// <param name="hashKey">The hash key, before the client's prefix.</param>
     /// <param name="field">The binary-safe lease name.</param>
     /// <param name="duration">A positive lease duration of at least one millisecond.</param>
-    /// <param name="cancellationToken">Cancels this attempt; an accepted lease can remain until expiry.</param>
+    /// <param name="cancellationToken">Cancels this attempt; when acceptance is uncertain, Respire best-effort releases the owner-checked field.</param>
     /// <remarks>Requires Redis 7.4 or later and a hash key without key-level expiration.</remarks>
     public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = ValidateLease(hashKey, duration);
+        var milliseconds = ValidateLease(hashKey, field, duration);
         cancellationToken.ThrowIfCancellationRequested();
         hashKey = hashKey.Snapshot();
         field = field.Snapshot();
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
-        using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
-            [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
-        if (response.IsNull || response.AsInteger() == 0) return null;
-        cancellationToken.ThrowIfCancellationRequested();
+        bool acquired;
+        try
+        {
+            using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
+                [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+            acquired = !response.IsNull && response.AsInteger() != 0;
+        }
+        catch (RespireServerException)
+        {
+            throw;
+        }
+        catch
+        {
+            await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
+            throw;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            if (acquired) await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        if (!acquired) return null;
+
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
         var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
         if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
-        await lease.DisposeAsync().ConfigureAwait(false);
+        await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
         return null;
     }
 
@@ -288,26 +335,36 @@ public sealed class RespireCoordination
     public async ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = ValidateLease(hashKey, duration);
+        var milliseconds = ValidateLease(hashKey, field, duration);
         cancellationToken.ThrowIfCancellationRequested();
         hashKey = hashKey.Snapshot();
         field = field.Snapshot();
-        return await RespireNotificationWaiter.WaitAsync(_client, hashKey,
-            async token => { _ = await _client.Hashes.GetBytesAsync(hashKey, field, token).ConfigureAwait(false); },
-            token => _client.Hashes.ExpiryAsync(hashKey, field, token),
-            async token =>
-            {
-                var lease = await TryAcquireLeaseAsync(hashKey, field, duration, token).ConfigureAwait(false);
-                return lease is null ? (false, default(RespireCoordinationLease)!) : (true, lease);
-            }, cancellationToken).ConfigureAwait(false);
+        return await RespireNotificationWaiter.WaitAsync<HashFieldLeaseWaitTarget, RespireCoordinationLease>(
+            _client, hashKey, new HashFieldLeaseWaitTarget(this, hashKey, field, milliseconds), cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    internal static long ValidateLease(RespireKey hashKey, TimeSpan duration)
+    internal static long ValidateLease(RespireKey hashKey, RespireKey field, TimeSpan duration)
     {
+        if (hashKey.IsEmpty) throw new ArgumentException("The hash key must not be empty.", nameof(hashKey));
+        if (field.IsEmpty) throw new ArgumentException("The lease field must not be empty.", nameof(field));
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
         if (milliseconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
         return milliseconds;
+    }
+
+    private async ValueTask BestEffortReleaseHashFieldLeaseAsync(
+        RespireKey hashKey, RespireKey field, RespireLockToken owner)
+    {
+        try
+        {
+            _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The owner-checked lease expires naturally if cleanup cannot reach Redis.
+        }
     }
 
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(
