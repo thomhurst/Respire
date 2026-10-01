@@ -154,6 +154,7 @@ public sealed class RespireProbabilisticClient
     /// <summary>Counts copies of one item in a Cuckoo filter.</summary>
     public async ValueTask<long> CuckooCountAsync(RespireKey key, RespireValue item, CancellationToken cancellationToken = default)
     {
+        ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooCountAsync(key, item, cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
@@ -272,7 +273,7 @@ public sealed class RespireProbabilisticClient
         return ReadIntegers(result);
     }
 
-    /// <summary>Returns Top-K items, optionally paired with estimated counts.</summary>
+    /// <summary>Returns the raw TOPK.LIST response: items, or item/count pairs when <paramref name="withCount"/> is true. Dispose the result when done.</summary>
     public ValueTask<RespireResult> TopKListAsync(RespireKey key, bool withCount = false, CancellationToken cancellationToken = default)
         => _commands.TopKListAsync(key, withCount ? ["WITHCOUNT"] : [], cancellationToken);
 
@@ -314,14 +315,14 @@ public sealed class RespireProbabilisticClient
     public async ValueTask<double> TDigestMinimumAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.TDigestMinimumAsync(key, cancellationToken).ConfigureAwait(false);
-        return result.AsDouble();
+        return ReadDouble(result);
     }
 
     /// <summary>Returns the maximum observation or NaN for an empty sketch.</summary>
     public async ValueTask<double> TDigestMaximumAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.TDigestMaximumAsync(key, cancellationToken).ConfigureAwait(false);
-        return result.AsDouble();
+        return ReadDouble(result);
     }
 
     /// <summary>Estimates values at quantile fractions.</summary>
@@ -354,7 +355,7 @@ public sealed class RespireProbabilisticClient
         ValidateQuantile(lowCut, nameof(lowCut)); ValidateQuantile(highCut, nameof(highCut));
         if (lowCut >= highCut) throw new ArgumentOutOfRangeException(nameof(lowCut));
         using var result = await _commands.TDigestTrimmedMeanAsync(key, lowCut, highCut, cancellationToken).ConfigureAwait(false);
-        return result.AsDouble();
+        return ReadDouble(result);
     }
 
     /// <summary>Returns the raw TDIGEST.INFO response. Dispose the result when done.</summary>
@@ -366,7 +367,7 @@ public sealed class RespireProbabilisticClient
         validate(values);
         using var result = await execute(key, values.Select(static value => (RespireValue)value).ToArray(), cancellationToken).ConfigureAwait(false);
         var output = new double[result.Count];
-        for (var index = 0; index < output.Length; index++) output[index] = result[index].AsDouble();
+        for (var index = 0; index < output.Length; index++) output[index] = ReadDouble(result[index]);
         return output;
     }
 
@@ -383,12 +384,29 @@ public sealed class RespireProbabilisticClient
         if (ranks.Count == 0 || ranks.Any(static rank => rank < 0)) throw new ArgumentOutOfRangeException(nameof(ranks));
         using var result = await execute(key, ranks.Select(static rank => (RespireValue)rank).ToArray(), cancellationToken).ConfigureAwait(false);
         var output = new double[result.Count];
-        for (var index = 0; index < output.Length; index++) output[index] = result[index].AsDouble();
+        for (var index = 0; index < output.Length; index++) output[index] = ReadDouble(result[index]);
         return output;
     }
 
     private static RespireProbabilisticDumpChunk ParseDumpChunk(RespireResult result)
         => new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
+
+    /// <summary>
+    /// Reads a t-digest double. RESP2 replies spell infinities as <c>inf</c>/<c>-inf</c>, which
+    /// <see cref="double.Parse(string)"/> does not accept, so they are mapped explicitly.
+    /// </summary>
+    private static double ReadDouble(RespireResult result)
+    {
+        if (result.Type != RespDataType.Double)
+        {
+            var text = result.AsString();
+            if (string.Equals(text, "inf", StringComparison.OrdinalIgnoreCase) || string.Equals(text, "+inf", StringComparison.OrdinalIgnoreCase))
+                return double.PositiveInfinity;
+            if (string.Equals(text, "-inf", StringComparison.OrdinalIgnoreCase))
+                return double.NegativeInfinity;
+        }
+        return result.AsDouble();
+    }
 
     private static bool IsOk(RespireResult result) => result.Type == RespDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
     private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsBoolean(); return values; }

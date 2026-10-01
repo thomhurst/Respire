@@ -328,15 +328,24 @@ public sealed partial class RespireClient : IRespireClient
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            if (_keyPrefix is null || !IsModuleCommand(command.Name))
+            if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
                 return ExecuteCatalogAsync(command, args, flags, cancellationToken);
             operation = command.Name;
             rawArguments = args;
         }
 
         if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
-        if (!TryPrefixModuleKeys(operation, rawArguments, out var prefixedArguments))
-            return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
+        // Report rejections and malformed layouts through the task, as ExecuteCatalogAsync does.
+        RespireValue[] prefixedArguments;
+        try
+        {
+            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
+                return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
+        }
+        catch (ArgumentException exception)
+        {
+            return ValueTask.FromException<RespireResult>(exception);
+        }
         return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
     }
 
@@ -352,26 +361,34 @@ public sealed partial class RespireClient : IRespireClient
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            if (_keyPrefix is null || !IsModuleCommand(command.Name))
+            if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
                 return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
             operation = command.Name;
             rawArguments = args;
         }
 
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
-        if (!TryPrefixModuleKeys(operation, rawArguments, out var prefixedArguments))
-            return ValueTask.FromException(KeyPrefixNotSupported());
+        RespireValue[] prefixedArguments;
+        try
+        {
+            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
+                return ValueTask.FromException(KeyPrefixNotSupported());
+        }
+        catch (ArgumentException exception)
+        {
+            return ValueTask.FromException(exception);
+        }
         return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
     }
 
+    /// <summary>
+    /// Rewrites the keys of a known module command for this key-prefixed view. The caller's array is
+    /// copied, never mutated. Returns false for core commands, which must use the typed facets, and for
+    /// module commands without a registered key layout.
+    /// </summary>
     private bool TryPrefixModuleKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
     {
-        if (!(operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase))
+        if (!IsPrefixableModuleCommand(operation)
             || !RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
         {
             prefixedArguments = [];
@@ -382,20 +399,23 @@ public sealed partial class RespireClient : IRespireClient
         for (var index = 0; index < layout.Count; index++)
         {
             var keyIndex = layout.Start + index * layout.Stride;
-            prefixedArguments[keyIndex] = arguments[keyIndex].AsKey().Prepend(_keyPrefix!).AsValue();
+            prefixedArguments[keyIndex] = Key(arguments[keyIndex].AsKey());
         }
         if (layout.Extra >= 0)
-            prefixedArguments[layout.Extra] = arguments[layout.Extra].AsKey().Prepend(_keyPrefix!).AsValue();
+            prefixedArguments[layout.Extra] = Key(arguments[layout.Extra].AsKey());
         return true;
     }
 
-    private static bool IsModuleCommand(string operation)
-        => operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
-            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Module families whose key layouts are registered in <see cref="RawCommandKeyLayouts"/> and may
+    /// therefore run through a key-prefixed view. Matching is ordinal, like the layout table.
+    /// </summary>
+    private static bool IsPrefixableModuleCommand(string operation)
+        => operation.StartsWith("BF.", StringComparison.Ordinal)
+            || operation.StartsWith("CF.", StringComparison.Ordinal)
+            || operation.StartsWith("CMS.", StringComparison.Ordinal)
+            || operation.StartsWith("TOPK.", StringComparison.Ordinal)
+            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal);
 
     /// <summary>
     /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a

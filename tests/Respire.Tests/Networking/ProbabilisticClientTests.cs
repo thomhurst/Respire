@@ -23,6 +23,46 @@ public class ProbabilisticClientTests
     }
 
     [Test]
+    public async Task KeyPrefixedMergesPrefixDestinationAndEverySource()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client.WithKeyPrefix("tenant:"));
+
+        await probabilistic.CountMinMergeAsync("destination", ["source-a", "source-b"], new() { Weights = [1, 2] });
+        await probabilistic.TDigestMergeAsync("digest", ["source-a", "source-b"], new() { Compression = 100, Override = true });
+
+        await Assert.That(server.ReceivedCommands.Contains(
+            "CMS.MERGE tenant:destination 2 tenant:source-a tenant:source-b WEIGHTS 1 2")).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains(
+            "TDIGEST.MERGE tenant:digest 2 tenant:source-a tenant:source-b COMPRESSION 100 OVERRIDE")).IsTrue();
+    }
+
+    [Test]
+    public async Task KeyPrefixedViewStillRejectsCatalogCommandsWithoutModuleLayouts()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var prefixed = client.WithKeyPrefix("tenant:");
+
+        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.GET"), "series"))
+            .Throws<NotSupportedException>();
+    }
+
+    [Test]
+    public async Task NullItemsAreRejectedBeforeSending()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.CuckooCountAsync("filter", RespireValue.Null))
+            .Throws<ArgumentNullException>();
+        await Assert.That(async () => await probabilistic.BloomInsertAsync("filter", [RespireValue.Null]))
+            .Throws<ArgumentNullException>();
+        await Assert.That(async () => await probabilistic.CuckooInsertAsync("filter", []))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
     public async Task BloomInsertAcceptsCapacityAndErrorIndependently()
     {
         await using var server = Server();
@@ -92,6 +132,42 @@ public class ProbabilisticClientTests
         await Assert.That(evicted.Length).IsEqualTo(1);
         await Assert.That(evicted[0]!.SequenceEqual(new byte[] { 0xFF, 0x00 })).IsTrue();
         await Assert.That(incrementEvictions[0]!.SequenceEqual(new byte[] { 0xFF, 0x00 })).IsTrue();
+    }
+
+    [Test]
+    public async Task TDigestReadsBulkStringInfinities()
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "TDIGEST.BYRANK digest 100 200" => "*2
+
+$3
+
+inf
+
+$4
+
+-inf
+
+"u8.ToArray(),
+            "TDIGEST.MAX digest" => "$4
+
++inf
+
+"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        var values = await probabilistic.TDigestByRankAsync("digest", [100, 200]);
+        var maximum = await probabilistic.TDigestMaximumAsync("digest");
+
+        await Assert.That(double.IsPositiveInfinity(values[0])).IsTrue();
+        await Assert.That(double.IsNegativeInfinity(values[1])).IsTrue();
+        await Assert.That(double.IsPositiveInfinity(maximum)).IsTrue();
     }
 
     [Test]

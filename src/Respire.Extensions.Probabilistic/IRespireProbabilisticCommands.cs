@@ -4,7 +4,7 @@ namespace Respire.Extensions.Probabilistic;
 [RespireCommands]
 public interface IRespireProbabilisticCommands
 {
-    /// <summary>Bloom filter commands.</summary>
+    // Bloom filter commands.
     /// <summary>Executes BF.RESERVE with typed arguments.</summary>
     [RespireCommand("BF.RESERVE")] ValueTask<RespireResult> BloomReserveAsync(RespireKey key, double errorRate, long capacity, RespireValue[] options, CancellationToken cancellationToken = default);
     /// <summary>Executes BF.ADD with typed arguments.</summary>
@@ -26,7 +26,7 @@ public interface IRespireProbabilisticCommands
     /// <summary>Executes BF.LOADCHUNK with typed arguments.</summary>
     [RespireCommand("BF.LOADCHUNK")] ValueTask<RespireResult> BloomLoadChunkAsync(RespireKey key, long iterator, RespireValue data, CancellationToken cancellationToken = default);
 
-    /// <summary>Cuckoo filter commands.</summary>
+    // Cuckoo filter commands.
     /// <summary>Executes CF.RESERVE with typed arguments.</summary>
     [RespireCommand("CF.RESERVE")] ValueTask<RespireResult> CuckooReserveAsync(RespireKey key, long capacity, RespireValue[] options, CancellationToken cancellationToken = default);
     /// <summary>Executes CF.ADD with typed arguments.</summary>
@@ -52,7 +52,7 @@ public interface IRespireProbabilisticCommands
     /// <summary>Executes CF.LOADCHUNK with typed arguments.</summary>
     [RespireCommand("CF.LOADCHUNK")] ValueTask<RespireResult> CuckooLoadChunkAsync(RespireKey key, long iterator, RespireValue data, CancellationToken cancellationToken = default);
 
-    /// <summary>Count-Min Sketch commands.</summary>
+    // Count-Min Sketch commands.
     /// <summary>Executes CMS.INITBYDIM with typed arguments.</summary>
     [RespireCommand("CMS.INITBYDIM")] ValueTask<RespireResult> CountMinInitializeByDimensionsAsync(RespireKey key, long width, long depth, CancellationToken cancellationToken = default);
     /// <summary>Executes CMS.INITBYPROB with typed arguments.</summary>
@@ -66,7 +66,7 @@ public interface IRespireProbabilisticCommands
     /// <summary>Executes CMS.MERGE with typed arguments.</summary>
     [RespireCommand("CMS.MERGE")] ValueTask<RespireResult> CountMinMergeAsync(RespireKey destination, long sourceCount, RespireValue[] sourcesAndOptions, CancellationToken cancellationToken = default);
 
-    /// <summary>Top-K commands.</summary>
+    // Top-K commands.
     /// <summary>Executes TOPK.RESERVE with typed arguments.</summary>
     [RespireCommand("TOPK.RESERVE")] ValueTask<RespireResult> TopKReserveAsync(RespireKey key, long count, RespireValue[] options, CancellationToken cancellationToken = default);
     /// <summary>Executes TOPK.ADD with typed arguments.</summary>
@@ -82,7 +82,7 @@ public interface IRespireProbabilisticCommands
     /// <summary>Executes TOPK.INFO with typed arguments.</summary>
     [RespireCommand("TOPK.INFO")] ValueTask<RespireResult> TopKInfoAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>t-digest commands.</summary>
+    // t-digest commands.
     /// <summary>Executes TDIGEST.CREATE with typed arguments.</summary>
     [RespireCommand("TDIGEST.CREATE")] ValueTask<RespireResult> TDigestCreateAsync(RespireKey key, RespireValue[] options, CancellationToken cancellationToken = default);
     /// <summary>Executes TDIGEST.RESET with typed arguments.</summary>

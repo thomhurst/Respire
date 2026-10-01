@@ -35,6 +35,42 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task ProbabilisticMutationsFenceOnlyTheirWrittenKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "unrelated", "retained");
+        foreach (var operation in new[]
+        {
+            "BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT", "BF.LOADCHUNK",
+            "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.LOADCHUNK",
+            "CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY",
+            "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD",
+        })
+        {
+            await AssertFencesOnly(operation, new Cmd1N(new Verb(operation), "sketch", ["item"]));
+        }
+
+        // Merges write only their destination; the source sketches are read.
+        foreach (var operation in new[] { "CMS.MERGE", "TDIGEST.MERGE" })
+        {
+            Insert(cache, "source", "retained");
+            await AssertFencesOnly(operation, new Cmd1N(new Verb(operation), "sketch", [1, "source"]));
+            await Assert.That(Read(cache, "source")).IsEqualTo("retained");
+        }
+
+        async Task AssertFencesOnly<TCommand>(string operation, TCommand command)
+            where TCommand : struct, IRespCommand
+        {
+            Insert(cache, "sketch", "old");
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.IsRequired).IsTrue();
+            await Assert.That(cache.TryGet(new RespireKey("sketch"), out _)).IsFalse();
+            cache.CompleteMutation(in fence);
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+    }
+
+    [Test]
     [Arguments("LPUSHX")]
     [Arguments("RPUSHX")]
     public async Task ConditionalListPushInvalidatesOnlyItsKeyBeforeAndAfterCompletion(string operation)
