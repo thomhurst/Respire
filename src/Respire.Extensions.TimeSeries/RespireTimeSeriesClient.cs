@@ -54,42 +54,71 @@ public sealed class RespireTimeSeriesClient
 
     /// <summary>Adds samples to existing series and returns each assigned timestamp, in request order.</summary>
     /// <remarks>
-    /// The whole batch is sent as one TS.MADD command, and Respire applies no batch size limit. Redis runs the
+    /// The whole batch is sent as one TS.MADD command, and this overload applies no batch size limit. Redis runs the
     /// command to completion before it serves other clients, and the command and reply are buffered in full,
-    /// so split very large batches (for example, into chunks of a few thousand samples) to keep latency and
-    /// buffer use bounded.
+    /// so pass a maximum batch size to
+    /// <see cref="MultiAddAsync(IReadOnlyList{RespireTimeSeriesWrite}, int, CancellationToken)"/> for very large
+    /// batches to keep latency and buffer use bounded.
     /// </remarks>
     /// <exception cref="RespireTimeSeriesMultiAddException">
     /// The server rejected one or more samples. Accepted samples were written; the exception reports the
     /// timestamp or error of every sample.
     /// </exception>
-    public async ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, CancellationToken cancellationToken = default)
+    public ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, CancellationToken cancellationToken = default)
+        => MultiAddAsync(samples, int.MaxValue, cancellationToken);
+
+    /// <summary>
+    /// Adds samples to existing series in TS.MADD commands of at most <paramref name="maxBatchSize"/> samples,
+    /// and returns each assigned timestamp, in request order.
+    /// </summary>
+    /// <remarks>
+    /// Chunks are sent one after another, so other clients can run commands between them, and the batch as a whole
+    /// is not atomic. Every timestamp is validated before the first chunk is sent. If a chunk fails to send, or the
+    /// operation is cancelled, the chunks before it stay written. Samples rejected by the server do not stop later
+    /// chunks: every chunk is sent, and the rejections are reported together at the end.
+    /// </remarks>
+    /// <param name="samples">The key, timestamp, and value of each sample.</param>
+    /// <param name="maxBatchSize">The largest number of samples sent in one TS.MADD command. It must be positive.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <exception cref="RespireTimeSeriesMultiAddException">
+    /// The server rejected one or more samples. Accepted samples were written; the exception reports the
+    /// timestamp or error of every sample, across all chunks.
+    /// </exception>
+    public async ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(samples);
         if (samples.Count == 0) throw new ArgumentException("At least one sample is required.", nameof(samples));
-        var arguments = new RespireValue[checked(samples.Count * 3)];
-        for (var index = 0; index < samples.Count; index++)
-        {
-            var sample = samples[index];
-            arguments[index * 3] = sample.Key;
-            arguments[index * 3 + 1] = sample.Timestamp.RequireWrite(nameof(samples));
-            arguments[index * 3 + 2] = sample.Value;
-        }
-        using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
-        if (result.Count != samples.Count) throw RespireTimeSeriesSeries.UnexpectedReply();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
+        // Validate every timestamp first, so invalid input never leaves earlier chunks written.
+        for (var index = 0; index < samples.Count; index++) samples[index].Timestamp.RequireWrite(nameof(samples));
 
         var timestamps = new long[samples.Count];
         string?[]? errors = null;
-        for (var index = 0; index < timestamps.Length; index++)
+        for (var start = 0; start < samples.Count; start += Math.Min(maxBatchSize, samples.Count - start))
         {
-            var reply = result[index];
-            if (reply.IsError)
+            var count = Math.Min(maxBatchSize, samples.Count - start);
+            var arguments = new RespireValue[checked(count * 3)];
+            for (var index = 0; index < count; index++)
             {
-                errors ??= new string?[timestamps.Length];
-                errors[index] = reply.ErrorMessage;
-                continue;
+                var sample = samples[start + index];
+                arguments[index * 3] = sample.Key;
+                arguments[index * 3 + 1] = sample.Timestamp.RequireWrite(nameof(samples));
+                arguments[index * 3 + 2] = sample.Value;
             }
-            timestamps[index] = reply.AsInteger();
+            using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
+            if (result.Count != count) throw RespireTimeSeriesSeries.UnexpectedReply();
+
+            for (var index = 0; index < count; index++)
+            {
+                var reply = result[index];
+                if (reply.IsError)
+                {
+                    errors ??= new string?[timestamps.Length];
+                    errors[start + index] = reply.ErrorMessage;
+                    continue;
+                }
+                timestamps[start + index] = reply.AsInteger();
+            }
         }
         if (errors is null) return timestamps;
 
@@ -198,7 +227,10 @@ public sealed class RespireTimeSeriesClient
     /// <param name="source">Series that receives raw samples.</param>
     /// <param name="destination">Existing series that receives aggregated buckets. In Redis Cluster it must share the source's hash slot.</param>
     /// <param name="aggregation">Bucket aggregation function.</param>
-    /// <param name="bucketDurationMilliseconds">Bucket duration in milliseconds.</param>
+    /// <param name="bucketDurationMilliseconds">
+    /// Bucket duration in milliseconds. An integer argument, such as <c>5</c>, binds to this overload and means
+    /// milliseconds; pass a <see cref="TimeSpan"/> to the other overload to give the duration in other units.
+    /// </param>
     /// <param name="alignTimestamp">Aligns buckets so one starts at this millisecond timestamp; defaults to the epoch.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     public async ValueTask CreateRuleAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, CancellationToken cancellationToken = default)
@@ -239,17 +271,9 @@ public sealed class RespireTimeSeriesClient
         return RespireTimeSeriesInfo.Parse(result);
     }
 
-    /// <summary>Returns the raw TS.INFO, or TS.INFO DEBUG, response, including fields <see cref="RespireTimeSeriesInfo"/> does not model.</summary>
-    /// <remarks>
-    /// The caller owns the returned result and must dispose it. Prefer
-    /// <see cref="GetRawInfoAsync{T}(RespireKey, Func{RespireResult, T}, bool, CancellationToken)"/>, which disposes it for you.
-    /// </remarks>
-    public ValueTask<RespireResult> GetRawInfoAsync(RespireKey key, bool debug = false, CancellationToken cancellationToken = default)
-        => _commands.InfoAsync(key, debug ? DebugOption : [], cancellationToken);
-
     /// <summary>
     /// Reads the raw TS.INFO, or TS.INFO DEBUG, response with <paramref name="read"/> and disposes it afterwards,
-    /// so pooled response buffers cannot leak.
+    /// so pooled response buffers cannot leak. Use it for fields <see cref="RespireTimeSeriesInfo"/> does not model.
     /// </summary>
     /// <param name="key">Series key.</param>
     /// <param name="read">Projects the response. The result is disposed when it returns, so it must not escape.</param>

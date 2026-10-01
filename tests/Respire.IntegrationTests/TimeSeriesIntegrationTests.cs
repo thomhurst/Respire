@@ -34,6 +34,8 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         {
             Labels = new Dictionary<string, string> { ["run"] = id, ["kind"] = "compacted" },
         });
+        // TS.GET on a series with no samples replies with an empty array in both RESP2 and RESP3.
+        await Assert.That(await timeSeries.GetAsync(source)).IsNull();
         await timeSeries.CreateRuleAsync(source, compacted, RespireTimeSeriesAggregation.Sum, 10, alignTimestamp: 0);
         await timeSeries.AlterAsync(source, new RespireTimeSeriesOptions { Ignore = (0, 0.0), Labels = labels });
 
@@ -43,7 +45,7 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
             Labels = labels,
         })).IsEqualTo(1);
         await timeSeries.AddAsync(source, 1, 1.0, new RespireTimeSeriesAddOptions { OnDuplicate = RespireTimeSeriesDuplicatePolicy.Sum });
-        var added = await timeSeries.MultiAddAsync([new(source, 5, 3.0), new(source, 12, 4.0)]);
+        var added = await timeSeries.MultiAddAsync([new(source, 5, 3.0), new(source, 12, 4.0)], maxBatchSize: 1);
         await Assert.That(added).IsEquivalentTo([5L, 12L]);
 
         var latest = await timeSeries.GetAsync(source);
@@ -90,8 +92,7 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         var compactedInfo = await timeSeries.GetInfoAsync(compacted);
         await Assert.That(compactedInfo.SourceKey?.ToString()).IsEqualTo(source.ToString());
         await Assert.That(compactedInfo.Labels["kind"]).IsEqualTo("compacted");
-        using (var rawInfo = await timeSeries.GetRawInfoAsync(source, debug: true))
-            await Assert.That(rawInfo.Count).IsGreaterThan(0);
+        await Assert.That(await timeSeries.GetRawInfoAsync(source, static info => info.Count, debug: true)).IsGreaterThan(0);
         await Assert.That(await timeSeries.GetRawInfoAsync(source, static info => info.Count)).IsGreaterThan(0);
         await timeSeries.DeleteRuleAsync(source, compacted);
         await Assert.That(await timeSeries.DeleteRangeAsync(source, new(0, 5))).IsEqualTo(2);

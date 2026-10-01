@@ -297,7 +297,7 @@ public class TimeSeriesClientTests
         var timeSeries = new RespireTimeSeriesClient(client);
 
         var info = await timeSeries.GetInfoAsync("series");
-        using (await timeSeries.GetRawInfoAsync("series", debug: true)) { }
+        await timeSeries.GetRawInfoAsync("series", static result => result.Count, debug: true);
         var rawCount = await timeSeries.GetRawInfoAsync("series", static result => result.Count);
 
         await Assert.That(info.TotalSamples).IsEqualTo(2);
@@ -359,6 +359,41 @@ public class TimeSeriesClientTests
         // A reply whose length differs from the request is malformed, not silently truncated.
         await Assert.That(async () => await timeSeries.MultiAddAsync([new("a", 1, 1.0), new("b", 2, 2.0)]))
             .Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task MultiAdd_WithMaxBatchSize_SendsChunksAndReportsRejectionsAcrossChunks()
+    {
+        await using var server = new FakeRespServer(
+            Frame("*2\r\n:1\r\n-ERR TSDB: the key does not exist\r\n"),
+            Frame("*2\r\n:3\r\n:4\r\n"),
+            Frame("*1\r\n:5\r\n"),
+            Frame("*2\r\n:1\r\n:2\r\n"),
+            Frame("*1\r\n:3\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+
+        // A rejected sample in the first chunk does not stop the later chunks.
+        var exception = await Assert.That(async () => await timeSeries.MultiAddAsync(
+                [new("a", 1, 1.0), new("missing", 2, 2.0), new("c", 3, 3.0), new("d", 4, 4.0), new("e", 5, 5.0)],
+                maxBatchSize: 2))
+            .Throws<RespireTimeSeriesMultiAddException>();
+        await Assert.That(exception!.Timestamps).IsEquivalentTo([(long?)1, null, 3, 4, 5]);
+        await Assert.That(exception.Errors[1]!).Contains("key does not exist");
+
+        var timestamps = await timeSeries.MultiAddAsync([new("a", 1, 1.0), new("b", 2, 2.0), new("c", 3, 3.0)], maxBatchSize: 2);
+        await Assert.That(timestamps).IsEquivalentTo([1L, 2L, 3L]);
+
+        // Invalid input is rejected before any chunk is sent.
+        await Assert.That(async () => await timeSeries.MultiAddAsync(
+                [new("a", 1, 1.0), new("b", 2, 2.0), new("c", RespireTimeSeriesTimestamp.Maximum, 3.0)], maxBatchSize: 2))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await timeSeries.MultiAddAsync([new("a", 1, 1.0)], maxBatchSize: 0))
+            .Throws<ArgumentOutOfRangeException>();
+
+        await Assert.That(Sent(server)).IsEqualTo(
+            "TS.MADD a 1 1 missing 2 2 | TS.MADD c 3 3 d 4 4 | TS.MADD e 5 5 | " +
+            "TS.MADD a 1 1 b 2 2 | TS.MADD c 3 3");
     }
 
     [Test]
