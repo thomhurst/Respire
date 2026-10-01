@@ -723,10 +723,10 @@ public class SentinelTests
             .FindIndex(command => command == "SUBSCRIBE +switch-master");
         await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", previous.Port, 6390),
             reportingSentinel.ReceivedConnectionIds[commandIndex]);
-        await Task.Delay(50);
+        await WaitUntilAsync(() => reportingSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > reportingLookups);
+        await WaitUntilQuietAsync(() => reportingSentinel.ReceivedCommands.Count + staleSentinel.ReceivedCommands.Count);
         await Assert.That(client.Core.Sentinel!.Current!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replacement.Port));
-        await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
-            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsGreaterThan(reportingLookups);
         await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(staleLookups);
     }
