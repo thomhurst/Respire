@@ -51,6 +51,13 @@ public sealed class RespireCoordination
     private static readonly RespireScript ReadCountdownLatchCompatibility =
         RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
 
+    /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
+    public RespireRateLimiters RateLimiters => new(this);
+
+    internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
+        RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
+        => _client.Scripts.ExecuteAsync(script, [key], args, cancellationToken);
+
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
     /// <param name="count">Initial number of signals required to release waiters.</param>
@@ -122,7 +129,6 @@ public sealed class RespireCoordination
             [snapshot], [generation, count, channel], cancellationToken).ConfigureAwait(false);
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
-
     internal static readonly RespireScript AcquireFencedLock = RespireScript.Create("""
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then

@@ -78,6 +78,69 @@ decimal bytes, preserving every positive `long` value, including values above 2^
 The script uses EVALSHA with a definitive NOSCRIPT fallback to EVAL and works on Redis 7+
 and compatible Valkey deployments; it does not require Redis 8.8 commands.
 
+## Redis-backed rate limits
+
+`RespireCoordination.RateLimiters` creates fixed-window, sliding-window and token-bucket
+implementations of `System.Threading.RateLimiting.RateLimiter`. Redis scripts use server time
+and apply each permit decision atomically. Fixed windows use `INCREX` on Redis 8.8 and later;
+older Redis versions use an equivalent Lua counter with the same first-request window expiry.
+Sliding-window state stores at most the permits allowed in one window. Token-bucket state stores
+only its current token count and last server refill time.
+
+```csharp
+using System.Threading.RateLimiting;
+using Respire.Extensions.Coordination;
+
+var coordination = new RespireCoordination(redis);
+await using var limiter = coordination.RateLimiters.FixedWindow(
+    "limits:checkout", permitLimit: 100, window: TimeSpan.FromMinutes(1), queueLimit: 20,
+    queueProcessingOrder: QueueProcessingOrder.OldestFirst);
+
+using var lease = await limiter.AcquireAsync(1, cancellationToken);
+if (!lease.IsAcquired
+    && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
+{
+    Console.WriteLine($"Try again after {retryAfter}.");
+}
+```
+
+Limiter keys accept binary values and use the configured client prefix. Each algorithm accesses one
+Redis key, so one atomic script stays on one Cluster slot. Permit leases are consumptive: disposing
+a successful lease does not return permits. Redis expiry and refill time govern availability.
+Use `AcquireAsync`; synchronous `AttemptAcquire` throws `NotSupportedException` because Redis
+requires a network round trip. Queued asynchronous acquisitions observe caller cancellation and
+limiter disposal. Waiting follows the next server-calculated availability time instead of polling
+Redis. `GetStatistics()` returns
+`null` because a local snapshot cannot represent shared limiter state across processes.
+If cancellation or a disconnect races with an accepted Redis script, the permit may be consumed
+even when the caller does not receive an acquired lease.
+
+### Fixed window
+
+```csharp
+var limiter = coordination.RateLimiters.FixedWindow(
+    "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1));
+```
+
+### Sliding window
+
+```csharp
+var limiter = coordination.RateLimiters.SlidingWindow(
+    "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1), segments: 10);
+```
+
+### Token bucket
+
+```csharp
+var limiter = coordination.RateLimiters.TokenBucket(
+    "limits:api", tokenLimit: 100, tokensPerPeriod: 10,
+    replenishmentPeriod: TimeSpan.FromSeconds(1));
+```
+
+For automatic DI and ASP.NET Core middleware integration, register the returned `RateLimiter`
+through the application's rate-limiting configuration. Dispose each limiter when its owner stops;
+the Respire client remains caller-owned.
+
 ## Named leases in hash fields
 
 `TryAcquireLeaseAsync` stores each named lease as one hash field and applies an independent field
