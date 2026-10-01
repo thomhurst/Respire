@@ -160,30 +160,22 @@ public static class RespireSearchQueryBuilder
     }
 
     private static string EscapeTag(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        var escaped = new System.Text.StringBuilder(value.Length);
-        foreach (var rune in value.EnumerateRunes())
-        {
-            if (!System.Text.Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
-            escaped.Append(rune.ToString());
-        }
-        return escaped.ToString();
-    }
+        => EscapeIdentifier(value);
 
     internal static string EscapeField(string value)
+        => EscapeIdentifier(value);
+
+    private static string EscapeIdentifier(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        var escaped = new System.Text.StringBuilder(value.Length);
+        var escaped = new StringBuilder(value.Length);
         foreach (var rune in value.EnumerateRunes())
         {
-            if (!System.Text.Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
+            if (!Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
             escaped.Append(rune.ToString());
         }
         return escaped.ToString();
     }
-
-    private static string Require(string value) { ArgumentException.ThrowIfNullOrWhiteSpace(value); return value; }
 }
 
 /// <summary>Modifiers for FT.SEARCH.</summary>

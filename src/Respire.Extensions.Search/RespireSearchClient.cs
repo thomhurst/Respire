@@ -37,6 +37,7 @@ public sealed class RespireSearchClient
     }
 
     /// <summary>Returns the raw index information response.</summary>
+    /// <remarks>The caller owns the result and must dispose it.</remarks>
     public ValueTask<RespireResult> GetIndexInfoAsync(string name, CancellationToken cancellationToken = default)
         => _commands.InfoAsync(RequireName(name), cancellationToken);
 
