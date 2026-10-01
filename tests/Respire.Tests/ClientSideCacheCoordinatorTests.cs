@@ -412,6 +412,40 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task TimeSeriesMutationsFenceTheirKeyOrFlushWhenTheyWriteSeveralKeys()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        foreach (var operation in new[] { "TS.CREATE", "TS.ALTER", "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.DEL" })
+        {
+            Insert(cache, "unrelated", "retained");
+            Insert(cache, "series", "old");
+            var command = new Cmd1N(new Verb(operation), "series", [1]);
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.IsRequired).IsTrue();
+            await Assert.That(cache.TryGet(new RespireKey("series"), out _)).IsFalse();
+            cache.CompleteMutation(in fence);
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+
+        // TS.MADD writes every listed series and rules change the destination, so they take the
+        // conservative unknown-mutation path and flush everything.
+        foreach (var operation in new[] { "TS.MADD", "TS.CREATERULE", "TS.DELETERULE" })
+        {
+            Insert(cache, "unrelated", "dropped");
+            var command = new Cmd1N(new Verb(operation), "series", ["other"]);
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.FlushAll).IsTrue().Because($"{operation} writes more than its first key");
+            await Assert.That(cache.Count).IsEqualTo(0);
+            cache.CompleteMutation(in fence);
+        }
+
+        foreach (var operation in new[] { "TS.GET", "TS.RANGE", "TS.REVRANGE", "TS.MGET", "TS.MRANGE", "TS.INFO", "TS.QUERYINDEX" })
+        {
+            await Assert.That(ClientSideCacheCoordinator.CanCacheOperation(operation)).IsFalse();
+        }
+    }
+
+    [Test]
     [Arguments("LPUSHX")]
     [Arguments("RPUSHX")]
     public async Task ConditionalListPushInvalidatesOnlyItsKeyBeforeAndAfterCompletion(string operation)

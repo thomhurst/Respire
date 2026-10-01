@@ -93,14 +93,15 @@ internal static class RawCommandKeyLayouts
         // Label-filter queries name no keys and return series from every key namespace, so they are
         // routed keylessly and are not prefixable.
         AddImmediate(LayoutKind.None, "TS.MGET", "TS.MRANGE", "TS.MREVRANGE", "TS.QUERYINDEX");
-        AddImmediate(LayoutKind.First,
+        // Probabilistic layouts name every key, including both sides of a merge, so they are prefixable.
+        AddPrefixable(LayoutKind.First,
             "BF.RESERVE", "BF.ADD", "BF.EXISTS", "BF.MADD", "BF.MEXISTS", "BF.INSERT", "BF.INFO", "BF.CARD", "BF.SCANDUMP", "BF.LOADCHUNK",
             "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO", "CF.SCANDUMP", "CF.LOADCHUNK",
             "CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.QUERY", "CMS.INFO",
             "TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY", "TOPK.QUERY", "TOPK.COUNT", "TOPK.LIST", "TOPK.INFO",
             "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD", "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK", "TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN", "TDIGEST.INFO",
             "VADD", "VREM", "VSETATTR");
-        AddImmediate(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
+        AddPrefixable(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)
@@ -130,6 +131,10 @@ internal static class RawCommandKeyLayouts
     /// <summary>Whether the registered layout identifies exactly one key in the first argument.</summary>
     internal static bool HasSingleFirstKeyLayout(string operation)
         => Layouts.TryGetValue(operation, out var definition) && definition.Kind == LayoutKind.First;
+
+    /// <summary>Whether <paramref name="operation"/> has an explicit layout safe for key-prefixed views.</summary>
+    internal static bool HasPrefixableLayout(string operation)
+        => Layouts.TryGetValue(operation, out var definition) && definition.Prefixable;
 
     internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
     {
