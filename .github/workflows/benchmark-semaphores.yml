@@ -50,7 +50,7 @@ jobs:
           # Keep shared feature sources identical across phases so each revision builds.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
-          # Add only the overload needed to compile candidate semaphore cleanup against the pinned client.
+          # Add baseline-compatible overloads used by the shared candidate semaphore source.
           # Baseline benchmark phases keep the base revision's client implementation.
           python3 - <<'PY'
           from pathlib import Path
@@ -61,7 +61,18 @@ jobs:
           shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')
           assert source.count(marker) == 1
-          path.write_text(source.replace(marker, shim + marker, 1))
+          tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
+          tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
+                          '        RespireScript script, RespireKey[] keys, RespireValue[] args,\n'
+                          '        CancellationToken cancellationToken, bool requireReliableCorrectionOrdering,\n'
+                          '        bool captureSendTimestampOnly)\n'
+                          '        => StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n\n')
+          assert source.count(tracked_marker) == 1
+          source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
+          source = source.replace(marker, shim + marker, 1)
+          assert source.count('bool captureSendTimestampOnly)') == 1
+          assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)') == 1
+          path.write_text(source)
           PY
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline

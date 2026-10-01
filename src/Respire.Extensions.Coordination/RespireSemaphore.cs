@@ -431,34 +431,51 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             if (Volatile.Read(ref _nonExpiringOutcomeUncertain) != 0
                 || Volatile.Read(ref _finiteOutcomeUncertain) != 0) return false;
             var started = Stopwatch.GetTimestamp();
+            RespireClient.TrackedScriptExecution? trackedExecution = null;
             try
             {
                 // Renewal only updates an existing member, so a delayed renewal that executes after
                 // a cleanup release cannot recreate the permit; no CLIENT KILL fence is needed.
-                using var response = await _client.Scripts.ExecuteAsync(
-                    RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
-                var completed = Stopwatch.GetTimestamp();
-                var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
-                var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
-                var renewed = response.AsInteger() == 1;
-                if (renewed)
+                RespireResult response;
+                if (_client is RespireClient concreteClient)
                 {
-                    Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
-                    Interlocked.Exchange(ref _validUntil,
-                        remaining is { } validRemaining && validRemaining > TimeSpan.Zero
-                            ? AddTimestampDuration(completed, validRemaining)
-                            : remaining.HasValue ? completed : long.MaxValue);
-                    // A prior timed-out renewal can still arrive on another connection and
-                    // overwrite this score. Only a confirmed owner-token release resolves that uncertainty.
+                    trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
+                        RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken,
+                        requireReliableCorrectionOrdering: false, captureSendTimestampOnly: true).ConfigureAwait(false);
+                    response = await trackedExecution.Response.ConfigureAwait(false);
                 }
-                if (!renewed)
+                else
                 {
-                    // Redis confirmed this owner holds no permit; no release is needed to prove it.
-                    Interlocked.Exchange(ref _released, 1);
-                    return false;
+                    response = await _client.Scripts.ExecuteAsync(
+                        RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 }
-                if ((!remaining.HasValue || remaining.Value > TimeSpan.Zero)
-                    && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
+                using (response)
+                {
+                    var completed = Stopwatch.GetTimestamp();
+                    if (trackedExecution is { StartedTimestamp: > 0 } sent)
+                        started = Math.Max(started, sent.StartedTimestamp);
+                    var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
+                    var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
+                    var renewed = response.AsInteger() == 1;
+                    if (renewed)
+                    {
+                        Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
+                        Interlocked.Exchange(ref _validUntil,
+                            remaining is { } validRemaining && validRemaining > TimeSpan.Zero
+                                ? AddTimestampDuration(completed, validRemaining)
+                                : remaining.HasValue ? completed : long.MaxValue);
+                        // A prior timed-out renewal can still arrive on another connection and
+                        // overwrite this score. Only a confirmed owner-token release resolves that uncertainty.
+                    }
+                    if (!renewed)
+                    {
+                        // Redis confirmed this owner holds no permit; no release is needed to prove it.
+                        Interlocked.Exchange(ref _released, 1);
+                        return false;
+                    }
+                    if ((!remaining.HasValue || remaining.Value > TimeSpan.Zero)
+                        && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
+                }
             }
             catch (Exception error)
             {
