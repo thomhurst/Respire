@@ -330,6 +330,7 @@ internal sealed partial class SubscriptionHub
         List<RespireConnection> close = [];
         List<(RespireConnection Connection, SubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
         List<RespireEndpoint> collateralEndpoints = [];
+        List<(RespireConnection Connection, CancellationTokenSource Timeout, Task Ack)> cleanupAcks = [];
         await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
         try
         {
@@ -379,28 +380,19 @@ internal sealed partial class SubscriptionHub
                 }
             }
 
+            // Enqueue removals while activation is gated so later subscriptions cannot be
+            // overtaken. Await their acknowledgements only after releasing the shared gate.
             foreach (var (connection, kind, name) in unsubscribe)
             {
-                try
-                {
-                    using var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
-                    await SendControlAsync(connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
-                        timeout.Token, instrument: true).ConfigureAwait(false);
-                }
-                catch (Exception closeError) when (closeError is RespireException or OperationCanceledException)
-                {
-                    try { await connection.DisposeAsync().ConfigureAwait(false); }
-                    catch (Exception disposeError) { core.Logger?.LogDebug(disposeError, "Closing an exhausted cluster notification connection failed"); }
-                }
+                var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
+                var ack = SendControlAsync(connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
+                    timeout.Token, instrument: true).AsTask();
+                cleanupAcks.Add((connection, timeout, ack));
             }
             if (node.Connection is { } nodeConnection) close.Add(nodeConnection);
-            foreach (var connection in close.Distinct())
-            {
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception closeError) { core.Logger?.LogDebug(closeError, "Closing an exhausted cluster notification connection failed"); }
-            }
         }
         finally { _controlGate.Release(); }
+
         core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
             node.Endpoint, RespireConnectionState.Disconnected, error)
         {
@@ -417,6 +409,28 @@ internal sealed partial class SubscriptionHub
             core.Logger?.LogWarning(telemetryError, "Cluster notification reconnect exhaustion telemetry listener threw");
         }
         foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
+
+        foreach (var (connection, timeout, ack) in cleanupAcks)
+        {
+            try { await ack.ConfigureAwait(false); }
+            catch (Exception cleanupError)
+            {
+                try { core.Logger?.LogDebug(cleanupError, "Cluster notification unsubscribe failed for {Host}:{Port}", node.Endpoint.Host, node.Endpoint.Port); }
+                catch { /* Cleanup must still close an uncertain connection if logging fails. */ }
+                close.Add(connection);
+            }
+            finally { timeout.Dispose(); }
+        }
+
+        foreach (var connection in close.Distinct())
+        {
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception closeError)
+            {
+                try { core.Logger?.LogDebug(closeError, "Closing an exhausted cluster notification connection failed"); }
+                catch { /* Cleanup is best-effort even when logging fails. */ }
+            }
+        }
     }
 
     private void PublishNotificationReconnectGaps(ClusterNotificationNode node)

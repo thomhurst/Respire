@@ -265,7 +265,7 @@ public class ClusterNotificationRoutingTests
         {
             InstrumentPublished = (instrument, meterListener) =>
             {
-                if (instrument.Name == "respire.connection.reconnect.attempt")
+                if (instrument.Name is "respire.connection.reconnect.attempt" or "respire.pubsub.delivery.gaps")
                     meterListener.EnableMeasurementEvents(instrument);
             },
         };
@@ -273,6 +273,8 @@ public class ClusterNotificationRoutingTests
         {
             if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
                 throw new InvalidOperationException("Injected reconnect telemetry failure.");
+            if (tags.ToArray().Any(tag => tag.Key == "respire.pubsub.gap.reason"))
+                throw new InvalidOperationException("Injected delivery-gap telemetry failure.");
         });
         telemetryListener.Start();
         await using var first = new FakeRespServer(20);
@@ -298,6 +300,17 @@ public class ClusterNotificationRoutingTests
         });
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var gapObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endpointReconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sawReconnect = 0;
+        subscription.DeliveryGap += _ => gapObserved.TrySetResult();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != third.Port) return;
+            if (change.State == RespireConnectionState.Reconnecting) Interlocked.Exchange(ref sawReconnect, 1);
+            else if (change.State == RespireConnectionState.Connected && Volatile.Read(ref sawReconnect) != 0)
+                endpointReconnected.TrySetResult();
+        };
         var initialIndex = third.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
         third.CloseConnection(third.ReceivedConnectionIds[initialIndex]);
 
@@ -317,6 +330,8 @@ public class ClusterNotificationRoutingTests
         }
 
         await reconnectSubscribed.Task.WaitAsync(deadline.Token);
+        await gapObserved.Task.WaitAsync(deadline.Token);
+        await endpointReconnected.Task.WaitAsync(deadline.Token);
         var reconnectIndex = third.ReceivedCommands.ToList().FindLastIndex(command => command == $"PSUBSCRIBE {descriptor}");
         await third.SendRawAsync(Data(descriptor, resp3: false, "set"), third.ReceivedConnectionIds[reconnectIndex]);
         while (!reader.Current.TryParseKeyNotification(out _))

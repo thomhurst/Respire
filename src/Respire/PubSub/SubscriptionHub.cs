@@ -293,8 +293,11 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
     }
 
-    internal void LogGapHandlerFailure(Exception error)
-        => core.Logger?.LogWarning(error, "Subscription delivery-gap handler threw");
+    internal void LogGapObserverFailure(Exception error)
+    {
+        try { core.Logger?.LogWarning(error, "Subscription delivery-gap observer threw"); }
+        catch { /* Observer failures must not interrupt gap delivery or recovery. */ }
+    }
 
     private async Task ObserveAbandonedConnectionAsync(Task disposal)
     {

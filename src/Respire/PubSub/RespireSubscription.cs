@@ -130,13 +130,14 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal void NotifyGap(RespireSubscriptionGap gap)
     {
-        RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason);
+        try { RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason); }
+        catch (Exception ex) { _hub.LogGapObserverFailure(ex); }
         var handlers = DeliveryGap;
         if (handlers is null) return;
         foreach (Action<RespireSubscriptionGap> handler in handlers.GetInvocationList())
         {
             try { handler(gap); }
-            catch (Exception ex) { _hub.LogGapHandlerFailure(ex); }
+            catch (Exception ex) { _hub.LogGapObserverFailure(ex); }
         }
     }
 
