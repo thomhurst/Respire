@@ -61,6 +61,14 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     internal int PendingCorrectionFenceCount => _retiredServerClientIds.Count;
     // Published only after accepted work drained and every failed-socket identity was collected.
     internal bool RetirementDrained => Volatile.Read(ref _retirementDrained);
+    /// <summary>True when any connection has an open streamed reply that has made no progress for <paramref name="idle"/>.</summary>
+    internal bool HasStalledBulkStream(TimeSpan idle)
+    {
+        foreach (var connection in _connections)
+            if (connection?.HasStalledBulkStream(idle) == true) return true;
+        return false;
+    }
+
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
@@ -123,6 +131,16 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
             return false;
         }
+    }
+
+    internal bool HasConnection(Func<RespireConnection, bool> predicate)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected) return false;
+        foreach (var connection in _connections)
+        {
+            if (connection is { IsAcceptingCommands: true } && predicate(connection)) return true;
+        }
+        return false;
     }
 
     private RespireConnectionMultiplexer(string host, int port, int connectionCount, RespireConnectionOptions options, ILogger? logger)

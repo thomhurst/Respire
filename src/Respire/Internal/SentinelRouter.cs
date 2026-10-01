@@ -33,6 +33,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    // Queries the configured and learned Sentinels directly, so replica reads do not depend on a
+    // reachable primary during an outage or failover window.
+    internal ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(CancellationToken cancellationToken)
+        => SentinelResolver.DiscoverReplicaEndpointsAsync(core.Options, _discovery.Snapshot(), cancellationToken);
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
 
     internal sealed class CorrectionLease(SentinelRouter owner, DedicatedConnectionPool pool) : IAsyncDisposable

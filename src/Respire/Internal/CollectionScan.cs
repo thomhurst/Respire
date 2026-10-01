@@ -22,12 +22,14 @@ internal static class CollectionScan
 
         var wireKey = client.Key(in key);
         var cursor = "0";
+        // Every page of this enumeration returns to the server that issued its cursor.
+        var affinity = new ReadAffinity();
         do
         {
             var args = match is null
                 ? new RespireValue[] { wireKey, cursor, "COUNT", countHint }
                 : new RespireValue[] { wireKey, cursor, "MATCH", match, "COUNT", countHint };
-            var reply = await client.SendAsync(operation, new CmdN(verb, args), cancellationToken)
+            var reply = await client.SendCursorPageAsync(operation, new CmdN(verb, args), affinity, cancellationToken)
                 .ConfigureAwait(false);
 
             T[] page;

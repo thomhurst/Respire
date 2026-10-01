@@ -407,6 +407,7 @@ atomically in the same round trip.
 - Streams and consumer groups with per-entry acknowledgement
 - Key-prefixed client views for multi-tenant applications
 - Lazy/eager Redis Sentinel discovery and reactive primary handoff after disconnect or READONLY
+- Role-validated read routing to configured standalone replicas or Sentinel-discovered replicas
 - Sharded pub/sub for Redis 7
 - Automatic reconnect and pub/sub resubscribe
 - OpenTelemetry spans and metrics through `ActivitySource` and `Meter`, both named `Respire`

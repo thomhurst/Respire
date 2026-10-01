@@ -39,6 +39,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly DedicatedConnectionPool _dedicatedPool;
     public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
     internal readonly SentinelRouter? Sentinel;
+    internal readonly ReadEndpointRouter ReadRouter;
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
@@ -62,6 +63,7 @@ internal sealed class ClientCore : IAsyncDisposable
         };
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
+        ReadRouter = new ReadEndpointRouter(this);
         _dedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
         Cluster = options.UseCluster
@@ -287,6 +289,64 @@ internal sealed class ClientCore : IAsyncDisposable
         PublishQueuedStates();
     }
 
+    /// <summary>
+    /// Tracks a read replica's command slot health. Replica reads never populate the client-side
+    /// cache, so a replica outage does not flush entries tracked against the primary.
+    /// </summary>
+    internal void NotifyReadReplicaStateChanged(
+        RespireConnectionMultiplexer node,
+        int slot,
+        RespireConnectionStateChange change)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            var commandSlot = (node, slot);
+            switch (change.State)
+            {
+                case RespireConnectionState.Reconnecting:
+                    _disconnectedCommandSlots.Remove(commandSlot);
+                    _reconnectingCommandSlots.Add(commandSlot);
+                    break;
+                case RespireConnectionState.Disconnected:
+                    _reconnectingCommandSlots.Remove(commandSlot);
+                    _disconnectedCommandSlots.Add(commandSlot);
+                    break;
+                default:
+                    _reconnectingCommandSlots.Remove(commandSlot);
+                    _disconnectedCommandSlots.Remove(commandSlot);
+                    break;
+            }
+
+            QueueEndpointStateLocked(change);
+        }
+
+        PublishQueuedStates();
+    }
+
+    /// <summary>
+    /// Forgets a closed read replica's slot health, so a later replica at the same host and port
+    /// does not inherit a stale Reconnecting or Disconnected state.
+    /// </summary>
+    internal void NotifyReadReplicaRetired(RespireConnectionMultiplexer node)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            var removed = _reconnectingCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node))
+                + _disconnectedCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node));
+            if (removed != 0)
+            {
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
+            }
+        }
+
+        PublishQueuedStates();
+    }
+
     private void QueueEndpointStateLocked(RespireConnectionStateChange source)
     {
         var state = GetEndpointStateLocked(source.Endpoint);
@@ -446,6 +506,8 @@ internal sealed class ClientCore : IAsyncDisposable
         else if (Sentinel is { } sentinelRouter)
             commandEndpoints = sentinelRouter.Current is { } generation ? [generation.Endpoint] : [];
         else commandEndpoints = [Endpoint];
+        // Replica endpoints used by read views are command endpoints too; report their terminal state.
+        commandEndpoints = commandEndpoints.Concat(ReadRouter.GetOpenEndpoints()).Distinct().ToArray();
         lock (_stateGate)
         {
             if (_subscriptionStates is not null)
@@ -478,6 +540,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
+        await ReadRouter.DisposeAsync().ConfigureAwait(false);
         await _dedicatedPool.DisposeAsync().ConfigureAwait(false);
         if (Cluster is { } cluster)
         {

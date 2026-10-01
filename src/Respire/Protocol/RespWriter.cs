@@ -152,4 +152,14 @@ internal interface IRespCommand
         key = default;
         return false;
     }
+
+    /// <summary>
+    /// Returns the argument at <paramref name="index"/> (counting after the command name) when the
+    /// command keeps its arguments as a list. Read routing uses it to find a scan cursor.
+    /// </summary>
+    bool TryGetArgument(int index, out RespireValue value)
+    {
+        value = default;
+        return false;
+    }
 }

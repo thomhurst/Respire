@@ -417,6 +417,89 @@ This is reactive discovery. Sentinel event subscriptions and the real-server fai
 remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
 monitor proactively moves an otherwise healthy connection before a failure is observed.
 
+## Read from replicas
+
+Set `RespireOptions.ReplicaEndpoints` for a standalone primary/replica deployment. Sentinel
+clients discover replica endpoints with `SENTINEL REPLICAS`, using the first Sentinel that gives
+a well-formed answer, in the same order as primary discovery. Replies from different Sentinels
+are not merged, because during a failover or partition a stale Sentinel can still list replicas
+that the others have dropped. A reply with a malformed entry counts as a failed Sentinel; an empty
+list is accepted and removes every replica. Existing multi-endpoint standalone
+configuration keeps its current validation and connection-time fallback behavior.
+
+`RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
+it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
+them read-only. Caller-defined commands, writes, blocking operations, subscriptions, batches, and
+transactions stay on the primary. `Replica` fails when no validated replica is available.
+`PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
+uses the primary when replica selection fails.
+
+Fallback happens only while a connection is being selected. Once a command has been written to a
+replica or the primary, a failure is returned to the caller and the command is not sent again,
+matching the rest of Respire: a command accepted by a failed connection is never replayed.
+
+### Validation and staleness
+
+Respire validates each replica connection with `ROLE` before sending reads to it, and rejects a
+node that does not report the `slave`/`replica` role. `ROLE` also reports the replica's link to
+its primary. A replica whose link is `connected` is always chosen over one that is still
+connecting or syncing, because an unlinked replica can serve arbitrarily stale data. When no
+linked replica is available, as during a primary outage, Respire still uses an unlinked replica;
+the server's `replica-serve-stale-data` setting decides whether it answers or rejects the read.
+
+`RespireOptions.ReplicaRefreshInterval` (default one second) bounds how stale the replica
+topology can be:
+
+- A connection's `ROLE` check is reused for one interval, so a node promoted to primary can keep
+  serving reads for up to one interval. Under heavy load one caller revalidates while others keep
+  using the previously validated connection, which can extend the window to two intervals.
+- Sentinel clients refresh the replica set in the background at most once per interval and keep
+  the last known set when no Sentinel answers. During a Sentinel outage the retry delay doubles
+  after each failed attempt, up to 30 seconds (or the interval, if that is longer), and returns to
+  one interval once Sentinel answers. Respire logs a warning when Sentinel stops answering and an
+  informational message when it recovers.
+- A replica that fails a connection attempt or a `ROLE` check is skipped for one interval, so a dead
+  replica does not add a connect timeout to every read.
+
+`TimeSpan.Zero` revalidates on every read and disables the cooldown.
+
+A replica removed from the topology stops receiving new reads at once. Its connections stay open
+for up to one second, then drain the commands they already accepted before closing. The drain
+waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;
+each command remains bounded by its own `CommandTimeout`, so retirement does not cut a read short
+while it makes progress. A streamed reply that receives no data for 30 seconds (or
+`CommandTimeout`, if that is longer) is treated as abandoned, for example a stream that was never
+read or disposed: the replica then closes and the stream fails. Disposing the client closes any
+replica that is still draining.
+
+### Cursor reads
+
+`SCAN`, `HSCAN`, `SSCAN`, `ZSCAN` and `ARSCAN` cursors are only valid on the server that issued
+them. `Keys.ScanAsync`, `Hashes.ScanAsync`, `Sets.ScanAsync` and `SortedSets.ScanAsync` pin each
+enumeration to the server that served its first page, so concurrent scans spread across replicas.
+If that server leaves the topology or fails mid-enumeration, the enumeration throws a
+`RespireConnectionException` instead of continuing a cursor on another server; start a new scan.
+
+Raw cursor commands sent through `ExecuteAsync` share one pinned server per read policy, because
+Respire cannot tell which enumeration a raw cursor belongs to. That pin is dropped when its server
+leaves the topology or fails. A raw `SCAN`, `HSCAN`, `SSCAN` or `ZSCAN` with cursor `0` then
+selects a healthy server, but a command that continues a cursor (any other cursor value) throws a
+`RespireConnectionException` rather than sending the cursor to a server that never issued it;
+restart that scan with cursor `0`. Respire does not know where `ARSCAN` keeps its cursor, so a raw
+`ARSCAN` always reselects once its pin is dropped.
+
+Fire-and-forget commands follow the same policy: a catalogued read sent with
+`ExecuteFireAndForgetAsync` goes to the server the policy selects.
+
+### Consistency
+
+Replica reads can be stale and do not provide read-your-writes consistency. Read views bypass
+client-side cache reads to avoid mixing primary-tracked cache entries with replica data, and a
+replica disconnect does not flush the client-side cache. A read-only function that reports
+`Function not found` on a replica is reloaded on the primary and retried once on the primary.
+Replica connection health is reported through `ConnectionStateChanged` with the replica's
+endpoint. Cluster replica reads are not supported yet.
+
 ## Cancellation and timeouts
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.

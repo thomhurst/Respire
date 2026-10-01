@@ -2971,6 +2971,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new RespireConnectionRetiredException(Host, Port);
     }
 
+    /// <summary>
+    /// True when a streamed bulk reply is still open and its consumer has not read bytes for at
+    /// least <paramref name="idle"/>. Socket reads can pause during pipe backpressure even while
+    /// a slow consumer is making progress, so retirement tracks reads from the returned stream.
+    /// </summary>
+    internal bool HasStalledBulkStream(TimeSpan idle)
+    {
+        return Volatile.Read(ref _activeBulkStreamSource)?.HasStalledReader(idle) == true;
+    }
+
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
     internal Task RetireAsync()
     {

@@ -346,6 +346,8 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             [EnumeratorCancellation] CancellationToken token)
         {
             var cursor = "0";
+            // Every page of this enumeration returns to the server that issued its cursor.
+            var affinity = new ReadAffinity();
             do
             {
                 var args = (effectiveMatch, typeToken) switch
@@ -357,7 +359,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 };
                 var command = new CmdN(Verbs.Scan, args);
                 string[] page;
-                using (var reply = await client.SendAsync("SCAN", command, token).ConfigureAwait(false))
+                using (var reply = await client.SendCursorPageAsync("SCAN", command, affinity, token).ConfigureAwait(false))
                 {
                     var elements = reply.AsArray();
                     cursor = elements[0].AsString();

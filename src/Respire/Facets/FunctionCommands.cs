@@ -100,7 +100,9 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             finally { gate.Release(); }
             // Redis reserves this reply for a missing function. A second failure escapes;
             // timeouts, connection failures and arbitrary function errors never trigger retries.
-            var reply = await client.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false);
+            // The library was loaded on the primary, and a replica may not have received it yet,
+            // so the one retry goes to the primary even under a replica read policy.
+            var reply = await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
     }
