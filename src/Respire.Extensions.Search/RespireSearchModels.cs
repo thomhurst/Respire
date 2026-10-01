@@ -422,7 +422,7 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
             ArgumentException.ThrowIfNullOrWhiteSpace(ScoreField);
             if (K <= 0) throw new ArgumentOutOfRangeException(nameof(K));
             if (Vector.IsEmpty) throw new ArgumentException("Vector bytes are required.", nameof(Vector));
-            return $"*=>[KNN {K} @{RespireSearchQueryBuilder.EscapeField(Field)} $vector AS {ScoreField}]";
+            return $"*=>[KNN {K} @{RespireSearchQueryBuilder.EscapeField(Field)} $vector AS {RespireSearchQueryBuilder.EscapeField(ScoreField)}]";
         }
     }
 }
@@ -580,18 +580,34 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         return new(total, documents, warnings);
     }
 
+    // FT.HYBRID rows carry the reserved __key and __score names. When they are present, names such
+    // as id or score are ordinary loaded fields and must not replace the document identity.
+    private static bool HasReservedHybridKey(RespireResult row)
+    {
+        for (var j = 0; j + 1 < row.Count; j += 2)
+            if (row[j].AsString() == "__key") return true;
+        return false;
+    }
+
+    private static bool IsHybridId(string key, bool reserved)
+        => reserved ? key == "__key" : key is "id" or "key" or "keyid";
+
+    private static bool IsHybridScore(string key, bool reserved)
+        => reserved ? key == "__score" : key == "score";
+
     private static void AddHybridDocument(RespireResult row, List<RespireSearchDocument> documents)
     {
         string? id = null;
         double? score = null;
         var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
         var structuredFields = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
+        var reserved = HasReservedHybridKey(row);
         for (var j = 0; j + 1 < row.Count; j += 2)
         {
             var key = row[j].AsString();
             var value = row[j + 1];
-            if (key is "id" or "key" or "keyid" or "__key") id = value.AsString();
-            else if (key is "score" or "__score") score = value.AsDouble();
+            if (IsHybridId(key, reserved)) id = value.AsString();
+            else if (IsHybridScore(key, reserved)) score = value.AsDouble();
             else if (key == "extra_attributes")
             {
                 var parsed = ParseTypedFields(value);
@@ -623,17 +639,18 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                 {
                     var item = value[j]; string? id = null; double? score = null; var fields = new Dictionary<string, string?>();
                     var structuredFields = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
+                    var reserved = hybrid && HasReservedHybridKey(item);
                     for (var k = 0; k + 1 < item.Count; k += 2)
                     {
                         var itemKey = item[k].AsString(); var itemValue = item[k + 1];
-                        if (itemKey is "id" or "key" or "keyid" or "__key") id = itemValue.AsString();
+                        if (reserved ? itemKey == "__key" : itemKey is "id" or "key" or "keyid" or "__key") id = itemValue.AsString();
                         else if (itemKey == "extra_attributes")
                         {
                             var parsed = ParseTypedFields(itemValue);
                             fields = parsed.Fields;
                             structuredFields = parsed.Structured;
                         }
-                        else if (itemKey is "score" or "__score") score = itemValue.AsDouble();
+                        else if (reserved ? itemKey == "__score" : itemKey is "score" or "__score") score = itemValue.AsDouble();
                         else if (hybrid)
                         {
                             fields[itemKey] = itemValue.IsNull ? null : itemValue.AsString();

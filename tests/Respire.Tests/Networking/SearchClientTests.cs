@@ -372,9 +372,34 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.VectorSearchAsync("idx", new("embedding-v2", new byte[] { 1, 2 }, 3));
+        await search.VectorSearchAsync("idx", new("embedding-v2", new byte[] { 1, 2 }, 3) { ScoreField = "distance-score" });
 
         await Assert.That(server.ReceivedCommands.Any(command => command.Contains("@embedding\\-v2", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(server.ReceivedCommands.Any(command => command.Contains("AS distance\\-score]", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task HybridSearchKeepsLoadedFieldsNamedLikeMetadata()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal)
+                ? "*2\r\n:1\r\n*8\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$2\r\nid\r\n$5\r\nother\r\n$5\r\nscore\r\n$4\r\nhigh\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+        {
+            LoadFields = ["id", "score"],
+        });
+
+        // The reserved names identify the document; loaded fields with metadata-like names stay fields.
+        await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
+        await Assert.That(result.Documents[0].Score).IsEqualTo(0.5);
+        await Assert.That(result.Documents[0].Fields["id"]).IsEqualTo("other");
+        await Assert.That(result.Documents[0].Fields["score"]).IsEqualTo("high");
     }
 
     [Test]
