@@ -19,6 +19,8 @@ public sealed record RespireBloomReserveOptions
 
     internal RespireValue[] ToArguments()
     {
+        if (NonScaling && Expansion is not null)
+            throw new ArgumentException("Expansion and NonScaling are mutually exclusive.");
         var args = new List<RespireValue>();
         if (Expansion is { } expansion) { if (expansion <= 0) throw new ArgumentOutOfRangeException(nameof(Expansion)); args.Add("EXPANSION"); args.Add(expansion); }
         if (NonScaling) args.Add("NONSCALING");
@@ -45,6 +47,8 @@ public sealed record RespireBloomInsertOptions
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
         foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
+        if (NonScaling && Expansion is not null)
+            throw new ArgumentException("Expansion and NonScaling are mutually exclusive.");
         var args = new List<RespireValue>();
         if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); args.Add("CAPACITY"); args.Add(capacity); }
         if (ErrorRate is { } errorRate) { if (!double.IsFinite(errorRate) || errorRate <= 0 || errorRate >= 1) throw new ArgumentOutOfRangeException(nameof(ErrorRate)); args.Add("ERROR"); args.Add(errorRate); }

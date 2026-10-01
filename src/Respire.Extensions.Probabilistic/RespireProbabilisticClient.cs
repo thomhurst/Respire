@@ -28,7 +28,7 @@ public sealed class RespireProbabilisticClient
     {
         ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.BloomAddAsync(key, item, cancellationToken).ConfigureAwait(false);
-        return result.AsBoolean();
+        return ReadBoolean(result);
     }
 
     /// <summary>Checks whether a Bloom filter may contain an item.</summary>
@@ -102,7 +102,7 @@ public sealed class RespireProbabilisticClient
     {
         ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooAddAsync(key, item, cancellationToken).ConfigureAwait(false);
-        return result.AsBoolean();
+        return ReadBoolean(result);
     }
 
     /// <summary>Adds an item only when it is not already present.</summary>
@@ -110,7 +110,7 @@ public sealed class RespireProbabilisticClient
     {
         ProbabilisticValueValidation.ThrowIfNull(item, nameof(item));
         using var result = await _commands.CuckooAddIfAbsentAsync(key, item, cancellationToken).ConfigureAwait(false);
-        return result.AsBoolean();
+        return ReadBoolean(result);
     }
 
     /// <summary>Creates a Cuckoo filter when needed and inserts multiple items, reporting per item whether it was inserted or the filter was full.</summary>
@@ -410,7 +410,9 @@ public sealed class RespireProbabilisticClient
     }
 
     private static bool IsOk(RespireResult result) => result.Type == RespDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
-    private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsBoolean(); return values; }
+    private static bool ReadBoolean(RespireResult result)
+        => result.Type == RespDataType.Boolean ? result.AsBoolean() : result.AsInteger() == 1;
+    private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = ReadBoolean(result[i]); return values; }
     private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
     {
         var values = new RespireCuckooInsertResult[result.Count];
