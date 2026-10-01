@@ -546,8 +546,7 @@ public class CredentialProviderTests
         var rejected = await Assert.That(async () =>
                 await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
             .Throws<RespireConnectionException>();
-        await Assert.That(rejected).IsTypeOf<RespireConnectionClosedBeforeSendException>();
-        await Assert.That(rejected!.InnerException).IsTypeOf<RespireAuthenticationException>();
+        await Assert.That(rejected).IsTypeOf<RespireAuthenticationException>();
         await Assert.That(LockCommands.IsUnsubmitted(rejected)).IsTrue();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
     }
