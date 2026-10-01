@@ -38,6 +38,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task? _notificationRediscovery;
     private int _queuedNotifications;
     private int _successfulMonitorSubscriptions;
+    // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
+    // budget wait on it, because a published generation proves Sentinel discovery works again.
+    private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private string? _masterDownKey;
 
     internal Generation? Current => Volatile.Read(ref _current);
@@ -149,6 +152,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
                 StartNotificationMonitoringLocked();
+                var rearm = _monitorRearm;
+                _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                rearm.TrySetResult();
             }
             return replacement;
         }
@@ -304,8 +310,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch (Exception error)
             {
-                try { core.Logger?.LogWarning(error, "Sentinel event monitor failed at {Endpoint}", endpoint); }
-                catch (Exception) { }
+                SafeLog((error, endpoint), static (logger, state)
+                    => logger.LogWarning(state.error, "Sentinel event monitor failed at {Endpoint}", state.endpoint));
             }
             finally
             {
@@ -327,17 +333,21 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // Surface the lost fast path: respire.connection.reconnect.exhausted with
                 // respire.reconnect.scope=sentinel-monitor, plus a warning.
                 RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, null, core.Logger);
-                try
-                {
-                    core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}; "
-                        + "failover events from this Sentinel are no longer observed and discovery runs on demand", endpoint);
-                }
-                catch (Exception) { }
+                SafeLog(endpoint, static (logger, endpoint) => logger.LogWarning(
+                    "Sentinel event monitor exhausted reconnect attempts at {Endpoint}; failover events from this "
+                    + "Sentinel are not observed until a new primary is published, and discovery runs on demand", endpoint));
                 // Stay parked rather than completing: the supervisor restarts completed monitors,
-                // which would bypass the configured budget. Discovery still runs on demand.
-                try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-                return;
+                // which would bypass the configured budget. Discovery still runs on demand, and the
+                // next validated publication grants a fresh budget, so one long outage does not
+                // remove this Sentinel's fast path for the life of the client.
+                Task rearm;
+                lock (_gate) rearm = _monitorRearm.Task;
+                try { await rearm.WaitAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+                SafeLog(endpoint, static (logger, endpoint) => logger.LogInformation(
+                    "Sentinel event monitor at {Endpoint} resumes after a new primary was published", endpoint));
+                attempt = 0;
+                continue;
             }
             attempt++;
             var delay = GetNotificationRetryDelay(policy, attempt);
@@ -353,8 +363,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         try { await resource.DisposeAsync().ConfigureAwait(false); }
         catch (Exception error)
         {
-            try { core.Logger?.LogDebug(error, "Sentinel event monitor cleanup failed at {Endpoint}", endpoint); }
-            catch (Exception) { }
+            SafeLog((error, endpoint), static (logger, state)
+                => logger.LogDebug(state.error, "Sentinel event monitor cleanup failed at {Endpoint}", state.endpoint));
         }
     }
 
@@ -418,18 +428,26 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // Queue immediately so slow DNS cannot hold up later one-shot notifications.
-                var hint = new SentinelHint("+switch-master:" + message.Text,
+                // Every Sentinel in the quorum announces the same parsed switch, so key on it.
+                var hint = new SentinelHint(sentinelEvent is { OldPrimary: { } from, NewPrimary: { } to }
+                        ? $"+switch-master:{from.Host}:{from.Port}>{to.Host}:{to.Port}"
+                        : "+switch-master:" + message.Text,
                     sentinelEvent.NewPrimary, sentinelEvent.OldPrimary,
                     MustRediscover: sentinelEvent.NewPrimary is null);
+                // Only the generation current when the event arrived can be its source. A later
+                // failover back to the same endpoint publishes a new generation that must survive.
+                var arrivedDuring = Current;
                 QueueNotificationRediscovery(in hint);
-                if (sentinelEvent.OldPrimary is not null)
-                    _ = ResolveAndRetireSwitchSourceAsync(hint, cancellationToken);
+                if (sentinelEvent.OldPrimary is { } source && arrivedDuring is { IsRetired: false }
+                    && !SameEndpoint(arrivedDuring.Endpoint, source))
+                    _ = ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken);
                 return ValueTask.CompletedTask;
         }
         return ValueTask.CompletedTask;
     }
 
-    private async Task ResolveAndRetireSwitchSourceAsync(SentinelHint hint, CancellationToken cancellationToken)
+    private async Task ResolveAndRetireSwitchSourceAsync(SentinelHint hint, Generation arrivedDuring,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -441,6 +459,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 if (_disposed) return;
                 var current = Current;
+                if (!ReferenceEquals(current, arrivedDuring)) return;
                 var targetIsCurrent = !hint.MustRediscover && hint.Target is { } target
                     && current is { IsRetired: false } && SameEndpoint(current.Endpoint, target);
                 if (!targetIsCurrent && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
@@ -450,8 +469,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception error)
         {
-            try { core.Logger?.LogDebug(error, "Could not retire the primary named by a Sentinel switch event"); }
-            catch (Exception) { }
+            SafeLog(error, static (logger, error)
+                => logger.LogDebug(error, "Could not retire the primary named by a Sentinel switch event"));
         }
     }
 
@@ -469,14 +488,22 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            try { core.Logger?.LogDebug(error, "Could not resolve Sentinel switch source {Host}", host); }
-            catch (Exception) { }
+            SafeLog((error, host), static (logger, state)
+                => logger.LogDebug(state.error, "Could not resolve Sentinel switch source {Host}", state.host));
             return null;
         }
     }
 
     private static string NormalizeAddress(IPAddress address)
         => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+
+    // Logging is diagnostic only: a failing user logger must never stop monitoring, rediscovery or disposal.
+    private void SafeLog<TState>(TState state, Action<ILogger, TState> log)
+    {
+        if (core.Logger is not { } logger) return;
+        try { log(logger, state); }
+        catch (Exception) { }
+    }
 
     private void LogSentinelEvent(LogLevel level, in RespireMessage message, RespireEndpoint sentinel)
     {
@@ -491,13 +518,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, bool initialSubscription = false)
     {
-        try
-        {
-            core.Logger?.LogInformation(initialSubscription
-                ? "Sentinel monitor established at {Sentinel}; revalidating the primary after subscription"
-                : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", sentinel);
-        }
-        catch (Exception) { }
+        SafeLog((sentinel, initialSubscription), static (logger, state) => logger.LogInformation(state.initialSubscription
+            ? "Sentinel monitor established at {Sentinel}; revalidating the primary after subscription"
+            : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
         QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true));
@@ -523,10 +546,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var current = Current;
             var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
                 && SameEndpoint(current.Endpoint, target);
-            if (!_coalescer.Offer(in hint, targetIsCurrent)) return;
+            var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
             // Compare the switch source with Current under the gate, immediately before retirement.
-            if (IsSwitchSource(current, in hint)) Invalidate(current!);
-            _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
+            // This also covers hints that wait behind an active discovery, so a direct endpoint
+            // match never waits for that attempt or for DNS.
+            if (!targetIsCurrent && IsSwitchSource(current, in hint)) Invalidate(current!);
+            if (startWorker) _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
         }
     }
 
@@ -545,14 +570,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                try { core.Logger?.LogWarning(error, "Sentinel notification-triggered primary discovery failed"); }
-                catch (Exception) { }
+                SafeLog(error, static (logger, error)
+                    => logger.LogWarning(error, "Sentinel notification-triggered primary discovery failed"));
             }
 
             lock (_gate)
             {
                 if (_disposed) return;
-                if (_coalescer.TakePending() is not { } next)
+                if (_coalescer.TakePending(activeFailed: !succeeded) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
                     // because a switch may already have retired the current generation.
@@ -567,7 +592,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 }
                 else
                 {
-                    failures = 0;
+                    // A newer hint restarts discovery at once, but only success resets the backoff.
+                    if (succeeded) failures = 0;
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
                         && SameEndpoint(current.Endpoint, target))
@@ -749,12 +775,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try { await Task.WhenAll(monitorTasks).WaitAsync(NotificationShutdownTimeout).ConfigureAwait(false); }
             catch (TimeoutException)
             {
-                try
-                {
-                    core.Logger?.LogWarning("Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running",
-                        NotificationShutdownTimeout, monitorTasks.Count(task => !task.IsCompleted));
-                }
-                catch (Exception) { }
+                SafeLog(monitorTasks, static (logger, tasks) => logger.LogWarning(
+                    "Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running",
+                    NotificationShutdownTimeout, tasks.Count(task => !task.IsCompleted)));
             }
             catch (Exception error) { disposeError = error; }
             await _discoveryGate.WaitAsync().ConfigureAwait(false);

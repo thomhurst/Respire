@@ -27,8 +27,11 @@ internal sealed class SentinelNotificationCoalescer
 {
     private SentinelHint? _pending;
 
+    /// <summary>The hint the worker is discovering, or null when no worker runs.</summary>
+    internal SentinelHint? Active { get; private set; }
+
     /// <summary>The key of the hint the worker is discovering, or null when no worker runs.</summary>
-    internal string? ActiveKey { get; private set; }
+    internal string? ActiveKey => Active?.Key;
 
     internal SentinelHint? Pending => _pending;
 
@@ -55,13 +58,14 @@ internal sealed class SentinelNotificationCoalescer
             return false;
         }
         _pending = null;
-        ActiveKey = hint.Key;
+        Active = hint;
         return true;
     }
 
     /// <summary>
     /// Merges a hint into the pending slot. A hint that names a switch source replaces a pending
-    /// hint without one, keeping the earlier target when it has none. A pending switch is never
+    /// hint without one, keeping the earlier target when it has none, unless the later hint names
+    /// that target as its own switch source. A pending switch is never
     /// replaced by a hint without a source, so a later down event cannot erase its retirement.
     /// Fault flags accumulate.
     /// </summary>
@@ -71,23 +75,35 @@ internal sealed class SentinelNotificationCoalescer
         var mustRediscover = previous.MustRediscover || hint.MustRediscover
             || hint.OldPrimary is not null && hint.Target is null;
         return hint.OldPrimary is not null || previous.OldPrimary is null
-            ? hint with { Target = hint.Target ?? previous.Target, MustRediscover = mustRediscover }
+            ? hint with
+            {
+                // A later switch away from the earlier target supersedes it rather than inheriting it.
+                Target = hint.Target ?? (previous.Target is { } target && hint.OldPrimary is { } source
+                    && SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, source) ? null : previous.Target),
+                MustRediscover = mustRediscover,
+            }
             : previous with { MustRediscover = mustRediscover };
     }
 
     /// <summary>Takes the pending hint and makes it active. Returns null when nothing is pending.</summary>
-    internal SentinelHint? TakePending()
+    /// <param name="activeFailed">
+    /// Whether the active attempt failed. Its hint is then merged into the next one and marked
+    /// must-rediscover, so a newer hint of a different kind cannot silently drop the failed one.
+    /// </param>
+    internal SentinelHint? TakePending(bool activeFailed = false)
     {
         if (_pending is not { } next) return null;
+        if (activeFailed && Active is { } failed)
+            next = Merge(failed, in next) with { MustRediscover = true };
         _pending = null;
-        ActiveKey = next.Key;
+        Active = next;
         return next;
     }
 
     /// <summary>Ends the worker: no hint is active or pending.</summary>
     internal void Complete()
     {
-        ActiveKey = null;
+        Active = null;
         _pending = null;
     }
 }

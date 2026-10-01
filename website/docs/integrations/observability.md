@@ -152,7 +152,7 @@ handoffs triggered by events, disconnects, or `READONLY` replies. Prefix views s
 Sentinel event monitors log failover hints for the configured service at Information and replica
 events at Debug. A monitor that exhausts its `ReconnectPolicy` increments
 `respire.connection.reconnect.exhausted` with `respire.reconnect.scope = sentinel-monitor` and logs
-a warning. The `respire.sentinel.failover` counter
+a warning. It logs at Information when a later primary publication resumes it. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
 discovery and reconnection to the same endpoint do not increment it. Published failover
 measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run

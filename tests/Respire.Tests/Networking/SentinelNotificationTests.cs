@@ -137,6 +137,59 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task LaterSwitchAwayFromThePendingTargetDoesNotInheritIt()
+    {
+        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
+        var later = new SentinelHint("b", OldPrimary: NewPrimary);
+
+        var merged = SentinelNotificationCoalescer.Merge(pending, in later);
+
+        await Assert.That(merged.Target).IsNull();
+        await Assert.That(merged.OldPrimary).IsEqualTo(NewPrimary);
+        await Assert.That(merged.MustRediscover).IsTrue();
+    }
+
+    [Test]
+    public async Task FailedActiveSwitchSurvivesANewerPendingHint()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        var failedSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(in failedSwitch, targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
+
+        var next = coalescer.TakePending(activeFailed: true);
+
+        // The down hint has no switch source, so the failed switch is kept and must be retried.
+        await Assert.That(next).IsEqualTo(failedSwitch with { MustRediscover = true });
+        await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
+    }
+
+    [Test]
+    public async Task FailedActiveHintMakesANewerTargetedHintRediscover()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
+        var laterSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(in laterSwitch, targetIsCurrent: false);
+
+        var next = coalescer.TakePending(activeFailed: true);
+
+        // A newer target that happens to be current must not end the worker before the failed hint is retried.
+        await Assert.That(next).IsEqualTo(laterSwitch with { MustRediscover = true });
+    }
+
+    [Test]
+    public async Task SuccessfulActiveHintLeavesTheNewerHintUnchanged()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
+        var laterSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(in laterSwitch, targetIsCurrent: false);
+
+        await Assert.That(coalescer.TakePending()).IsEqualTo(laterSwitch);
+    }
+
+    [Test]
     public async Task CompleteClearsActiveAndPendingHints()
     {
         var coalescer = new SentinelNotificationCoalescer();

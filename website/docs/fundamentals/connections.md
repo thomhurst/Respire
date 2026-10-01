@@ -476,9 +476,10 @@ start discovery.
 
 Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
 independently under the client's `ReconnectPolicy`, reported with
-`respire.reconnect.scope = sentinel-monitor`. Pub/Sub delivery is at-most-once, so a monitor that
-reconnects, or whose subscription reports a delivery gap, triggers one rediscovery to catch a missed
-switch. Later commands also still use the reactive discovery path. Client disposal stops monitor
+`respire.reconnect.scope = sentinel-monitor`. A monitor that exhausts the policy resumes with a
+fresh budget after the next validated primary publication. Pub/Sub delivery is at-most-once, so a
+monitor that subscribes, reconnects, or reports a delivery gap triggers one rediscovery to catch a
+missed switch. Later commands also still use the reactive discovery path. Client disposal stops monitor
 work and waits up to 10 seconds for it, logging any task that does not stop. Accepted commands are
 never replayed during handoff.
 
