@@ -9,18 +9,4 @@
     <ProjectReference Include="..\Respire\Respire.csproj" />
     <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
-  <Target Name="_PackRespireSearchAnalyzer" BeforeTargets="_GetPackageFiles">
-    <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
-      <Output TaskParameter="TargetOutputs" ItemName="_RespireSearchAnalyzerAssembly" />
-    </MSBuild>
-    <Error Condition="'@(_RespireSearchAnalyzerAssembly)' == ''" Text="Respire.Analyzers.dll was not produced for packaging." />
-    <PropertyGroup>
-      <_RespireSearchAnalyzerOutputDir>%(_RespireSearchAnalyzerAssembly.RootDir)%(_RespireSearchAnalyzerAssembly.Directory)</_RespireSearchAnalyzerOutputDir>
-    </PropertyGroup>
-    <ItemGroup>
-      <None Include="@(_RespireSearchAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-      <_RespireSearchAnalyzerDependency Include="$(_RespireSearchAnalyzerOutputDir)*.dll" Exclude="@(_RespireSearchAnalyzerAssembly);$(_RespireSearchAnalyzerOutputDir)Respire.Analyzers.dll;$(_RespireSearchAnalyzerOutputDir)Microsoft.CodeAnalysis.dll;$(_RespireSearchAnalyzerOutputDir)Microsoft.CodeAnalysis.CSharp.dll" />
-      <None Include="@(_RespireSearchAnalyzerDependency)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-    </ItemGroup>
-  </Target>
 </Project>

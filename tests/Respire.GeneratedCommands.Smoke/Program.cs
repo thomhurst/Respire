@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Respire;
 using Respire.Extensions.Json;
+using Respire.Search;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
@@ -17,6 +18,75 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             throw new InvalidOperationException("Generated aggregate reply failed.");
         using var raw = await commands.RawGet(key);
         if (raw.AsString() != "generated") throw new InvalidOperationException("Generated raw reply failed.");
+
+        var index = "respire:search-smoke:" + Guid.NewGuid().ToString("N");
+        var documentPrefix = index + ":doc:";
+        var vector = new byte[sizeof(float) * 2];
+        BitConverter.TryWriteBytes(vector.AsSpan(0, sizeof(float)), 1f);
+        BitConverter.TryWriteBytes(vector.AsSpan(sizeof(float), sizeof(float)), 0f);
+        var search = new RespireSearchClient(client);
+        await search.CreateIndexAsync(index, new RespireSearchIndexDefinition
+        {
+            Prefixes = [documentPrefix],
+            Fields =
+            [
+                new("title", RespireSearchFieldType.Text),
+                new("category", RespireSearchFieldType.Tag),
+                new("embedding", RespireSearchFieldType.Vector,
+                    Options: ["FLAT", "6", "TYPE", "FLOAT32", "DIM", "2", "DISTANCE_METRIC", "L2"]),
+            ],
+        });
+        try
+        {
+            await client.Hashes.SetAsync(documentPrefix + "1",
+                ("title", "redis search"), ("category", "cache"), ("embedding", vector));
+            await client.Hashes.SetAsync(documentPrefix + "2",
+                ("title", "redis client"), ("category", "client"), ("embedding", vector));
+
+            var found = await search.SearchAsync(index, new("redis", new() { Limit = (0, 10) }));
+            if (found.Total != 2 || found.Documents.Count != 2)
+                throw new InvalidOperationException("Respire.Search FT.SEARCH failed.");
+
+            var groups = await search.AggregateAsync(index, "*", new()
+            {
+                Groups = [new(["@category"], [new("COUNT", [], "count")])],
+            });
+            if (groups.Total != 2 || groups.Rows.Count != 2)
+                throw new InvalidOperationException("Respire.Search FT.AGGREGATE failed.");
+
+            var nearest = await search.VectorSearchAsync(index, new("embedding", vector, 1));
+            if (nearest.Documents.Count != 1)
+                throw new InvalidOperationException("Respire.Search vector query failed.");
+
+            var hybrid = await search.HybridSearchAsync(index,
+                new("redis", "embedding", vector, 1, 2) { LoadFields = ["title"] });
+            if (hybrid.Documents.Count == 0 || !hybrid.Documents[0].Id.StartsWith(documentPrefix, StringComparison.Ordinal) || hybrid.Documents[0].Fields["title"] is null)
+                throw new InvalidOperationException($"Respire.Search hybrid query returned no documents (total {hybrid.Total}).");
+
+            try
+            {
+                await search.SearchAsync(index + ":missing", new("*"));
+                throw new InvalidOperationException("Respire.Search server error was not surfaced.");
+            }
+            catch (RespireServerException)
+            {
+            }
+
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            try
+            {
+                await search.SearchAsync(index, new("*"), canceled.Token);
+                throw new InvalidOperationException("Respire.Search cancellation was not propagated.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        finally
+        {
+            await search.DropIndexAsync(index, deleteDocuments: true);
+        }
     }
     finally
     {

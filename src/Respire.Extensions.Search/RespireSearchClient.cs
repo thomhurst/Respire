@@ -1,4 +1,4 @@
-namespace Respire.Extensions.Search;
+namespace Respire.Search;
 
 /// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
 /// <remarks>Search commands are raw module commands. Keys and prefixes must be supplied in index definitions; generated module commands use conservative routing and cache invalidation.</remarks>
@@ -70,7 +70,8 @@ public sealed class RespireSearchClient
         {
             Parameters = parameters,
             Dialect = selected.Dialect ?? 2,
-            SortBy = selected.SortBy ?? (vector.ScoreField, RespireSearchSortDirection.Ascending)
+            SortBy = selected.SortBy ?? (vector.ScoreField, RespireSearchSortDirection.Ascending),
+            Limit = selected.Limit ?? (0, vector.K)
         };
         return SearchAsync(index, new RespireSearchQuery(vector.Expression, selected), cancellationToken);
     }
@@ -84,12 +85,16 @@ public sealed class RespireSearchClient
     }
 
     /// <summary>Returns the server query plan text.</summary>
-    public async ValueTask<string> ExplainAsync(string index, string expression, bool explainCli = false, CancellationToken cancellationToken = default)
+    public async ValueTask<string> ExplainAsync(string index, string expression, bool explainCli = false, CancellationToken cancellationToken = default, int? dialect = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        if (dialect is <= 0) throw new ArgumentOutOfRangeException(nameof(dialect));
+        string[] options = dialect is { } value
+            ? ["DIALECT", value.ToString(System.Globalization.CultureInfo.InvariantCulture)]
+            : [];
         using var result = explainCli
-            ? await _commands.ExplainCliAsync(RequireName(index), expression, [], cancellationToken).ConfigureAwait(false)
-            : await _commands.ExplainAsync(RequireName(index), expression, [], cancellationToken).ConfigureAwait(false);
+            ? await _commands.ExplainCliAsync(RequireName(index), expression, options, cancellationToken).ConfigureAwait(false)
+            : await _commands.ExplainAsync(RequireName(index), expression, options, cancellationToken).ConfigureAwait(false);
         if (!explainCli) return result.AsString();
         var lines = new string[result.Count];
         for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();
