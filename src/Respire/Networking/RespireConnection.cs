@@ -1334,6 +1334,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var streamingStarted = false;
         var requestStarted = false;
         var requestQueued = false;
+        var requestFrameWritten = false;
         var queuedBatchStarted = false;
         try
         {
@@ -1405,10 +1406,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 if (chunk is not null) ArrayPool<byte>.Shared.Return(chunk);
             }
 
-            AppendStreamingEnd(command, source, requestWriteStart, out queuedBatchStarted);
+            var finalWrite = AppendStreamingEnd(command, source, requestWriteStart, out queuedBatchStarted);
             requestQueued = true;
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(queuedBatchStarted);
+            await finalWrite.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+            requestFrameWritten = true;
         }
         catch (OperationCanceledException error) when (IsClosedCancellation(error, effectiveCancellation, cancellationToken))
         {
@@ -1419,7 +1422,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (OperationCanceledException error) when (timeoutCancellation is not null
             && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
         {
-            if (requestStarted && !requestQueued)
+            if (requestStarted && !requestFrameWritten)
                 Abort(new RespireConnectionException(
                     $"Streamed SET on {Host}:{Port} timed out before its RESP frame completed.", error));
             if (!requestQueued) ReclaimUnpublished(source);
@@ -1430,7 +1433,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
         {
-            if (requestStarted && !requestQueued)
+            if (requestStarted && !requestFrameWritten)
                 Abort(new RespireConnectionException(
                     $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
             if (!requestQueued) ReclaimUnpublished(source);
@@ -1438,7 +1441,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
-            if (requestStarted && !requestQueued)
+            if (requestStarted && !requestFrameWritten)
             {
                 Abort(new RespireConnectionException(
                     $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
@@ -1540,7 +1543,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    private void AppendStreamingEnd(
+    private Task AppendStreamingEnd(
         StreamedSetCommand command, PendingResponse source, long requestWriteStart, out bool startedBatch)
     {
         lock (_writeGate)
@@ -1559,6 +1562,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (_responseTimeout is not null) _activeReplyCount++;
             if (!_inflight.TryEnqueue(source, requestWriteEnd))
                 throw new InvalidOperationException("No in-flight slot remained for streamed SET response.");
+            return _activeBuffer.WriteCompletion;
         }
     }
 
@@ -3362,6 +3366,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // an unexpected exit before _dead is published, without spinning on its task.
                     if (_dead || _receiveTask.IsCompleted) break;
                     if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending)
+                        && !_streamingActive
                         && Volatile.Read(ref _activeBulkStreamSource) is null)
                     {
                         Volatile.Write(ref _drainedSuccessfully, true);
