@@ -159,8 +159,7 @@ public class SentinelTests
     {
         // Optional peer discovery hits the discovery deadline after the primary reply arrived.
         // The later primary connection deadline must still surface as CONNECT.
-        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0
-"u8.ToArray())
+        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray())
         {
             SuppressReply = command => command == "SENTINEL SENTINELS mymaster",
         };
