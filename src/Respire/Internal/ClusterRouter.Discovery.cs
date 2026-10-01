@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
