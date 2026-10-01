@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -405,7 +406,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             var key = primaryKey.AsKey().Snapshot();
             Invalidate(in key);
-            return new MutationFence(key, FlushAll: false);
+            return MutationFence.ForKey(key);
+        }
+
+        if (IsMultiKeyMutation(operation)
+            && command.TryGetClientCacheKey(operation, out var arguments)
+            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout))
+        {
+            return BeginMultiKeyMutation(in arguments, layout);
         }
 
         return BeginUnknownMutation();
@@ -419,13 +427,56 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal void CompleteMutation(in MutationFence fence)
     {
-        if (fence.Key is { } key)
+        switch (fence.Kind)
         {
+            case MutationFenceKind.Key:
+                var single = fence.Key;
+                Invalidate(in single);
+                break;
+            case MutationFenceKind.Keys:
+                foreach (var key in fence.Keys!)
+                    Invalidate(in key);
+                break;
+            case MutationFenceKind.All:
+                Flush(continuityLost: false);
+                break;
+        }
+    }
+
+    // Below this many keys a linear scan beats hashing; above it a set keeps fencing linear.
+    private const int LinearDeduplicationLimit = 8;
+
+    private MutationFence BeginMultiKeyMutation(
+        in ClientCacheCommandKey arguments, RawCommandKeyLayouts.KeyLayout layout)
+    {
+        if (layout.Count == 1)
+        {
+            var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
+            Invalidate(in key);
+            return MutationFence.ForKey(key);
+        }
+
+        // Duplicate keys (DEL a a) are skipped so each key is invalidated, published and counted once.
+        var keys = new RespireKey[layout.Count];
+        var keyCount = 0;
+        var seen = layout.Count > LinearDeduplicationLimit ? new HashSet<RespireKey>(layout.Count) : null;
+        for (var index = 0; index < layout.Count; index++)
+        {
+            var key = arguments.GetArgument(layout.Start + index * layout.Stride).AsKey().Snapshot();
+            if (seen is not null ? !seen.Add(key) : ContainsKey(keys, keyCount, in key)) continue;
+            keys[keyCount++] = key;
             Invalidate(in key);
         }
-        else if (fence.FlushAll)
+
+        if (keyCount == 1) return MutationFence.ForKey(keys[0]);
+        if (keyCount != keys.Length) Array.Resize(ref keys, keyCount);
+        return MutationFence.ForKeys(keys);
+
+        static bool ContainsKey(RespireKey[] keys, int count, in RespireKey key)
         {
-            Flush(continuityLost: false);
+            for (var index = 0; index < count; index++)
+                if (keys[index] == key) return true;
+            return false;
         }
     }
 
@@ -759,6 +810,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "XADD" or "XACK" or "XDEL" or "XTRIM" or "XSETID" or
             "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
             "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD" or "VADD" or "VREM" or "VSETATTR";
+
+    private static bool IsMultiKeyMutation(string operation)
+        => operation is "MSET" or "MSETNX" or "MSETEX" or "DEL" or "UNLINK" or "JSON.MSET";
 
     internal readonly record struct ReadToken(
         InflightRead State,
@@ -1143,10 +1197,44 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         Expiration,
     }
 
-    internal readonly record struct MutationFence(RespireKey? Key, bool FlushAll)
+    internal enum MutationFenceKind : byte
     {
-        internal static MutationFence All => new(Key: null, FlushAll: true);
+        /// <summary>No fence: the command is read-only or caching is disabled.</summary>
+        None,
+        /// <summary>Re-invalidate one key on completion.</summary>
+        Key,
+        /// <summary>Re-invalidate several distinct keys on completion.</summary>
+        Keys,
+        /// <summary>Flush the whole cache on completion.</summary>
+        All,
+    }
 
-        internal bool IsRequired => Key is not null || FlushAll;
+    /// <summary>
+    /// What a mutation must re-invalidate when its reply arrives. Constructed only through the factories,
+    /// so the payload always matches <see cref="Kind"/>.
+    /// </summary>
+    internal readonly struct MutationFence
+    {
+        private readonly RespireKey _key;
+        private readonly RespireKey[]? _keys;
+
+        private MutationFence(MutationFenceKind kind, RespireKey key, RespireKey[]? keys)
+            => (Kind, _key, _keys) = (kind, key, keys);
+
+        internal static MutationFence All => new(MutationFenceKind.All, default, null);
+
+        internal static MutationFence ForKey(RespireKey key) => new(MutationFenceKind.Key, key, null);
+
+        internal static MutationFence ForKeys(RespireKey[] keys) => new(MutationFenceKind.Keys, default, keys);
+
+        internal MutationFenceKind Kind { get; }
+
+        /// <summary>The fenced key when <see cref="Kind"/> is <see cref="MutationFenceKind.Key"/>.</summary>
+        internal RespireKey Key => _key;
+
+        /// <summary>The distinct fenced keys when <see cref="Kind"/> is <see cref="MutationFenceKind.Keys"/>.</summary>
+        internal RespireKey[]? Keys => _keys;
+
+        internal bool IsRequired => Kind != MutationFenceKind.None;
     }
 }

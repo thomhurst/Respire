@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using Respire.Internal;
 
 namespace Respire.Commands;
 
@@ -16,7 +17,7 @@ internal static class RawCommandKeyLayouts
     private enum LayoutKind
     {
         None, First, FirstTwo, All, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
-        AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
+        AllExceptLast, CountedPairs, Triples, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
     private readonly record struct Definition(LayoutKind Kind, bool Deferred);
 
@@ -71,6 +72,7 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");
         AddImmediate(LayoutKind.CountedPairs, "MSETEX");
+        AddImmediate(LayoutKind.Triples, "JSON.MSET");
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
@@ -111,6 +113,28 @@ internal static class RawCommandKeyLayouts
         return false;
     }
 
+    /// <summary>
+    /// Non-throwing layout lookup for client-side cache mutation fences. Only shapes whose keys can be
+    /// located from the argument count (and an optional leading count) are supported; every other kind
+    /// returns <see langword="false"/> so the caller falls back to a full-cache fence. Validation shares
+    /// <see cref="TryShape"/> and <see cref="TryCounted"/> with <see cref="Parse"/>, so the two cannot drift.
+    /// </summary>
+    internal static bool TryGetMutationLayout(
+        string operation, in ClientCacheCommandKey args, out KeyLayout layout)
+    {
+        layout = default;
+        if (!Layouts.TryGetValue(operation, out var definition)) return false;
+        var length = args.ArgumentCount;
+        return definition.Kind switch
+        {
+            LayoutKind.All or LayoutKind.Pairs or LayoutKind.Triples => TryShape(definition.Kind, length, out layout),
+            LayoutKind.CountedPairs => TryCounted(length, 0,
+                length > 0 && args.GetArgument(0).TryGetInt64(out var count) ? count : null,
+                allowZero: false, stride: 2, out layout),
+            _ => false,
+        };
+    }
+
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)
     {
         if (!TryGetLayout(operation, args, out var layout)) return default;
@@ -147,11 +171,10 @@ internal static class RawCommandKeyLayouts
                 Require(args.Length >= 2);
                 return new(0, 2);
             case LayoutKind.All:
-                Require(args.Length >= 1);
-                return new(0, args.Length);
             case LayoutKind.Pairs:
-                Require(args.Length >= 2 && args.Length % 2 == 0);
-                return new(0, args.Length / 2, 2);
+            case LayoutKind.Triples:
+                Require(TryShape(kind, args.Length, out var shape));
+                return shape;
             case LayoutKind.BitOp:
                 Require(args.Length >= 3);
                 return new(1, args.Length - 1);
@@ -218,10 +241,42 @@ internal static class RawCommandKeyLayouts
 
     private static KeyLayout Counted(ReadOnlySpan<RespireValue> args, int index, bool allowZero = false, int stride = 1)
     {
-        Require(args.Length > index);
-        Require(args[index].TryGetInt64(out var count) && count >= (allowZero ? 0 : 1)
-            && count <= (args.Length - index - 1) / stride);
-        return new(index + 1, (int)count, stride);
+        Require(TryCounted(args.Length, index,
+            args.Length > index && args[index].TryGetInt64(out var count) ? count : null,
+            allowZero, stride, out var layout));
+        return layout;
+    }
+
+    /// <summary>Layouts whose keys are every argument, or the first of each fixed-size group.</summary>
+    private static bool TryShape(LayoutKind kind, int length, out KeyLayout layout)
+    {
+        var stride = kind switch
+        {
+            LayoutKind.All => 1,
+            LayoutKind.Pairs => 2,
+            LayoutKind.Triples => 3,
+            _ => throw new InvalidOperationException("Not a fixed-shape key layout."),
+        };
+        if (length < stride || length % stride != 0)
+        {
+            layout = default;
+            return false;
+        }
+        layout = new(0, length / stride, stride);
+        return true;
+    }
+
+    /// <summary>A key count at <paramref name="index"/> followed by that many keys (or key groups).</summary>
+    private static bool TryCounted(int length, int index, long? count, bool allowZero, int stride, out KeyLayout layout)
+    {
+        if (length <= index || count is not { } value || value < (allowZero ? 0 : 1)
+            || value > (length - index - 1) / stride)
+        {
+            layout = default;
+            return false;
+        }
+        layout = new(index + 1, (int)value, stride);
+        return true;
     }
 
     private static void Require(bool condition)
