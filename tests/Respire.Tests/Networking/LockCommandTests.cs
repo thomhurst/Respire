@@ -343,15 +343,15 @@ public class LockCommandTests
 
         await Assert.That(await mutex.ResetExpiryAsync(
             TimeSpan.FromSeconds(45) + TimeSpan.FromTicks(9_999))).IsTrue();
-        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(45_001));
 
         await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(90))).IsFalse();
-        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(45_001));
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(90))).IsFalse();
         await Assert.That(server.ReceivedCommands).Count().IsEqualTo(5);
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("CLIENT ID");
-        await Assert.That(server.ReceivedCommands[3]).EndsWith(" 45000");
+        await Assert.That(server.ReceivedCommands[3]).EndsWith(" 45001");
     }
 
     [Test]
@@ -625,6 +625,39 @@ public class LockCommandTests
 
         await Assert.That(mutex.IsReleased).IsFalse();
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+    }
+
+    [Test]
+    public async Task RespireLock_RoundsSubMillisecondExpiryUp()
+    {
+        var commands = new CoordinatedLockCommands(blockFirstExtension: false);
+        var mutex = new RespireLock(commands, "resource", "owner", TimeSpan.FromMinutes(1), Stopwatch.GetTimestamp());
+
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond + 1)))
+            .IsTrue();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(2));
+    }
+
+    [Test]
+    [Arguments(1L)]
+    [Arguments(45_000L)]
+    public async Task RespireLock_WholeMillisecondExpiryIsNotRoundedUp(long milliseconds)
+    {
+        var commands = new CoordinatedLockCommands(blockFirstExtension: false);
+        var mutex = new RespireLock(commands, "resource", "owner", TimeSpan.FromMinutes(1), Stopwatch.GetTimestamp());
+
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMilliseconds(milliseconds))).IsTrue();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
+    }
+
+    [Test]
+    public async Task RespireLock_SubMillisecondExpiryRoundsUpToOneMillisecond()
+    {
+        var commands = new CoordinatedLockCommands(blockFirstExtension: false);
+        var mutex = new RespireLock(commands, "resource", "owner", TimeSpan.FromMinutes(1), Stopwatch.GetTimestamp());
+
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromTicks(1))).IsTrue();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(1));
     }
 
     [Test]
