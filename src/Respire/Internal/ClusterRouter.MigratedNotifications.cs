@@ -55,6 +55,8 @@ internal sealed partial class ClusterRouter
     {
         if (notification.Kind != "SMIGRATED" || Volatile.Read(ref _disposed) != 0
             || notification.Migrations is not { Length: > 0 }) return;
+        // This callback is attached only while the sender is active. Preserve that enqueue-time
+        // validity: an earlier FIFO item can retire the sender before a later queued item runs.
         _smigratedNotifications.Writer.TryWrite(CaptureSmigratedNotification(sender, sequenceScope, notification));
     }
 
@@ -105,8 +107,7 @@ internal sealed partial class ClusterRouter
         var topologyChanged = false;
         lock (_nodesGate)
         {
-            if (Volatile.Read(ref _disposed) != 0 || !_identities.IsActive(item.Sender)
-                || !_nodeMaintenanceHandlers.ContainsKey(item.Sender)) return;
+            if (Volatile.Read(ref _disposed) != 0) return;
             if (!_smigratedSequences.GetOrCreateValue(item.SequenceScope).TryAdd(item.Notification.SequenceId)) return;
 
             List<int>? movable = null;
@@ -167,6 +168,7 @@ internal sealed partial class ClusterRouter
         slots = [];
         if (string.IsNullOrEmpty(value)) return false;
         var parsed = new List<int>();
+        var seenSlots = new HashSet<int>();
         var remaining = value.AsSpan();
         while (!remaining.IsEmpty)
         {
@@ -178,10 +180,10 @@ internal sealed partial class ClusterRouter
             if (!int.TryParse(first, NumberStyles.None, CultureInfo.InvariantCulture, out var start)
                 || !int.TryParse(last, NumberStyles.None, CultureInfo.InvariantCulture, out var end)
                 || start is < 0 or >= ClusterHash.SlotCount
-                || end < start || end >= ClusterHash.SlotCount
-                || parsed.Count + end - start + 1 > ClusterHash.SlotCount)
+                || end < start || end >= ClusterHash.SlotCount)
                 return false;
-            for (var slot = start; slot <= end; slot++) parsed.Add(slot);
+            for (var slot = start; slot <= end; slot++)
+                if (seenSlots.Add(slot)) parsed.Add(slot);
             if (comma < 0) break;
             remaining = remaining[(comma + 1)..];
             if (remaining.IsEmpty) return false;

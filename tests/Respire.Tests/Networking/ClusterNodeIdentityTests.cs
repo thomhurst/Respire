@@ -97,7 +97,7 @@ public class ClusterNodeIdentityTests
         var cEndpoint = new RespireEndpoint("c", 7002);
         var a = router.GetMultiplexer(aEndpoint);
         var b = router.GetMultiplexer(bEndpoint);
-        var c = router.GetMultiplexer(cEndpoint);
+        router.GetMultiplexer(cEndpoint);
         router.SetSlotOwner(0, a);
         router.SetSlotOwner(1, b);
         var connection = new object();
@@ -105,7 +105,7 @@ public class ClusterNodeIdentityTests
         // Both are captured before the worker applies either one.
         var first = router.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
-        var second = router.CaptureSmigratedNotification(b, connection,
+        var second = router.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 2, Migrations: [new(bEndpoint, cEndpoint, "0")]));
         router.ApplySmigratedNotification(first);
         router.ApplySmigratedNotification(second);
