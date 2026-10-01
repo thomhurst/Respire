@@ -172,8 +172,14 @@ public sealed class RespireCoordination
             local first = redis.call('ZRANGE', KEYS[1], 0, 0)[1]
             if first and string.sub(first, 1, {{WriterRole.Length}}) == '{{WriterRole}}' then return 0 end
         end
-        local added = redis.call('ZADD', KEYS[1], 'NX', now + tonumber(ARGV[2]), role .. ARGV[1])
-        refreshExpiry()
+        local member = role .. ARGV[1]
+        local added = redis.call('ZADD', KEYS[1], 'NX', now + tonumber(ARGV[2]), member)
+        if added == 0 then return 0 end
+        local refreshed, refreshError = pcall(refreshExpiry)
+        if not refreshed then
+            redis.call('ZREM', KEYS[1], member)
+            return redis.error_reply(refreshError)
+        end
         return added
         """);
 
