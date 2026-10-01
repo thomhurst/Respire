@@ -100,6 +100,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             await _discoveryGate.WaitAsync(linked.Token).ConfigureAwait(false);
             acquired = true;
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
+            if (switchRefreshVersion is { } activeVersion && activeVersion != _switchRefreshVersion)
+                throw new SupersededSentinelRefreshException();
             // Another discovery owner may have published while this caller awaited the gate.
             Generation? expectedGeneration = null;
             var previous = Current;

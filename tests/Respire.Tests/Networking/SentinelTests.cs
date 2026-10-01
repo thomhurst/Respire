@@ -772,6 +772,44 @@ public class SentinelTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task SwitchbackSupersedesPendingSentinelRefresh()
+    {
+        await using var first = CreatePrimary();
+        await using var replacement = CreatePrimary();
+        var primaryPort = first.Port;
+        await using var sentinel = CreateSentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => sentinel.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitor = sentinel.ReceivedConnectionIds[sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+        var discoveryCount = sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+
+        sentinel.DelayReply(0, 1_000);
+        Volatile.Write(ref primaryPort, replacement.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, replacement.Port), monitor);
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > discoveryCount);
+
+        sentinel.DelayReply(0, 0);
+        Volatile.Write(ref primaryPort, first.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port, first.Port), monitor);
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == first.Port);
+        await Task.Delay(1_100);
+
+        await Assert.That(client.Core.Sentinel!.Current!.Endpoint.Port).IsEqualTo(first.Port);
+        await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsFalse();
+    }
+
+    [Test]
     public async Task MonitorDisposalDoesNotWaitForCommandTimeoutOnUnsubscribe()
     {
         await using var primary = CreatePrimary();
