@@ -792,8 +792,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return false;
     }
 
-    // RedisJSON writes must appear here (or be deliberately left to BeginUnknownMutation, like JSON.MSET);
-    // RespireJsonCommandClassificationTests fails when a JSON command is not classified.
+    // RedisJSON writes must appear here or in IsMultiKeyMutation (JSON.MSET);
+    // RespireJsonClientTests.EveryJsonCommandHasAKeyLayoutAndACacheClassification fails when a JSON command is not classified.
     internal static bool IsSingleKeyMutation(string operation)
         => operation is
             "SET" or "DELEX" or "DELIFEQ" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
@@ -815,7 +815,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
             "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD" or "VADD" or "VREM" or "VSETATTR";
 
-    private static bool IsMultiKeyMutation(string operation)
+    internal static bool IsMultiKeyMutation(string operation)
         => operation is "MSET" or "MSETNX" or "MSETEX" or "DEL" or "UNLINK" or "JSON.MSET";
 
     internal readonly record struct ReadToken(

@@ -51,4 +51,4 @@ The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath
 
 Known RedisJSON key arguments receive the prefix configured by `WithKeyPrefix`. All keys in `JSON.MGET` and `JSON.MSET` must share a Redis Cluster hash slot; Respire validates these layouts before dispatch and fails with a `CROSSSLOT` error without sending the command. RESP2 and RESP3 use Respire's shared command transport.
 
-With client-side caching enabled, JSON reads such as `JSON.GET` and `JSON.MGET` can be served from the local cache. Single-key JSON writes invalidate only their document key. `JSON.MSET` writes several keys, so it clears the whole local cache, as core `MSET` does.
+With client-side caching enabled, JSON reads such as `JSON.GET` and `JSON.MGET` can be served from the local cache. Single-key JSON writes invalidate only their document key. `JSON.MSET` invalidates each document key it writes, as core `MSET` does, and leaves other cached entries in place.

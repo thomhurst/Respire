@@ -356,13 +356,11 @@ public partial class RespireJsonClientTests
             }
         }
 
-        // JSON.MSET writes several keys and deliberately takes the conservative full-cache flush.
-        string[] flushesWholeCache = ["JSON.MSET"];
         var missingLayout = operations.Where(operation => !RawCommandKeyLayouts.HasLayout(operation)).ToArray();
         var unclassified = operations.Where(operation =>
             !ClientSideCacheCoordinator.IsReadOnly(operation)
             && !ClientSideCacheCoordinator.IsSingleKeyMutation(operation)
-            && !flushesWholeCache.Contains(operation)).ToArray();
+            && !ClientSideCacheCoordinator.IsMultiKeyMutation(operation)).ToArray();
 
         await Assert.That(operations.Count).IsGreaterThan(20);
         await Assert.That(missingLayout).IsEmpty();
