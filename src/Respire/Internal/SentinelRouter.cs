@@ -487,6 +487,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 if (_disposed) return;
                 var current = Current;
+                // Do not apply an old resolution to a later generation for the same endpoint:
+                // a failback can legitimately publish that address again. A changed endpoint
+                // is checked so a hostname alias is not lost across an in-flight handoff.
+                if (current is null || !ReferenceEquals(current, arrivedDuring)
+                    && SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)) return;
                 if (!IsAnnouncedTarget(current, in hint)
                     && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
                     Invalidate(current!);
