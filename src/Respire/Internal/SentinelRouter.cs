@@ -144,7 +144,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (_disposed) return;
             foreach (var endpoint in _discovery.Snapshot())
                 if (_monitoredSentinels.Add(endpoint))
-                    _sentinelMonitors.Add(Task.Run(() => MonitorSentinelAsync(endpoint)));
+                {
+                    using (ExecutionContext.SuppressFlow())
+                        _sentinelMonitors.Add(Task.Run(() => MonitorSentinelAsync(endpoint)));
+                }
         }
     }
 
@@ -176,6 +179,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             TlsOptions = core.Options.SentinelTlsOptions ?? core.Options.TlsOptions,
             Protocol = RespProtocol.Resp2,
             Connections = 1,
+            CommandTimeout = core.Options.CommandTimeout is { } commandTimeout
+                ? TimeSpan.FromMilliseconds(Math.Min(commandTimeout.TotalMilliseconds, 2_000))
+                : TimeSpan.FromSeconds(2),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ThreadPoolMonitoring = false,
             ClientName = null,
             Database = 0,
             ClientSideCache = null,

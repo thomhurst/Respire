@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -700,6 +701,28 @@ public class SentinelTests
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
         await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MonitorDisposalIsBoundedWhenCommandTimeoutIsDisabled()
+    {
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var sentinel = CreateSentinel(() => primary.Port);
+        var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        sentinel.SuppressReply = command => command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal);
+
+        var started = Stopwatch.GetTimestamp();
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(5)).IsTrue();
     }
 
     private static FakeRespServer CreateSentinel(Func<int> primaryPort)
