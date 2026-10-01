@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -108,17 +109,82 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     public async Task ClusterRunsLatchScriptsOnTaggedKey(int protocol)
     {
         await using var cluster = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster });
-        await using var client = await RespireClient.ConnectAsync(cluster.CreateOptions() with
+        var options = cluster.CreateOptions() with
         {
             Protocol = (RespProtocol)protocol,
             Connections = 1,
-        });
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
         var coordination = new RespireCoordination(client.WithKeyPrefix("coord:"));
-        var latch = await coordination.CreateCountdownLatchAsync("{batch}:latch", 2);
+        var latch = await coordination.CreateCountdownLatchAsync("{batch}:latch", 1);
+        var subscribeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = SubscribeConfirmationListener(
+            options.Endpoints.Select(static endpoint => endpoint.Port).ToHashSet(), subscribeReady);
         var waiter = latch.WaitAsync().AsTask();
-        await Assert.That(await latch.CountDownAsync()).IsEqualTo(1L);
+        await subscribeReady.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(await latch.CountDownAsync()).IsEqualTo(0L);
         await Assert.That(await waiter.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+    }
+
+    [Test]
+    public async Task PublishPermissionFailureLeavesLatchStateUnchanged()
+    {
+        await using var admin = await ConnectAsync();
+        var key = Key();
+        var original = await new RespireCoordination(admin).CreateCountdownLatchAsync(key, 1);
+        var username = $"latch-no-publish-{Guid.NewGuid():N}";
+        const string password = "latch-test-password";
+        (await admin.ExecuteAsync("ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-publish")).Dispose();
+        RespireClient? restricted = null;
+        try
+        {
+            restricted = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [new(fixture.Host, fixture.Port)],
+                Database = fixture.Database,
+                Username = username,
+                Password = password,
+                Protocol = RespProtocol.Resp3,
+            });
+            var coordination = new RespireCoordination(restricted);
+            RespireServerException? resetError = null;
+            try { _ = await coordination.ResetCountdownLatchAsync(key, 2); }
+            catch (RespireServerException error) { resetError = error; }
+            await Assert.That(resetError?.Code).IsEqualTo("NOPERM");
+
+            var stillCurrent = await new RespireCoordination(admin).JoinCountdownLatchAsync(key);
+            await Assert.That(stillCurrent?.Generation).IsEqualTo(original.Generation);
+            var restrictedLatch = await coordination.JoinCountdownLatchAsync(key);
+            RespireServerException? countDownError = null;
+            try { _ = await restrictedLatch!.CountDownAsync(); }
+            catch (RespireServerException error) { countDownError = error; }
+            await Assert.That(countDownError?.Code).IsEqualTo("NOPERM");
+            using var remaining = await admin.ExecuteAsync("HGET", key, "remaining");
+            await Assert.That(remaining.AsString()).IsEqualTo("1");
+        }
+        finally
+        {
+            if (restricted is not null) await restricted.DisposeAsync();
+            (await admin.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
+        }
+    }
+
+    private static ActivityListener SubscribeConfirmationListener(
+        HashSet<int> ports, TaskCompletionSource confirmed)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is "SUBSCRIBE"
+                    && activity.GetTagItem("server.port") is int port && ports.Contains(port))
+                    confirmed.TrySetResult();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
