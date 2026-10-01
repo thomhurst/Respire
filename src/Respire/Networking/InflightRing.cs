@@ -116,7 +116,7 @@ internal sealed class InflightRing
     /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
     public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection, long deadlineExtension = 0,
-        long maintenanceStarted = long.MinValue)
+        long maintenanceStarted = long.MinValue, TimeSpan? alreadyRelaxedTimeout = null)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
@@ -140,14 +140,16 @@ internal sealed class InflightRing
                 continue;
             }
 
-            var deadline = source.Deadline;
+            var commandDeadline = source.Deadline;
+            var alreadyRelaxed = commandDeadline.IsRelaxed;
+            var deadline = commandDeadline.Ticks;
             if (deadline == 0)
             {
                 continue;
             }
 
             // A late notification cannot revive a deadline that elapsed before maintenance.
-            var extension = deadline > maintenanceStarted ? deadlineExtension : 0;
+            var extension = !alreadyRelaxed && deadline > maintenanceStarted ? deadlineExtension : 0;
             var remaining = deadline + extension - nowMilliseconds;
             if (remaining > 0)
             {
@@ -159,7 +161,10 @@ internal sealed class InflightRing
                 continue;
             }
 
-            source.TrySetTimedOut(state, timeout + TimeSpan.FromMilliseconds(extension), ref diagnostics, connection);
+            var reportedTimeout = timeout + TimeSpan.FromMilliseconds(extension);
+            if (alreadyRelaxed && alreadyRelaxedTimeout is { } relaxedTimeout && relaxedTimeout > reportedTimeout)
+                reportedTimeout = relaxedTimeout;
+            source.TrySetTimedOut(state, reportedTimeout, ref diagnostics, connection);
         }
 
         return next;

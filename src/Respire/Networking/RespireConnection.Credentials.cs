@@ -26,7 +26,10 @@ internal sealed partial class RespireConnection
             _credentialRenewalPending = true;
         }
         // The renewal's token already carries its connection/credential deadline.
-        return SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken, armCommandDeadline: false);
+        // AUTH renews this socket's session; on another socket it would silently change that
+        // socket's authentication, so a retired socket surfaces retirement instead.
+        return SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken, armCommandDeadline: false,
+            pinToConnection: true);
     }
 
     private void CompleteCredentialRenewal()

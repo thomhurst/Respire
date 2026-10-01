@@ -16,13 +16,15 @@ namespace Respire.Infrastructure;
 /// connection is skipped and replaced in the background. Supports lazy start: create unconnected,
 /// then <see cref="EnsureConnectedAsync"/> before first use (idempotent, thread-safe).
 /// </summary>
-internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
+internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 {
     private readonly RespireConnection?[] _connections;
+    private readonly long[] _movingPublicationGenerations;
     private readonly int _connectionMask;
     private readonly int[] _reconnecting;
     private readonly int[]? _reconnectAttempts;
     private readonly RespireConnectionOptions _options;
+    private ActiveEndpoint _activeEndpoint;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
@@ -36,6 +38,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private bool _retirementDrained;
     // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
     // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
+    // Lock order: _lifecycleGate, then _movingGate (RespireConnectionMultiplexer.Moving.cs).
     private readonly object _lifecycleGate = new();
     private readonly CancellationTokenSource _stopConnecting = new();
     private readonly CancellationTokenSource _abortCancellation = new();
@@ -123,9 +126,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         Host = host;
         Port = port;
+        _activeEndpoint = new ActiveEndpoint(host, port);
         _options = options;
         _logger = logger;
         _connections = new RespireConnection?[connectionCount];
+        _movingPublicationGenerations = new long[connectionCount];
         _connectionMask = BitOperations.IsPow2((uint)connectionCount) ? connectionCount - 1 : -1;
         _reconnecting = new int[connectionCount];
         _reconnectAttempts = options.ReconnectPolicy is null ? null : new int[connectionCount];
@@ -198,7 +203,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var connectTasks = new Task<RespireConnection>[_connections.Length];
             for (var i = 0; i < connectTasks.Length; i++)
             {
-                connectTasks[i] = RespireConnection.ConnectAsync(Host, Port, _options, _logger, cancellationToken);
+                var endpoint = Volatile.Read(ref _activeEndpoint);
+                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, cancellationToken);
             }
 
             try
@@ -209,13 +215,15 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     ThrowIfUnavailable();
                     for (var i = 0; i < connections.Length; i++)
                     {
+                        connections[i].MultiplexerSlot = i;
+                        connections[i].MovingPublicationGeneration = Volatile.Read(ref _movingPublicationGenerations[i]);
                         connections[i].Multiplexer = this;
                         Volatile.Write(ref _connections[i], connections[i]);
                     }
                     _connected = true;
                 }
                 for (var i = 0; i < connections.Length; i++)
-                    ObserveConnectionFailure(i, connections[i]);
+                    ObservePublishedConnection(i, connections[i]);
             }
             catch
             {
@@ -365,6 +373,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         ThrowIfRecoveryExhausted(slot);
                         ready = false;
                     }
+                    catch (RespireConnectionRetiredException)
+                    {
+                        // A handoff unpublished this socket before admitting CLIENT ID; its
+                        // replacement is examined on the next pass.
+                        ready = false;
+                    }
                 }
 
                 if (ready)
@@ -384,6 +398,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                             ThrowIfRecoveryExhausted(slot);
                         }
 
+                        await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                    catch (RespireConnectionRetiredException)
+                    {
                         await Task.Delay(25, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
@@ -438,7 +457,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // setup is bounded by its callers' own timeout tokens, not the per-command deadline.
         var reply = await connection.SendAsync(
                 new ClientKillIdCommand(connection.ServerClientId, skipMe: true), cancellationToken,
-                armCommandDeadline: false)
+                armCommandDeadline: false, pinToConnection: true) // Probes this connection's own ID.
             .ConfigureAwait(false);
         if (reply.IsError)
         {
@@ -483,6 +502,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
 
             var sends = new List<(RespireConnection Connection, ValueTask<RespValue> Send)>(_connections.Length);
+            var retiredBeforeAdmission = false;
             for (var slot = 0; slot < _connections.Length; slot++)
             {
                 var connection = Volatile.Read(ref _connections[slot]);
@@ -495,17 +515,24 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
                 try
                 {
-                    // Corrections, once owed, must not be abandonable: no command deadline.
+                    // Corrections, once owed, must not be abandonable: no command deadline. Each
+                    // copy orders against its own socket's FIFO, so it is pinned there: moving it
+                    // to another socket would void that barrier.
                     var send = sendAsking
                         ? Respire.Internal.ClusterRouter.SendAskingUncheckedAsync(
-                            connection, in command, cancellationToken, armCommandDeadline: false)
-                        : connection.SendAsync(in command, cancellationToken, armCommandDeadline: false);
+                            connection, in command, cancellationToken, armCommandDeadline: false, pinToConnection: true)
+                        : connection.SendAsync(in command, cancellationToken, armCommandDeadline: false, pinToConnection: true);
                     sends.Add((connection, send));
                 }
                 catch (Exception ex) when (IsConnectionLoss(ex))
                 {
                     RetireConnection(connection);
                     ScheduleReconnect(slot);
+                }
+                catch (RespireConnectionRetiredException)
+                {
+                    // Never admitted, so nothing to fence; the replacement gets the next pass.
+                    retiredBeforeAdmission = true;
                 }
             }
 
@@ -519,13 +546,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 drains[i] = DrainAsync(sends[i].Connection, sends[i].Send);
             }
 
-            var retry = sends.Count == 0;
+            var retry = sends.Count == 0 || retiredBeforeAdmission;
             Exception? fatal = null;
             for (var i = 0; i < drains.Length; i++)
             {
                 if (await drains[i].ConfigureAwait(false) is { } ex)
                 {
-                    if (IsConnectionLoss(ex))
+                    if (IsConnectionLoss(ex) || ex is RespireConnectionRetiredException)
                     {
                         retry = true;
                     }
@@ -590,11 +617,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port)
+    // TlsHost is the name the socket was opened with; after a MOVING handoff it can differ
+    // from the multiplexer's configured host, and the fence must validate the same identity.
+    private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port, string TlsHost)
     {
         internal static RetiredClientIdentity From(RespireConnection connection)
             => new(connection.ServerClientId, connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port);
+                connection.NetworkPeerPort ?? connection.Port, connection.Host);
     }
 
     internal bool HasCurrentPeer(string host, int port)
@@ -639,7 +668,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     Generation = null,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
-                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
+                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, identity.TlsHost) : _options.TlsOptions,
                 };
                 try
                 {
@@ -745,6 +774,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         if (connection is { IsConnected: true, IsAcceptingCommands: false }) return;
         var error = connection?.CloseError;
         RetireConnection(connection);
+        ForgetMovingSequences(connectedOnly: true);
         bool publish;
         var attempt = 0;
         var delay = TimeSpan.Zero;
@@ -778,7 +808,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, _stopConnecting.Token).ConfigureAwait(false);
-            replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger, _stopConnecting.Token)
+            var endpoint = Volatile.Read(ref _activeEndpoint);
+            replacement = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, _stopConnecting.Token)
                 .ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
                 await replacement.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
@@ -788,13 +819,22 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             lock (_lifecycleGate)
             {
                 ThrowIfUnavailable();
-                replacement.Multiplexer = this;
-                old = Interlocked.Exchange(ref _connections[slot], replacement);
-                publishedReplacement = replacement;
-                replacement = null;
-                if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                if (!ReferenceEquals(endpoint, Volatile.Read(ref _activeEndpoint)))
+                    throw new RespireConnectionException("Connection endpoint changed during reconnect.");
+                ForgetMovingSequences(connectedOnly: true);
+                lock (_movingGate)
+                {
+                    var generation = Interlocked.Increment(ref _movingPublicationGenerations[slot]);
+                    replacement.MultiplexerSlot = slot;
+                    replacement.MovingPublicationGeneration = generation;
+                    replacement.Multiplexer = this;
+                    old = Interlocked.Exchange(ref _connections[slot], replacement);
+                    publishedReplacement = replacement;
+                    replacement = null;
+                    if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                }
             }
-            ObserveConnectionFailure(slot, publishedReplacement);
+            ObservePublishedConnection(slot, publishedReplacement);
             RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
@@ -816,15 +856,35 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
-                if (exhausted)
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
-                else if (_options.ReconnectPolicy is not null)
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
-                else
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-                publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
-                reconnectGuardReleased = true;
+                lock (_lifecycleGate)
+                {
+                    if (IsOperational && _connections[slot] is { IsAcceptingCommands: true })
+                    {
+                        // Not a recovery failure: while this reconnect was failing (for example
+                        // against an endpoint a MOVING handoff has just left), the handoff
+                        // published a healthy socket into this slot. Report the slot as
+                        // connected and reset its attempts instead of scheduling a retry.
+                        _logger?.LogDebug(ex,
+                            "Reconnect of slot {Slot} failed after a healthy connection was published; keeping it", slot);
+                        if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                        publish = QueueLifecycleNotificationUnderLock(
+                            new StateNotification(slot, RespireConnectionState.Connected, null));
+                        Volatile.Write(ref _reconnecting[slot], 0);
+                        reconnectGuardReleased = true;
+                    }
+                    else if (IsOperational)
+                    {
+                        var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
+                        if (exhausted)
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
+                        else if (_options.ReconnectPolicy is not null)
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
+                        else
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+                        publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
+                        reconnectGuardReleased = true;
+                    }
+                }
             }
         }
         finally
@@ -839,8 +899,27 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         if (publish) DrainStateNotifications();
     }
 
-    private void ObserveConnectionFailure(int slot, RespireConnection connection)
+    /// <summary>
+    /// Wires a newly published socket's failure and MOVING callbacks. Each socket is published
+    /// once, so handlers never stack; they die with the socket, and the eligibility checks in
+    /// <see cref="QueueMovingHandoffUnderLock"/> ignore callbacks from sockets no longer current.
+    /// </summary>
+    private void ObservePublishedConnection(int slot, RespireConnection connection)
     {
+        connection.MovingNotification += announcement => QueueMovingHandoff(slot, connection, announcement);
+        // Replay a MOVING parsed before this handler existed (for example during the handshake).
+        // The handler is attached first, so a MOVING parsed between these two lines is delivered
+        // twice; the per-connection LastQueuedMovingSequence check drops the second copy.
+        if (connection.LastMovingAnnouncement is { } announcement)
+            QueueMovingHandoff(slot, connection, announcement.PublicationGeneration >= 0
+                ? announcement
+                : announcement with
+                {
+                    // Parsed before publication: it is current as of this publication, but keeps
+                    // its receipt time so the advertised grace period is not restarted.
+                    PublicationGeneration = connection.MovingPublicationGeneration,
+                    HandoffEpoch = Volatile.Read(ref _movingHandoffEpoch),
+                });
         if (_options.EnableClientTracking)
         {
             connection.PendingCommandsFailing += () => HandleConnectionFailure(slot, connection);
@@ -1065,6 +1144,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 : (_reconnectsDrained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
         await reconnects.ConfigureAwait(false);
+        Task? moving;
+        lock (_movingGate) moving = _movingCompletion?.Task;
+        if (moving is not null) await moving.ConfigureAwait(false);
+        // The worker has stopped, so no further drain can start after this snapshot.
+        await WaitForMovingDrainsAsync().ConfigureAwait(false);
     }
 
     private async Task RetireCoreAsync(TaskCompletionSource completion)

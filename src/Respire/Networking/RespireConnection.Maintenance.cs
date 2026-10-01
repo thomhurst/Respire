@@ -17,7 +17,10 @@ internal sealed partial class RespireConnection
     private const int MaintenanceNegotiating = 1;
     private const int MaintenanceEnabled = 2;
     private int _maintenanceStatus;
+    // One immutable reference, so a reader never pairs a notification with another's origin.
+    private Respire.Infrastructure.MovingAnnouncement? _lastMovingAnnouncement;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
+    internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
     private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespProtocol protocol,
         CancellationToken cancellationToken, bool armCommandDeadline)
@@ -91,6 +94,15 @@ internal sealed partial class RespireConnection
             Volatile.Write(ref _maintenanceState, state);
         }
         state.Apply(notification, Environment.TickCount64);
+        if (notification.Kind == "MOVING")
+        {
+            // Eligibility and receipt time are captured here, when the push is parsed, because the
+            // multiplexer may handle it later (after a replay or behind its handoff gate).
+            var announcement = Multiplexer?.CaptureMovingAnnouncement(MultiplexerSlot, this, notification)
+                ?? new Respire.Infrastructure.MovingAnnouncement(notification, -1, -1, Environment.TickCount64);
+            Volatile.Write(ref _lastMovingAnnouncement, announcement);
+            MovingNotification?.Invoke(announcement);
+        }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
         {
@@ -99,6 +111,8 @@ internal sealed partial class RespireConnection
         }
         return true;
     }
+
+    internal event Action<Respire.Infrastructure.MovingAnnouncement>? MovingNotification;
 
     private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
         long deadline = long.MaxValue)
@@ -110,15 +124,49 @@ internal sealed partial class RespireConnection
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
 
-    private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, long deadline,
+    /// <summary>
+    /// The deadline a send rejected by this retired socket carries to its replacement. When this
+    /// socket's maintenance window was relaxing it, the relaxed allowance is added once and
+    /// marked, so the replacement socket's own window cannot add it again.
+    /// </summary>
+    private CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
+    {
+        if (!deadline.IsSet || deadline.IsRelaxed
+            || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
+        var window = Volatile.Read(ref _maintenanceState)?.GetWindow(Environment.TickCount64);
+        return window is not null && deadline.Ticks > window.Started
+            && _maintenanceOptions.MaintenanceRelaxedTimeout > normal
+            ? deadline.Relax((long)(_maintenanceOptions.MaintenanceRelaxedTimeout - normal).TotalMilliseconds)
+            : deadline;
+    }
+
+    /// <summary>
+    /// The timeout that applies to a parked producer at <paramref name="now"/>, and how far it
+    /// extends the stamped deadline. An already relaxed rerouted deadline keeps its allowance
+    /// and gets no second extension from this socket's window.
+    /// </summary>
+    private TimeSpan CapacityTimeout(CommandDeadline deadline, long now, out long extension, out long window)
+    {
+        var normal = _commandTimeout!.Value;
+        var windowTimeout = MaintenanceTimeout(normal, now, out window, out _, deadline.Ticks);
+        if (deadline.IsRelaxed)
+        {
+            extension = 0;
+            return Max(normal, _maintenanceOptions!.MaintenanceRelaxedTimeout);
+        }
+        extension = (long)(windowTimeout - normal).TotalMilliseconds;
+        return windowTimeout;
+    }
+
+    private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, CommandDeadline deadline,
         string? commandName, CancellationToken cancellationToken)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
-            var timeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
-            var remaining = deadline + (long)(timeout - _commandTimeout.Value).TotalMilliseconds - now;
+            var timeout = CapacityTimeout(deadline, now, out var extension, out var window);
+            var remaining = deadline.Ticks + extension - now;
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
                     CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
@@ -128,9 +176,8 @@ internal sealed partial class RespireConnection
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
-                var resumedTimeout = MaintenanceTimeout(_commandTimeout!.Value, resumedAt, out _, out _, deadline);
-                var resumedRemaining = deadline + (long)(resumedTimeout - _commandTimeout.Value).TotalMilliseconds - resumedAt;
-                if (resumedRemaining <= 0)
+                var resumedTimeout = CapacityTimeout(deadline, resumedAt, out var resumedExtension, out _);
+                if (deadline.Ticks + resumedExtension - resumedAt <= 0)
                     throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
                         CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
                 return;
@@ -138,4 +185,6 @@ internal sealed partial class RespireConnection
             catch (TimeoutException) { /* Recheck maintenance state before declaring expiry. */ }
         }
     }
+
+    private static TimeSpan Max(TimeSpan left, TimeSpan right) => left >= right ? left : right;
 }
