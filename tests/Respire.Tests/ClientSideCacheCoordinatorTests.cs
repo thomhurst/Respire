@@ -609,7 +609,7 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
-    public async Task JsonMSet_FlushesCacheForEveryDocumentKey()
+    public async Task JsonMSet_InvalidatesEveryDocumentKeyAndPreservesUnrelatedEntries()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         Insert(cache, "first", "old-first");
@@ -621,10 +621,13 @@ public class ClientSideCacheCoordinatorTests
 
         var fence = cache.BeforeCommand("JSON.MSET", in command);
 
-        await Assert.That(fence.FlushAll).IsTrue();
-        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+        await Assert.That(fence.Keys!.Length).IsEqualTo(2);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         cache.CompleteMutation(in fence);
-        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
     }
 
     [Test]

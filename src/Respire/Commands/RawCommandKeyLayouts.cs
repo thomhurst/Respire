@@ -75,7 +75,6 @@ internal static class RawCommandKeyLayouts
         // AfterFirst assumes one subcommand token before the key (JSON.DEBUG MEMORY key, JSON.DEBUG FIELDS key).
         AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
         AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
-        AddImmediate(LayoutKind.Triples, "JSON.MSET");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
