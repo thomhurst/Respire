@@ -93,6 +93,34 @@ public class HashFieldLeaseTests
     }
 
     [Test]
+    public async Task EarlyReleaseWakesLeaseWaiterBeforeExpiry()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var ownerClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new(),
+        });
+        await using var waiterClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new(),
+        });
+        var ownerCoordination = new RespireCoordination(ownerClient);
+        var waiterCoordination = new RespireCoordination(waiterClient);
+        await using var owner = await ownerCoordination.TryAcquireLeaseAsync(
+            "registry", "worker", TimeSpan.FromSeconds(20))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+
+        var waiting = waiterCoordination.AcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(20)).AsTask();
+        await Task.Delay(100);
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        await Assert.That(await owner.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await using var replacement = await waiting.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(replacement.OwnerToken == owner.OwnerToken).IsFalse();
+    }
+
+    [Test]
     public async Task ClusterKeepsHashFieldLeaseOperationsOnThePrefixedSlotOwner()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
