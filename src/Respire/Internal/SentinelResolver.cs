@@ -15,7 +15,8 @@ internal static class SentinelResolver
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
-        RespireEndpoint? expectedPrimary = null)
+        RespireEndpoint? expectedPrimary = null,
+        RespireEndpoint? rejectedPrimary = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -68,6 +69,11 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
+                    && !(expectedPrimary is { } expected && SameEndpoint(primary, expected)
+                        && preferredSentinel is { } reportingSentinel && SameEndpoint(endpoint, reportingSentinel)))
+                    throw new RespireConnectionException(
+                        $"Sentinel at {endpoint} still reports previous primary {rejected} after a switch event.");
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -157,6 +163,9 @@ internal static class SentinelResolver
             if (cause is OperationCanceledException) return true;
         return false;
     }
+
+    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
     private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
     {

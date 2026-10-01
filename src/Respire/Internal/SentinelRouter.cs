@@ -72,13 +72,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     internal async ValueTask<Generation> GetGenerationAsync(
         CancellationToken cancellationToken, RespireEndpoint? preferredSentinel = null,
-        RespireEndpoint? expectedPrimary = null)
+        RespireEndpoint? expectedPrimary = null, RespireEndpoint? rejectedPrimary = null,
+        bool refreshAfterSubscriptionGap = false)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
-        if (expectedPrimary is null
+        if (expectedPrimary is null && rejectedPrimary is null && !refreshAfterSubscriptionGap
             && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
@@ -90,13 +91,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             // Another discovery owner may have published while this caller awaited the gate.
             var previous = Current;
-            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
-                && (expectedPrimary is null || SameEndpoint(previous.Endpoint, expectedPrimary.Value))) return previous;
-            if (previous is not null) Invalidate(previous);
+            var preservePrevious = refreshAfterSubscriptionGap
+                && previous is { IsRetired: false } && previous.Multiplexer.IsConnected;
+            if (!preservePrevious && previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, ConnectGenerationAsync, linked.Token, _discovery,
-                preferredSentinel, expectedPrimary).ConfigureAwait(false);
+                preferredSentinel, expectedPrimary, rejectedPrimary).ConfigureAwait(false);
             unpublished = replacement;
+            Generation? unchanged = null;
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
@@ -104,16 +106,27 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (replacement.IsRetired)
                     throw new RespireConnectionException("Sentinel primary changed before its generation was published.");
                 var old = Current;
-                Volatile.Write(ref _current, replacement);
-                unpublished = null;
-                // Publication owns this measurement even if disposal suppresses later health
-                // callbacks. Keep meter listeners outside discovery to permit observer disposal.
-                if (old is not null && old.Endpoint != replacement.Endpoint)
-                    QueueNotificationLocked(() => RespireTelemetry.SentinelFailovers.Add(1,
-                        new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
-                        new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
-                QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
+                if (preservePrevious && old is { IsRetired: false } && old.Multiplexer.IsConnected
+                    && SameEndpoint(old.Endpoint, replacement.Endpoint))
+                {
+                    unchanged = old;
+                    FlushSentinelCacheForContinuityLossLocked();
+                }
+                else
+                {
+                    if (old is not null) Invalidate(old);
+                    Volatile.Write(ref _current, replacement);
+                    unpublished = null;
+                    // Publication owns this measurement even if disposal suppresses later health
+                    // callbacks. Keep meter listeners outside discovery to permit observer disposal.
+                    if (old is not null && old.Endpoint != replacement.Endpoint)
+                        QueueNotificationLocked(() => RespireTelemetry.SentinelFailovers.Add(1,
+                            new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
+                            new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
+                    QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
+                }
             }
+            if (unchanged is not null) return unchanged;
             StartSentinelMonitors();
             return replacement;
         }
@@ -251,38 +264,61 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private void OnSentinelPrimaryChanged(RespireEndpoint sentinel, RespireEndpoint newPrimary)
     {
         Generation? current;
+        RespireEndpoint? previousPrimary;
         lock (_gate)
         {
             current = Current;
             if (current is { IsRetired: false }
                 && string.Equals(current.Endpoint.Host, newPrimary.Host, StringComparison.OrdinalIgnoreCase)
                 && current.Endpoint.Port == newPrimary.Port) return;
+            previousPrimary = current?.Endpoint;
             if (current is { IsRetired: false }) Invalidate(current);
         }
-        _ = RefreshAfterSentinelEventAsync(sentinel, newPrimary);
+        _ = RefreshAfterSentinelEventAsync(sentinel, newPrimary, previousPrimary);
     }
 
     private void OnSentinelSubscriptionGap(RespireEndpoint sentinel)
     {
-        lock (_gate)
-        {
-            if (Current is not { IsRetired: false } current) return;
-            Invalidate(current);
-        }
-        _ = RefreshAfterSentinelEventAsync(sentinel, expectedPrimary: null);
+        _ = RefreshAfterSentinelEventAsync(sentinel, expectedPrimary: null, rejectedPrimary: null,
+            refreshAfterSubscriptionGap: true);
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
-    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel, RespireEndpoint? expectedPrimary)
+    private async Task RefreshAfterSentinelEventAsync(
+        RespireEndpoint sentinel, RespireEndpoint? expectedPrimary, RespireEndpoint? rejectedPrimary,
+        bool refreshAfterSubscriptionGap = false)
     {
-        try { await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception error)
+        var attempt = 0;
+        var delay = TimeSpan.FromMilliseconds(250);
+        while (!_lifetime.IsCancellationRequested)
         {
-            QueueSentinelDiagnostic(() => core.Logger?.LogDebug(error,
-                "Sentinel primary refresh failed after an event from {Endpoint}", sentinel));
+            try
+            {
+                await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary, rejectedPrimary,
+                    refreshAfterSubscriptionGap)
+                    .ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                if (refreshAfterSubscriptionGap)
+                {
+                    lock (_gate)
+                        if (Current is { IsRetired: false } current) Invalidate(current, error);
+                }
+                QueueSentinelDiagnostic(() => core.Logger?.LogDebug(error,
+                    "Sentinel primary refresh failed after an event from {Endpoint}", sentinel));
+                attempt++;
+                var policy = core.Options.ReconnectPolicy;
+                if (policy?.IsExhausted(attempt) == true) return;
+                var nextDelay = policy?.GetDelay(attempt) ?? delay;
+                try { await Task.Delay(nextDelay, Clock, _lifetime.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+            }
         }
     }
 
@@ -320,12 +356,17 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // Cache invalidation is synchronous; metrics and health callbacks run elsewhere.
             generation.CountedAsRetired = true;
             Interlocked.Increment(ref _retiredGenerationCount);
-            var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
-            if (evictions is { } count)
-                QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
+            FlushSentinelCacheForContinuityLossLocked();
             QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer, error));
             generation.Retirement = Task.Run(() => DrainAsync(generation));
         }
+    }
+
+    private void FlushSentinelCacheForContinuityLossLocked()
+    {
+        var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
+        if (evictions is { } count)
+            QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
     }
 
     private void RemoveOwnedLocked(Generation generation)
