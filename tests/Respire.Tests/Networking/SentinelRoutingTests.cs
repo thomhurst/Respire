@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Threading.Channels;
+using Respire.Internal;
 using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -96,6 +97,8 @@ public class SentinelRoutingTests
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         Volatile.Write(ref port, promoted.Port);
         sentinel.SuppressReply = command => command == discovery;
+        var router = client.Core.Sentinel!;
+        var queued = router.QueuedNotificationCount;
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {intermediate.Port}");
@@ -105,6 +108,8 @@ public class SentinelRoutingTests
             $"mymaster 127.0.0.1 {intermediate.Port} 127.0.0.1 {promoted.Port}");
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown",
             $"master mymaster 127.0.0.1 {promoted.Port}");
+        // Release the blocked discovery only after both later events reached the router.
+        await WaitForQueuedNotificationsAsync(router, queued + 3);
 
         Volatile.Write(ref port, fallback.Port);
         sentinel.SuppressReply = null;
@@ -116,6 +121,43 @@ public class SentinelRoutingTests
         await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
         await WaitForEndpointAsync(client, fallback.Port);
         await Assert.That(client.Endpoint.Port).IsEqualTo(fallback.Port);
+    }
+
+    [Test]
+    public async Task SingleSwitchNotificationRetriesFailedRediscovery()
+    {
+        await using var original = Primary();
+        await using var unavailable = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null,
+        };
+        await using var recovered = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
+        });
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var monitorCommand = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        Volatile.Write(ref port, unavailable.Port);
+        sentinel.SuppressReply = command => command == discovery;
+
+        // Only one Sentinel publishes the switch, and its rediscovery fails ROLE validation.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}");
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        Volatile.Write(ref port, recovered.Port);
+        sentinel.SuppressReply = null;
+        var queryConnection = sentinel.ReceivedConnectionIds[^1];
+        await sentinel.SendRawAsync(AddressReply(unavailable.Port), queryConnection);
+
+        await WaitForEndpointAsync(client, recovered.Port);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(recovered.Port);
     }
 
     [Test]
@@ -139,10 +181,14 @@ public class SentinelRoutingTests
         Volatile.Write(ref port, unavailable.Port);
         sentinel.SuppressReply = command => command == discovery;
         var switchText = $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}";
+        var router = client.Core.Sentinel!;
+        var queued = router.QueuedNotificationCount;
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
         await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
+        // The duplicate must arrive while the first discovery is still blocked.
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
         Volatile.Write(ref port, recovered.Port);
         sentinel.SuppressReply = null;
 
@@ -2120,6 +2166,13 @@ public class SentinelRoutingTests
     {
         using var timeout = new CancellationTokenSource(Limit);
         while (server.ReceivedCommands.Count(value => value == command) < count)
+            await Task.Delay(5, timeout.Token);
+    }
+
+    private static async Task WaitForQueuedNotificationsAsync(SentinelRouter router, int count)
+    {
+        using var timeout = new CancellationTokenSource(Limit);
+        while (router.QueuedNotificationCount < count)
             await Task.Delay(5, timeout.Token);
     }
 

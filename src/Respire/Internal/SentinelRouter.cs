@@ -32,6 +32,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
+    private int _queuedNotifications;
     private bool _notificationPending;
     private string? _activeNotificationKey;
     private string? _pendingNotificationKey;
@@ -49,6 +50,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(CancellationToken cancellationToken)
         => SentinelResolver.DiscoverReplicaEndpointsAsync(core.Options, _discovery.Snapshot(), cancellationToken);
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
+    /// <summary>Counts failover hints passed to rediscovery coalescing. Tests use it to order events.</summary>
+    internal int QueuedNotificationCount => Volatile.Read(ref _queuedNotifications);
 
     internal sealed class CorrectionLease(SentinelRouter owner, DedicatedConnectionPool pool) : IAsyncDisposable
     {
@@ -190,6 +193,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             && fields[2].Type == RespDataType.Array;
     }
 
+    // How often the supervisor checks discovery for newly learned Sentinels and restarts completed monitors.
+    private static readonly TimeSpan SentinelMonitorSupervisorInterval = TimeSpan.FromSeconds(1);
+
+    private static TimeSpan GetNotificationRetryDelay(RespireReconnectPolicy? policy, int attempt)
+        => policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
+
     private void StartNotificationMonitoringLocked()
     {
         if (_notificationMonitorSupervisor != Task.CompletedTask) return;
@@ -212,7 +221,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         _notificationMonitors[key] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
                     }
                 }
-                await Task.Delay(TimeSpan.FromSeconds(1), Clock, _lifetime.Token).ConfigureAwait(false);
+                await Task.Delay(SentinelMonitorSupervisorInterval, Clock, _lifetime.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
@@ -254,17 +263,21 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 catch (Exception) { }
             }
 
-            attempt++;
+            // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
+            // initial subscription failure still receives a retry.
             var policy = core.Options.ReconnectPolicy;
             if (policy?.IsExhausted(attempt) == true)
             {
                 try { core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}", endpoint); }
                 catch (Exception) { }
+                // Stay parked rather than completing: the supervisor restarts completed monitors,
+                // which would bypass the configured budget. Discovery still runs on demand.
                 try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
                 return;
             }
-            var delay = policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
+            attempt++;
+            var delay = GetNotificationRetryDelay(policy, attempt);
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
         }
@@ -318,24 +331,36 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
         if (!switchHint && !relatedDownEvent) return;
         RespireEndpoint? promotedPrimary = null;
-        if (channel == "+switch-master")
-        {
-            if (!int.TryParse(fields[2], out var oldPort) || oldPort is < 1 or > 65535
-                || !int.TryParse(fields[4], out var newPort) || newPort is < 1 or > 65535) return;
+        // An unparseable target still triggers untargeted discovery; ROLE validation selects the primary.
+        if (switchHint && int.TryParse(fields[4], out var newPort) && newPort is >= 1 and <= 65535)
             promotedPrimary = new(fields[3], newPort);
-        }
         if (relatedDownEvent)
         {
             try { core.Logger?.LogInformation("Sentinel {Channel} hint for service {Service} from {Sentinel}", channel, serviceName, sentinel); }
             catch (Exception) { }
         }
         if (switchHint || masterDownHint)
-            QueueNotificationRediscovery(channel + ":" + message.Text, promotedPrimary,
+            // +odown text carries changing quorum counts; key master-down hints by service so
+            // repeated reports of one outage coalesce while discovery is active.
+            QueueNotificationRediscovery(masterDownHint ? channel + ":master:" + serviceName : channel + ":" + message.Text, promotedPrimary,
                 retireCurrent: switchHint, mustRediscoverAfterCurrent: masterDownHint);
     }
 
     private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target,
         bool retireCurrent, bool mustRediscoverAfterCurrent = false)
+    {
+        try
+        {
+            QueueNotificationRediscoveryCore(notificationKey, target, retireCurrent, mustRediscoverAfterCurrent);
+        }
+        finally
+        {
+            Interlocked.Increment(ref _queuedNotifications);
+        }
+    }
+
+    private void QueueNotificationRediscoveryCore(string notificationKey, RespireEndpoint? target,
+        bool retireCurrent, bool mustRediscoverAfterCurrent)
     {
         lock (_gate)
         {
@@ -384,9 +409,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private async Task RediscoverFromNotificationAsync(string notificationKey)
     {
+        var failures = 0;
         while (!_lifetime.IsCancellationRequested)
         {
             var succeeded = false;
+            var retryDelay = TimeSpan.Zero;
             try
             {
                 await GetGenerationAsync(_lifetime.Token, forceDiscovery: true).ConfigureAwait(false);
@@ -404,28 +431,45 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (_disposed) return;
                 if (!_notificationPending)
                 {
-                    _notificationRediscovery = null;
-                    _activeNotificationKey = null;
-                    return;
+                    // Sentinel publishes each event at most once. Retry a failed hint with backoff,
+                    // because the switch already retired the current generation.
+                    var policy = core.Options.ReconnectPolicy;
+                    if (succeeded || policy?.IsExhausted(failures) == true)
+                    {
+                        _notificationRediscovery = null;
+                        _activeNotificationKey = null;
+                        return;
+                    }
+                    retryDelay = GetNotificationRetryDelay(policy, ++failures);
                 }
-                var pendingKey = _pendingNotificationKey;
-                var pendingTarget = _pendingNotificationTarget;
-                var retireCurrent = _pendingNotificationRetiresCurrent;
-                var mustRediscover = _pendingNotificationMustRediscover;
-                var duplicateOfActive = _pendingNotificationIsActiveDuplicate;
-                ClearPendingNotificationLocked();
-                var current = Current;
-                if ((succeeded && duplicateOfActive)
-                    || (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
-                        && SameEndpoint(current.Endpoint, target)))
+                else
                 {
-                    _notificationRediscovery = null;
-                    _activeNotificationKey = null;
-                    return;
+                    failures = 0;
+                    var pendingKey = _pendingNotificationKey;
+                    var pendingTarget = _pendingNotificationTarget;
+                    var retireCurrent = _pendingNotificationRetiresCurrent;
+                    var mustRediscover = _pendingNotificationMustRediscover;
+                    var duplicateOfActive = _pendingNotificationIsActiveDuplicate;
+                    ClearPendingNotificationLocked();
+                    var current = Current;
+                    if ((succeeded && duplicateOfActive)
+                        || (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
+                            && SameEndpoint(current.Endpoint, target)))
+                    {
+                        _notificationRediscovery = null;
+                        _activeNotificationKey = null;
+                        return;
+                    }
+                    if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
+                    notificationKey = pendingKey ?? notificationKey;
+                    _activeNotificationKey = notificationKey;
                 }
-                if (retireCurrent && current is { IsRetired: false }) Invalidate(current);
-                notificationKey = pendingKey ?? notificationKey;
-                _activeNotificationKey = notificationKey;
+            }
+
+            if (retryDelay > TimeSpan.Zero)
+            {
+                try { await Task.Delay(retryDelay, Clock, _lifetime.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             }
         }
     }
@@ -580,7 +624,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             await _lifetime.CancelAsync().ConfigureAwait(false);
             Task[] monitorTasks;
-            lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values];
+            // Join notification rediscovery too, so a late attempt cannot publish or invalidate after disposal.
+            lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values,
+                _notificationRediscovery ?? Task.CompletedTask];
             Exception? disposeError = null;
             try { await Task.WhenAll(monitorTasks).ConfigureAwait(false); }
             catch (Exception error) { disposeError = error; }
