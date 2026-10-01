@@ -528,7 +528,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (_gapGenerations.ContainsKey(sentinel)) retry = true;
                 else _gapRefreshQueued.Remove(sentinel);
             }
-            if (retry) TrackRefresh(ReconcileSubscriptionGapAsync(sentinel));
+            if (retry) TrackRefresh(Task.Run(() => ReconcileSubscriptionGapAsync(sentinel)));
         }
     }
 
