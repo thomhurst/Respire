@@ -722,6 +722,56 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task NewRouteRejectionKeepsSharedNotificationSocketOpen()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var stableDescriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        var key = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .First(static value => ClusterHash.GetSlot(value) >= 8192);
+        var movedDescriptor = RespireChannel.KeySpaceSingleKey(key, 0);
+        var stableSubscribes = 0;
+        var rejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reject = false;
+        var configured = first.ReplyOverride!;
+        first.ReplyOverride = (connectionId, command) =>
+        {
+            if (command == $"SUBSCRIBE {stableDescriptor}") Interlocked.Increment(ref stableSubscribes);
+            if (reject && command == $"SUBSCRIBE {movedDescriptor}")
+            {
+                rejected.TrySetResult();
+                return "-NOPERM denied\r\n"u8.ToArray();
+            }
+            return configured(connectionId, command);
+        };
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        await using var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await using var moved = await client.SubscribeAsync(movedDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var stableSubscribeCount = Volatile.Read(ref stableSubscribes);
+        var stableCommand = first.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {stableDescriptor}");
+        var sharedConnection = first.ReceivedConnectionIds[stableCommand];
+        Volatile.Write(ref reject, true);
+
+        topology = Topology(second.Port, first.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await rejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(400);
+        await Assert.That(Volatile.Read(ref stableSubscribes)).IsEqualTo(stableSubscribeCount);
+
+        var message = Encoding.ASCII.GetBytes(
+            $"*3\r\n$7\r\nmessage\r\n${stableDescriptor.ToString().Length}\r\n{stableDescriptor}\r\n$3\r\nkey\r\n");
+        await first.SendRawAsync(message, sharedConnection);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = stable.GetAsyncEnumerator(timeout.Token);
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Channel).IsEqualTo(stableDescriptor);
+    }
+
+    [Test]
     public async Task RejectedOnlyRouteKeepsItsSubscriptionInReconciliation()
     {
         await using var server = new FakeRespServer(20);

@@ -14,8 +14,9 @@ internal sealed partial class SubscriptionHub
         internal readonly ByteRouteDictionary<List<RespireSubscription>>[] Routes = [new(), new(), new()];
         internal RespireConnection? Connection;
         internal long Epoch;
-        // Highest epoch handed to a connection. A failed replacement restores Epoch to the
-        // previous connection's value, so new epochs come from here and are never reused.
+        // Candidate pushes may be delivered while the previous epoch keeps owning recovery.
+        internal long PendingEpoch;
+        // Highest epoch handed to a connection. Failed replacements do not reuse their epoch.
         internal long IssuedEpoch;
         internal volatile bool Retired;
         internal DateTimeOffset? InterruptedAt;
@@ -259,12 +260,7 @@ internal sealed partial class SubscriptionHub
             cancellationToken, _lifetimeCancellation.Token);
         var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, options,
             core.Logger, connectCancellation.Token).ConfigureAwait(false);
-        Interlocked.Exchange(ref node.Epoch, epoch);
-        lock (_gate)
-        {
-            node.Connection = connection;
-            _notificationNodes[endpoint] = node;
-        }
+        Volatile.Write(ref node.PendingEpoch, epoch);
         List<(SubscriptionKind Kind, RespireChannel Name)>? rejected = null;
         try
         {
@@ -287,20 +283,20 @@ internal sealed partial class SubscriptionHub
         }
         catch
         {
-            lock (_gate)
-            {
-                if (ReferenceEquals(node.Connection, connection) && Volatile.Read(ref node.Epoch) == epoch)
-                {
-                    node.Connection = null;
-                    // Restore the previous epoch so its watcher keeps ownership of recovery.
-                    // The next replacement draws a fresh epoch from IssuedEpoch, so late pushes
-                    // from this discarded socket can never pass that replacement's fence.
-                    Interlocked.Exchange(ref node.Epoch, previousEpoch);
-                }
-            }
+            Volatile.Write(ref node.PendingEpoch, 0);
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { TryLogDebug(error, "Closing a failed cluster notification replacement failed"); }
             throw;
+        }
+        // Keep the previous epoch visible to its watcher until all saved routes replay. Candidate
+        // pushes use PendingEpoch during replay; on failure the old watcher remains eligible to
+        // recover this node, and every replacement receives a fresh IssuedEpoch.
+        Interlocked.Exchange(ref node.Epoch, epoch);
+        Volatile.Write(ref node.PendingEpoch, 0);
+        lock (_gate)
+        {
+            node.Connection = connection;
+            _notificationNodes[endpoint] = node;
         }
         if (rejected is not null)
         {
@@ -333,7 +329,7 @@ internal sealed partial class SubscriptionHub
 
     private void OnNotificationPush(ClusterNotificationNode node, long epoch, in RespValue value)
     {
-        if (Volatile.Read(ref node.Epoch) != epoch) return;
+        if (!IsCurrentNotificationEpoch(node, epoch)) return;
         var elements = value.AsArray();
         if (elements.Length < 3) return;
         var frame = elements[0].AsSpan();
@@ -349,7 +345,7 @@ internal sealed partial class SubscriptionHub
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
         lock (_gate)
         {
-            if (_disposed || Volatile.Read(ref node.Epoch) != epoch || node.Retired
+            if (_disposed || !IsCurrentNotificationEpoch(node, epoch) || node.Retired
                 || !node.Routes[(int)kind].TryGetValue(routeName, out var cachedName, out var targets)) return;
             var message = new RespireMessage(
                 pattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedName,
@@ -361,6 +357,9 @@ internal sealed partial class SubscriptionHub
         if (drops is not null)
             foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
     }
+
+    private static bool IsCurrentNotificationEpoch(ClusterNotificationNode node, long epoch)
+        => Volatile.Read(ref node.Epoch) == epoch || Volatile.Read(ref node.PendingEpoch) == epoch;
 
     private async Task WatchNotificationNodeAsync(
         ClusterNotificationNode node, RespireConnection connection, long epoch)
@@ -927,9 +926,27 @@ internal sealed partial class SubscriptionHub
                             SubscribeOperation(subscription.Kind), name, cancellationToken, instrument: true)
                             .ConfigureAwait(false);
                     }
-                    catch
+                    catch (Exception error)
                     {
-                        uncertain.Add(endpoint);
+                        if (ContainsServerRejection(error))
+                        {
+                            // This route was definitely not installed. Remove its local
+                            // provisional entry so rollback does not unsubscribe or retire a
+                            // shared socket that continues to serve other routes.
+                            lock (_gate)
+                            {
+                                var routes = node.Routes[(int)subscription.Kind];
+                                if (routes.TryGetValue(name, out var consumers))
+                                {
+                                    consumers.Remove(subscription);
+                                    if (consumers.Count == 0) routes.Remove(name);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            uncertain.Add(endpoint);
+                        }
                         throw;
                     }
                 }
