@@ -2,16 +2,16 @@
 title: Redis Search
 ---
 
-`Respire.Search` provides typed index definitions, query options, aggregation stages, vector KNN requests, and hybrid queries. Install it alongside `Respire`:
+`Respire.Search` provides typed index definitions, query options, ordered aggregation pipelines with cursor paging, vector KNN requests, and hybrid queries. Install it alongside `Respire`:
 
 ```bash
 dotnet add package Respire.Search
 ```
 
-This package provides the client API. Your Redis server must also provide the Redis Search module.
+The package ID is `Respire.Search`. Its types live in the `Respire.Extensions.Search` namespace, matching the project folder and the other first-party extension packages. This package provides the client API. Your Redis server must also provide the Redis Search module.
 
 ```csharp
-using Redis.Search;
+using Respire.Extensions.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var search = new RespireSearchClient(client);
@@ -21,27 +21,38 @@ await search.CreateIndexAsync("books", new RespireSearchIndexDefinition
     Prefixes = ["book:"],
     Fields =
     [
-        new("title", RespireSearchFieldType.Text, Sortable: true),
-        new("category", RespireSearchFieldType.Tag),
+        new("title", RespireSearchFieldType.Text, Sortable: true) { Weight = 2 },
+        new("category", RespireSearchFieldType.Tag) { Separator = ',' },
         new("year", RespireSearchFieldType.Numeric, Sortable: true),
-        new("embedding", RespireSearchFieldType.Vector, Options: ["FLAT", "6", "TYPE", "FLOAT32", "DIM", "3", "DISTANCE_METRIC", "COSINE"]),
+        new("embedding", RespireSearchFieldType.Vector)
+        {
+            Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 3, RespireSearchDistanceMetric.Cosine),
+        },
     ],
 });
 
 var expression = RespireSearchQueryBuilder.And(
     RespireSearchQueryBuilder.TextField("title", "redis search"),
-    RespireSearchQueryBuilder.Tag("category", "database"));
+    RespireSearchQueryBuilder.Tag("category", "database"),
+    RespireSearchQueryBuilder.NumericRange("year", 2020, 2026));
 var found = await search.SearchAsync("books", new RespireSearchQuery(expression,
     new RespireSearchQueryOptions { Limit = (0, 20), ReturnFields = ["title", "year"] }));
 
 var groups = await search.AggregateAsync("books", "*", new RespireSearchAggregateOptions
 {
-    Groups = [new(["@category"], [new("COUNT", [], "count")])],
-    SortBy = [new("@count", RespireSearchSortDirection.Descending)],
+    Stages =
+    [
+        RespireSearchAggregateStage.GroupBy(["@category"], new RespireSearchReducer("COUNT", [], "count")),
+        RespireSearchAggregateStage.Filter("@count > 1"),
+        RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@count", RespireSearchSortDirection.Descending)),
+    ],
 });
 
 var nearest = await search.VectorSearchAsync("books",
-    new RespireVectorSearchRequest("embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10));
+    new RespireVectorSearchRequest("embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
+    {
+        Filter = RespireSearchQueryBuilder.Tag("category", "database"),
+    });
 
 var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuery(
     "@title:$term", "embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
@@ -53,12 +64,36 @@ var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuer
 });
 ```
 
-Use `RespireSearchField.Options` for field-specific schema settings. Vector schema options contain the RediSearch algorithm and its arguments. Query helpers build common text, exact tag, numeric range, AND, and OR expressions; pass raw server query syntax for features outside these helpers.
+## Schema
 
-Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`. `RespireSearchQueryOptions` supports projections, scores, sorting, limits, named parameters, timeout, and dialect. `RespireSearchResult` contains total count, document IDs, fields, scores, and warnings where the server returns them. `AggregateAsync` uses `FT.AGGREGATE` and supports LOAD, FILTER, APPLY, GROUPBY with REDUCE, SORTBY, LIMIT, and DIALECT; rows expose string values by name.
+Text fields accept `Weight` and `NoStem`. Tag fields accept `Separator` and `CaseSensitive`. Vector fields take a typed `RespireSearchVectorOptions` (algorithm, element type, dimensions, and distance metric). The client computes the algorithm argument count, and `Attributes` adds settings such as `M` or `EF_CONSTRUCTION`. `RespireSearchField.Options` remains a raw-token escape hatch for server-version-specific settings that have no typed property. A vector field uses either typed `Vector` options or raw `Options`, not both. Invalid combinations, such as `Weight` on a tag field or `Sortable` on a vector field, throw before anything is sent.
 
-`VectorSearchAsync` emits FT.SEARCH KNN syntax with dialect 2 and a binary `$vector` parameter. It returns up to `K` documents by default; set `Limit` to override. Vector queries need RediSearch 2.4 or later. `HybridSearchAsync` emits FT.HYBRID text + vector search with reciprocal-rank fusion. Set `RrfWindow`, `Parameters`, `TimeoutMilliseconds`, and `LoadFields` as needed. FT.HYBRID requires Redis Open Source 8.4.0 or later. Redis Search and RediSearch module features vary by server version; check [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/), [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/), [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/), and [FT.HYBRID](https://redis.io/docs/latest/commands/ft.hybrid/) for supported features.
+## Queries
 
-`RespireSearchDocument.Fields` and aggregate `Rows` provide string views for convenient text results. `StructuredFields` and `StructuredRows` preserve RESP types, nested values, and copied raw bytes for binary fields. `ExplainAsync` accepts an optional dialect for dialect-specific expressions.
+Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. `GetIndexInfoAsync` returns a parsed `RespireSearchIndexInfo` with the index name, document count, schema attributes, and every reported property as a copied value. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`; `ExplainAsync` takes `RespireSearchExplainOptions` to select CLI output or a dialect.
 
-The package reuses Respire's generated command infrastructure. Generated module commands preserve cancellation and conservative routing/cache behavior and are covered by the Native AOT smoke app against Redis 8.4 with RESP2 and RESP3. They do not apply `WithKeyPrefix`; include prefixes in the indexed keyspace and use keys with the format expected by your server. The caller owns the underlying client. Use `GetIndexInfoAsync` to inspect the server's raw FT.INFO response.
+`RespireSearchQueryOptions` supports projections, scores, sorting, limits, named parameters, timeout, and dialect. Named parameters need an explicit dialect of 2 or later. `RespireSearchResult` contains the total count, document IDs, fields, scores, and any warnings the server returns.
+
+Query helpers escape field names and tag values, so names from configuration cannot change the query. They build exact text, tag, numeric range (inclusive or exclusive, with infinite bounds), AND, and OR expressions. For prefix, fuzzy, wildcard, and other advanced syntax, pass native query text to `RespireSearchQuery`.
+
+## Aggregation
+
+`AggregateAsync` uses `FT.AGGREGATE`. `RespireSearchAggregateOptions.Stages` is an ordered pipeline that is sent exactly as written. Use it when a FILTER needs an alias from an earlier APPLY, or when a LIMIT must run before GROUPBY. The factory methods on `RespireSearchAggregateStage` create LOAD, FILTER, APPLY, GROUPBY with REDUCE, SORTBY (multiple keys and an optional `Max`), and LIMIT stages. An empty GROUPBY property list groups every row together. Rows expose string values by name, and `StructuredRows` preserves nested values from reducers such as `TOLIST`.
+
+For large results, `AggregateWithCursorAsync` adds `WITHCURSOR` with an optional page size and idle timeout. It returns the first page. Call `ReadCursorAsync` until `IsComplete` is true, or release the cursor early with `DeleteCursorAsync`.
+
+## Vector and hybrid queries
+
+`VectorSearchAsync` emits FT.SEARCH KNN syntax with dialect 2 and a binary `$vector` parameter. Set `Filter` on the request for a pre-filtered KNN query such as `(@category:{database})=>[KNN ...]`. The request is validated when it is created. By default it returns up to `K` documents sorted by score; explicit `Limit` and `SortBy` options are kept. The parameter name `vector` is reserved, and supplying it in `Parameters` throws. Vector queries need RediSearch 2.4 or later.
+
+`HybridSearchAsync` emits FT.HYBRID text and vector search with reciprocal-rank fusion. Set `RrfWindow`, `Parameters`, `TimeoutMilliseconds`, and `LoadFields` as needed. FT.HYBRID requires Redis Open Source 8.4.0 or later. Search features vary by server version; check [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/), [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/), [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/), and [FT.HYBRID](https://redis.io/docs/latest/commands/ft.hybrid/) for supported features.
+
+`RespireSearchDocument.Fields` and aggregate `Rows` provide string views for convenient text results. `StructuredFields` and `StructuredRows` preserve RESP types, nested values, and copied raw bytes for binary fields. Replies with an unexpected shape throw `InvalidOperationException` rather than silently dropping data.
+
+## Routing, caching, and ownership
+
+FT.* commands carry an index name instead of keys. On a Redis Cluster, Respire routes each Search command, including cursor reads, to the node that owns the index name's hash slot. Respire does not fan out queries or merge shard results. Cross-shard search relies on the server's search coordinator, so check that your cluster deployment provides one; without it, a query only sees the documents on the node that receives it. Standalone and Sentinel deployments need no special handling.
+
+With client-side caching enabled, read-only Search commands leave the local cache intact, while index changes invalidate it conservatively. Key-prefixed views reject Search commands, so include prefixes in the indexed keyspace and use keys in the format your index expects. Search methods build one argument list per call and are not part of Respire's zero-allocation hot path. The caller owns the underlying client.
+
+The package reuses Respire's generated command infrastructure, and a Native AOT smoke app covers it against Redis 8.4 over RESP2 and RESP3.

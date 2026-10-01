@@ -1,10 +1,8 @@
-using Respire;
+namespace Respire.Extensions.Search;
 
-namespace Redis.Search;
-
-/// <summary>Generated Redis Search command methods.</summary>
+/// <summary>Generated low-level Redis Search commands used by <see cref="RespireSearchClient"/>.</summary>
 [RespireCommands]
-public interface IRespireSearchCommands
+internal interface IRespireSearchCommands
 {
     /// <summary>Creates an index from command arguments.</summary>
     [RespireCommand("FT.CREATE")]

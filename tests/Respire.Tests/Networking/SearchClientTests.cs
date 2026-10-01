@@ -1,4 +1,4 @@
-using Redis.Search;
+using Respire.Extensions.Search;
 using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;
@@ -11,6 +11,8 @@ namespace Respire.Tests.Networking;
 public class SearchClientTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+    private static readonly byte[] EmptyAggregate = "*1\r\n:0\r\n"u8.ToArray();
+    private static readonly byte[] EmptyResp3Search = "%2\r\n$13\r\ntotal_results\r\n:0\r\n$7\r\nresults\r\n*0\r\n"u8.ToArray();
 
     [Test]
     public async Task AggregateParsesResp3RowsAndSortsBySeparateTokens()
@@ -29,11 +31,10 @@ public class SearchClientTests
 
         var result = await search.AggregateAsync("idx", "*", new()
         {
-            SortBy = [new("@count", RespireSearchSortDirection.Descending)],
+            Stages = [RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@count", RespireSearchSortDirection.Descending))],
         });
 
-        await Assert.That(server.ReceivedCommands.Contains("FT.AGGREGATE idx * SORTBY 2 @count DESC")).IsTrue();
-        var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
+        var arguments = LastArguments(server);
         await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@count", "DESC"], CollectionOrdering.Matching);
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Rows[0]["name"]).IsEqualTo("foo");
@@ -80,55 +81,11 @@ public class SearchClientTests
     }
 
     [Test]
-    public async Task AggregateSortKeepsAliasWithSpacesInOneArgument()
+    public async Task AggregateSortKeepsAliasWithSpacesInOneArgumentAndSendsMax()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
-            ReplyOverride = (_, command) => command switch
-            {
-                "HELLO 3" => Hello,
-                _ => "+OK\r\n"u8.ToArray(),
-            },
-        };
-        await using var client = await RespireClient.ConnectAsync(Options(server));
-        var search = new RespireSearchClient(client);
-
-        await search.AggregateAsync("idx", "*", new()
-        {
-            SortBy = [new("@my field", RespireSearchSortDirection.Descending)],
-        });
-
-        var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@my field", "DESC"], CollectionOrdering.Matching);
-    }
-
-    [Test]
-    public async Task AggregateStagesPreserveCallerOrder()
-    {
-        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
-        {
-            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
-        };
-        await using var client = await RespireClient.ConnectAsync(Options(server));
-        var search = new RespireSearchClient(client);
-
-        await search.AggregateAsync("idx", "*", new()
-        {
-            Stages = [new RespireSearchAggregateApply("@price * 2", "doubled"), new RespireSearchAggregateFilter("@doubled > 10")],
-        });
-
-        var arguments = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments[^9..]).IsEquivalentTo(
-            ["FT.AGGREGATE", "idx", "*", "APPLY", "@price * 2", "AS", "doubled", "FILTER", "@doubled > 10"],
-            CollectionOrdering.Matching);
-    }
-
-    [Test]
-    public async Task AggregateSortAndLimitStagesStayBeforeGrouping()
-    {
-        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
-        {
-            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
@@ -137,16 +94,138 @@ public class SearchClientTests
         {
             Stages =
             [
-                new RespireSearchAggregateSort("@price", RespireSearchSortDirection.Descending),
-                new RespireSearchAggregateLimit(0, 5),
-                new RespireSearchAggregateGroupStage(new(["@category"], [])),
+                new RespireSearchAggregateSortBy(
+                [
+                    new("@my field", RespireSearchSortDirection.Descending),
+                    new("@name"),
+                ]) { Max = 5 },
             ],
         });
 
-        var arguments = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments).IsEquivalentTo(
-            ["FT.AGGREGATE", "idx", "*", "SORTBY", "2", "@price", "DESC", "LIMIT", "0", "5", "GROUPBY", "1", "@category"],
+        await Assert.That(LastArguments(server)[3..]).IsEquivalentTo(
+            ["SORTBY", "4", "@my field", "DESC", "@name", "ASC", "MAX", "5"],
             CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task AggregateStagesPreserveCallerOrder()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await search.AggregateAsync("idx", "*", new()
+        {
+            Stages =
+            [
+                RespireSearchAggregateStage.GroupBy(["@category"], new RespireSearchReducer("SUM", ["@price"], "total")),
+                RespireSearchAggregateStage.Apply("@total * 2", "doubled"),
+                RespireSearchAggregateStage.Filter("@doubled > 10"),
+            ],
+            Dialect = 2,
+        });
+
+        await Assert.That(LastArguments(server)).IsEquivalentTo(
+            [
+                "FT.AGGREGATE", "idx", "*",
+                "GROUPBY", "1", "@category", "REDUCE", "SUM", "1", "@price", "AS", "total",
+                "APPLY", "@total * 2", "AS", "doubled",
+                "FILTER", "@doubled > 10",
+                "DIALECT", "2",
+            ],
+            CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task AggregateSortAndLimitStagesStayBeforeGrouping()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await search.AggregateAsync("idx", "*", new()
+        {
+            Stages =
+            [
+                RespireSearchAggregateStage.Load("@price"),
+                RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@price", RespireSearchSortDirection.Descending)),
+                RespireSearchAggregateStage.Limit(0, 5),
+                RespireSearchAggregateStage.GroupBy([], new RespireSearchReducer("COUNT", [], "count")),
+            ],
+        });
+
+        await Assert.That(LastArguments(server)).IsEquivalentTo(
+            [
+                "FT.AGGREGATE", "idx", "*", "LOAD", "1", "@price", "SORTBY", "2", "@price", "DESC",
+                "LIMIT", "0", "5", "GROUPBY", "0", "REDUCE", "COUNT", "0", "AS", "count",
+            ],
+            CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task AggregateWithCursorSendsCursorOptionsAndParsesPages()
+    {
+        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        {
+            await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+            {
+                ReplyOverride = (_, command) => command switch
+                {
+                    "HELLO 3" => Hello,
+                    _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                        ? "*2\r\n*2\r\n:1\r\n*2\r\n$1\r\nn\r\n$1\r\n1\r\n:42\r\n"u8.ToArray()
+                        : "*2\r\n%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%2\r\n$16\r\nextra_attributes\r\n%1\r\n$1\r\nn\r\n$1\r\n1\r\n$6\r\nvalues\r\n*0\r\n:42\r\n"u8.ToArray(),
+                    "FT.CURSOR READ idx 42 COUNT 2" => protocol == RespProtocol.Resp2
+                        ? "*2\r\n*2\r\n:1\r\n*2\r\n$1\r\nn\r\n$1\r\n2\r\n:0\r\n"u8.ToArray()
+                        : "*2\r\n%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$16\r\nextra_attributes\r\n%1\r\n$1\r\nn\r\n$1\r\n2\r\n:0\r\n"u8.ToArray(),
+                    "FT.CURSOR DEL idx 7" => FakeRespServer.OkReply,
+                    _ => null,
+                },
+            };
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var search = new RespireSearchClient(client);
+
+            var first = await search.AggregateWithCursorAsync("idx", "*",
+                new() { Stages = [RespireSearchAggregateStage.Load("@n")], Dialect = 2 },
+                new() { Count = 1, MaxIdleMilliseconds = 5_000 });
+            await Assert.That(LastArguments(server)[^9..]).IsEquivalentTo(
+                ["1", "@n", "WITHCURSOR", "COUNT", "1", "MAXIDLE", "5000", "DIALECT", "2"],
+                CollectionOrdering.Matching);
+            await Assert.That(first.CursorId).IsEqualTo(42);
+            await Assert.That(first.IsComplete).IsFalse();
+            await Assert.That(first.Result.Rows[0]["n"]).IsEqualTo("1");
+
+            var second = await search.ReadCursorAsync("idx", first.CursorId, 2);
+            await Assert.That(second.IsComplete).IsTrue();
+            await Assert.That(second.Result.Rows[0]["n"]).IsEqualTo("2");
+
+            await search.DeleteCursorAsync("idx", 7);
+            await Assert.That(server.ReceivedCommands).Contains("FT.CURSOR DEL idx 7");
+        }
+    }
+
+    [Test]
+    public async Task CursorMethodsRejectInvalidArgumentsBeforeSending()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.ReadCursorAsync("idx", 0)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await search.ReadCursorAsync("idx", 1, 0)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await search.DeleteCursorAsync("idx", -1)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", "*", cursor: new() { Count = 0 }))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]
@@ -159,18 +238,18 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.SearchAsync("idx", new("@name:$name", new()
+        var exception = await Assert.That(async () => await search.SearchAsync("idx", new("@name:$name", new()
         {
             Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
         }))).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(exception!.ParamName).IsEqualTo("Dialect");
 
         await search.SearchAsync("idx", new("@name:$name", new()
         {
             Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
             Dialect = 3,
         }));
-        var arguments = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments[^2..]).IsEquivalentTo(["DIALECT", "3"], CollectionOrdering.Matching);
+        await Assert.That(LastArguments(server)[^2..]).IsEquivalentTo(["DIALECT", "3"], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -188,7 +267,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var plan = await search.ExplainAsync("idx", "query", explainCli: true);
+        var plan = await search.ExplainAsync("idx", "query", new() { Cli = true });
 
         await Assert.That(plan).IsEqualTo($"line1{Environment.NewLine}line2");
     }
@@ -203,9 +282,11 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.ExplainAsync("idx", "*=>[KNN 1 @embedding $vector]", dialect: 2);
+        await search.ExplainAsync("idx", "*=>[KNN 1 @embedding $vector]", new() { Dialect = 2 });
 
         await Assert.That(server.ReceivedCommands).Contains("FT.EXPLAIN idx *=>[KNN 1 @embedding $vector] DIALECT 2");
+        await Assert.That(async () => await search.ExplainAsync("idx", "*", new() { Dialect = 0 }))
+            .Throws<ArgumentOutOfRangeException>();
     }
 
     [Test]
@@ -225,6 +306,18 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task NumericRangeSupportsExclusiveBoundsAndServerNumberSyntax()
+    {
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 1.5, 10.0, exclusiveMinimum: true))
+            .IsEqualTo("@price:[(1.5 10]");
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 0.0000001, 1e20, exclusiveMaximum: true))
+            .IsEqualTo("@price:[1E-07 (1E20]");
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("id", 9_007_199_254_740_993L, long.MaxValue))
+            .IsEqualTo("@id:[9007199254740993 9223372036854775807]");
+        await Assert.That(() => RespireSearchQueryBuilder.NumericRange("price", 5L, 1L)).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task SearchParsesResp2DocumentsAndSendsTypedOptions()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
@@ -241,6 +334,21 @@ public class SearchClientTests
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
         await Assert.That(result.Documents[0].Fields["title"]).IsEqualTo("foo");
+    }
+
+    [Test]
+    public async Task SearchRejectsMalformedFieldLists()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FT.SEARCH", StringComparison.Ordinal)
+                ? "*3\r\n:1\r\n$3\r\ndoc\r\n*3\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$4\r\nlost\r\n"u8.ToArray()
+                : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.SearchAsync("idx", new("*"))).Throws<InvalidOperationException>();
     }
 
     [Test]
@@ -269,7 +377,7 @@ public class SearchClientTests
             ReplyOverride = (_, command) => command switch
             {
                 "HELLO 3" => Hello,
-                _ => "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%2\r\n$2\r\nid\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray(),
+                _ => "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%3\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray(),
             },
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
@@ -279,6 +387,7 @@ public class SearchClientTests
 
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
+        await Assert.That(result.Documents[0].Score).IsEqualTo(0.5);
         await Assert.That(result.Documents[0].Fields["title"]).IsEqualTo("foo");
     }
 
@@ -287,8 +396,9 @@ public class SearchClientTests
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
+            // Redis 8.4 RESP2 layout: a flat key/value array with nested key/value rows.
             ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal)
-                ? "*2\r\n:1\r\n*4\r\n$2\r\nid\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray()
+                ? "*8\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*4\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$8\r\nwarnings\r\n*1\r\n$4\r\nslow\r\n$14\r\nexecution_time\r\n$3\r\n0.1\r\n"u8.ToArray()
                 : null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
@@ -305,16 +415,33 @@ public class SearchClientTests
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
         await Assert.That(result.Documents[0].Fields["title"]).IsEqualTo("foo");
-        var command = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(command).Contains("WINDOW");
+        await Assert.That(result.Warnings).IsEquivalentTo(["slow"], CollectionOrdering.Matching);
+        var command = LastArguments(server);
         await Assert.That(command[command.ToList().IndexOf("WINDOW") + 1]).IsEqualTo("25");
         await Assert.That(command[command.ToList().IndexOf("PARAMS") + 1]).IsEqualTo("4");
         await Assert.That(command).Contains("term");
         await Assert.That(command).Contains("TIMEOUT");
         var loadIndex = command.ToList().IndexOf("LOAD");
         await Assert.That(command[loadIndex + 1]).IsEqualTo("3");
-        await Assert.That(command.Skip(loadIndex + 2).Take(3)).IsEquivalentTo(["@__key", "@__score", "@title"]);
+        await Assert.That(command.Skip(loadIndex + 2).Take(3)).IsEquivalentTo(["@__key", "@__score", "@title"], CollectionOrdering.Matching);
         await Assert.That(command.Contains("DIALECT", StringComparer.Ordinal)).IsFalse();
+    }
+
+    [Test]
+    public async Task HybridSearchRejectsReservedVectorParameter()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+        {
+            Parameters = new Dictionary<string, RespireValue> { ["vector"] = "x" },
+        })).Throws<ArgumentException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.HYBRID", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]
@@ -327,9 +454,29 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.VectorSearchAsync(
+        var exception = await Assert.That(async () => await search.VectorSearchAsync(
             "idx", new("embedding", new byte[] { 1, 2 }, 3), new() { Dialect = 1 }))
             .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(exception!.ParamName).IsEqualTo("Dialect");
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.SEARCH", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task VectorSearchRejectsCallerParameterNamedVector()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.VectorSearchAsync(
+            "idx", new("embedding", new byte[] { 1, 2 }, 3), new()
+            {
+                Parameters = new Dictionary<string, RespireValue> { ["vector"] = "caller" },
+            }))
+            .Throws<ArgumentException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.SEARCH", StringComparison.Ordinal))).IsFalse();
     }
 
@@ -338,28 +485,59 @@ public class SearchClientTests
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
-            ReplyOverride = (_, command) => command switch
-            {
-                "HELLO 3" => Hello,
-                _ => "%2\r\n$13\r\ntotal_results\r\n:0\r\n$7\r\nresults\r\n*0\r\n"u8.ToArray(),
-            },
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
         await search.VectorSearchAsync("idx", new("embedding", new byte[] { 1, 2 }, 3));
 
-        var commandIndex = server.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("FT.SEARCH", StringComparison.Ordinal));
-        await Assert.That(commandIndex).IsGreaterThanOrEqualTo(0);
-        var arguments = server.ReceivedArguments[commandIndex];
+        var arguments = server.ReceivedArguments.Last();
         var textArguments = arguments.Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(textArguments).Contains("*=>[KNN 3 @embedding $vector AS vector_score]");
-        await Assert.That(textArguments).Contains("LIMIT");
-        await Assert.That(textArguments[textArguments.ToList().IndexOf("LIMIT") + 1]).IsEqualTo("0");
-        await Assert.That(textArguments[textArguments.ToList().IndexOf("LIMIT") + 2]).IsEqualTo("3");
-        await Assert.That(textArguments).Contains("DIALECT");
-        await Assert.That(textArguments[textArguments.ToList().IndexOf("DIALECT") + 1]).IsEqualTo("2");
-        await Assert.That(arguments.Any(argument => argument.AsSpan().SequenceEqual(new byte[] { 1, 2 }))).IsTrue();
+        await Assert.That(textArguments[..3]).IsEquivalentTo(
+            ["FT.SEARCH", "idx", "*=>[KNN 3 @embedding $vector AS vector_score]"], CollectionOrdering.Matching);
+        await Assert.That(textArguments[3..^3]).IsEquivalentTo(
+            ["SORTBY", "vector_score", "ASC", "LIMIT", "0", "3", "PARAMS", "2", "vector"], CollectionOrdering.Matching);
+        await Assert.That(arguments[^3].AsSpan().SequenceEqual(new byte[] { 1, 2 })).IsTrue();
+        await Assert.That(textArguments[^2..]).IsEquivalentTo(["DIALECT", "2"], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task VectorSearchKeepsCallerLimitSortAndParameters()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await search.VectorSearchAsync("idx",
+            new("embedding", new byte[] { 1, 2 }, 50) { Filter = "@category:{$category}" },
+            new()
+            {
+                Limit = (10, 5),
+                SortBy = ("year", RespireSearchSortDirection.Descending),
+                Parameters = new Dictionary<string, RespireValue> { ["category"] = "books" },
+                Dialect = 3,
+            });
+
+        var arguments = LastArguments(server);
+        await Assert.That(arguments[2]).IsEqualTo("(@category:{$category})=>[KNN 50 @embedding $vector AS vector_score]");
+        await Assert.That(arguments[3..9]).IsEquivalentTo(["SORTBY", "year", "DESC", "LIMIT", "10", "5"], CollectionOrdering.Matching);
+        await Assert.That(arguments[9..11]).IsEquivalentTo(["PARAMS", "4"], CollectionOrdering.Matching);
+        await Assert.That(arguments[^4..]).IsEquivalentTo(["category", "books", "DIALECT", "3"], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task VectorSearchRequestValidatesWhenCreated()
+    {
+        await Assert.That(() => new RespireVectorSearchRequest("embedding", new byte[] { 1 }, 0)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => new RespireVectorSearchRequest(" ", new byte[] { 1 }, 1)).Throws<ArgumentException>();
+        await Assert.That(() => new RespireVectorSearchRequest("embedding", ReadOnlyMemory<byte>.Empty, 1)).Throws<ArgumentException>();
+        var request = new RespireVectorSearchRequest("embedding", new byte[] { 1 }, 1);
+        await Assert.That(() => request with { K = -1 }).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => request with { ScoreField = "" }).Throws<ArgumentException>();
     }
 
     [Test]
@@ -367,7 +545,7 @@ public class SearchClientTests
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
-            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "%2\r\n$13\r\ntotal_results\r\n:0\r\n$7\r\nresults\r\n*0\r\n"u8.ToArray(),
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
@@ -384,7 +562,7 @@ public class SearchClientTests
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
             ReplyOverride = (_, command) => command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal)
-                ? "*2\r\n:1\r\n*8\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$2\r\nid\r\n$5\r\nother\r\n$5\r\nscore\r\n$4\r\nhigh\r\n"u8.ToArray()
+                ? "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*8\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$2\r\nid\r\n$5\r\nother\r\n$5\r\nscore\r\n$4\r\nhigh\r\n"u8.ToArray()
                 : null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
@@ -413,7 +591,7 @@ public class SearchClientTests
                 {
                     "HELLO 3" => Hello,
                     _ when command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
-                        ? "*2\r\n:1\r\n*6\r\n$2\r\nid\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray()
+                        ? "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*6\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray()
                         : "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%3\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray(),
                     _ => null,
                 },
@@ -445,8 +623,95 @@ public class SearchClientTests
         {
             Fields = [new("embedding", RespireSearchFieldType.Vector, Sortable: true, Options: ["FLAT", "6", "TYPE", "FLOAT32", "DIM", "2", "DISTANCE_METRIC", "COSINE"])],
         })).Throws<ArgumentException>();
+        await Assert.That(async () => await search.CreateIndexAsync("idx", new()
+        {
+            Fields = [new("title", RespireSearchFieldType.Tag) { Weight = 2 }],
+        })).Throws<ArgumentException>();
+        await Assert.That(async () => await search.CreateIndexAsync("idx", new()
+        {
+            Fields =
+            [
+                new("embedding", RespireSearchFieldType.Vector, Options: ["FLAT"])
+                {
+                    Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2),
+                },
+            ],
+        })).Throws<ArgumentException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.CREATE", StringComparison.Ordinal))).IsFalse();
     }
+
+    [Test]
+    public async Task TypedSchemaOptionsComputeArgumentCounts()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await search.CreateIndexAsync("idx", new()
+        {
+            Prefixes = ["doc:"],
+            Fields =
+            [
+                new("title", RespireSearchFieldType.Text, Alias: "t", Sortable: true) { Weight = 2.5, NoStem = true },
+                new("category", RespireSearchFieldType.Tag) { Separator = ';', CaseSensitive = true },
+                new("embedding", RespireSearchFieldType.Vector)
+                {
+                    Vector = new(RespireSearchVectorAlgorithm.Hnsw, RespireSearchVectorType.Float32, 3, RespireSearchDistanceMetric.Cosine)
+                    {
+                        Attributes = new Dictionary<string, string> { ["M"] = "16" },
+                    },
+                },
+            ],
+        });
+
+        await Assert.That(LastArguments(server)).IsEquivalentTo(
+            [
+                "FT.CREATE", "idx", "ON", "HASH", "PREFIX", "1", "doc:", "SCHEMA",
+                "title", "AS", "t", "TEXT", "WEIGHT", "2.5", "NOSTEM", "SORTABLE",
+                "category", "TAG", "SEPARATOR", ";", "CASESENSITIVE",
+                "embedding", "VECTOR", "HNSW", "8", "TYPE", "FLOAT32", "DIM", "3", "DISTANCE_METRIC", "COSINE", "M", "16",
+            ],
+            CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task IndexInfoParsesResp2AndResp3Replies()
+    {
+        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        {
+            await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+            {
+                ReplyOverride = (_, command) => command switch
+                {
+                    "HELLO 3" => Hello,
+                    "FT.INFO idx" => protocol == RespProtocol.Resp2
+                        ? "*6\r\n$10\r\nindex_name\r\n$3\r\nidx\r\n$10\r\nattributes\r\n*1\r\n*9\r\n$10\r\nidentifier\r\n$5\r\ntitle\r\n$9\r\nattribute\r\n$5\r\ntitle\r\n$4\r\ntype\r\n$4\r\nTEXT\r\n$6\r\nWEIGHT\r\n$1\r\n1\r\n$8\r\nSORTABLE\r\n$8\r\nnum_docs\r\n$1\r\n5\r\n"u8.ToArray()
+                        : "%3\r\n$10\r\nindex_name\r\n$3\r\nidx\r\n$10\r\nattributes\r\n*1\r\n%5\r\n$10\r\nidentifier\r\n$5\r\ntitle\r\n$9\r\nattribute\r\n$5\r\ntitle\r\n$4\r\ntype\r\n$4\r\nTEXT\r\n$6\r\nWEIGHT\r\n,1\r\n$5\r\nflags\r\n*1\r\n$8\r\nSORTABLE\r\n$8\r\nnum_docs\r\n:5\r\n"u8.ToArray(),
+                    _ => null,
+                },
+            };
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var search = new RespireSearchClient(client);
+
+            var info = await search.GetIndexInfoAsync("idx");
+
+            await Assert.That(info.Name).IsEqualTo("idx");
+            await Assert.That(info.DocumentCount).IsEqualTo(5);
+            await Assert.That(info.Attributes.Count).IsEqualTo(1);
+            var attribute = info.Attributes[0];
+            await Assert.That(attribute.Identifier).IsEqualTo("title");
+            await Assert.That(attribute.Type).IsEqualTo("TEXT");
+            await Assert.That(attribute.Flags).IsEquivalentTo(["SORTABLE"], CollectionOrdering.Matching);
+            await Assert.That(attribute.Options["WEIGHT"].Scalar).IsEqualTo("1");
+            await Assert.That(info.Properties.ContainsKey("num_docs")).IsTrue();
+        }
+    }
+
+    private static string[] LastArguments(FakeRespServer server)
+        => server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
 
     private static RespireOptions Options(FakeRespServer server, RespProtocol protocol = RespProtocol.Resp3) => new()
     {
