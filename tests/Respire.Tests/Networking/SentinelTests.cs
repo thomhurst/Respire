@@ -761,12 +761,116 @@ public class SentinelTests
         await Assert.That(sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"))
             .IsGreaterThan(lookups);
 
+        // A lagging event only reconciles through its Sentinel, which still reports the replacement.
         var confirmedLookups = sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+        var current = client.Core.Sentinel!.Current;
         await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, middle.Port), monitor);
-        await Task.Delay(100);
-        await Assert.That(client.Core.Sentinel!.Current!.Endpoint.Port).IsEqualTo(replacement.Port);
-        await Assert.That(sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"))
-            .IsEqualTo(confirmedLookups);
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > confirmedLookups);
+        await WaitUntilQuietAsync(() => sentinel.ReceivedCommands.Count + replacement.ReceivedCommands.Count);
+        await Assert.That(ReferenceEquals(client.Core.Sentinel!.Current, current)).IsTrue();
+        await Assert.That(current!.IsRetired).IsFalse();
+        await Assert.That(middle.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task NoncontiguousSwitchEventAfterConfirmedSwitchReconcilesThroughReportingSentinel()
+    {
+        await using var first = CreatePrimary();
+        await using var second = CreatePrimary();
+        await using var third = CreatePrimary();
+        var primaryPort = first.Port;
+        await using var sentinel = CreateSentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => sentinel.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitor = sentinel.ReceivedConnectionIds[sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+
+        Volatile.Write(ref primaryPort, second.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, second.Port), monitor);
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == second.Port);
+
+        // The second -> unknown transition was missed; the next event names a primary the client never used.
+        Volatile.Write(ref primaryPort, third.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390, third.Port), monitor);
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == third.Port);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(third.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task SwitchRefreshThatFallsBackToLaggingSentinelReconcilesThroughReportingSentinel()
+    {
+        await using var first = CreatePrimary();
+        await using var announced = CreatePrimary();
+        await using var stale = CreatePrimary();
+        var reportingPort = first.Port;
+        var laggingPort = first.Port;
+        var reportingFailures = 0;
+        await using var reporting = new FakeRespServer(16, "*0
+"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")
+                {
+                    if (Interlocked.Decrement(ref reportingFailures) >= 0) return "-ERR busy
+"u8.ToArray();
+                    return PrimaryReply(Volatile.Read(ref reportingPort));
+                }
+                if (command == "SENTINEL SENTINELS mymaster") return "*0
+"u8.ToArray();
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    var channel = command["SUBSCRIBE ".Length..];
+                    return Encoding.ASCII.GetBytes($"*3
+$9
+subscribe
+${channel.Length}
+{channel}
+:1
+");
+                }
+                return null;
+            },
+        };
+        await using var lagging = CreateSentinel(() => Volatile.Read(ref laggingPort));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", reporting.Port), new("127.0.0.1", lagging.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => reporting.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1
+            && lagging.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => reporting.ReceivedCommands.Count + lagging.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitor = reporting.ReceivedConnectionIds[reporting.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+
+        // The reporting Sentinel fails once, so the switch refresh publishes the lagging Sentinel's answer.
+        Volatile.Write(ref reportingPort, announced.Port);
+        Volatile.Write(ref laggingPort, stale.Port);
+        Volatile.Write(ref reportingFailures, 1);
+        await reporting.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, announced.Port), monitor);
+
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == announced.Port);
+        await Assert.That(stale.ReceivedCommands).Contains("ROLE");
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(announced.ReceivedCommands).Contains("PING");
     }
 
     [Test]

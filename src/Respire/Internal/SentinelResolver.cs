@@ -16,9 +16,7 @@ internal static class SentinelResolver
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? expectedPrimary = null,
-        RespireEndpoint? rejectedPrimary = null,
-        RespireEndpoint? additionalRejectedPrimary = null,
-        bool allowRejectedPrimaryFromPreferred = false)
+        RespireEndpoint? rejectedPrimary = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -71,16 +69,9 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                var isRejectedPrimary = rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
-                    || additionalRejectedPrimary is { } additionalRejected && SameEndpoint(primary, additionalRejected);
-                var isPreferredSentinel = preferredSentinel is { } reportingSentinel
-                    && SameEndpoint(endpoint, reportingSentinel);
-                if (isRejectedPrimary
-                    && !(expectedPrimary is { } expected && SameEndpoint(primary, expected) && isPreferredSentinel)
-                    && !(allowRejectedPrimaryFromPreferred && isPreferredSentinel))
+                if (IsRejectedAfterSwitch(primary, endpoint, preferredSentinel, expectedPrimary, rejectedPrimary))
                     throw new RespireConnectionException(
                         $"Sentinel at {endpoint} reports rejected primary {primary} after a switch event.");
-                discoveryCompleted = true;
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -144,7 +135,6 @@ internal static class SentinelResolver
                 lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                     && (ex is RespireTimeoutException || ContainsCancellation(ex));
                 lastError = lastErrorIsDiscoveryTimeout
-
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
@@ -182,6 +172,14 @@ internal static class SentinelResolver
             if (cause is OperationCanceledException) return true;
         return false;
     }
+
+    // A switch event names the primary it retires, and lagging Sentinels may still report it.
+    // The rejected endpoint is accepted only when the reporting Sentinel also announced it.
+    private static bool IsRejectedAfterSwitch(RespireEndpoint primary, RespireEndpoint sentinel,
+        RespireEndpoint? preferredSentinel, RespireEndpoint? expectedPrimary, RespireEndpoint? rejectedPrimary)
+        => rejectedPrimary is { } rejected && SameEndpoint(primary, rejected)
+            && !(expectedPrimary is { } expected && SameEndpoint(primary, expected)
+                && preferredSentinel is { } reporting && SameEndpoint(sentinel, reporting));
 
     internal static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
