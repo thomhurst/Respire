@@ -18,6 +18,12 @@ Redis user. The Redis username is that identity's **object ID**. The access toke
 returns the token's actual `ExpiresOn` value to Respire's credential refresh lifecycle. The
 provider and `TokenCredential` remain caller-owned.
 
+The provider calls `TokenCredential.GetTokenAsync` on every credential request and relies on the
+credential's own token caching. The managed identity and service principal credentials that
+`DefaultAzureCredential` uses in production cache tokens until shortly before expiry, so large
+connection pools do not each reach Microsoft Entra ID. Add caching to a custom `TokenCredential`
+that does not cache before passing it to the provider.
+
 ```csharp
 using Azure.Identity;
 using Respire;

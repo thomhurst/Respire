@@ -1,0 +1,47 @@
+name: Azure credential sample
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'samples/Respire.Samples.Azure/**'
+      - 'src/**'
+      - 'Directory.*'
+      - 'global.json'
+      - '.github/workflows/azure-sample.yml'
+  pull_request:
+    paths:
+      - 'samples/Respire.Samples.Azure/**'
+      - 'src/**'
+      - 'Directory.*'
+      - 'global.json'
+      - '.github/workflows/azure-sample.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  azure-sample:
+    name: Azure sample (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Build Azure credential sample
+        run: dotnet build samples/Respire.Samples.Azure -c Release -f ${{ matrix.framework }}
+      - name: Run Azure credential sample without connecting
+        run: dotnet run --project samples/Respire.Samples.Azure -c Release -f ${{ matrix.framework }} --no-build

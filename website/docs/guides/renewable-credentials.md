@@ -45,8 +45,8 @@ public sealed class ConfigurationCredentials(
 Use an ISO 8601 timestamp with a UTC offset for `Redis:ExpiresAt`. A null username selects
 Redis's `default` user. A null `ExpiresAt` disables proactive renewal for that connection;
 new connections still query the provider. See the [Azure Managed Redis authentication guide](azure-managed-redis.md)
-for its Microsoft Entra credential adapter. AWS support is tracked in
-[#614](https://github.com/thomhurst/Respire/issues/614).
+for its Microsoft Entra credential adapter and the [AWS IAM credentials guide](aws-iam-credentials.md)
+for the ElastiCache and MemoryDB adapters.
 
 ## Ownership and identity
 
