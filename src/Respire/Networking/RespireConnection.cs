@@ -1677,7 +1677,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ThrowIfRetired();
             if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             var start = _activeBuffer.Count;
-            startedBatch = start == 0 && _inflight.Count == 0;
+            // An earlier reply may still be pending after its frame has been sent and the
+            // flush loop has parked. Wake inline whenever this header starts an empty buffer.
+            startedBatch = start == 0;
             requestWriteStart = _enqueuedBytes;
             try
             {
