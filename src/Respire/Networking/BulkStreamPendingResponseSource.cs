@@ -34,6 +34,8 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
+    internal bool HasPrefixReply => _hasPrefixReply;
+    internal Action<Exception?>? OnFrameCompleted => _onFrameCompleted;
 
     internal ValueTask<Stream?> Task => new(this, _core.Version);
 

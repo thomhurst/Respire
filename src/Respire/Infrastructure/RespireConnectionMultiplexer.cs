@@ -26,8 +26,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private ActiveEndpoint _activeEndpoint;
     private readonly object _movingGate = new();
     private long _movingSequence = -1;
+    private long _completedMovingSequence = -1;
     private RespireEndpoint _pendingMovingEndpoint;
-    private TimeSpan _pendingMovingGrace;
+    private long _pendingMovingDeadline;
     private int _movingWorker;
     private TaskCompletionSource? _movingCompletion;
     private readonly ILogger? _logger;
@@ -828,15 +829,29 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
-                if (exhausted)
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
-                else if (_options.ReconnectPolicy is not null)
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
-                else
-                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-                publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
-                reconnectGuardReleased = true;
+                lock (_lifecycleGate)
+                {
+                    if (IsOperational && _connections[slot] is { IsAcceptingCommands: true })
+                    {
+                        if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                        publish = QueueLifecycleNotificationUnderLock(
+                            new StateNotification(slot, RespireConnectionState.Connected, null));
+                        Volatile.Write(ref _reconnecting[slot], 0);
+                        reconnectGuardReleased = true;
+                    }
+                    else if (IsOperational)
+                    {
+                        var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
+                        if (exhausted)
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
+                        else if (_options.ReconnectPolicy is not null)
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
+                        else
+                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+                        publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
+                        reconnectGuardReleased = true;
+                    }
+                }
             }
         }
         finally
@@ -875,7 +890,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (!IsOperational || notification.SequenceId <= _movingSequence) return;
             _movingSequence = notification.SequenceId;
             _pendingMovingEndpoint = notification.Target ?? new RespireEndpoint(Host, Port);
-            _pendingMovingGrace = TimeSpan.FromSeconds(Math.Clamp(notification.Seconds ?? 5, 1, 30));
+            var grace = TimeSpan.FromSeconds(Math.Clamp(notification.Seconds ?? 5, 1, 30));
+            _pendingMovingDeadline = Environment.TickCount64 + (long)grace.TotalMilliseconds;
             if (Interlocked.Exchange(ref _movingWorker, 1) != 0) return;
             _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -890,12 +906,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 long sequence;
                 RespireEndpoint endpoint;
-                TimeSpan drainTimeout;
+                long drainDeadline;
                 lock (_movingGate)
                 {
                     sequence = _movingSequence;
                     endpoint = _pendingMovingEndpoint;
-                    drainTimeout = _pendingMovingGrace;
+                    drainDeadline = _pendingMovingDeadline;
                 }
                 if (sequence < 0) return;
                 var replacements = new RespireConnection[_connections.Length];
@@ -930,7 +946,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     var drains = old.OfType<RespireConnection>().Select(connection => connection.RetireAsync()).ToArray();
                     try
                     {
-                        await Task.WhenAll(drains).WaitAsync(drainTimeout).ConfigureAwait(false);
+                        var remainingMilliseconds = Math.Max(0, drainDeadline - Environment.TickCount64);
+                        await Task.WhenAll(drains).WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds)).ConfigureAwait(false);
                     }
                     catch (TimeoutException)
                     {
@@ -944,7 +961,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after abortive drain cleanup"); }
                         if (HasPendingCorrectionFences)
                             await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
-                        _logger?.LogWarning("MOVING handoff drain exceeded {Timeout}; aborted remaining old sockets", drainTimeout);
+                        _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborted remaining old sockets");
                     }
                 }
                 catch (OperationCanceledException) when (!IsOperational) { return; }
@@ -958,7 +975,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         if (replacement is not null) await replacement.DisposeAsync().ConfigureAwait(false);
                 }
                 lock (_movingGate)
-                    if (sequence == _movingSequence) { _movingSequence = -1; return; }
+                {
+                    if (sequence > _completedMovingSequence) _completedMovingSequence = sequence;
+                    if (sequence == _movingSequence) return;
+                }
             }
         }
         finally
@@ -967,7 +987,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             lock (_movingGate)
             {
                 Volatile.Write(ref _movingWorker, 0);
-                if (IsOperational && _movingSequence >= 0)
+                if (IsOperational && _movingSequence > _completedMovingSequence)
                 {
                     Volatile.Write(ref _movingWorker, 1);
                     restart = true;

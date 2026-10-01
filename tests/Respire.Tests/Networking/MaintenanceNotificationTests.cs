@@ -227,6 +227,29 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingReroutePreservesCheckedErrorHandling()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (connectionId, command) => command == "PING"
+            ? "-ERR target rejected PING\r\n"u8.ToArray()
+            : targetReply(connectionId, command);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var staleSelection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Encoding.UTF8.GetBytes(
+            $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+        await WaitForCommands(target, 2);
+        while (multiplexer.GetConnection().Port != target.Port) await Task.Delay(5);
+
+        await Assert.That(async () => await staleSelection.SendCheckedAsync(
+                new RawCommand(FakeRespServer.PingFrame), commandName: "PING").AsTask())
+            .Throws<RespireServerException>();
+    }
+
+    [Test]
     public async Task MovingDrainsAcceptedReplyAndReroutesProducerParkedOnFullRing()
     {
         await using var source = Server(maxConnections: 2);
