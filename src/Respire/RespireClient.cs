@@ -2139,7 +2139,7 @@ public sealed partial class RespireClient : IRespireClient
                 cluster,
                 command,
                 cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is StreamedSetCommand);
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is IStreamingRespCommand);
         }
         else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
@@ -4285,12 +4285,8 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
-<<<<<<< HEAD
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
-=======
-            && (_readFrom == RespireReadFrom.Primary || !ReadOnlyCommandCatalog.Contains(operation))
-            && command is not StreamedSetCommand
->>>>>>> b31128b6 (fix: stream sets on warmed clients)
+            && command is not IStreamingRespCommand
             && core.Cluster is null
             && core.Sentinel is null
             && core.Multiplexer.IsInitialized

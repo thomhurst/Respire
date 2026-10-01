@@ -162,6 +162,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: false),
@@ -174,6 +175,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
@@ -185,6 +187,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return sink.Add<SetCommand, string?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: true),
@@ -197,6 +200,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return sink.Add<SetCommand, T?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: true),

@@ -31,7 +31,7 @@ public sealed class StreamedSetTests
         await Assert.That(source.CanRead).IsTrue();
         await Assert.That(source.Position).IsEqualTo(length);
         await Assert.That(server.ValueLength).IsEqualTo(length);
-        await Assert.That(source.MaximumReadSize).IsLessThanOrEqualTo(32 * 1024);
+        await Assert.That(source.MaximumReadSize).IsLessThanOrEqualTo(RespireConnection.StreamChunkSize);
         await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(64 * 1024);
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
@@ -56,6 +56,166 @@ public sealed class StreamedSetTests
         await Assert.That(await client.Strings.SetAsync("sequence", sequence)).IsTrue();
         await Assert.That(server.ValueLength).IsEqualTo(5);
         await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 1, 2, 3, 4, 5 });
+    }
+
+    [Test]
+    public async Task SetReadOnlySequenceStreamsLargeSegmentsWithBoundedBufferMemory()
+    {
+        const int length = 4 * 1024 * 1024;
+        const int largeSegment = 3 * 1024 * 1024;
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        // One 3 MiB segment (split into chunks) followed by many small segments (coalesced).
+        var payload = new byte[length];
+        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
+        var first = new BufferSegment(payload.AsMemory(0, largeSegment));
+        var last = first;
+        for (var offset = largeSegment; offset < length; offset += 1000)
+            last = last.Append(payload.AsMemory(offset, Math.Min(1000, length - offset)));
+        var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
+        var command = new StreamedSetCommand((RespireValue)"large-sequence", sequence, default, SetWhen.Always);
+
+        using var response = await connection.SendCheckedAsync(in command, commandName: "SET");
+
+        await Assert.That(response.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ValueLength).IsEqualTo(length);
+        await Assert.That(connection.WriteBufferCapacity).IsLessThanOrEqualTo(64 * 1024);
+    }
+
+    [Test]
+    public async Task SetReadOnlySequenceHandlesEmptySegmentsAndEmptyPayload()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+
+        var first = new BufferSegment(Array.Empty<byte>());
+        var last = first.Append(new byte[] { 1, 2 }).Append(Array.Empty<byte>()).Append(new byte[] { 3 })
+            .Append(Array.Empty<byte>());
+        var sequence = new ReadOnlySequence<byte>(first, 0, last, 0);
+        await Assert.That(await client.Strings.SetAsync("gaps", sequence)).IsTrue();
+        await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 1, 2, 3 });
+
+        await Assert.That(await client.Strings.SetAsync("empty", ReadOnlySequence<byte>.Empty)).IsTrue();
+        await Assert.That(server.ValueLength).IsEqualTo(0);
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET", "SET" });
+    }
+
+    [Test]
+    public async Task SmallSourceReadsAreCoalescedWithoutCorruptingThePayload()
+    {
+        const int length = 200_000;
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        // Odd-sized reads exercise partial chunk fills; the server verifies every payload byte.
+        var source = new GeneratedStream(length, maximumRead: 7);
+        var command = new StreamedSetCommand((RespireValue)"trickle", source, length, default, SetWhen.Always);
+
+        using var response = await connection.SendCheckedAsync(in command, commandName: "SET");
+
+        await Assert.That(response.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ValueLength).IsEqualTo(length);
+        await Assert.That(source.Position).IsEqualTo(length);
+    }
+
+    [Test]
+    public async Task SurplusSourceBytesAreLeftUnread()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        using var source = new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+
+        await Assert.That(await client.Strings.SetAsync("prefix", source, 4)).IsTrue();
+
+        await Assert.That(source.Position).IsEqualTo(4);
+        await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 1, 2, 3, 4 });
+    }
+
+    [Test]
+    public async Task SeekableStreamWithUnsupportedLengthFallsBackToStreaming()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        using var source = new UnknownLengthSeekableStream(new byte[] { 7, 8, 9 });
+
+        await Assert.That(await client.Strings.SetAsync("wrapped", source, 3)).IsTrue();
+
+        await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 7, 8, 9 });
+    }
+
+    [Test]
+    public async Task UndefinedSetWhenIsRejectedBeforeAnyFrameIsSent()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        const SetWhen undefined = (SetWhen)3;
+        using var source = new MemoryStream(new byte[] { 1 });
+        RespireValue value = "v";
+
+        await Assert.That(async () => await client.Strings.SetAsync("stream", source, 1, when: undefined))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Strings.SetAsync(
+                "sequence", new ReadOnlySequence<byte>(new byte[] { 1 }), when: undefined))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Strings.SetAsync("value", value, when: undefined))
+            .Throws<ArgumentOutOfRangeException>();
+        await client.PingAsync();
+
+        await Assert.That(source.Position).IsEqualTo(0);
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
+    }
+
+    [Test]
+    public async Task UndefinedSetWhenCannotDesynchronizeTheConnection()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        // Bypasses facet validation to prove the command itself never writes a short array.
+        var command = new StreamedSetCommand(
+            (RespireValue)"bad", new MemoryStream(new byte[] { 1 }), 1, default, (SetWhen)3);
+
+        await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET"))
+            .Throws<ArgumentOutOfRangeException>();
+        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING");
+
+        await Assert.That(ping.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
     [Test]
@@ -228,6 +388,8 @@ public sealed class StreamedSetTests
         cancellation.Cancel();
         var error = await Assert.That(async () => await secondSet).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        // Nothing of the second frame was written, so cancelling it must not close the connection.
+        await Assert.That(connection.IsConnected).IsTrue();
 
         holder.ContinueReading.TrySetResult();
         using var reply = await firstSet;
@@ -465,13 +627,16 @@ public sealed class StreamedSetTests
         await Assert.That(set.IsCompleted).IsFalse();
 
         var retirement = connection.RetireAsync();
-        await peerStream.ReadExactlyAsync(frame);
-        await peerStream.WriteAsync("+OK\r\n"u8.ToArray());
+        // Bound every peer read so a write-ordering regression fails the test instead of hanging it.
+        using var peerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await peerStream.ReadExactlyAsync(frame, peerTimeout.Token);
+        await peerStream.WriteAsync("+OK\r\n"u8.ToArray(), peerTimeout.Token);
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         source.ContinueReading.TrySetResult();
-        await peerStream.ReadExactlyAsync("*3\r\n$3\r\nSET\r\n$6\r\nqueued\r\n$4\r\n"u8.ToArray());
-        await peerStream.ReadExactlyAsync(new byte[6]); // "data\r\n"
-        await peerStream.WriteAsync("+OK\r\n"u8.ToArray());
+        await peerStream.ReadExactlyAsync(
+            "*3\r\n$3\r\nSET\r\n$6\r\nqueued\r\n$4\r\n"u8.ToArray(), peerTimeout.Token);
+        await peerStream.ReadExactlyAsync(new byte[6], peerTimeout.Token); // "data\r\n"
+        await peerStream.WriteAsync("+OK\r\n"u8.ToArray(), peerTimeout.Token);
 
         using var blockerReply = await blocker.WaitAsync(TimeSpan.FromSeconds(5));
         using var streamedReply = await set.WaitAsync(TimeSpan.FromSeconds(5));
@@ -501,6 +666,30 @@ public sealed class StreamedSetTests
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
     }
 
+    private sealed class UnknownLengthSeekableStream(byte[] bytes) : Stream
+    {
+        private int _position;
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException("Length is unknown.");
+        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var count = Math.Min(buffer.Length, bytes.Length - _position);
+            bytes.AsSpan(_position, count).CopyTo(buffer.Span);
+            _position += count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class ThrowingStream : Stream
     {
         public override bool CanRead => true;
@@ -517,7 +706,7 @@ public sealed class StreamedSetTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed class GeneratedStream(int length) : Stream
+    private sealed class GeneratedStream(int length, int maximumRead = int.MaxValue) : Stream
     {
         private int _position;
         private int _maximumReadSize;
@@ -532,7 +721,7 @@ public sealed class StreamedSetTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             UpdateMaximum(ref _maximumReadSize, buffer.Length);
-            var count = Math.Min(buffer.Length, length - _position);
+            var count = Math.Min(Math.Min(buffer.Length, maximumRead), length - _position);
             var output = buffer.Span[..count];
             for (var index = 0; index < count; index++) output[index] = (byte)((_position + index) % 251);
             _position += count;
