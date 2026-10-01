@@ -477,7 +477,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         None = 0,
         // A release command for this owner completed, or Redis reported the owner absent.
         Released = 1,
-        // Disposal handed release to the background retry; renewals no longer report success.
+        // Disposal handed release to the background retry; the permit is no longer usable locally.
         DisposeReleaseScheduled = 2,
         // A renewal to owner-only release may have run on Redis without its reply being observed.
         NonExpiringOutcomeUncertain = 4,
@@ -516,13 +516,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <remarks>
     /// The estimate is conservative because it counts from when the acquire or renewal command was
     /// sent, before Redis applied the expiry, and subtracts the whole round trip. It is zero after a
-    /// release, and after a failed or canceled renewal, which surrenders the permit.
+    /// release, after a failed or canceled renewal, or after disposal schedules its background
+    /// release.
     /// </remarks>
     public TimeSpan? RemainingEstimate
     {
         get
         {
-            if (Has(PermitState.Released | PermitState.RenewalFailed)) return TimeSpan.Zero;
+            if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled))
+                return TimeSpan.Zero;
             var validUntil = Volatile.Read(ref _lease).ValidUntil;
             if (validUntil == long.MaxValue) return null;
             var remaining = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), validUntil);
@@ -533,11 +535,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <summary>Whether this permit can no longer be relied on.</summary>
     /// <remarks>
     /// True after a release, after Redis reported the permit gone, after a failed or canceled
-    /// renewal, or once <see cref="RemainingEstimate"/> reaches zero. It does not mean
+    /// renewal, after disposal schedules background release, or once <see cref="RemainingEstimate"/>
+    /// reaches zero. It does not mean
     /// <see cref="ReleaseAsync"/> was called or confirmed: a locally expired or surrendered permit can
     /// still be on Redis until it is released or its server-side expiry passes.
     /// </remarks>
-    public bool IsReleased => Has(PermitState.Released | PermitState.RenewalFailed) || RemainingEstimate == TimeSpan.Zero;
+    public bool IsReleased
+        => Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled)
+            || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks whether this owner still holds an active permit on Redis.</summary>
     /// <remarks>

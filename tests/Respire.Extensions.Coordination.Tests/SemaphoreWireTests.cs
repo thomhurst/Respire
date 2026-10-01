@@ -590,7 +590,7 @@ public class SemaphoreWireTests
                 if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
                 var call = Interlocked.Increment(ref evalCount);
                 if (call == 2) renewalStarted.TrySetResult();
-                return call == 2;
+                return call >= 2;
             },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -599,6 +599,9 @@ public class SemaphoreWireTests
         await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(permit.IsReleased).IsTrue();
+        await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(await permit.VerifyStillHeldAsync()).IsFalse();
         var renewalCommand = server.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
                 && command.Contains("semaphore", StringComparison.Ordinal));
