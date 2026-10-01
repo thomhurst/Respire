@@ -601,6 +601,48 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task SearchPreservesBinaryDocumentKeyInResp3Replies()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3"
+                ? Hello
+                : [.. "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$2\r\nid\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8],
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        var result = await search.SearchAsync("idx", new("*"));
+
+        await Assert.That(result.Documents[0].DocumentKey).IsEqualTo(new RespireKey(new byte[] { 0, 255, 128 }));
+    }
+
+    [Test]
+    public async Task HybridSearchPreservesBinaryDocumentKey()
+    {
+        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        {
+            await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+            {
+                ReplyOverride = (_, command) => command switch
+                {
+                    "HELLO 3" => Hello,
+                    _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                        ? [.. "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*2\r\n$5\r\n__key\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8]
+                        : [.. "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$5\r\n__key\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8],
+                    _ => null,
+                },
+            };
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var search = new RespireSearchClient(client);
+
+            var result = await search.HybridSearchAsync("idx", new("*", "embedding", new byte[] { 1, 2 }, 3));
+
+            await Assert.That(result.Documents[0].DocumentKey).IsEqualTo(new RespireKey(new byte[] { 0, 255, 128 }));
+        }
+    }
+
+    [Test]
     public async Task HybridSearchParsesResp3Fields()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
