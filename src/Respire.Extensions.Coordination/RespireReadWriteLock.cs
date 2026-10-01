@@ -118,7 +118,6 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 {
                     Volatile.Write(ref _snapshot, new LeaseSnapshot(
                         milliseconds * TimeSpan.TicksPerMillisecond, started));
-                    // A concurrent release does not wait for renewal; it wins if it already started.
                     return Volatile.Read(ref _released) == 0;
                 }
             }
@@ -141,34 +140,41 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
 
     /// <summary>Releases only this owner lease. Repeated calls return false.</summary>
     /// <remarks>
-    /// Release does not wait for an in-flight renewal or verification. Every script is atomic and
-    /// owner-checked, so whichever runs second observes the release.
+    /// Release waits for an in-flight renewal or verification so an uncertain release retry cannot
+    /// race a delayed renewal reply and restore a stale local estimate after Redis removed the lease.
     /// </remarks>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
-        int ownershipVersion;
-        lock (_ownershipSync)
-        {
-            if (_released != 0) return false;
-            Volatile.Write(ref _released, 1);
-            ownershipVersion = _ownershipVersion;
-        }
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using var response = await _client.Scripts.ExecuteAsync(
-                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-            return response.AsInteger() == 1;
-        }
-        catch
-        {
-            // The reply may be lost after Redis removed the member. Keep a retry path; the
-            // owner-checked script safely reports NotOwned if the first request took effect. A
-            // concurrent verification or renewal failure must not reopen a handle known to be lost.
+            int ownershipVersion;
             lock (_ownershipSync)
-                if (_ownershipVersion == ownershipVersion) Volatile.Write(ref _released, 0);
-            throw;
+            {
+                if (_released != 0) return false;
+                Volatile.Write(ref _released, 1);
+                ownershipVersion = _ownershipVersion;
+            }
+            try
+            {
+                using var response = await _client.Scripts.ExecuteAsync(
+                    RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
+                return response.AsInteger() == 1;
+            }
+            catch
+            {
+                // The reply may be lost after Redis removed the member. Keep a retry path; the
+                // owner-checked script safely reports NotOwned if the first request took effect.
+                lock (_ownershipSync)
+                    if (_ownershipVersion == ownershipVersion) Volatile.Write(ref _released, 0);
+                throw;
+            }
+        }
+        finally
+        {
+            _operationGate.Release();
         }
     }
 

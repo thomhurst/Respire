@@ -83,10 +83,10 @@ public class FencedLockWireTests
     }
 
     [Test]
-    public async Task FailedReleaseCannotReopenAfterVerificationConfirmsOwnershipLost()
+    public async Task ReleaseWaitsForVerificationBeforeChangingOwnershipState()
     {
         await using var server = new FakeRespServer(
-            ":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), "-ERR injected release failure\r\n"u8.ToArray());
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         server.DelayReply(1, 250);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var attempt = await new RespireCoordination(client)
@@ -98,11 +98,11 @@ public class FencedLockWireTests
         while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
         var release = attempt.Lock.ReleaseAsync().AsTask();
 
-        await Assert.That(await verification.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
-        await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<RespireServerException>();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+        await Assert.That(await verification.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
-        await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(server.CommandsSeen).IsEqualTo(3);
     }
 
     [Test]
