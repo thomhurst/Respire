@@ -65,7 +65,9 @@ public class ClusterTopologyRefreshTests
         var periodic = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         router.SignalMovedTopologyRefresh();
-        var rearmed = await clock.NextTimerAsync(periodic.DueTime).WaitAsync(TimeSpan.FromSeconds(2));
+        // The MOVED wake disposes the periodic wait and re-arms it with the same remaining time
+        // (the manual clock has not moved). Fire the re-armed timer, not the disposed original.
+        var rearmed = await clock.NextTimerAsync(periodic.DueTime, superseded: periodic).WaitAsync(TimeSpan.FromSeconds(2));
         clock.Advance(TimeSpan.FromMilliseconds(500));
         rearmed.Fire();
 
@@ -752,12 +754,15 @@ public class ClusterTopologyRefreshTests
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
         internal void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
 
-        internal async Task<ManualTimer> NextTimerAsync(TimeSpan dueTime)
+        /// <summary>Returns the next timer created with <paramref name="dueTime"/>, skipping
+        /// <paramref name="superseded"/> (a timer the caller already holds, which the worker may have
+        /// disposed and whose <see cref="ManualTimer.Fire"/> would then do nothing).</summary>
+        internal async Task<ManualTimer> NextTimerAsync(TimeSpan dueTime, ManualTimer? superseded = null)
         {
             while (true)
             {
                 var timer = await _timers.Reader.ReadAsync();
-                if (timer.DueTime == dueTime) return timer;
+                if (timer.DueTime == dueTime && !ReferenceEquals(timer, superseded)) return timer;
             }
         }
 
