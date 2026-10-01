@@ -29,7 +29,7 @@ Given a connected `IRespireClient client`, construct `new IJsonCommandsImplement
 
 ## Declarations and arguments
 
-Interfaces must be public or internal, top-level, non-generic, and have no base interfaces. Partial interfaces and overloaded methods are supported. Members must be public abstract instance methods with `[RespireCommand]`. Unsupported declarations produce the `RESP003` compilation error. The generated class name must be available in the namespace.
+Interfaces must be public or internal, top-level, non-generic, and have no base interfaces. Partial interfaces and overloaded methods are supported. Members must be public abstract instance methods with `[RespireCommand]`. Unsupported declarations produce the `RESP003` compilation error, whose message names the violated rule and whose help link points to this guide. The generated class name must be available in the namespace.
 
 A command attribute contains one printable ASCII token, such as `JSON.GET`; it is normalized to uppercase and encoded once in a static descriptor. Pass subcommands and options as ordinary method arguments. Parameters are sent in declaration order. A single `CancellationToken` and a single `RespireCommandFlags` parameter are recognized as execution controls and are not sent to Redis.
 
@@ -42,7 +42,7 @@ Methods return `Task` or `ValueTask`, optionally with a result type:
 - `string`, `byte[]`, `bool`, `int`, `long`, or `double`, their nullable forms, and one-dimensional arrays of these scalar types.
 - `RespireResult` for arbitrary module responses, including RESP2/RESP3 shape differences and nested aggregates.
 
-Nullable results preserve RESP nulls. A null reply for a non-nullable result throws `InvalidOperationException`; `int` uses a checked conversion. Booleans accept RESP booleans or integer flags, and doubles accept RESP doubles or invariant-culture textual numbers. Aggregate scalar conversion follows the server's element order; map keys and values are flattened as exposed by `RespireResult`. It does not infer a module-specific object model.
+Nullable results preserve RESP nulls. A null reply for a non-nullable result throws `InvalidOperationException`. Reference types declared in a nullable-oblivious context (`#nullable disable`) are treated as nullable, so `Task<string>` there returns `null` for a RESP null. `int` results use a checked conversion. Booleans accept RESP booleans or integer flags, and doubles accept RESP doubles or invariant-culture textual numbers. Aggregate scalar conversion follows the server's element order; map keys and values are flattened as exposed by `RespireResult`. It does not infer a module-specific object model.
 
 Typed methods copy strings/bytes as needed and dispose the pooled root reply, including when conversion fails. Methods without a result still await server success and dispose the reply. Methods returning `RespireResult` transfer its lease to the caller: use `using var result = await commands.DebugAsync("MEMORY", "document")`, and do not retain nested views beyond that lease. User-defined DTOs and arbitrary serializers are not inferred; obtain raw bytes/string and explicitly apply source-generated serialization metadata where needed.
 

@@ -12,8 +12,9 @@ namespace Respire.Analyzers;
 public sealed class RespireCommandGenerator : IIncrementalGenerator
 {
     private static readonly DiagnosticDescriptor InvalidDeclaration = new(
-        "RESP003", "Unsupported generated command declaration", "{0}",
-        "Respire", DiagnosticSeverity.Error, isEnabledByDefault: true);
+        DiagnosticIds.InvalidGeneratedCommand, "Unsupported generated command declaration", "{0}",
+        DiagnosticIds.Category, DiagnosticSeverity.Error, isEnabledByDefault: true,
+        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/generated-commands");
 
     private static readonly SymbolDisplayFormat TypeFormat = SymbolDisplayFormat.FullyQualifiedFormat
         .WithMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers
@@ -212,24 +213,33 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var result = LocalName(usedNames, "__result");
         var output = LocalName(usedNames, "__output");
         var loop = LocalName(usedNames, "__index");
+        var exception = LocalName(usedNames, "__exception");
+        // Null expanded arrays, length overflow, and RespireValue conversions (for example a char holding an
+        // isolated surrogate) can throw. Async shapes capture that in their task; the non-async shape catches it.
+        var indent = direct ? "            " : "        ";
+        if (direct) source.Append("        global::Respire.RespireValue[] ").Append(values).Append(";\n        try\n        {\n");
         foreach (var parameter in expanded)
         {
-            var nullArgument = "new global::System.ArgumentNullException(nameof(" + Escape(parameter.Name) + "))";
-            source.Append("        if (").Append(Escape(parameter.Name)).Append(" is null) ")
-                .Append(direct ? "return global::System.Threading.Tasks.ValueTask.FromException<global::Respire.RespireResult>(" + nullArgument + ")" : "throw " + nullArgument)
-                .Append(";\n");
+            source.Append(indent).Append("if (").Append(Escape(parameter.Name)).Append(" is null) throw new global::System.ArgumentNullException(nameof(")
+                .Append(Escape(parameter.Name)).Append("));\n");
         }
-        source.Append("        var ").Append(values).Append(" = new global::Respire.RespireValue[checked(")
+        source.Append(indent).Append(direct ? "" : "var ").Append(values).Append(" = new global::Respire.RespireValue[checked(")
             .Append(arguments.Length - expanded.Length);
         foreach (var parameter in expanded) source.Append(" + ").Append(Escape(parameter.Name)).Append(".Length");
         source.Append(")];\n");
-        if (arguments.Length != 0) source.Append("        var ").Append(position).Append(" = 0;\n");
+        if (arguments.Length != 0) source.Append(indent).Append("var ").Append(position).Append(" = 0;\n");
         foreach (var parameter in arguments)
         {
             if (expanded.Contains(parameter, SymbolEqualityComparer.Default))
-                source.Append("        foreach (var ").Append(element).Append(" in ").Append(Escape(parameter.Name)).Append(") ")
+                source.Append(indent).Append("foreach (var ").Append(element).Append(" in ").Append(Escape(parameter.Name)).Append(") ")
                     .Append(values).Append('[').Append(position).Append("++] = ").Append(element).Append(";\n");
-            else source.Append("        ").Append(values).Append('[').Append(position).Append("++] = ").Append(Escape(parameter.Name)).Append(";\n");
+            else source.Append(indent).Append(values).Append('[').Append(position).Append("++] = ").Append(Escape(parameter.Name)).Append(";\n");
+        }
+        if (direct)
+        {
+            source.Append("        }\n        catch (global::System.Exception ").Append(exception).Append(")\n        {\n")
+                .Append("            return global::System.Threading.Tasks.ValueTask.FromException<global::Respire.RespireResult>(")
+                .Append(exception).Append(");\n        }\n");
         }
         var call = "this." + clientField + ".ExecuteAsync(" + commandField + ", " + values + ", "
             + (flags is null ? "global::Respire.RespireCommandFlags.None" : Escape(flags.Name)) + ", "
@@ -244,7 +254,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
                 if (reply is IArrayTypeSymbol array && !IsBytes(reply))
                 {
                     source.Append("        if (").Append(result).Append(".IsNull) ")
-                        .Append(CanBeNull(reply) ? "return null;" : "throw new global::System.InvalidOperationException(\"The command returned null for a non-nullable result.\");").Append('\n');
+                        .Append(CanBeNull(reply) ? "return " + NullLiteral(reply) + ";" : "throw new global::System.InvalidOperationException(\"The command returned null for a non-nullable result.\");").Append('\n');
                     source.Append("        ").Append(TypeName(reply)).Append(' ').Append(output).Append(" = ").Append(ArrayCreation(array.ElementType, result + ".Count")).Append(";\n")
                         .Append("        for (var ").Append(loop).Append(" = 0; ").Append(loop).Append(" < ").Append(output)
                         .Append(".Length; ").Append(loop).Append("++)\n            ").Append(output).Append('[').Append(loop).Append("] = ")
@@ -277,14 +287,22 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             SpecialType.System_Double => result + ".AsDouble()",
             _ => throw new InvalidOperationException("Unvalidated reply type."),
         };
-        var absent = CanBeNull(type) ? "(" + TypeName(type) + ")null"
+        var absent = CanBeNull(type) ? "(" + TypeName(type) + ")" + NullLiteral(type)
             : "throw new global::System.InvalidOperationException(\"The command returned null for a non-nullable result.\")";
         return result + ".IsNull ? " + absent + " : " + conversion;
     }
 
+    // Reference types declared in a nullable-oblivious context (#nullable disable) accept RESP nulls, as
+    // hand-written oblivious code would; only a non-nullable annotation in an enabled context rejects them.
     private static bool CanBeNull(ITypeSymbol type)
-        => type.NullableAnnotation == NullableAnnotation.Annotated
+        => type.NullableAnnotation == NullableAnnotation.Annotated || IsObliviousReference(type)
             || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
+    private static bool IsObliviousReference(ITypeSymbol type)
+        => type.IsReferenceType && type.NullableAnnotation == NullableAnnotation.None;
+
+    // The generated file enables nullable analysis, so an oblivious reference type needs a suppressed null.
+    private static string NullLiteral(ITypeSymbol type) => IsObliviousReference(type) ? "null!" : "null";
 
     private static string ParameterDeclaration(IParameterSymbol parameter)
     {
@@ -343,7 +361,8 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         public override bool Equals(object? obj) => Equals(obj as GeneratedInterface);
 
         public override int GetHashCode()
-            => ((HintName?.GetHashCode() ?? 0) * 397) ^ (Source?.Length ?? 0) ^ Diagnostics.Length;
+            => ((HintName is null ? 0 : StringComparer.Ordinal.GetHashCode(HintName)) * 397)
+                ^ (Source is null ? 0 : StringComparer.Ordinal.GetHashCode(Source)) ^ Diagnostics.Length;
     }
 
     /// <summary>A diagnostic captured without Location or SyntaxTree references.</summary>

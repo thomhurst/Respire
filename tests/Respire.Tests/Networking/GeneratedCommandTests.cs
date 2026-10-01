@@ -35,7 +35,22 @@ internal interface IGeneratedModule
     ValueTask Authenticate(string password);
     [RespireCommand("MGET")]
     ValueTask<string?[]> MultiGet(params RespireKey[] keys);
+    [RespireCommand("CUSTOM.RAW")]
+    ValueTask<RespireResult> RawLetter(char letter);
 }
+
+#nullable disable
+[RespireCommands]
+internal interface IObliviousGeneratedModule
+{
+    [RespireCommand("CUSTOM.STRING")]
+    Task<string> Text();
+    [RespireCommand("CUSTOM.BYTES")]
+    ValueTask<byte[]> Bytes();
+    [RespireCommand("CUSTOM.ARRAY")]
+    ValueTask<string[]> Strings();
+}
+#nullable restore
 
 public class GeneratedCommandTests
 {
@@ -136,6 +151,21 @@ public class GeneratedCommandTests
     }
 
     [Test]
+    [Arguments(RespProtocol.Resp2)]
+    [Arguments(RespProtocol.Resp3)]
+    public async Task NullableObliviousDeclarationsAcceptNullReplies(RespProtocol protocol)
+    {
+        var nullReply = protocol == RespProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray();
+        await using var server = Server(command => command == "CUSTOM.ARRAY"
+            ? "*2\r\n$1\r\na\r\n$-1\r\n"u8.ToArray() : nullReply);
+        await using var client = await Connect(server, protocol);
+        var module = new IObliviousGeneratedModuleImplementation(client);
+        await Assert.That(await module.Text()).IsNull();
+        await Assert.That(await module.Bytes()).IsNull();
+        await Assert.That(await module.Strings()).IsEquivalentTo(new[] { "a", null });
+    }
+
+    [Test]
     public async Task SafetyChecksRejectAffinityPrefixAndUnsupportedFlagsBeforeWriting()
     {
         await using var server = Server(_ => FakeRespServer.OkReply);
@@ -165,6 +195,10 @@ public class GeneratedCommandTests
         await Assert.That(async () => { using var result = await canceled; }).Throws<OperationCanceledException>();
         var missing = module.RawValues(null!);
         await Assert.That(async () => { using var result = await missing; }).Throws<ArgumentNullException>();
+        // Argument conversion failures, such as an isolated surrogate, also fault the task instead of throwing.
+        var unencodable = module.RawLetter('\ud800');
+        await Assert.That(unencodable.IsFaulted).IsTrue();
+        await Assert.That(async () => { using var result = await unencodable; }).Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(count);
     }
 

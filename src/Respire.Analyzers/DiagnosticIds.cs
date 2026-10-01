@@ -9,5 +9,8 @@ public static class DiagnosticIds
     /// <summary>A <c>RespirePending{T}</c> is read before its batch/transaction is flushed.</summary>
     public const string PendingReadBeforeFlush = "RESP002";
 
+    /// <summary>A <c>[RespireCommands]</c> interface or method cannot be generated.</summary>
+    public const string InvalidGeneratedCommand = "RESP003";
+
     internal const string Category = "Respire";
 }

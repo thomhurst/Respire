@@ -79,6 +79,34 @@ public class RespireCommandGeneratorTests
     }
 
     [Test]
+    public async Task NullableObliviousDeclarationsCompileWithoutWarnings()
+    {
+        var (generated, diagnostics) = Generate("""
+            #nullable disable
+            using Respire; using System.Threading.Tasks;
+            namespace Demo {
+                [RespireCommands] public interface IModule {
+                    [RespireCommand("X.GET")] Task<string> Text(string key);
+                    [RespireCommand("X.GET")] ValueTask<string[]> Texts(string[] keys);
+                    [RespireCommand("X.GET")] ValueTask<byte[][]> Blobs();
+                    [RespireCommand("X.GET")] ValueTask<long> Count();
+                }
+            }
+            """);
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(generated).Contains("return null!;");
+        await Assert.That(generated.Contains("The command returned null")).IsTrue();
+    }
+
+    [Test]
+    public async Task InvalidDeclarationDiagnosticLinksToGuide()
+    {
+        var (_, diagnostics) = Generate(Preamble + "[RespireCommands] public interface IModule { ValueTask<string> Get(string key); }");
+        var diagnostic = diagnostics.Single(candidate => candidate.Id == DiagnosticIds.InvalidGeneratedCommand);
+        await Assert.That(diagnostic.Descriptor.HelpLinkUri).EndsWith("/guides/generated-commands");
+    }
+
+    [Test]
     [Arguments("[RespireCommand(\"X.GET\")] ValueTask<int> Get(string key);")]
     [Arguments("[RespireCommand(\"X.GET\")] int Get(string key);")]
     public async Task UnrelatedEditsReuseCachedModelsWithoutRetainingSymbols(string method)
