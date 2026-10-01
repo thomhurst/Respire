@@ -9,6 +9,8 @@ internal sealed partial class RespireConnection
     private static readonly RawCommand EnableMaintenance = new(
         "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
     private readonly RespireConnectionOptions? _maintenanceOptions;
+    // Serializes maintenance-window publication with streamed-upload deadline cancellation.
+    private readonly object _maintenancePublicationGate = new();
     // Created lazily and only by the receive loop; other threads read the state volatilely.
     private MaintenanceTimeoutState? _maintenanceState;
     private MaintenanceTelemetry? _maintenanceTelemetry;
@@ -89,13 +91,16 @@ internal sealed partial class RespireConnection
         // Servers can replay historical completion notifications during opt-in. They must not
         // become a new maintenance window or a current diagnostic event.
         if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
-        var state = Volatile.Read(ref _maintenanceState);
-        if (state is null)
+        lock (_maintenancePublicationGate)
         {
-            state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
-            Volatile.Write(ref _maintenanceState, state);
+            var state = Volatile.Read(ref _maintenanceState);
+            if (state is null)
+            {
+                state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
+                Volatile.Write(ref _maintenanceState, state);
+            }
+            state.Apply(notification, Environment.TickCount64);
         }
-        state.Apply(notification, Environment.TickCount64);
         if (notification.Kind == "MOVING")
         {
             // Eligibility and receipt time are captured here, when the push is parsed, because the

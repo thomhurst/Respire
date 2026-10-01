@@ -1103,6 +1103,27 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task StreamedSetTimeoutReportsRelaxedDeadline()
+    {
+        await using var server = Server();
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150),
+            window: TimeSpan.FromSeconds(2), relaxed: TimeSpan.FromMilliseconds(500));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+
+        var error = await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(500));
+        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [Test]
     public async Task FullRingWaitUsesRelaxedDeadlineAndNeverAdmitsExpiredWaiter()
     {
         await using var server = Server();
@@ -1427,14 +1448,14 @@ public class MaintenanceNotificationTests
     };
 
     private static Task<RespireConnection> Connect(FakeRespServer server, TimeSpan? timeout,
-        TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16)
+        TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16, TimeSpan? relaxed = null)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = timeout,
             ResponseTimeout = responseTimeout,
-            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+            MaintenanceRelaxedTimeout = relaxed ?? TimeSpan.FromSeconds(5),
             MaintenanceWindowTimeout = window ?? TimeSpan.FromSeconds(10),
             MaxInflightCommands = capacity,
         });

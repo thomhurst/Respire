@@ -61,17 +61,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // instead of installing (or acting on) a stale deadline.
         private int _version;
         private int _disposed;
+        private TimeSpan _effectiveTimeout;
 
         internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
         {
             _connection = connection;
             _deadline = deadline;
+            _effectiveTimeout = connection._commandTimeout!.Value;
             _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
                 this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             if (connection._maintenanceOptions is not null) _maintenanceChanged = Recheck;
         }
 
         internal CancellationToken Token => _source.Token;
+        internal TimeSpan EffectiveTimeout => _effectiveTimeout;
 
         internal void Start()
         {
@@ -98,37 +101,35 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 if (Volatile.Read(ref _disposed) != 0) return;
                 var version = Volatile.Read(ref _version);
-                var delay = ComputeDelay();
                 Task? cancellationCallbacks = null;
                 lock (_scheduleGate)
                 {
                     // A maintenance change raced this calculation; the newest state must win.
                     if (version != _version) continue;
-                    if (delay is { } next)
+                    lock (_connection._maintenancePublicationGate)
                     {
-                        try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
+                        var delay = ComputeDelay(out _effectiveTimeout);
+                        if (delay is { } next)
+                        {
+                            try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
+                            catch (ObjectDisposedException) { }
+                            return;
+                        }
+                        // Commit cancellation while maintenance-state publication is excluded.
+                        try { cancellationCallbacks = _source.CancelAsync(); }
                         catch (ObjectDisposedException) { }
-                        return;
                     }
-                    // Request cancellation under the same gate as maintenance changes. CancelAsync
-                    // signals the token now and runs registrations asynchronously, so callbacks
-                    // cannot run inline while this gate is held.
-                    try { cancellationCallbacks = _source.CancelAsync(); }
-                    catch (ObjectDisposedException) { }
                 }
 
-                if (cancellationCallbacks is { IsFaulted: true }) _ = cancellationCallbacks.Exception;
-                else if (cancellationCallbacks is not null)
-                    _ = cancellationCallbacks.ContinueWith(static completed => _ = completed.Exception,
-                        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                        TaskScheduler.Default);
+                ObserveCancellationCallbacks(cancellationCallbacks);
                 return;
             }
         }
 
         // Null once the effective deadline has passed.
-        private TimeSpan? ComputeDelay()
+        private TimeSpan? ComputeDelay(out TimeSpan effectiveTimeout)
         {
+            effectiveTimeout = _connection._commandTimeout!.Value;
             var now = Environment.TickCount64;
             var remaining = _deadline - now;
             long window = 0;
@@ -136,8 +137,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 // Like the capacity wait and deadline sweep, an active maintenance window relaxes
                 // the deadline measured from the command's original start; its end restores it.
-                var timeout = _connection.MaintenanceTimeout(normal, now, out window, out _, _deadline);
-                remaining += (long)(timeout - normal).TotalMilliseconds;
+                effectiveTimeout = _connection.MaintenanceTimeout(normal, now, out window, out _, _deadline);
+                remaining += (long)(effectiveTimeout - normal).TotalMilliseconds;
             }
             if (remaining <= 0) return null;
 
@@ -154,6 +155,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _timer.Dispose();
             _source.Dispose();
         }
+    }
+
+    private static void ObserveCancellationCallbacks(Task? callbacks)
+    {
+        if (callbacks is { IsFaulted: true }) _ = callbacks.Exception;
+        else if (callbacks is not null)
+            _ = callbacks.ContinueWith(static completed => _ = completed.Exception,
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
     }
 
     private readonly Socket? _socket;
@@ -1382,7 +1392,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
         {
             // Another streamed SET held this connection's frame for the whole command timeout.
-            throw new RespireTimeoutException("SET", _commandTimeout!.Value, error,
+            throw new RespireTimeoutException("SET", timeoutCancellation!.EffectiveTimeout, error,
                 CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
 
@@ -1506,7 +1516,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     $"Streamed SET on {Host}:{Port} timed out before its RESP frame completed.", error));
             if (!requestQueued) ReclaimUnpublished(source);
             else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
-            throw new RespireTimeoutException("SET", _commandTimeout!.Value, error,
+            throw new RespireTimeoutException("SET", timeoutCancellation!.EffectiveTimeout, error,
                 CaptureTimeoutDiagnostics(stage: requestStarted
                     ? RespireCommandStage.Writing
                     : RespireCommandStage.WaitingForCapacity));
@@ -3365,7 +3375,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
-        _closedCancellation.Cancel();
+        try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>

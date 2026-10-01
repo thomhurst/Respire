@@ -340,6 +340,32 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AbortDoesNotRunSourceCancellationCallbacksInline(bool blockCallback)
+    {
+        var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        var source = new CancellationCallbackStream(blockCallback);
+        var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await server.DisposeAsync();
+        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
+            .Throws<RespireConnectionException>();
+        await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.IsConnected).IsFalse();
+
+        source.ReleaseCallback.TrySetResult();
+        await source.CallbackCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await source.DisposeAsync();
+    }
+
+    [Test]
     public async Task NonCooperativeSourceReadCannotOutlastCommandTimeout()
     {
         await using var server = new CountingSetServer();
@@ -547,6 +573,50 @@ public sealed class StreamedSetTests
             buffer.Span[0] = 42;
             ReadCompleted.TrySetResult();
             return 1;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CancellationCallbackStream(bool blockCallback) : Stream
+    {
+        private CancellationTokenRegistration _registration;
+        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource CallbackEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseCallback { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource CallbackCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => 1;
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _registration = cancellationToken.Register(() =>
+            {
+                CallbackEntered.TrySetResult();
+                try
+                {
+                    if (blockCallback) ReleaseCallback.Task.GetAwaiter().GetResult();
+                    else throw new InvalidOperationException("Test cancellation callback failure.");
+                }
+                finally { CallbackCompleted.TrySetResult(); }
+            });
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            buffer.Span[0] = 1;
+            return 1;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _registration.Dispose();
+            base.Dispose(disposing);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
