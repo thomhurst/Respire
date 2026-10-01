@@ -480,7 +480,10 @@ independently under the client's `ReconnectPolicy`, reported with
 fresh budget after a validated primary publication, including one that lands during its final
 retries. Pub/Sub delivery is at-most-once, so a
 monitor that subscribes, reconnects, or reports a delivery gap triggers one rediscovery to catch a
-missed switch. Later commands also still use the reactive discovery path. Client disposal stops monitor
+missed switch. Sentinel sends each event only once, so a failed event-triggered rediscovery retries
+with backoff. Without a `ReconnectPolicy` it retries until discovery succeeds or the client is
+disposed, waiting at most 30 seconds between attempts. A policy's `MaxAttempts` bounds those
+retries. Later commands also still use the reactive discovery path. Client disposal stops monitor
 work and waits up to 10 seconds for it, logging any task that does not stop. Accepted commands are
 never replayed during handoff.
 

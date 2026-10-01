@@ -36,6 +36,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
+    // Background DNS checks for +switch-master sources. Disposal joins them with the monitors.
+    private readonly HashSet<Task> _switchSourceResolutions = []; // Guarded by _gate.
     private int _queuedNotifications;
     private int _successfulMonitorSubscriptions;
     // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
@@ -55,6 +57,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     /// <summary>Counts failover hints passed to rediscovery coalescing. Tests use it to order events.</summary>
     internal int QueuedNotificationCount => Volatile.Read(ref _queuedNotifications);
     internal int SuccessfulMonitorSubscriptions => Volatile.Read(ref _successfulMonitorSubscriptions);
+    /// <summary>Resolves a switch source host name. Tests replace it to hold resolution open.</summary>
+    internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
+    internal int PendingSwitchSourceResolutions
+    {
+        get { lock (_gate) return _switchSourceResolutions.Count; }
+    }
     internal Task? NotificationRediscovery
     {
         get { lock (_gate) return _notificationRediscovery; }
@@ -444,7 +452,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 QueueNotificationRediscovery(in hint);
                 if (sentinelEvent.OldPrimary is { } source && arrivedDuring is { IsRetired: false }
                     && !SameEndpoint(arrivedDuring.Endpoint, source))
-                    _ = ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken);
+                    TrackSwitchSourceResolution(ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken));
                 return ValueTask.CompletedTask;
         }
         return ValueTask.CompletedTask;
@@ -478,6 +486,20 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
+    private void TrackSwitchSourceResolution(Task resolution)
+    {
+        lock (_gate)
+        {
+            if (resolution.IsCompleted) return;
+            _switchSourceResolutions.Add(resolution);
+        }
+        _ = resolution.ContinueWith(static (completed, state) =>
+        {
+            var router = (SentinelRouter)state!;
+            lock (router._gate) router._switchSourceResolutions.Remove(completed);
+        }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
     // Run address resolution after queueing the one-shot notification, so DNS cannot hold up
     // failover discovery or prevent this monitor from reading later events.
     private async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
@@ -487,7 +509,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(core.Options.ConnectTimeout);
-            var addresses = await Dns.GetHostAddressesAsync(host, timeout.Token).ConfigureAwait(false);
+            var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
             return Array.ConvertAll(addresses, NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -584,7 +606,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (_coalescer.TakePending(activeFailed: !succeeded) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
-                    // because a switch may already have retired the current generation.
+                    // because a switch may already have retired the current generation. Without a
+                    // ReconnectPolicy this retries until discovery succeeds or the client is disposed,
+                    // at the default backoff capped at 30 seconds: dropping the hint could leave a
+                    // retired generation with no event-driven replacement. A policy's MaxAttempts
+                    // bounds it; commands still run discovery on demand after that.
                     var policy = core.Options.ReconnectPolicy;
                     if (succeeded || policy?.IsExhausted(failures) == true)
                     {
@@ -770,9 +796,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             await _lifetime.CancelAsync().ConfigureAwait(false);
             Task[] monitorTasks;
-            // Join notification rediscovery too, so a late attempt cannot publish or invalidate after disposal.
+            // Join notification rediscovery and switch-source DNS checks too, so a late attempt
+            // cannot publish or invalidate after disposal.
             lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values,
-                _notificationRediscovery ?? Task.CompletedTask];
+                _notificationRediscovery ?? Task.CompletedTask, .. _switchSourceResolutions];
             Exception? disposeError = null;
             // Bounded: a monitor client whose cleanup ignores cancellation must not hang disposal.
             // Stragglers cannot publish or retire afterwards, because both recheck _disposed under the gate.

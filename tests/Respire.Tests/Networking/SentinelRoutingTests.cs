@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Net;
 using System.Text;
 using System.Threading.Channels;
 using Respire.Internal;
@@ -361,6 +362,40 @@ public class SentinelRoutingTests
         await ((Task)resolve.Invoke(router, [hint, arrivedDuring, CancellationToken.None])!).WaitAsync(Limit);
 
         await Assert.That(current.IsRetired).IsEqualTo(sameGeneration);
+    }
+
+    [Test]
+    public async Task DisposalJoinsAPendingSwitchSourceResolution()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        await using var sentinel = Sentinel(() => original.Port);
+        var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var resolving = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Ignores cancellation, as a resolver stuck in the OS can.
+        router.HostResolver = (_, _) => { resolving.TrySetResult(); return release.Task; };
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+
+        // A host name source cannot match the current endpoint textually, so it is resolved in the background.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster old-primary.invalid {original.Port} 127.0.0.1 {promoted.Port}");
+        await resolving.Task.WaitAsync(Limit);
+        // The resolver starts before the router records the resolution task, so wait for both.
+        using (var timeout = new CancellationTokenSource(Limit))
+            while (router.PendingSwitchSourceResolutions == 0) await Task.Delay(5, timeout.Token);
+
+        var disposal = client.DisposeAsync().AsTask();
+        await Task.Delay(200);
+        await Assert.That(disposal.IsCompleted).IsFalse();
+        release.TrySetResult([IPAddress.Loopback]);
+        await disposal.WaitAsync(Limit);
+        await Assert.That(router.PendingSwitchSourceResolutions).IsEqualTo(0);
     }
 
     [Test]
