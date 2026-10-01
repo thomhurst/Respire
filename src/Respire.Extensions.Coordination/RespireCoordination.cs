@@ -356,7 +356,8 @@ public sealed class RespireCoordination
         if (!acquired) return null;
 
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
-        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
+        var acquiredTimestamp = execution?.StartedTimestamp ?? started;
+        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, acquiredTimestamp);
         if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
         await BestEffortReleaseHashFieldLeaseAsync(
             hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);

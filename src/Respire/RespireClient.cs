@@ -3240,6 +3240,8 @@ public sealed partial class RespireClient : IRespireClient
 
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
 
+        internal long StartedTimestamp { get; set; }
+
         internal ValueTask<RespireResult> Response { get; set; }
     }
 
@@ -3370,10 +3372,17 @@ public sealed partial class RespireClient : IRespireClient
             var identity = GetTrackedConnectionIdentity(
                 connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
             var execution = new TrackedScriptExecution(connection, identity);
-            var response = core.Cluster is { } router
-                ? ExecuteTrackedClusterScriptAsync(
-                    execution, router, connection, script, tail, requiresIdentity, cancellationToken)
-                : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+            ValueTask<RespireResult> response;
+            if (core.Cluster is { } router)
+            {
+                response = ExecuteTrackedClusterScriptAsync(
+                    execution, router, connection, script, tail, requiresIdentity, cancellationToken);
+            }
+            else
+            {
+                execution.StartedTimestamp = Stopwatch.GetTimestamp();
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+            }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
                 : response;
@@ -3552,6 +3561,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 try
                 {
+                    execution.StartedTimestamp = Stopwatch.GetTimestamp();
                     var reply = await SendOnConnectionAsync(
                             operation, connection, command,
                             cancellationToken, storedProcedureName, sendAsking)

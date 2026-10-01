@@ -10,6 +10,30 @@ public class HashFieldLeaseWireTests
 {
     [Test]
     [NotInParallel]
+    public async Task LeaseEstimateStartsAfterCorrectionOrderingBootstrap()
+    {
+        await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray());
+        server.DelayReply(0, 250);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 2,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+
+        await using var lease = await (new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromMilliseconds(100))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("CLIENT ID", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(lease.RemainingEstimate > TimeSpan.Zero).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CancellationAfterSuccessfulReplyReleasesTheLease()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
