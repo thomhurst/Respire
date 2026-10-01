@@ -77,7 +77,7 @@ public sealed class RespireSemaphore
         }
         catch (OperationCanceledException)
         {
-            await permit.DisposeAsync().ConfigureAwait(false);
+            _ = await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
             throw;
         }
     }
@@ -111,7 +111,7 @@ public sealed class RespireSemaphore
             if latest == math.huge then
                 redis.call('PERSIST', KEYS[1])
             elseif latest and latest > 0 then
-                redis.call('PEXPIREAT', KEYS[1], math.ceil(latest))
+                redis.call('PEXPIREAT', KEYS[1], string.format('%.0f', math.ceil(latest)))
             end
         end
 
