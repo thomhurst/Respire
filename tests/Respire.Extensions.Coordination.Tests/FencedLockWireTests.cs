@@ -83,6 +83,29 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task FailedReleaseCannotReopenAfterVerificationConfirmsOwnershipLost()
+    {
+        await using var server = new FakeRespServer(
+            ":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), "-ERR injected release failure\r\n"u8.ToArray());
+        server.DelayReply(3, 250);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        var verification = attempt.Lock.VerifyStillHeldAsync().AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+        var release = attempt.Lock.ReleaseAsync().AsTask();
+
+        await Assert.That(await verification.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
+        await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());

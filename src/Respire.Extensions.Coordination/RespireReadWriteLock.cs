@@ -32,8 +32,10 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     private readonly RespireLockToken _owner;
     private readonly bool _isWriter;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly object _ownershipSync = new();
     private LeaseSnapshot _snapshot;
     private int _released;
+    private int _ownershipVersion;
 
     internal RespireReadWriteLock(
         IRespireClient client, RespireKey key, RespireLockToken owner,
@@ -86,7 +88,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireCoordination.VerifyReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
             if (response.AsInteger() == 1) return true;
-            Interlocked.Exchange(ref _released, 1);
+            MarkOwnershipUnavailable();
             return false;
         }
         finally
@@ -122,12 +124,12 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             }
             catch
             {
-                Interlocked.Exchange(ref _released, 1);
+                MarkOwnershipUnavailable();
                 await ReleaseBestEffortAsync().ConfigureAwait(false);
                 throw;
             }
 
-            Interlocked.Exchange(ref _released, 1);
+            MarkOwnershipUnavailable();
             await ReleaseBestEffortAsync().ConfigureAwait(false);
             return false;
         }
@@ -146,7 +148,13 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
-        if (Interlocked.CompareExchange(ref _released, 1, 0) != 0) return false;
+        int ownershipVersion;
+        lock (_ownershipSync)
+        {
+            if (_released != 0) return false;
+            Volatile.Write(ref _released, 1);
+            ownershipVersion = _ownershipVersion;
+        }
         try
         {
             using var response = await _client.Scripts.ExecuteAsync(
@@ -156,8 +164,10 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         catch
         {
             // The reply may be lost after Redis removed the member. Keep a retry path; the
-            // owner-checked script safely reports NotOwned if the first request took effect.
-            Volatile.Write(ref _released, 0);
+            // owner-checked script safely reports NotOwned if the first request took effect. A
+            // concurrent verification or renewal failure must not reopen a handle known to be lost.
+            lock (_ownershipSync)
+                if (_ownershipVersion == ownershipVersion) Volatile.Write(ref _released, 0);
             throw;
         }
     }
@@ -171,6 +181,15 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
 
     private string Role => _isWriter ? RespireCoordination.WriterRole : RespireCoordination.ReaderRole;
     private ReadOnlyMemory<byte> OwnerBytes() => _owner.Bytes;
+
+    private void MarkOwnershipUnavailable()
+    {
+        lock (_ownershipSync)
+        {
+            _ownershipVersion++;
+            Volatile.Write(ref _released, 1);
+        }
+    }
 
     private async ValueTask ReleaseBestEffortAsync()
     {
