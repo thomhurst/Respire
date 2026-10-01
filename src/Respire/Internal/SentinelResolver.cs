@@ -89,7 +89,7 @@ internal static class SentinelResolver
             catch (Exception ex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                lastError = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested && ContainsCancellation(ex)
+                lastError = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
@@ -119,13 +119,6 @@ internal static class SentinelResolver
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
         }
-    }
-
-    private static bool ContainsCancellation(Exception error)
-    {
-        for (Exception? cause = error; cause is not null; cause = cause.InnerException)
-            if (cause is OperationCanceledException) return true;
-        return false;
     }
 
     private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
