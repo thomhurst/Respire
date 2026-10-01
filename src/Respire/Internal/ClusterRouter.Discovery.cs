@@ -128,27 +128,25 @@ internal sealed partial class ClusterRouter
         }
         finally
         {
-            var abandoned = ReleaseWaiter(flight);
-            // The READONLY flight still runs for other waiters, or has already finished. Either
-            // way it records its own outcome, so this caller's cancellation must not replace it.
-            if (canceled && !abandoned && flight.Kind == RefreshFlightKind.ReadOnly)
-                discovery?.LeftSurvivingSharedFlight();
+            ReleaseWaiter(flight);
+            // The flight owns this discovery round while its cancellation unwinds, even when this
+            // was the last waiter. The caller must not mutate the round concurrently.
+            if (canceled && flight.Kind == RefreshFlightKind.ReadOnly)
+                discovery?.LeftSharedReadOnlyFlight();
         }
     }
 
-    /// <summary>Returns true when this waiter was the last one and abandoned a running flight.</summary>
-    private bool ReleaseWaiter(RefreshFlight flight)
+    private void ReleaseWaiter(RefreshFlight flight)
     {
         lock (_sharedRefreshGate)
         {
             if (flight.Waiters > 0) flight.Waiters--;
-            if (flight.Kind != RefreshFlightKind.ReadOnly || flight.Completed || flight.Waiters != 0) return false;
+            if (flight.Kind != RefreshFlightKind.ReadOnly || flight.Completed || flight.Waiters != 0) return;
             flight.Abandoned = true;
             if (ReferenceEquals(_sharedRefresh, flight)) _sharedRefresh = null;
         }
         try { flight.Cancellation?.Cancel(); }
         catch (ObjectDisposedException) { }
-        return true;
     }
 
     private async Task CompleteSharedRefreshAsync(RefreshFlight flight, Func<Task<bool>> work)
@@ -260,6 +258,7 @@ internal sealed partial class ClusterRouter
         try
         {
             var round = scope.Round;
+            var refreshTopologyVersion = CaptureTopologyVersion();
             var candidates = OrderTopologyRefreshCandidates(GetTopologyRefreshCandidates());
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
             var clock = _topologyRefreshClock;
@@ -291,7 +290,8 @@ internal sealed partial class ClusterRouter
                     await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null).ConfigureAwait(false);
                     // Apply partial maps while continuing through known candidates. A later node
                     // may provide the complete map needed to replace stale routes during failover.
-                    var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true)
+                    var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true,
+                        expectedTopologyVersion: refreshTopologyVersion)
                         .ConfigureAwait(false);
                     if (load.Loaded)
                     {
@@ -581,12 +581,12 @@ internal sealed partial class ClusterRouter
         internal RespireReconnectLimitException? Exhaustion { get; private set; }
         private Exception? _terminalError;
         // Set when this round's caller was cancelled while a shared READONLY flight it had joined
-        // kept running for other waiters, or had already finished. That flight owns the outcome.
+        // still owned the round, including while the last-waiter cancellation unwinds.
         // A plain field is enough: it is written in AwaitSharedRefreshAsync's finally block and read
         // by RecordCommandFailure, and both run in the round owner's own sequential async flow (the
         // await between them publishes the write). The shared flight itself never touches it.
-        private bool _leftSurvivingSharedFlight;
-        internal void LeftSurvivingSharedFlight() => _leftSurvivingSharedFlight = true;
+        private bool _leftSharedReadOnlyFlight;
+        internal void LeftSharedReadOnlyFlight() => _leftSharedReadOnlyFlight = true;
         internal Exception? TerminalError
         {
             get => _terminalError;
@@ -601,7 +601,7 @@ internal sealed partial class ClusterRouter
         internal Exception? PendingFailure => _failure;
 
         private bool IsCancellationOwnedBySharedFlight(Exception error, CancellationToken callerToken)
-            => _leftSurvivingSharedFlight && error is OperationCanceledException && callerToken.IsCancellationRequested;
+            => _leftSharedReadOnlyFlight && error is OperationCanceledException && callerToken.IsCancellationRequested;
 
         internal void RecordCommandFailure(Exception error, bool discoveryPending, CancellationToken callerToken = default)
         {

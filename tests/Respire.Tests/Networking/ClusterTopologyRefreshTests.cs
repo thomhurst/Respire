@@ -679,10 +679,10 @@ public class ClusterTopologyRefreshTests
         // An abandoned flight never stays joinable.
         await Assert.That(published).IsEqualTo(!expectAbandoned);
 
-        // A surviving flight owns the shared outcome; an abandoned one leaves it to this caller.
+        // The shared flight owns the discovery round until its work or cancellation unwinds.
         var canceled = new OperationCanceledException(caller.Token);
         round.RecordCommandFailure(canceled, discoveryPending: true, callerToken: caller.Token);
-        await Assert.That(ReferenceEquals(round.TerminalError, canceled)).IsEqualTo(expectAbandoned);
+        await Assert.That(round.TerminalError).IsNull();
         round.Finish();
     }
 
@@ -704,12 +704,12 @@ public class ClusterTopologyRefreshTests
         var incompleteTopology = Encoding.UTF8.GetBytes(
             "*1\r\n*4\r\n:0\r\n:100\r\n"
             + $"*3\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n$9\r\nmaster-id\r\n"
-            + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n");
+            + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$9\r\n127.0.0.1\r\n");
         seed.ReplyOverride = (_, command) =>
         {
             if (command != "CLUSTER SLOTS") return null;
             if (Interlocked.Increment(ref slotsCalls) == 1)
-                return Topology(seed.Port, replicaPort);
+                return Topology(seed.Port, replicaPort, "127.0.0.1");
             refreshReceived.TrySetResult();
             return incompleteTopology;
         };
@@ -783,6 +783,55 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task PartialRefreshOwnerIsNotReversedByLaterStaleCompleteReply()
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(FakeRespServer.OkReply);
+        var seedSlotsCalls = 0;
+        var secondRefreshReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var partial = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:100\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        var initial = TwoMasterTopology(seed.Port, 8191, 8192, second.Port);
+        seed.ReplyOverride = (_, command) => command != "CLUSTER SLOTS" ? null
+            : Interlocked.Increment(ref seedSlotsCalls) == 1 ? initial : partial;
+        second.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            secondRefreshReceived.TrySetResult();
+            return initial;
+        };
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        var initialGeneration = PublishedDiscoveryGeneration(router);
+        var firstOwner = router.GetSlotOwnerEndpoint(0);
+        var secondOwner = new RespireEndpoint("127.0.0.1", second.Port);
+
+        router.SignalTopologyRefresh(force: true);
+        await secondRefreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (PublishedDiscoveryGeneration(router) < initialGeneration + 2)
+            await Task.Delay(10, timeout.Token);
+
+        await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(secondOwner);
+        await Assert.That(router.GetSlotOwnerEndpoint(100)).IsEqualTo(secondOwner);
+        await Assert.That(router.GetSlotOwnerEndpoint(101)).IsEqualTo(firstOwner);
+        await Assert.That(router.GetSlotOwnerEndpoint(8191)).IsEqualTo(firstOwner);
+        await Assert.That(router.GetSlotOwnerEndpoint(8192)).IsEqualTo(secondOwner);
+    }
+
+    private static long PublishedDiscoveryGeneration(ClusterRouter router)
+        => (long)typeof(ClusterRouter).GetField("_publishedDiscoveryGeneration",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(router)!;
+
+    [Test]
     public async Task RefreshFallbacksStartAtADifferentCandidateOnEachPass()
     {
         // Each attempt has a minimum timeout, so many stalled fallbacks can use up the deadline
@@ -809,11 +858,11 @@ public class ClusterTopologyRefreshTests
         await Assert.That(firstFallbacks.Count).IsEqualTo(4);
     }
 
-    private static byte[] Topology(int masterPort, int replicaPort)
+    private static byte[] Topology(int masterPort, int replicaPort, string replicaAlias = "replica")
         => Encoding.UTF8.GetBytes(
             "*1\r\n*4\r\n:0\r\n:16383\r\n"
             + $"*3\r\n$9\r\n127.0.0.1\r\n:{masterPort}\r\n$9\r\nmaster-id\r\n"
-            + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n");
+            + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n${Encoding.UTF8.GetByteCount(replicaAlias)}\r\n{replicaAlias}\r\n");
 
     private static byte[] TwoMasterTopology(int firstPort, int firstEnd, int secondStart, int secondPort)
         => Encoding.ASCII.GetBytes(
