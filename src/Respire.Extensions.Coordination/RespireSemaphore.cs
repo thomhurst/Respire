@@ -6,6 +6,8 @@ namespace Respire.Extensions.Coordination;
 /// <remarks>
 /// Every contender for a key must use the same capacity. Capacity changes fail while any
 /// permit remains active. Acquisitions do not queue and provide no fairness guarantee.
+/// With <see cref="RespireClient"/>, command timeouts or cancellation require Redis ACL permission
+/// for <c>CLIENT ID</c> and <c>CLIENT KILL</c> to fence uncertain writes before cleanup.
 /// </remarks>
 public sealed class RespireSemaphore
 {

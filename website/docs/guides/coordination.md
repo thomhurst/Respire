@@ -452,4 +452,5 @@ scripts need no Cluster hash-tag coordination. Redis asynchronous failover can r
 state. After an uncertain acquisition, Respire attempts owner-token cleanup; finite expiry is
 the fallback if the reply and cleanup are both lost. An uncertain non-expiring permit can
 consume capacity indefinitely if cleanup cannot reach Redis; use finite expiry when clients
-may lose connectivity.
+may lose connectivity. With `RespireClient`, command timeouts or cancellation require Redis ACL
+permission for `CLIENT ID` and `CLIENT KILL` so Respire can fence uncertain writes before cleanup.
