@@ -149,6 +149,43 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task SuppressedPrimaryDisconnectWakesWorkerDuringMovedDebounce()
+    {
+        var refreshes = 0;
+        var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thirdRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            var count = Interlocked.Increment(ref refreshes);
+            if (count == 2) secondRefresh.TrySetResult();
+            if (count >= 3) thirdRefresh.TrySetResult();
+            return Topology(seed.Port, seed.Port);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        // The manual clock never ends the MOVED debounce on its own.
+        router.TopologyRefreshClock = new ManualTopologyRefreshClock();
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        router.SignalPrimaryDisconnectRefresh();
+        await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        await Task.Delay(50);
+        // Inside the spacing window: suppressed now, but it must still wake the debouncing worker.
+        router.SignalPrimaryDisconnectRefresh();
+
+        await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task ForceSignalRacingWithDelayDoesNotLeakIntoNextSignal()
     {
         var refreshes = 0;

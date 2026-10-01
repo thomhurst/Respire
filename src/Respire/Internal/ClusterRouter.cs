@@ -719,7 +719,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             if (owner is null || IsSameEndpoint(owner, source))
                 ExceptionDispatchInfo.Capture(error).Throw();
-            await EnsureRouteNodeConnectedAsync(owner, cancellationToken, discovery).ConfigureAwait(false);
+            // The shared flight already waited its backoff and connected the repaired owner.
+            // Waiting this caller's pending retry again would delay, or cancel, a finished recovery.
+            if (!owner.IsConnected)
+                await EnsureRouteNodeConnectedAsync(owner, cancellationToken, discovery).ConfigureAwait(false);
             return owner;
         }
         catch (Exception failure) when (!cancellationToken.IsCancellationRequested

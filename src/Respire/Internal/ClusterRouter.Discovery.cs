@@ -24,8 +24,10 @@ internal sealed partial class ClusterRouter
     // refreshes keeps a dead or flapping primary from driving back-to-back discovery passes.
     private static readonly TimeSpan PrimaryDisconnectRefreshSpacing = TimeSpan.FromSeconds(1);
     // Many seeds must not shrink each candidate's share of the deadline below one round trip.
+    private static readonly TimeSpan MinimumTopologyCandidateTimeout = TimeSpan.FromSeconds(2);
     private long _lastPrimaryDisconnectRefreshSignal;
     private int _primaryDisconnectRefreshPending;
+    private int _primaryDisconnectWakeScheduled;
     private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
     private readonly object _topologyRefreshSignalGate = new();
     private readonly object _topologyRefreshWorkerGate = new();
@@ -296,8 +298,11 @@ internal sealed partial class ClusterRouter
                 }
                 var candidatesLeft = candidates.Count - candidateIndex;
                 var timeLeft = MaximumTopologyRefreshDeadline - Stopwatch.GetElapsedTime(refreshStarted);
-                var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
-                    Math.Max(0, timeLeft.Ticks / Math.Max(1, candidatesLeft))));
+                // Share the deadline, but never below a usable floor: with many known nodes an even
+                // share can be too short for any candidate. Connected candidates are tried first.
+                var share = Math.Max(timeLeft.Ticks / Math.Max(1, candidatesLeft),
+                    Math.Min(configuredCandidateTimeout.Ticks, MinimumTopologyCandidateTimeout.Ticks));
+                var candidateTimeout = TimeSpan.FromTicks(Math.Max(0, Math.Min(Math.Min(configuredCandidateTimeout.Ticks, share), timeLeft.Ticks)));
                 if (candidateTimeout <= TimeSpan.Zero) break;
                 using var candidateDeadline = new CancellationTokenSource(candidateTimeout);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
@@ -419,7 +424,9 @@ internal sealed partial class ClusterRouter
             using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
             var delay = Task.Delay(remaining, TopologyRefreshClock, waitCancellation.Token);
             var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
-            var periodic = periodicDelay is { } waitForPeriodic
+            // Only a periodic deadline inside the debounce can win the race. Skipping longer ones
+            // also keeps intervals beyond the runtime timer limit out of Task.Delay.
+            var periodic = periodicDelay is { } waitForPeriodic && waitForPeriodic < remaining
                 ? Task.Delay(waitForPeriodic, TopologyRefreshClock, waitCancellation.Token)
                 : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
             var completed = await Task.WhenAny(delay, signal, periodic).ConfigureAwait(false);
@@ -457,13 +464,38 @@ internal sealed partial class ClusterRouter
     {
         var now = Stopwatch.GetTimestamp();
         var last = Volatile.Read(ref _lastPrimaryDisconnectRefreshSignal);
-        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < PrimaryDisconnectRefreshSpacing)
+        var sinceLast = last == 0 ? PrimaryDisconnectRefreshSpacing : Stopwatch.GetElapsedTime(last, now);
+        if (sinceLast < PrimaryDisconnectRefreshSpacing)
         {
             Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 1);
+            // The worker may be inside a longer MOVED debounce, or idle with no periodic interval.
+            // Wake it when the spacing window ends instead of waiting for its next iteration.
+            if (Interlocked.CompareExchange(ref _primaryDisconnectWakeScheduled, 1, 0) == 0)
+                _ = WakeAfterPrimaryDisconnectSpacingAsync(PrimaryDisconnectRefreshSpacing - sinceLast);
             return;
         }
         if (Interlocked.CompareExchange(ref _lastPrimaryDisconnectRefreshSignal, now, last) != last) return;
         Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 0);
+        SignalTopologyRefresh(force: true);
+    }
+
+    private async Task WakeAfterPrimaryDisconnectSpacingAsync(TimeSpan delay)
+    {
+        try
+        {
+            await Task.Delay(delay, _stopDiscovery.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            Volatile.Write(ref _primaryDisconnectWakeScheduled, 0);
+        }
+        // The worker consumes the same flag after a refresh; whichever runs first signals once.
+        if (Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 0) == 0) return;
+        Volatile.Write(ref _lastPrimaryDisconnectRefreshSignal, Stopwatch.GetTimestamp());
         SignalTopologyRefresh(force: true);
     }
 
