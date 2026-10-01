@@ -565,7 +565,7 @@ public class FailoverGroupTests
         var endpoint = Endpoint(server);
 
         var sentinel = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
-            [new RespireFailoverCandidate(new RespireOptions { Endpoints = [endpoint], SentinelPrimaryName = "mymaster" })]))
+            [new RespireFailoverCandidate(new RespireOptions { UseCluster = true, Endpoints = [endpoint], SentinelPrimaryName = "mymaster" })]))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(sentinel!.Message).Contains("Sentinel");
 

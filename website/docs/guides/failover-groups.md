@@ -7,8 +7,8 @@ deployment for new operations. Lower candidate priorities win. The group uses bo
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
-Health means standalone endpoints answer `PING` within `ProbeTimeout`. Cluster candidates use `CLUSTER INFO`; Sentinel candidates first check primary `ROLE`, as described below. The probe
-checks the discovered primary with `ROLE`. The group does not
+Standalone health probes use `PING`. Cluster probes use `CLUSTER INFO`. Sentinel probes check
+the discovered primary with `ROLE` and then send `PING`. The group does not
 inspect application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
 `-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
@@ -100,6 +100,9 @@ new RespireFailoverCandidate(new RespireOptions
     UseCluster = true,
     Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
 }, Priority: 0);
+
+new RespireFailoverCandidate(new RespireOptions
+{
     Endpoints = ["sentinel-a:26379", "sentinel-b:26379"],
     SentinelPrimaryName = "orders-primary",
     Username = "app",
@@ -134,4 +137,3 @@ deployment while another application instance writes to a different deployment d
 detection or failback. Design consistency, replication, and write ownership at the application
 layer. Client-side caching is rejected because cache entries cannot be shared safely across
 independent deployments.
-

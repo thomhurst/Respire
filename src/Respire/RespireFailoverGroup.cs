@@ -346,22 +346,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             if (candidate.Client.Core.Cluster is null)
             {
-                if (candidate.Client.Core.Sentinel is { } sentinel)
-                {
-                    bool isPrimary;
-                    try { isPrimary = await sentinel.IsCurrentPrimaryAsync(timeout.Token).ConfigureAwait(false); }
-                    catch (Exception) when (!timeout.IsCancellationRequested && sentinel.Current is { IsRetired: true })
-                    {
-                        await sentinel.RediscoverAfterRoleMismatchAsync(timeout.Token).ConfigureAwait(false);
-                        throw;
-                    }
-                    if (!isPrimary)
-                    {
-                        await sentinel.RediscoverAfterRoleMismatchAsync(timeout.Token).ConfigureAwait(false);
-                        throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
-                    }
-                }
-                else await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
+                if (candidate.Client.Core.Sentinel is { } sentinel
+                    && !await sentinel.ProbePrimaryAsync(timeout.Token).ConfigureAwait(false))
+                    throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
+                await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
             }
             else
             {
