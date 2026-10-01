@@ -54,10 +54,12 @@ jobs:
           for phase in baseline-a candidate baseline-b; do
             source=baseline
             if [ "$phase" = candidate ]; then source=candidate; fi
+            dotnet_args=()
+            if [ "$phase" = candidate ]; then dotnet_args+=('-p:RateLimiterApiBenchmark=true'); fi
             (
               cd "$source"
               git rev-parse HEAD
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 "${dotnet_args[@]}" -- \
                 --filter '*RedisRateLimiterBenchmarks*' --job Medium --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1

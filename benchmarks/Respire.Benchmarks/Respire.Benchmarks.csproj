@@ -4,7 +4,7 @@
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);FENCED_LOCKS</DefineConstants>
-    <DefineConstants Condition="Exists('..\..\src\Respire.Extensions.Coordination\RespireRateLimiters.cs')">$(DefineConstants);RATE_LIMITER_API</DefineConstants>
+    <DefineConstants Condition="'$(RateLimiterApiBenchmark)' == 'true'">$(DefineConstants);RATE_LIMITER_API</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
