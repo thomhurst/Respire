@@ -1685,6 +1685,21 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 masterSlotCounts[Array.IndexOf(masters, node)]++;
             }
         }
+        if (!complete)
+        {
+            // An incomplete slot map cannot prove that an omitted primary owns no
+            // slots. Keep prior primaries in the published set until full discovery.
+            var priorMasters = Volatile.Read(ref _masters);
+            foreach (var prior in priorMasters)
+            {
+                if (activeNodes.Add(prior))
+                {
+                    Array.Resize(ref masters, masters.Length + 1);
+                    Array.Resize(ref masterSlotCounts, masterSlotCounts.Length + 1);
+                    masters[^1] = prior;
+                }
+            }
+        }
         _masterSlotCounts = masterSlotCounts;
         Volatile.Write(ref _masters, masters);
         Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
