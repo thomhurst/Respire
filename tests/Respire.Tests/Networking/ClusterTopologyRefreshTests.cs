@@ -38,6 +38,7 @@ public class ClusterTopologyRefreshTests
     {
         var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thirdRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fourthRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
@@ -46,6 +47,7 @@ public class ClusterTopologyRefreshTests
             var call = Interlocked.Increment(ref calls);
             if (call == 2) secondRefresh.TrySetResult();
             if (call >= 3) thirdRefresh.TrySetResult();
+            if (call >= 4) fourthRefresh.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
         await using var client = RespireClient.Create(new RespireOptions
@@ -63,6 +65,10 @@ public class ClusterTopologyRefreshTests
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         router.SignalTopologyRefresh(force: true);
         await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        await Task.Delay(50);
+        router.SignalTopologyRefresh(force: true);
+        await fourthRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]

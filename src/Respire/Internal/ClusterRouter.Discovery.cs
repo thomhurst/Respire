@@ -277,18 +277,9 @@ internal sealed partial class ClusterRouter
                 var wasSignaled = ReferenceEquals(completed, signal);
                 var delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
                 var force = wasSignaled && Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0;
-                if (wasSignaled)
-                {
-                    if (delayMilliseconds > 0)
-                    {
-                        try
-                        {
-                            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TopologyRefreshClock, _stopDiscovery.Token)
-                                .ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (_stopDiscovery.IsCancellationRequested) { return; }
-                    }
-                }
+                if (wasSignaled && delayMilliseconds > 0 && !force)
+                    force = await WaitForTopologyRefreshDelayAsync(delayMilliseconds).ConfigureAwait(false);
+                if (_stopDiscovery.IsCancellationRequested) return;
                 try
                 {
                     await RefreshTopologySharedAsync(_stopDiscovery.Token,
@@ -301,6 +292,25 @@ internal sealed partial class ClusterRouter
                 }
             }
         });
+    }
+
+    private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds)
+    {
+        while (delayMilliseconds > 0)
+        {
+            using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
+            var delay = Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TopologyRefreshClock, waitCancellation.Token);
+            var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
+            var completed = await Task.WhenAny(delay, signal).ConfigureAwait(false);
+            await waitCancellation.CancelAsync().ConfigureAwait(false);
+            try { await Task.WhenAll(delay, signal).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
+            if (_stopDiscovery.IsCancellationRequested) return false;
+            if (ReferenceEquals(completed, delay)) return false;
+            if (Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0) return true;
+            delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
+        }
+        return false;
     }
 
     internal void SignalTopologyRefresh(int delayMilliseconds = 0, bool force = false)
