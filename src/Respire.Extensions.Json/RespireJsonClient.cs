@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Respire.Protocol;
@@ -101,7 +103,8 @@ public sealed class RespireJsonClient
     /// The value is serialized directly to UTF-8. A null reference is stored as the JSON literal <c>null</c>.
     /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
-    public ValueTask<bool> SetAsync<T>(
+    /// <remarks>Argument and serialization failures are reported through the returned task, not thrown synchronously.</remarks>
+    public async ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -111,13 +114,18 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         var token = ConditionToken(condition);
-        return SetCoreAsync(key, JsonSerializer.SerializeToUtf8Bytes(value, jsonTypeInfo), path, token, cancellationToken);
+        var utf8Json = JsonSerializer.SerializeToUtf8Bytes(value, jsonTypeInfo);
+        return await SetCoreAsync(key, utf8Json, path, token, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized JSON text.</summary>
-    /// <remarks>The text <c>"null"</c> is valid JSON and stores a JSON null.</remarks>
+    /// <remarks>
+    /// The text <c>"null"</c> is valid JSON and stores a JSON null. Apart from rejecting empty or whitespace-only
+    /// text, the JSON is not validated on the client: Redis rejects invalid JSON with a
+    /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
+    /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
-    public ValueTask<bool> SetJsonAsync(
+    public async ValueTask<bool> SetJsonAsync(
         RespireKey key,
         string json,
         RespireJsonPath path = default,
@@ -126,12 +134,16 @@ public sealed class RespireJsonClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
         var token = ConditionToken(condition);
-        return SetCoreAsync(key, json, path, token, cancellationToken);
+        return await SetCoreAsync(key, json, path, token, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized UTF-8 JSON without a UTF-16 round trip.</summary>
+    /// <remarks>
+    /// The JSON is not validated on the client: Redis rejects invalid JSON with a
+    /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
+    /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
-    public ValueTask<bool> SetJsonAsync(
+    public async ValueTask<bool> SetJsonAsync(
         RespireKey key,
         ReadOnlyMemory<byte> utf8Json,
         RespireJsonPath path = default,
@@ -140,7 +152,7 @@ public sealed class RespireJsonClient
     {
         if (utf8Json.IsEmpty) throw new ArgumentException("JSON must not be empty.", nameof(utf8Json));
         var token = ConditionToken(condition);
-        return SetCoreAsync(key, utf8Json, path, token, cancellationToken);
+        return await SetCoreAsync(key, utf8Json, path, token, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets one path from several keys. All keys must share a Cluster slot.</summary>
@@ -251,6 +263,9 @@ public sealed class RespireJsonClient
         RespireResult result, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
         => result.IsNull ? [] : DeserializeJsonText(result.AsSpan(), path, jsonTypeInfo);
 
+    // System.Text.Json uses this depth when JsonSerializerOptions.MaxDepth is left at 0.
+    private const int DefaultMaxDepth = 64;
+
     // Reads the borrowed reply bytes in one pass: no byte[] copy and no intermediate JsonDocument.
     private static RespireJsonValue<T>[] DeserializeJsonText<T>(
         ReadOnlySpan<byte> json, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
@@ -258,19 +273,43 @@ public sealed class RespireJsonClient
         if (!path.UsesJsonPath)
             return [new RespireJsonValue<T>(true, JsonSerializer.Deserialize(json, jsonTypeInfo))];
 
-        var reader = new Utf8JsonReader(json);
+        // The reply wraps the matches in an array, which uses one depth level on top of the caller's limit.
+        var maxDepth = jsonTypeInfo.Options.MaxDepth;
+        var reader = new Utf8JsonReader(json, new JsonReaderOptions
+        {
+            MaxDepth = (int)Math.Min((long)(maxDepth == 0 ? DefaultMaxDepth : maxDepth) + 1, int.MaxValue),
+        });
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
             throw new JsonException("RedisJSON returned a non-array response for a JSONPath request.");
-        RespireJsonValue<T>[] values = [];
+
+        // The match count is unknown until the end of the array, so matches are collected in a pooled buffer
+        // and copied once into an exactly sized result.
+        var pool = ArrayPool<RespireJsonValue<T>>.Shared;
+        var buffer = pool.Rent(4);
         var count = 0;
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        try
         {
-            if (count == values.Length) Array.Resize(ref values, count == 0 ? 1 : count * 2);
-            values[count++] = new RespireJsonValue<T>(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+            {
+                if (count == buffer.Length)
+                {
+                    var larger = pool.Rent(checked(count * 2));
+                    buffer.AsSpan(0, count).CopyTo(larger);
+                    ReturnBuffer(pool, buffer);
+                    buffer = larger;
+                }
+                buffer[count++] = new RespireJsonValue<T>(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
+            }
+            if (reader.TokenType != JsonTokenType.EndArray)
+                throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
+            return buffer.AsSpan(0, count).ToArray();
         }
-        if (reader.TokenType != JsonTokenType.EndArray)
-            throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
-        if (count != values.Length) Array.Resize(ref values, count);
-        return values;
+        finally
+        {
+            ReturnBuffer(pool, buffer);
+        }
     }
+
+    private static void ReturnBuffer<T>(ArrayPool<RespireJsonValue<T>> pool, RespireJsonValue<T>[] buffer)
+        => pool.Return(buffer, clearArray: RuntimeHelpers.IsReferenceOrContainsReferences<T>());
 }

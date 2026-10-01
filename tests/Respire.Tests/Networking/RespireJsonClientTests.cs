@@ -220,6 +220,74 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
+    public async Task SetFailuresAreReportedThroughTheReturnedTask()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client);
+
+        ValueTask<bool> badCondition = default;
+        ValueTask<bool> missingMetadata = default;
+        ValueTask<bool> blankJson = default;
+        ValueTask<bool> emptyUtf8 = default;
+        await Assert.That(() =>
+        {
+            badCondition = json.SetAsync("profile", new Profile(1), JsonTestContext.Default.Profile,
+                condition: (RespireJsonSetCondition)42);
+            missingMetadata = json.SetAsync("profile", new Profile(1), null!);
+            blankJson = json.SetJsonAsync("profile", " ");
+            emptyUtf8 = json.SetJsonAsync("profile", ReadOnlyMemory<byte>.Empty);
+        }).ThrowsNothing();
+
+        await Assert.That(async () => await badCondition).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await missingMetadata).Throws<ArgumentNullException>();
+        await Assert.That(async () => await blankJson).Throws<ArgumentException>();
+        await Assert.That(async () => await emptyUtf8).Throws<ArgumentException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("JSON.", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task JsonPathRepliesHonorTheMetadataMaxDepthAndCollectManyMatches()
+    {
+        const int depth = 100;
+        var nested = "null";
+        for (var level = 0; level < depth; level++) nested = "{\"Next\":" + nested + "}";
+        var matches = string.Join(",", Enumerable.Range(1, 10).Select(age => "{\"Age\":" + age + "}"));
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "JSON.GET deep $" => Bulk("[" + nested + "]"),
+                "JSON.GET deep ." => Bulk(nested),
+                "JSON.GET many $..Age" => Bulk("[" + matches + "]"),
+                _ => null,
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client);
+
+        // The JSONPath wrapper array must not push a value that fits the caller's MaxDepth over the limit.
+        var viaJsonPath = await json.GetAsync("deep", DeepJsonTestContext.Default.Node, RespireJsonPath.JsonPathRoot);
+        var viaLegacyPath = await json.GetAsync("deep", DeepJsonTestContext.Default.Node);
+        await Assert.That(Depth(viaJsonPath.Value)).IsEqualTo(depth);
+        await Assert.That(Depth(viaLegacyPath.Value)).IsEqualTo(depth);
+
+        // The default limit of 64 still applies when the metadata does not raise it.
+        await Assert.That(async () => await json.GetAsync("deep", JsonTestContext.Default.Node, RespireJsonPath.JsonPathRoot))
+            .Throws<System.Text.Json.JsonException>();
+
+        var many = await json.GetManyAsync("many", JsonTestContext.Default.Profile, "$..Age");
+        await Assert.That(many.Select(value => value.Value!.Age).ToArray()).IsEquivalentTo(Enumerable.Range(1, 10).ToArray());
+
+        static int Depth(Node? node)
+        {
+            var count = 0;
+            for (; node is not null; node = node.Next) count++;
+            return count;
+        }
+    }
+
+    [Test]
     public async Task GetMemoryUsageRoutesByDocumentKeyAndReadsBothReplyShapes()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -309,6 +377,16 @@ public partial class RespireJsonClientTests
 
     private sealed record Profile(int Age);
 
+    private sealed class Node
+    {
+        public Node? Next { get; set; }
+    }
+
     [JsonSerializable(typeof(Profile))]
+    [JsonSerializable(typeof(Node))]
     private sealed partial class JsonTestContext : JsonSerializerContext;
+
+    [JsonSourceGenerationOptions(MaxDepth = 128)]
+    [JsonSerializable(typeof(Node))]
+    private sealed partial class DeepJsonTestContext : JsonSerializerContext;
 }
