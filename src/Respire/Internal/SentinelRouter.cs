@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -25,7 +26,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         ? [new RespireEndpoint("localhost", 26379)] : core.Options.Endpoints);
     private readonly HashSet<Generation> _owned = [];
     private readonly HashSet<DedicatedConnectionPool> _correctionPools = [];
-    private readonly Dictionary<string, Task> _notificationMonitors = new(StringComparer.OrdinalIgnoreCase);
+    // Keyed like discovery itself. Discovery never forgets an endpoint, so entries are never removed.
+    private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelDiscoveryState.EndpointComparer.Instance);
+    private readonly SentinelNotificationCoalescer _coalescer = new(); // Guarded by _gate.
+    private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(core.Options.SentinelPrimaryName ?? "");
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
@@ -33,12 +37,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
     private int _queuedNotifications;
-    private bool _notificationPending;
-    private string? _activeNotificationKey;
-    private string? _pendingNotificationKey;
-    private RespireEndpoint? _pendingNotificationTarget;
-    private RespireEndpoint? _pendingNotificationOldPrimary;
-    private bool _pendingNotificationMustRediscover;
+    private string? _masterDownKey;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
@@ -105,8 +104,23 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var previous = Current;
             if (!forceDiscovery && previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
             if (!forceDiscovery && previous is not null) Invalidate(previous);
+            // A forced discovery that resolves to the healthy current primary confirms it with ROLE
+            // on the existing connection instead of opening and discarding a candidate generation.
+            Func<RespireOptions, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
+                ? (options, token) => ReuseOrConnectGenerationAsync(previous, options, token)
+                : ConnectGenerationAsync;
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
-                core.Options, ConnectGenerationAsync, linked.Token, _discovery).ConfigureAwait(false);
+                core.Options, connect, linked.Token, _discovery).ConfigureAwait(false);
+            if (ReferenceEquals(replacement, previous))
+            {
+                lock (_gate)
+                {
+                    ObjectDisposedException.ThrowIf(_disposed, this);
+                    if (replacement.IsRetired || !ReferenceEquals(Current, replacement))
+                        throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
+                }
+                return replacement;
+            }
             unpublished = replacement;
             lock (_gate)
             {
@@ -192,12 +206,35 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             && fields[2].Type == RespDataType.Array;
     }
 
-    // How often the supervisor checks discovery for newly learned Sentinels and restarts completed monitors.
-    private static readonly TimeSpan SentinelMonitorSupervisorInterval = TimeSpan.FromSeconds(1);
+    private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (current.IsRetired || !current.Multiplexer.IsConnected || !SameEndpoint(current.Endpoint, options.PrimaryEndpoint))
+            return await ConnectGenerationAsync(options, cancellationToken).ConfigureAwait(false);
+        // ObserveResponse retires the generation when ROLE no longer reports a primary.
+        using var reply = await current.Multiplexer.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+        if (!Generation.IsPrimary(in reply))
+        {
+            Invalidate(current);
+            throw new RespireConnectionException($"Sentinel primary at {current.Endpoint} no longer confirms a primary ROLE.");
+        }
+        return current;
+    }
+
+    // The supervisor wakes when discovery learns a Sentinel. Monitors complete only when the
+    // client is disposed, so this fallback interval only restarts one that faulted unexpectedly.
+    private static readonly TimeSpan SentinelMonitorSupervisorFallbackInterval = TimeSpan.FromSeconds(30);
+    // Disposal stops waiting for monitor, supervisor and rediscovery tasks after this bound and
+    // logs the stragglers. Publication and retirement recheck disposal under the gate.
+    private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
+    private const string SentinelMonitorReconnectScope = "sentinel-monitor";
+    private const string DeliveryGapKey = "gap";
 
     private static TimeSpan GetNotificationRetryDelay(RespireReconnectPolicy? policy, int attempt)
         => policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
 
+    // Monitoring starts after the first validated publication. Until then every command runs
+    // discovery itself, and a client whose initial discovery keeps failing has no primary to move.
     private void StartNotificationMonitoringLocked()
     {
         if (_notificationMonitorSupervisor != Task.CompletedTask) return;
@@ -210,17 +247,23 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             while (!_lifetime.IsCancellationRequested)
             {
-                foreach (var endpoint in _discovery.Snapshot())
+                var endpoints = _discovery.Snapshot(out var changed);
+                lock (_gate)
                 {
-                    var key = endpoint.Host + ":" + endpoint.Port;
-                    lock (_gate)
+                    if (_disposed) return;
+                    foreach (var endpoint in endpoints)
                     {
-                        if (_disposed) return;
-                        if (_notificationMonitors.TryGetValue(key, out var monitor) && !monitor.IsCompleted) continue;
-                        _notificationMonitors[key] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
+                        if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.IsCompleted) continue;
+                        _notificationMonitors[endpoint] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
                     }
                 }
-                await Task.Delay(SentinelMonitorSupervisorInterval, Clock, _lifetime.Token).ConfigureAwait(false);
+                // Wake as soon as discovery learns a Sentinel; no periodic polling of the endpoint set.
+                try
+                {
+                    await changed.WaitAsync(SentinelMonitorSupervisorFallbackInterval, Clock, _lifetime.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException) { }
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
@@ -229,40 +272,42 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private async Task MonitorSentinelAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         var attempt = 0;
+        var subscribedBefore = false;
         while (!cancellationToken.IsCancellationRequested)
         {
             var subscriptionReconnectExhausted = false;
+            RespireClient? client = null;
+            RespireSubscription? subscription = null;
             try
             {
-                await using var client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint));
-                var subscription = await client.SubscribeAsync(
+                client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint));
+                subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    attempt = 0;
-                    await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
-                        ObserveSentinelNotification(endpoint, message);
-                    if (!cancellationToken.IsCancellationRequested)
-                        subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
-                            == RespireSubscriptionEndReason.ReconnectExhausted;
-                }
-                finally
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        try { await client.DisposeAsync().ConfigureAwait(false); }
-                        catch (Exception) { }
-                    }
-                    try { await subscription.DisposeAsync().ConfigureAwait(false); }
-                    catch (Exception) when (cancellationToken.IsCancellationRequested) { }
-                }
+                attempt = 0;
+                // Events published while this Sentinel was unmonitored cannot be replayed.
+                if (subscribedBefore) QueueDeliveryGapRediscovery(endpoint);
+                subscribedBefore = true;
+                await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
+                    await ObserveSentinelNotificationAsync(endpoint, message, cancellationToken).ConfigureAwait(false);
+                if (!cancellationToken.IsCancellationRequested)
+                    subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
+                        == RespireSubscriptionEndReason.ReconnectExhausted;
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch (Exception error)
             {
                 try { core.Logger?.LogWarning(error, "Sentinel event monitor failed at {Endpoint}", endpoint); }
                 catch (Exception) { }
             }
+            finally
+            {
+                // The single disposal path. On shutdown, close the client first so the subscription's
+                // UNSUBSCRIBE cannot wait on a live socket; otherwise unsubscribe before closing.
+                var shutdown = cancellationToken.IsCancellationRequested;
+                await DisposeMonitorResourceAsync(shutdown ? client : subscription, endpoint).ConfigureAwait(false);
+                await DisposeMonitorResourceAsync(shutdown ? subscription : client, endpoint).ConfigureAwait(false);
+            }
+            if (cancellationToken.IsCancellationRequested) return;
 
             // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
             // initial subscription failure still receives a retry.
@@ -271,7 +316,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 attempt = exhaustedAt;
             if (policy?.IsExhausted(attempt) == true)
             {
-                try { core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}", endpoint); }
+                // Surface the lost fast path: respire.connection.reconnect.exhausted with
+                // respire.reconnect.scope=sentinel-monitor, plus a warning.
+                RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, null, core.Logger);
+                try
+                {
+                    core.Logger?.LogWarning("Sentinel event monitor exhausted reconnect attempts at {Endpoint}; "
+                        + "failover events from this Sentinel are no longer observed and discovery runs on demand", endpoint);
+                }
                 catch (Exception) { }
                 // Stay parked rather than completing: the supervisor restarts completed monitors,
                 // which would bypass the configured budget. Discovery still runs on demand.
@@ -281,8 +333,20 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             attempt++;
             var delay = GetNotificationRetryDelay(policy, attempt);
+            RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, delay, core.Logger);
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+        }
+    }
+
+    private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)
+    {
+        if (resource is null) return;
+        try { await resource.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            try { core.Logger?.LogDebug(error, "Sentinel event monitor cleanup failed at {Endpoint}", endpoint); }
+            catch (Exception) { }
         }
     }
 
@@ -318,49 +382,90 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         };
     }
 
-    private void ObserveSentinelNotification(RespireEndpoint sentinel, in RespireMessage message)
+    private async ValueTask ObserveSentinelNotificationAsync(RespireEndpoint sentinel, RespireMessage message,
+        CancellationToken cancellationToken)
     {
-        if (message.Kind != RespireMessageKind.Message) return;
-        var channel = message.Channel.ToString();
-        var fields = message.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var serviceName = core.Options.SentinelPrimaryName;
-        if (serviceName is null || fields.Length == 0) return;
-        var switchHint = channel == "+switch-master" && fields.Length >= 5
-            && fields[0].Equals(serviceName, StringComparison.Ordinal);
-        var masterDownHint = (channel is "+sdown" or "+odown") && fields.Length >= 4
-            && fields[0] == "master" && fields[1].Equals(serviceName, StringComparison.Ordinal);
-        var relatedDownEvent = (channel is "+sdown" or "+odown") && fields.Length >= 4
-            && (masterDownHint || fields.Length >= 6 && fields[0] == "slave"
-                && fields[3] == "@" && fields[4].Equals(serviceName, StringComparison.Ordinal));
-        if (!switchHint && !relatedDownEvent) return;
-        RespireEndpoint? promotedPrimary = null;
-        RespireEndpoint? oldPrimary = null;
-        // An unparseable target still triggers untargeted discovery; ROLE validation selects the primary.
-        if (switchHint)
+        if (message.Kind == RespireMessageKind.Gap)
         {
-            if (int.TryParse(fields[4], out var newPort) && newPort is >= 1 and <= 65535)
-                promotedPrimary = new(fields[3], newPort);
-            if (int.TryParse(fields[2], out var oldPort) && oldPort is >= 1 and <= 65535)
-                oldPrimary = new(fields[1], oldPort);
+            QueueDeliveryGapRediscovery(sentinel);
+            return;
         }
-        if (relatedDownEvent)
+        if (message.Kind != RespireMessageKind.Message || _serviceNameUtf8.Length == 0) return;
+        // Filter by channel and service on the raw bytes, so events for other masters do not allocate.
+        var sentinelEvent = SentinelEvent.Parse(message.Channel.Span, message.Payload.Span, _serviceNameUtf8);
+        switch (sentinelEvent.Kind)
         {
-            try { core.Logger?.LogInformation("Sentinel {Channel} hint for service {Service} from {Sentinel}", channel, serviceName, sentinel); }
-            catch (Exception) { }
+            case SentinelEventKind.ReplicaDown:
+                // Replica events never move the primary; keep them out of Information logs.
+                LogSentinelEvent(LogLevel.Debug, message, sentinel);
+                return;
+            case SentinelEventKind.MasterDown:
+                LogSentinelEvent(LogLevel.Information, message, sentinel);
+                // +odown text carries changing quorum counts; key master-down hints by service so
+                // repeated reports of one outage coalesce while discovery is active.
+                QueueNotificationRediscovery(new SentinelHint(
+                    _masterDownKey ??= "master-down:" + core.Options.SentinelPrimaryName, MustRediscover: true));
+                return;
+            case SentinelEventKind.SwitchMaster:
+                LogSentinelEvent(LogLevel.Information, message, sentinel);
+                var addresses = sentinelEvent.OldPrimary is { } oldPrimary
+                    ? await ResolveAddressesAsync(oldPrimary.Host, cancellationToken).ConfigureAwait(false)
+                    : null;
+                QueueNotificationRediscovery(new SentinelHint("+switch-master:" + message.Text,
+                    sentinelEvent.NewPrimary, sentinelEvent.OldPrimary, OldPrimaryAddresses: addresses));
+                return;
         }
-        if (switchHint || masterDownHint)
-            // +odown text carries changing quorum counts; key master-down hints by service so
-            // repeated reports of one outage coalesce while discovery is active.
-            QueueNotificationRediscovery(masterDownHint ? channel + ":master:" + serviceName : channel + ":" + message.Text, promotedPrimary,
-                oldPrimary, mustRediscoverAfterCurrent: masterDownHint);
     }
 
-    private void QueueNotificationRediscovery(string notificationKey, RespireEndpoint? target,
-        RespireEndpoint? oldPrimary, bool mustRediscoverAfterCurrent = false)
+    private void LogSentinelEvent(LogLevel level, in RespireMessage message, RespireEndpoint sentinel)
     {
         try
         {
-            QueueNotificationRediscoveryCore(notificationKey, target, oldPrimary, mustRediscoverAfterCurrent);
+            if (core.Logger?.IsEnabled(level) == true)
+                core.Logger.Log(level, "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}",
+                    message.Channel.ToString(), core.Options.SentinelPrimaryName, sentinel, message.Text);
+        }
+        catch (Exception) { }
+    }
+
+    // A switch event names the old primary as Sentinel announces it, which may be an IP for a
+    // primary this client reached by hostname, or the reverse. Resolve it so the source check can
+    // compare against the generation's connected peer addresses.
+    private async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
+    {
+        if (IPAddress.TryParse(host, out var literal)) return [NormalizeAddress(literal)];
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(core.Options.ConnectTimeout);
+            var addresses = await Dns.GetHostAddressesAsync(host, timeout.Token).ConfigureAwait(false);
+            return Array.ConvertAll(addresses, NormalizeAddress);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            try { core.Logger?.LogDebug(error, "Could not resolve Sentinel switch source {Host}", host); }
+            catch (Exception) { }
+            return null;
+        }
+    }
+
+    private static string NormalizeAddress(IPAddress address)
+        => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+
+    private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel)
+    {
+        try { core.Logger?.LogInformation("Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", sentinel); }
+        catch (Exception) { }
+        // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
+        // former primary serving reads as a replica without a disconnect or READONLY reply.
+        QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true));
+    }
+
+    internal void QueueNotificationRediscovery(in SentinelHint hint)
+    {
+        try
+        {
+            QueueNotificationRediscoveryCore(in hint);
         }
         finally
         {
@@ -368,58 +473,22 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private void QueueNotificationRediscoveryCore(string notificationKey, RespireEndpoint? target,
-        RespireEndpoint? oldPrimary, bool mustRediscoverAfterCurrent)
+    private void QueueNotificationRediscoveryCore(in SentinelHint hint)
     {
         lock (_gate)
         {
             if (_disposed) return;
             var current = Current;
-            var retireCurrent = oldPrimary is { } oldEndpoint && current is { IsRetired: false }
-                && SameEndpoint(current.Endpoint, oldEndpoint);
-            if (_activeNotificationKey == notificationKey)
-            {
-                if (!mustRediscoverAfterCurrent) return;
-                // Coalesce a duplicate while discovery is active, but retain it until the
-                // attempt succeeds so it can trigger another attempt after a transient failure.
-                if (!_notificationPending)
-                {
-                    _notificationPending = true;
-                    _pendingNotificationKey = notificationKey;
-                    _pendingNotificationTarget = target;
-                    _pendingNotificationOldPrimary = oldPrimary;
-                }
-                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
-                return;
-            }
-            if (_pendingNotificationKey == notificationKey)
-            {
-                if (!mustRediscoverAfterCurrent) return;
-                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
-                return;
-            }
-            if (!mustRediscoverAfterCurrent && target is { } targetEndpoint && current is { IsRetired: false }
-                && SameEndpoint(current.Endpoint, targetEndpoint)) return;
-            if (_notificationRediscovery is { IsCompleted: false })
-            {
-                _notificationPending = true;
-                _pendingNotificationMustRediscover |= mustRediscoverAfterCurrent;
-                if (oldPrimary is not null || _pendingNotificationOldPrimary is null)
-                {
-                    _pendingNotificationKey = notificationKey;
-                    _pendingNotificationTarget = target ?? _pendingNotificationTarget;
-                    _pendingNotificationOldPrimary = oldPrimary;
-                }
-                return;
-            }
-            ClearPendingNotificationLocked();
-            _activeNotificationKey = notificationKey;
-            if (retireCurrent) Invalidate(current!);
-            _notificationRediscovery = Task.Run(() => RediscoverFromNotificationAsync(notificationKey));
+            var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
+                && SameEndpoint(current.Endpoint, target);
+            if (!_coalescer.Offer(in hint, targetIsCurrent)) return;
+            // Compare the switch source with Current under the gate, immediately before retirement.
+            if (IsSwitchSource(current, in hint)) Invalidate(current!);
+            _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
         }
     }
 
-    private async Task RediscoverFromNotificationAsync(string notificationKey)
+    private async Task RediscoverFromNotificationAsync()
     {
         var failures = 0;
         while (!_lifetime.IsCancellationRequested)
@@ -441,15 +510,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate)
             {
                 if (_disposed) return;
-                if (!_notificationPending)
+                if (_coalescer.TakePending() is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
-                    // because the switch already retired the current generation.
+                    // because a switch may already have retired the current generation.
                     var policy = core.Options.ReconnectPolicy;
                     if (succeeded || policy?.IsExhausted(failures) == true)
                     {
+                        _coalescer.Complete();
                         _notificationRediscovery = null;
-                        _activeNotificationKey = null;
                         return;
                     }
                     retryDelay = GetNotificationRetryDelay(policy, ++failures);
@@ -457,23 +526,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 else
                 {
                     failures = 0;
-                    var pendingKey = _pendingNotificationKey;
-                    var pendingTarget = _pendingNotificationTarget;
-                    var oldPrimary = _pendingNotificationOldPrimary;
-                    var mustRediscover = _pendingNotificationMustRediscover;
-                    ClearPendingNotificationLocked();
                     var current = Current;
-                    if (!mustRediscover && pendingTarget is { } target && current is { IsRetired: false }
+                    if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
                         && SameEndpoint(current.Endpoint, target))
                     {
+                        _coalescer.Complete();
                         _notificationRediscovery = null;
-                        _activeNotificationKey = null;
                         return;
                     }
-                    if (oldPrimary is { } oldEndpoint && current is { IsRetired: false }
-                        && SameEndpoint(current.Endpoint, oldEndpoint)) Invalidate(current);
-                    notificationKey = pendingKey ?? notificationKey;
-                    _activeNotificationKey = notificationKey;
+                    if (IsSwitchSource(current, in next)) Invalidate(current!);
                 }
             }
 
@@ -485,13 +546,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private void ClearPendingNotificationLocked()
+    // Whether a switch hint's old primary is the healthy current generation, by announced
+    // endpoint or by the resolved addresses of its connected peers.
+    private static bool IsSwitchSource(Generation? current, in SentinelHint hint)
     {
-        _notificationPending = false;
-        _pendingNotificationKey = null;
-        _pendingNotificationTarget = null;
-        _pendingNotificationOldPrimary = null;
-        _pendingNotificationMustRediscover = false;
+        if (hint.OldPrimary is not { } oldPrimary || current is not { IsRetired: false }) return false;
+        if (SameEndpoint(current.Endpoint, oldPrimary)) return true;
+        if (hint.OldPrimaryAddresses is { } addresses)
+            foreach (var address in addresses)
+                if (current.Multiplexer.HasCurrentPeer(address, oldPrimary.Port)) return true;
+        return false;
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
@@ -638,7 +702,18 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values,
                 _notificationRediscovery ?? Task.CompletedTask];
             Exception? disposeError = null;
-            try { await Task.WhenAll(monitorTasks).ConfigureAwait(false); }
+            // Bounded: a monitor client whose cleanup ignores cancellation must not hang disposal.
+            // Stragglers cannot publish or retire afterwards, because both recheck _disposed under the gate.
+            try { await Task.WhenAll(monitorTasks).WaitAsync(NotificationShutdownTimeout).ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                try
+                {
+                    core.Logger?.LogWarning("Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running",
+                        NotificationShutdownTimeout, monitorTasks.Count(task => !task.IsCompleted));
+                }
+                catch (Exception) { }
+            }
             catch (Exception error) { disposeError = error; }
             await _discoveryGate.WaitAsync().ConfigureAwait(false);
             _discoveryGate.Release();
@@ -812,7 +887,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             return Task.WhenAll(connections.Select(connection => connection.RetireAsync()));
         }
 
-        private static bool IsPrimary(in RespValue reply)
+        internal static bool IsPrimary(in RespValue reply)
         {
             if (reply.Type != RespDataType.Array) return false;
             var role = reply.AsArray();

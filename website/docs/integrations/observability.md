@@ -148,7 +148,11 @@ and correction-identity timeouts before data-peer selection likewise carry endpo
 connecting diagnostics; a selected physical connection retains its own diagnostic identity.
 
 `ConnectionStateChanged` reports the retired endpoint and validated replacement for Sentinel
-handoffs triggered by events, disconnects, or `READONLY` replies. Prefix views share these events. The `respire.sentinel.failover` counter
+handoffs triggered by events, disconnects, or `READONLY` replies. Prefix views share these events.
+Sentinel event monitors log failover hints for the configured service at Information and replica
+events at Debug. A monitor that exhausts its `ReconnectPolicy` increments
+`respire.connection.reconnect.exhausted` with `respire.reconnect.scope = sentinel-monitor` and logs
+a warning. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
 discovery and reconnection to the same endpoint do not increment it. Published failover
 measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run

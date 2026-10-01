@@ -1,0 +1,167 @@
+using System.Text;
+using Respire.Internal;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class SentinelNotificationTests
+{
+    private static readonly RespireEndpoint OldPrimary = new("10.0.0.1", 6379);
+    private static readonly RespireEndpoint NewPrimary = new("10.0.0.2", 6380);
+
+    private static SentinelEvent Parse(string channel, string text, string service = "mymaster")
+        => SentinelEvent.Parse(Encoding.UTF8.GetBytes(channel), Encoding.UTF8.GetBytes(text), Encoding.UTF8.GetBytes(service));
+
+    [Test]
+    public async Task ParsesSwitchMasterPayload()
+    {
+        var parsed = Parse("+switch-master", "mymaster 10.0.0.1 6379 10.0.0.2 6380");
+
+        await Assert.That(parsed.Kind).IsEqualTo(SentinelEventKind.SwitchMaster);
+        await Assert.That(parsed.OldPrimary).IsEqualTo(OldPrimary);
+        await Assert.That(parsed.NewPrimary).IsEqualTo(NewPrimary);
+    }
+
+    [Test]
+    [Arguments("mymaster 10.0.0.1 port 10.0.0.2 6380")]
+    [Arguments("mymaster 10.0.0.1")]
+    [Arguments("mymaster")]
+    public async Task MalformedSwitchForServiceStillRequestsUntargetedDiscovery(string text)
+    {
+        var parsed = Parse("+switch-master", text);
+
+        await Assert.That(parsed.Kind).IsEqualTo(SentinelEventKind.SwitchMaster);
+        await Assert.That(parsed.OldPrimary).IsNull();
+    }
+
+    [Test]
+    [Arguments("+sdown", "master mymaster 10.0.0.1 6379")]
+    [Arguments("+odown", "master mymaster 10.0.0.1 6379 #quorum 2/2")]
+    public async Task ParsesMasterDownPayloads(string channel, string text)
+        => await Assert.That(Parse(channel, text).Kind).IsEqualTo(SentinelEventKind.MasterDown);
+
+    [Test]
+    [Arguments("+sdown", "slave 10.0.0.3:6379 10.0.0.3 6379 @ mymaster 10.0.0.1 6379")]
+    [Arguments("+odown", "slave 10.0.0.3:6379 10.0.0.3 6379 @ mymaster 10.0.0.1 6379")]
+    public async Task ParsesRealReplicaDownPayloads(string channel, string text)
+        => await Assert.That(Parse(channel, text).Kind).IsEqualTo(SentinelEventKind.ReplicaDown);
+
+    [Test]
+    [Arguments("+switch-master", "othermaster 10.0.0.1 6379 10.0.0.2 6380")]
+    [Arguments("+switch-master", "mymaster2 10.0.0.1 6379 10.0.0.2 6380")]
+    [Arguments("+sdown", "master othermaster 10.0.0.1 6379")]
+    [Arguments("+odown", "master othermaster 10.0.0.1 6379 #quorum 2/2")]
+    [Arguments("+sdown", "slave 10.0.0.3:6379 10.0.0.3 6379 @ othermaster 10.0.0.1 6379")]
+    // The off-by-one shape (master name at index 4) must not match a replica event.
+    [Arguments("+sdown", "slave 10.0.0.3 6379 @ mymaster 10.0.0.1 6379")]
+    [Arguments("+sdown", "sentinel 0123abcd 10.0.0.4 26379 @ mymaster 10.0.0.1 6379")]
+    [Arguments("+sdown", "")]
+    [Arguments("+tilt", "mymaster")]
+    public async Task IgnoresEventsForOtherServicesAndShapes(string channel, string text)
+        => await Assert.That(Parse(channel, text).Kind).IsEqualTo(SentinelEventKind.None);
+
+    [Test]
+    public async Task FirstHintStartsWorkerAndDuplicateCoalesces()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        var hint = new SentinelHint("switch", NewPrimary, OldPrimary);
+
+        await Assert.That(coalescer.Offer(in hint, targetIsCurrent: false)).IsTrue();
+        await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
+        await Assert.That(coalescer.Offer(in hint, targetIsCurrent: false)).IsFalse();
+        await Assert.That(coalescer.Pending).IsNull();
+    }
+
+    [Test]
+    public async Task DuplicateFaultHintOutlivesTheActiveAttempt()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        var down = new SentinelHint("master-down", MustRediscover: true);
+        coalescer.Offer(in down, targetIsCurrent: false);
+
+        await Assert.That(coalescer.Offer(in down, targetIsCurrent: false)).IsFalse();
+        await Assert.That(coalescer.Pending).IsEqualTo(down);
+        await Assert.That(coalescer.TakePending()).IsEqualTo(down);
+        await Assert.That(coalescer.ActiveKey).IsEqualTo("master-down");
+        await Assert.That(coalescer.TakePending()).IsNull();
+    }
+
+    [Test]
+    public async Task HintForCurrentPrimaryIsIgnoredUnlessItReportsAFault()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+
+        await Assert.That(coalescer.Offer(new SentinelHint("switch", NewPrimary), targetIsCurrent: true)).IsFalse();
+        await Assert.That(coalescer.ActiveKey).IsNull();
+        await Assert.That(coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: true)).IsTrue();
+    }
+
+    [Test]
+    public async Task LaterDownHintCannotEraseAPendingSwitch()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false);
+        var pendingSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(in pendingSwitch, targetIsCurrent: false);
+
+        coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
+
+        await Assert.That(coalescer.Pending).IsEqualTo(pendingSwitch with { MustRediscover = true });
+    }
+
+    [Test]
+    public async Task SwitchReplacesPendingDownAndKeepsTheFault()
+    {
+        var pendingDown = new SentinelHint("master-down", MustRediscover: true);
+        var later = new SentinelHint("switch", OldPrimary: OldPrimary);
+
+        var merged = SentinelNotificationCoalescer.Merge(pendingDown, in later);
+
+        await Assert.That(merged).IsEqualTo(later with { MustRediscover = true });
+    }
+
+    [Test]
+    public async Task UntargetedSwitchKeepsTheEarlierTarget()
+    {
+        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
+        var later = new SentinelHint("b", OldPrimary: new RespireEndpoint("10.0.0.9", 6379));
+
+        var merged = SentinelNotificationCoalescer.Merge(pending, in later);
+
+        await Assert.That(merged.Key).IsEqualTo("b");
+        await Assert.That(merged.Target).IsEqualTo(NewPrimary);
+        await Assert.That(merged.OldPrimary).IsEqualTo(later.OldPrimary);
+    }
+
+    [Test]
+    public async Task CompleteClearsActiveAndPendingHints()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("second"), targetIsCurrent: false);
+
+        coalescer.Complete();
+
+        await Assert.That(coalescer.ActiveKey).IsNull();
+        await Assert.That(coalescer.Pending).IsNull();
+        await Assert.That(coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false)).IsTrue();
+    }
+
+    [Test]
+    public async Task DiscoveryStateSignalsOnlyNewEndpoints()
+    {
+        var state = new SentinelDiscoveryState([new RespireEndpoint("sentinel-a", 26379)]);
+        state.Snapshot(out var changed);
+
+        await Assert.That(state.TryAdd(new RespireEndpoint("SENTINEL-A", 26379))).IsFalse();
+        await Assert.That(changed.IsCompleted).IsFalse();
+        await Assert.That(state.TryAdd(new RespireEndpoint("sentinel-b", 26379))).IsTrue();
+        await changed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var endpoints = state.Snapshot(out var next);
+        await Assert.That(endpoints.Length).IsEqualTo(2);
+        await Assert.That(next.IsCompleted).IsFalse();
+    }
+}

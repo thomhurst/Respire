@@ -302,6 +302,103 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task MasterDownForHealthyPrimaryRevalidatesOnExistingConnection()
+    {
+        await using var original = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        var roles = original.ReceivedCommands.Count(command => command == "ROLE");
+        var connections = original.ReceivedConnectionIds.Distinct().Count();
+        var generation = client.Core.Sentinel!.Current;
+
+        // Sentinel still reports the same primary, so no candidate connection should be opened.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown", $"master mymaster 127.0.0.1 {original.Port}");
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        await WaitForCommandCountAsync(original, "ROLE", roles + 1);
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+
+        await Assert.That(original.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(connections);
+        await Assert.That(client.Core.Sentinel!.Current).IsSameReferenceAs(generation);
+        await Assert.That(generation!.IsRetired).IsFalse();
+    }
+
+    [Test]
+    public async Task SwitchSourceMatchesCurrentPrimaryByConnectedAddress()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var host = "localhost";
+        var port = original.Port;
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? AddressReply(Volatile.Read(ref host), Volatile.Read(ref port))
+                : command == "SUBSCRIBE +switch-master +sdown +odown"
+                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
+                    : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var router = client.Core.Sentinel!;
+        var current = router.Current!;
+        await Assert.That(current.Endpoint.Host).IsEqualTo("localhost");
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var queued = router.QueuedNotificationCount;
+        sentinel.SuppressReply = command => command == discovery;
+
+        // Sentinel announces the old primary by IP while this client reached it by hostname.
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {promoted.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 1);
+        await Assert.That(current.IsRetired).IsTrue();
+
+        Volatile.Write(ref host, "127.0.0.1");
+        Volatile.Write(ref port, promoted.Port);
+        sentinel.SuppressReply = null;
+        var queryIndex = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command == discovery);
+        await sentinel.SendRawAsync(AddressReply(promoted.Port), sentinel.ReceivedConnectionIds[queryIndex]);
+        await WaitForEndpointAsync(client, promoted.Port);
+    }
+
+    [Test]
+    public async Task SubscriptionGapTriggersRediscovery()
+    {
+        await using var original = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
+        });
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        var subscriptions = sentinel.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+
+        // Events published while the monitor reconnects are lost, so the resubscription must rediscover.
+        sentinel.CloseConnections();
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal)))
+            .IsGreaterThan(subscriptions);
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(original.Port);
+    }
+
+    [Test]
     [Arguments("unused")]
     [Arguments("failed-validation")]
     [Arguments("published")]
@@ -398,11 +495,9 @@ public class SentinelRoutingTests
             Options(26379) with { Endpoints = [new("current.invalid", 6380)] });
         typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
-        var queue = typeof(SentinelRouter).GetMethod("QueueNotificationRediscoveryCore",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
         // The switch was parsed from the old generation before current was published.
-        queue.Invoke(router, ["stale-switch", null, old.Endpoint, false]);
+        router.QueueNotificationRediscovery(new SentinelHint("stale-switch", OldPrimary: old.Endpoint));
 
         await Assert.That(current.IsRetired).IsFalse();
     }
@@ -2347,6 +2442,8 @@ public class SentinelRoutingTests
                 },
         };
 
-    private static byte[] AddressReply(int port)
-        => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+    private static byte[] AddressReply(int port) => AddressReply("127.0.0.1", port);
+
+    private static byte[] AddressReply(string host, int port)
+        => Encoding.ASCII.GetBytes($"*2\r\n${host.Length}\r\n{host}\r\n${port.ToString().Length}\r\n{port}\r\n");
 }

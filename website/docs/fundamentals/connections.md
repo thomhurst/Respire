@@ -463,12 +463,24 @@ server acknowledges the fence. Repeated failovers during an outage can therefore
 state until the fences succeed or client disposal aborts cleanup.
 
 Respire also subscribes to `+switch-master`, `+sdown`, and `+odown` on configured and discovered
-Sentinels after the first primary is validated. These events are hints: Respire resolves the
-service again and confirms the candidate with `ROLE` before publishing a replacement. Discovery
-uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect independently;
-client disposal stops and joins their work. Pub/Sub delivery is at-most-once, so later commands
-still use the existing reactive discovery path when a monitor misses an event. Accepted commands
-are never replayed during handoff.
+Sentinels after the first primary is validated. A client whose initial discovery has not yet
+succeeded has no monitors; each command runs discovery itself until one does. A Sentinel learned
+later is monitored as soon as discovery finds it.
+
+These events are hints: Respire resolves the service again and confirms the candidate with `ROLE`
+before publishing a replacement. When Sentinel still names the current primary, `ROLE` is checked
+on the existing connection and no new connection is opened. A `+switch-master` retires the current
+generation before rediscovery only when its old address matches that generation, by announced
+endpoint or by the connected peer address. Hints for other services and replica events never
+start discovery.
+
+Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
+independently under the client's `ReconnectPolicy`, reported with
+`respire.reconnect.scope = sentinel-monitor`. Pub/Sub delivery is at-most-once, so a monitor that
+reconnects, or whose subscription reports a delivery gap, triggers one rediscovery to catch a missed
+switch. Later commands also still use the reactive discovery path. Client disposal stops monitor
+work and waits up to 10 seconds for it, logging any task that does not stop. Accepted commands are
+never replayed during handoff.
 
 ## Read from replicas
 

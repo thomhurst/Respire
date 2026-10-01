@@ -398,19 +398,36 @@ internal sealed class SentinelDiscoveryState
         _configuredCount = _known.Count;
     }
 
+    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
+
+    // Returns the endpoints and a task that completes when a later TryAdd learns a new endpoint.
+    // Endpoints are never removed, so consumers only need to react to additions.
+    internal RespireEndpoint[] Snapshot(out Task changed)
+    {
+        lock (_gate)
+        {
+            changed = _changed.Task;
+            return _endpoints.ToArray();
+        }
+    }
 
     internal bool TryAdd(RespireEndpoint endpoint)
     {
+        TaskCompletionSource changed;
         lock (_gate)
         {
             if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints || !_known.Add(endpoint)) return false;
             _endpoints.Add(endpoint);
-            return true;
+            changed = _changed;
+            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+        changed.TrySetResult();
+        return true;
     }
 
-    private sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
+    internal sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
     {
         internal static readonly EndpointComparer Instance = new();
         public bool Equals(RespireEndpoint x, RespireEndpoint y)

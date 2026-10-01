@@ -42,6 +42,55 @@ public class SentinelTests
         await Assert.That(options.SentinelPrimaryName).IsNull();
     }
 
+    // Each row: which credential sources are configured, and the expected monitor credentials and protocol.
+    [Test]
+    [Arguments("none", null, null, false, RespProtocol.Resp2)]
+    [Arguments("data-static", "data-user", "data-password", false, RespProtocol.Resp2)]
+    [Arguments("data-provider", null, null, true, RespProtocol.Resp3)]
+    [Arguments("sentinel-static", "sentinel-user", "sentinel-password", false, RespProtocol.Resp2)]
+    [Arguments("sentinel-static+data-provider", "sentinel-user", "sentinel-password", false, RespProtocol.Resp2)]
+    [Arguments("sentinel-username-only+data-provider", "sentinel-user", null, false, RespProtocol.Resp2)]
+    [Arguments("sentinel-provider", null, null, true, RespProtocol.Resp3)]
+    [Arguments("empty-password", null, null, false, RespProtocol.Resp2)]
+    [Arguments("empty-password+sentinel-provider", null, null, false, RespProtocol.Resp2)]
+    [Arguments("empty-password+data-provider", null, null, false, RespProtocol.Resp2)]
+    public async Task SentinelMonitorOptionsCredentialMatrix(string scenario, string? username, string? password,
+        bool hasProvider, RespProtocol protocol)
+    {
+        var dataProvider = new FixedCredentials("data-user", "data-password");
+        var sentinelProvider = new FixedCredentials("sentinel-user", "sentinel-password");
+        var options = new RespireOptions { Endpoints = [new("redis.example", 6379)], SentinelPrimaryName = "mymaster" };
+        foreach (var part in scenario.Split('+'))
+        {
+            options = part switch
+            {
+                "none" => options,
+                "data-static" => options with { Username = "data-user", Password = "data-password" },
+                "data-provider" => options with { CredentialProvider = dataProvider },
+                "sentinel-static" => options with { SentinelUsername = "sentinel-user", SentinelPassword = "sentinel-password" },
+                "sentinel-username-only" => options with { SentinelUsername = "sentinel-user" },
+                "sentinel-provider" => options with { SentinelCredentialProvider = sentinelProvider },
+                "empty-password" => options with { SentinelPassword = "" },
+                _ => throw new ArgumentOutOfRangeException(nameof(scenario), part, null),
+            };
+        }
+
+        var monitor = SentinelRouter.CreateSentinelMonitorOptions(options, new RespireEndpoint("sentinel.example", 26379));
+
+        await Assert.That(monitor.Username).IsEqualTo(username);
+        await Assert.That(monitor.Password).IsEqualTo(password);
+        await Assert.That(monitor.CredentialProvider is not null).IsEqualTo(hasProvider);
+        if (hasProvider)
+        {
+            await Assert.That(monitor.CredentialProvider).IsSameReferenceAs(
+                options.SentinelCredentialProvider is not null ? sentinelProvider : dataProvider);
+        }
+        await Assert.That(monitor.Protocol).IsEqualTo(protocol);
+        await Assert.That(monitor.SentinelUsername).IsNull();
+        await Assert.That(monitor.SentinelPassword).IsNull();
+        await Assert.That(monitor.SentinelCredentialProvider).IsNull();
+    }
+
     [Test]
     public async Task SentinelMonitorOptionsUseSentinelProviderWithResp3()
     {

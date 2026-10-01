@@ -224,6 +224,13 @@ Sentinel again with the same fallback policy. Validated endpoint changes also in
 `respire.sentinel.failover`. Eager `ConnectAsync` performs initial discovery before returning
 the client. No accepted command or WATCH state is replayed during a primary handoff.
 
+Sentinel event monitors apply the same policy to their own subscription connections.
+`MaxAttempts` counts replacement attempts, so a failed initial subscription still gets a retry.
+Scheduled retries and exhaustion use the same instruments with
+`respire.reconnect.scope = sentinel-monitor`. An exhausted monitor stops observing that
+Sentinel's events for the life of the client and logs a warning; discovery still runs on demand
+when commands observe a disconnect or `READONLY`.
+
 ## Cluster discovery fallback
 
 Each logical Cluster discovery round shares one policy budget across cached owners,

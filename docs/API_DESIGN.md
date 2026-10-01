@@ -576,7 +576,9 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   `respire.reconnect.scope=sentinel-discovery`. Sentinel supports lazy discovery and reactive
   generation replacement after disconnect or READONLY. Validated replacements share the same
   core, retire stale admission, preserve accepted work, and never replay WATCH or ambiguous writes.
-  Endpoint changes emit lifecycle events and `respire.sentinel.failover`; event monitoring remains #549.
+  Endpoint changes emit lifecycle events and `respire.sentinel.failover`. Sentinel event monitors
+  (#549) subscribe to `+switch-master`, `+sdown`, and `+odown` and treat them as rediscovery hints;
+  their retry budget reports `respire.reconnect.scope=sentinel-monitor`.
   Dedicated rents use independent
   per-rent budgets; pub/sub shares a budget until all live routes are resubscribed. Cluster
   discovery shares one budget across cached-owner, known-master, topology, seed, tracked,
