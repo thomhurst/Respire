@@ -88,9 +88,13 @@ internal static class SentinelResolver
             catch (Exception ex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                lastError = ex;
+                lastError = discoveryTimeoutSource.IsCancellationRequested && ContainsCancellation(ex)
+                    ? new RespireTimeoutException(
+                        "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+                    : ex;
                 logger?.LogWarning(
-                    ex,
+                    lastError,
                     "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
@@ -102,6 +106,7 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        if (lastError is RespireTimeoutException timeoutError) throw timeoutError;
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
@@ -113,6 +118,13 @@ internal static class SentinelResolver
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
         }
+    }
+
+    private static bool ContainsCancellation(Exception error)
+    {
+        for (Exception? cause = error; cause is not null; cause = cause.InnerException)
+            if (cause is OperationCanceledException) return true;
+        return false;
     }
 
     private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
