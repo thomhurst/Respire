@@ -87,7 +87,9 @@ public partial interface IStringCommands
     /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early
     /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
     /// without affecting the connection. The source has still been read, so the call is not
-    /// retryable with the same stream. A failure after the first chunk closes the connection.
+    /// retryable with the same stream. On a cluster client, if the node loses its slots during that
+    /// first read, the held chunk is sent to the new owner rather than read again. A failure after the
+    /// first chunk closes the connection.
     /// </para>
     /// <para>
     /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection

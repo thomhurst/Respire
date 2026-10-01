@@ -30,7 +30,9 @@ stream. A seekable stream with fewer remaining bytes than the declared length is
 `ArgumentOutOfRangeException` before anything is sent; any other source that ends early throws
 `EndOfStreamException`. Respire reads the first chunk (up to 32 KiB) before it sends anything, so a
 source that fails, ends, is cancelled or times out within that chunk throws without affecting the
-connection. The stream has still been read, so retry with a fresh or rewound source. The
+connection. The stream has still been read, so retry with a fresh or rewound source. On a cluster
+client, if the node loses its slots while that first chunk is being read, Respire keeps the chunk
+and sends the upload to the new owner without reading those bytes again. The
 `ReadOnlySequence<byte>` overload copies its segments straight into
 the write buffer in 32 KiB chunks without combining them first; keep its memory unchanged until the
 returned task completes. Both overloads always take the streaming path, which costs a few small

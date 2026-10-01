@@ -740,33 +740,45 @@ public sealed class StreamedSetTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var accept = listener.AcceptSocketAsync();
+        // The transport write is gated by the test, so the earlier write stalls on every OS.
+        // Kernel socket buffers are not reliable for this: Windows loopback absorbs megabytes,
+        // so a large frame there never stalls and the SET is not queued behind it.
+        GatedWriteStream? transport = null;
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
                 Protocol = RespProtocol.Resp2,
                 CommandTimeout = null,
+                TestingStreamFactory = async (host, port, cancellationToken) =>
+                {
+                    var client = new TcpClient();
+                    await client.ConnectAsync(host, port, cancellationToken);
+                    return transport = new GatedWriteStream(client);
+                },
             });
-        // The peer holds an earlier large frame until retirement, then accepts both frames.
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         await using var peerStream = new NetworkStream(peer, ownsSocket: false);
-        const int payload = 32 * 1024 * 1024;
-        var header = Encoding.ASCII.GetBytes($"*3\r\n$3\r\nSET\r\n$7\r\nblocker\r\n${payload}\r\n");
-        var frame = new byte[header.Length + payload + 2];
-        header.CopyTo(frame, 0);
-        "\r\n"u8.CopyTo(frame.AsSpan(frame.Length - 2));
-        var blocker = connection.SendAsync(new RawCommand(frame)).AsTask();
+
+        transport!.CloseGate();
+        var blocker = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
+        await transport.WriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
 
         var source = new PausedStream();
         var command = new StreamedSetCommand((RespireValue)"queued", source, 4, default, SetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
-        await Task.Delay(200);
+        await Task.Delay(100);
+        // Precondition: the streamed SET owns the write path and waits for the stalled write.
         await Assert.That(set.IsCompleted).IsFalse();
+        await Assert.That(source.ReadStarted.Task.IsCompleted).IsFalse();
 
+        // Local retirement drains the admitted upload after the earlier frame.
         var retirement = connection.RetireAsync();
-        // Bound peer reads so a write-ordering regression fails instead of hanging the test.
+        await Task.Delay(50);
+        await Assert.That(set.IsCompleted).IsFalse();
+        transport.OpenGate();
         using var peerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await peerStream.ReadExactlyAsync(frame, peerTimeout.Token);
-        await peerStream.WriteAsync("+OK\r\n"u8.ToArray(), peerTimeout.Token);
+        await peerStream.ReadExactlyAsync(new byte[14], peerTimeout.Token); // "*1\r\n$4\r\nPING\r\n"
+        await peerStream.WriteAsync("+PONG\r\n"u8.ToArray(), peerTimeout.Token);
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         source.ContinueReading.TrySetResult();
         await peerStream.ReadExactlyAsync(
@@ -777,8 +789,31 @@ public sealed class StreamedSetTests
         using var blockerReply = await blocker.WaitAsync(TimeSpan.FromSeconds(5));
         using var streamedReply = await set.WaitAsync(TimeSpan.FromSeconds(5));
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(blockerReply.AsString()).IsEqualTo("OK");
+        await Assert.That(blockerReply.AsString()).IsEqualTo("PONG");
         await Assert.That(streamedReply.AsString()).IsEqualTo("OK");
+    }
+
+    [Test]
+    public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromMilliseconds(100),
+        });
+        // The read blocks synchronously past the deadline and then succeeds, so the completed
+        // read task wins over the cancelled token. The header must still not be queued.
+        var source = new SynchronouslyBlockingStream(TimeSpan.FromMilliseconds(500));
+        var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, SetWhen.Always);
+
+        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET")
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
+        await Assert.That(connection.IsConnected).IsTrue();
+        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING");
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
     [Test]
@@ -941,6 +976,91 @@ public sealed class StreamedSetTests
     }
 
     // Serves `prefix` generated bytes immediately, then pauses before the final four bytes.
+    private sealed class GatedWriteStream(TcpClient client) : Stream
+    {
+        private readonly NetworkStream _inner = client.GetStream();
+        private readonly TaskCompletionSource _writeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _gate = CreateOpenGate();
+
+        internal Task WriteStarted => _writeStarted.Task;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        internal void CloseGate() => _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal void OpenGate() => _gate.TrySetResult();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _writeStarted.TrySetResult();
+            await _gate.Task.WaitAsync(cancellationToken);
+            await _inner.WriteAsync(buffer, cancellationToken);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => _inner.ReadAsync(buffer, cancellationToken);
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => _inner.ReadAsync(buffer, offset, count, cancellationToken);
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+        public override void Flush() => _inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                OpenGate();
+                _inner.Dispose();
+                client.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        private static TaskCompletionSource CreateOpenGate()
+        {
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            gate.TrySetResult();
+            return gate;
+        }
+    }
+
+    private sealed class SynchronouslyBlockingStream(TimeSpan delay) : Stream
+    {
+        private bool _read;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        // Ignores the token and completes synchronously after the delay.
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_read) return ValueTask.FromResult(0);
+            _read = true;
+            Thread.Sleep(delay);
+            "late"u8.CopyTo(buffer.Span);
+            return ValueTask.FromResult(4);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class PausedStream(int prefix = 0) : Stream
     {
         private int _read;

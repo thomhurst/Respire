@@ -252,13 +252,13 @@ internal sealed partial class RespireConnection
                 if (connection._credentialRenewalPending) return false;
                 connection._streamingActive = true;
                 return true;
-            }, effectiveCancellation).ConfigureAwait(false);
+            }, rejectLocallyRetired: true, effectiveCancellation).ConfigureAwait(false);
             ownsWritePath = true;
 
             await DrainBufferedWritesAsync(effectiveCancellation).ConfigureAwait(false);
             await WaitForStreamingAdmissionAsync(
                 static connection => connection._inflight.Capacity - connection._inflight.Count > 0,
-                effectiveCancellation).ConfigureAwait(false);
+                rejectLocallyRetired: false, effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
             if (command.SourceStream is { } stream && command.Length > 0)
@@ -271,6 +271,12 @@ internal sealed partial class RespireConnection
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
             }
+
+            // A source that ignored the token can complete its read after the caller, the deadline
+            // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
+            // the wire yet, so fail here instead of queueing an expired header that a later wait
+            // would have to abort the connection for.
+            effectiveCancellation.ThrowIfCancellationRequested();
 
             // A locally retired connection drains admitted uploads. Cluster generation
             // retirement rejects this frame; restore its consumed first chunk for a retry.
@@ -428,25 +434,29 @@ internal sealed partial class RespireConnection
     /// completes that waiter instead of being lost.
     /// </summary>
     private async ValueTask WaitForStreamingAdmissionAsync(
-        Func<RespireConnection, bool> admit, CancellationToken cancellationToken)
+        Func<RespireConnection, bool> admit, bool rejectLocallyRetired, CancellationToken cancellationToken)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (TryAdmitStreaming(admit)) return;
+            if (TryAdmitStreaming(admit, rejectLocallyRetired)) return;
             var signaled = _capacitySignal.WaitAsync(cancellationToken);
             // Rarely abandoned when this re-check passes; it completes at the next shared pulse
             // and never consumes a wakeup meant for another producer.
-            if (TryAdmitStreaming(admit)) return;
+            if (TryAdmitStreaming(admit, rejectLocallyRetired)) return;
             await signaled.ConfigureAwait(false);
         }
     }
 
-    private bool TryAdmitStreaming(Func<RespireConnection, bool> admit)
+    // Taking the write path rejects a locally retired connection. Once the upload owns it, local
+    // retirement drains the upload like the buffered-write drain does, and only a retired cluster
+    // generation (lost slot ownership) rejects it.
+    private bool TryAdmitStreaming(Func<RespireConnection, bool> admit, bool rejectLocallyRetired)
     {
         lock (_writeGate)
         {
-            ThrowIfStreamingUnavailable(rejectRetired: true);
+            ThrowIfStreamingUnavailable(rejectLocallyRetired);
+            ThrowIfGenerationRetired();
             return admit(this);
         }
     }

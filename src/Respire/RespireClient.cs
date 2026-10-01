@@ -2428,8 +2428,9 @@ public sealed partial class RespireClient : IRespireClient
                             operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
                         .ConfigureAwait(false);
                 }
-                // Retirement rejects a streamed SET before its header is written, so its source
-                // has not been read and the command can move to the replacement connection.
+                // Retirement rejects a streamed SET before its header is written. Its source is
+                // untouched, or its consumed first chunk was restored in front of the source, so
+                // the command can move to the replacement connection without losing bytes.
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRejection(ref discovery, connection, retirement);
