@@ -16,6 +16,7 @@ internal static class AwsIamCredentialProvider
         string resource,
         string username,
         bool isElastiCacheServerless,
+        DateTimeOffset signedAt,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(awsCredentials);
@@ -25,7 +26,6 @@ internal static class AwsIamCredentialProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var signedAt = DateTimeOffset.UtcNow;
         var query = $"Action=connect&User={Uri.EscapeDataString(username)}";
         if (isElastiCacheServerless)
             query += "&ResourceType=ServerlessCache";
@@ -48,8 +48,8 @@ internal static class AwsIamCredentialProvider
         };
         var signed = await AWSSigV4Signer.PresignAsync(
             request, parameters, TokenLifetime, cancellationToken).ConfigureAwait(false);
-        var token = signed.Uri.GetComponents(
-            UriComponents.HostAndPort | UriComponents.PathAndQuery, UriFormat.UriEscaped);
+        var token = signed.Uri.GetComponents(UriComponents.Host, UriFormat.UriEscaped)
+            + signed.Uri.GetComponents(UriComponents.PathAndQuery, UriFormat.UriEscaped);
         return new RespireCredentials(username, token, signedAt.Add(TokenLifetime));
     }
 }

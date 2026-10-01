@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Respire.Tests" />
     <PackageReference Include="AWSSDK.Core" />
     <ProjectReference Include="..\Respire\Respire.csproj" />
   </ItemGroup>

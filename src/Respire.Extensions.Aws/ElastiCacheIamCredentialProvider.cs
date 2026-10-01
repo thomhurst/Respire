@@ -48,5 +48,6 @@ public sealed class ElastiCacheIamCredentialProvider : IRespireCredentialProvide
     /// <inheritdoc />
     public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
         => AwsIamCredentialProvider.CreateAsync(
-            _awsCredentials, _region, "elasticache", _cacheName, _userId, _isServerless, cancellationToken);
+            _awsCredentials, _region, "elasticache", _cacheName, _userId, _isServerless,
+            DateTimeOffset.UtcNow, cancellationToken);
 }

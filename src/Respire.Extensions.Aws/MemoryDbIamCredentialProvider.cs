@@ -40,5 +40,6 @@ public sealed class MemoryDbIamCredentialProvider : IRespireCredentialProvider
     /// <inheritdoc />
     public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
         => AwsIamCredentialProvider.CreateAsync(
-            _awsCredentials, _region, "memorydb", _clusterName, _username, false, cancellationToken);
+            _awsCredentials, _region, "memorydb", _clusterName, _username, false,
+            DateTimeOffset.UtcNow, cancellationToken);
 }
