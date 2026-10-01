@@ -139,7 +139,7 @@ public class HashFieldLeaseWireTests
 
     [Test]
     [NotInParallel]
-    public async Task QueuedReleaseWaitsForRenewalBeforeStartingItsCommandTimeout()
+    public async Task QueuedReleaseDeadlineIncludesRenewalWait()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         server.DelayReply(3, 2500);
@@ -152,11 +152,12 @@ public class HashFieldLeaseWireTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
         var release = lease.ReleaseAsync().AsTask();
-        await Task.Delay(2200, timeout.Token);
-
-        await Assert.That(release.IsCompleted).IsFalse();
+        await Assert.That(async () => await release.WaitAsync(TimeSpan.FromSeconds(4)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(renewal.IsCompleted).IsFalse();
         await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(3);
     }
@@ -184,6 +185,39 @@ public class HashFieldLeaseWireTests
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(4)).IsTrue();
         await Assert.That(lease.IsReleased).IsTrue();
         server.SuppressReply = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedReleaseDeadlineIncludesAnUnresponsiveRenewal()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        await using var lease = await new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+        server.SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal);
+
+        var renewal = lease.ResetExpiryAsync(TimeSpan.FromSeconds(30)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)) < 2)
+            await Task.Delay(5, timeout.Token);
+
+        var started = Stopwatch.GetTimestamp();
+        await Assert.That(async () => await lease.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(4)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(4)).IsTrue();
+        await Assert.That(lease.IsReleased).IsTrue();
+
+        await client.DisposeAsync();
+        try { await renewal.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception) { }
     }
 
     [Test]

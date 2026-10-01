@@ -111,7 +111,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases only this owner, leaving unrelated hash fields untouched. The Redis command has a two-second bound after preceding operations finish.</summary>
+    /// <summary>Releases only this owner, leaving unrelated hash fields untouched. One two-second deadline covers preceding operations and the Redis command.</summary>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -141,11 +141,11 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            await _operationGate.WaitAsync().ConfigureAwait(false);
+            await _operationGate.WaitAsync(deadline.Token).ConfigureAwait(false);
             entered = true;
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, deadline.Token)
                 .ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
@@ -178,7 +178,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases this lease.</summary>
+    /// <summary>Releases this lease on a best-effort basis.</summary>
     public async ValueTask DisposeAsync()
     {
         try

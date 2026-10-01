@@ -297,7 +297,11 @@ public sealed class RespireCoordination
     /// <param name="field">The binary-safe lease name.</param>
     /// <param name="duration">A positive lease duration of at least one millisecond.</param>
     /// <param name="cancellationToken">Cancels this attempt; when acceptance is uncertain, Respire best-effort releases the owner-checked field.</param>
-    /// <remarks>Requires Redis 7.4 or later and a hash key without key-level expiration.</remarks>
+    /// <remarks>
+    /// Requires Redis 7.4 or later and a hash key without key-level expiration. With a concrete
+    /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
+    /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
+    /// </remarks>
     public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
@@ -360,7 +364,11 @@ public sealed class RespireCoordination
     }
 
     /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
-    /// <remarks>Requires RESP3 client-side caching/tracking and Redis 7.4 or later.</remarks>
+    /// <remarks>
+    /// Requires RESP3 client-side caching/tracking and Redis 7.4 or later. With a concrete
+    /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
+    /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
+    /// </remarks>
     public async ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {

@@ -93,6 +93,11 @@ an error that identifies the required Redis feature. Waiters subscribe to invali
 whole hash key, so unrelated field changes can wake them and cause another owner-checked attempt.
 Many waiters sharing one hash can therefore retry together after one field changes.
 
+When you pass a concrete `RespireClient`, hash-field lease acquisition also requires Redis
+`CLIENT ID` and `CLIENT KILL` permissions. Respire uses these commands to order owner-checked
+cleanup after an acquisition whose result is uncertain. Other `IRespireClient` implementations use
+their own command-ordering behavior.
+
 ```csharp
 using Respire.Extensions.Coordination;
 
@@ -160,8 +165,8 @@ later write. `RemainingEstimate` measures elapsed time from before acquisition a
 local estimate. Stop protected work when the lease expires or ownership becomes uncertain.
 
 Renewal and release reuse the existing [managed lock lifecycle](distributed-locks.md).
-Managed renewal requires `CLIENT ID` and `CLIENT KILL` permissions to fence uncertain
-commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing a copied
+Managed renewal and concrete-client hash-field lease acquisition require `CLIENT ID` and
+`CLIENT KILL` permissions to fence uncertain commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing a copied
 attempt is idempotent through the shared handle and never deletes another owner's lease.
 
 Cancellation, timeout or disconnect can occur after Redis accepts acquisition. Fenced-lock
