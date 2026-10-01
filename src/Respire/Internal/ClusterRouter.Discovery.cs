@@ -24,8 +24,8 @@ internal sealed partial class ClusterRouter
     // refreshes keeps a dead or flapping primary from driving back-to-back discovery passes.
     private static readonly TimeSpan PrimaryDisconnectRefreshSpacing = TimeSpan.FromSeconds(1);
     // Many seeds must not shrink each candidate's share of the deadline below one round trip.
-    private static readonly TimeSpan MinimumTopologyRefreshCandidateTimeout = TimeSpan.FromSeconds(1);
     private long _lastPrimaryDisconnectRefreshSignal;
+    private int _primaryDisconnectRefreshPending;
     private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
     private readonly object _topologyRefreshSignalGate = new();
     private readonly object _topologyRefreshWorkerGate = new();
@@ -50,7 +50,6 @@ internal sealed partial class ClusterRouter
         internal Task<bool>? SharedTask;
         internal int Waiters;
         internal bool Completed;
-        internal IDisposable? DiscoveryLease;
     }
 
     private Task<bool> RefreshReadOnlySharedAsync(
@@ -70,13 +69,9 @@ internal sealed partial class ClusterRouter
             }
             if (_sharedRefreshTask is null)
             {
-                var discoveryLease = discovery?.Hold();
                 var newFlight = new ReadOnlyRefreshFlight(
                     CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token), slot,
-                    new RespireEndpoint(source.Host, source.Port))
-                {
-                    DiscoveryLease = discoveryLease,
-                };
+                    new RespireEndpoint(source.Host, source.Port));
                 start = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 newFlight.SharedTask = start.Task;
                 _sharedRefreshTask = start.Task;
@@ -92,7 +87,7 @@ internal sealed partial class ClusterRouter
         }
         if (start is not null)
             _ = CompleteSharedRefreshAsync(start, async () =>
-                await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery).ConfigureAwait(false), flight);
+                await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery: null).ConfigureAwait(false), flight);
         return AwaitReadOnlyRefreshAsync(task, waiterToken, flight);
     }
 
@@ -162,7 +157,6 @@ internal sealed partial class ClusterRouter
                     _readOnlyRefreshFlight = null;
                 }
             }
-            readOnlyFlight?.DiscoveryLease?.Dispose();
             readOnlyFlight?.Cancellation.Dispose();
         }
     }
@@ -263,7 +257,7 @@ internal sealed partial class ClusterRouter
             {
                 foreach (var endpoint in replica.Aliases.Prepend(replica.Endpoint))
                 {
-                    var replicaNode = GetOrCreateNode(endpoint);
+                    var replicaNode = GetOrCreateNode(endpoint, observe: false);
                     if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
                 }
             }
@@ -277,11 +271,7 @@ internal sealed partial class ClusterRouter
                 .Select(static candidate => candidate.index).ToArray();
             var position = connected.Length == 0 ? -1 : connected[Random.Shared.Next(connected.Length)];
             if (position > 0) candidates = candidates.Skip(position).Concat(candidates.Take(position)).ToList();
-            var boundedCandidateCount = Math.Max(1, candidates.Count);
-            var maxTotalTicks = MaximumTopologyRefreshDeadline.Ticks;
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
-            var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
-                Math.Max(maxTotalTicks / boundedCandidateCount, MinimumTopologyRefreshCandidateTimeout.Ticks)));
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
             var refreshStarted = Stopwatch.GetTimestamp();
@@ -292,12 +282,17 @@ internal sealed partial class ClusterRouter
                 if (round is not null)
                 {
                     var remainingCandidates = candidates.Count - candidateIndex;
-                    var remainingBudget = MaximumTopologyRefreshDeadline - Stopwatch.GetElapsedTime(refreshStarted)
-                        - TimeSpan.FromTicks(Math.Min(MaximumTopologyRefreshDeadline.Ticks,
-                            candidateTimeout.Ticks * (long)remainingCandidates));
+                    var remainingBudget = MaximumTopologyRefreshDeadline - Stopwatch.GetElapsedTime(refreshStarted);
                     await round.BeforeCandidateAsync(Endpoint(candidate), linked.Token,
-                        remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero).ConfigureAwait(false);
+                        remainingBudget > TimeSpan.Zero
+                            ? TimeSpan.FromTicks(remainingBudget.Ticks / Math.Max(1, remainingCandidates))
+                            : TimeSpan.Zero).ConfigureAwait(false);
                 }
+                var candidatesLeft = candidates.Count - candidateIndex;
+                var timeLeft = MaximumTopologyRefreshDeadline - Stopwatch.GetElapsedTime(refreshStarted);
+                var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
+                    Math.Max(0, timeLeft.Ticks / Math.Max(1, candidatesLeft))));
+                if (candidateTimeout <= TimeSpan.Zero) break;
                 using var candidateDeadline = new CancellationTokenSource(candidateTimeout);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
                 try
@@ -379,6 +374,13 @@ internal sealed partial class ClusterRouter
                         try { _logger?.LogDebug(error, "Periodic Redis Cluster topology refresh failed"); }
                         catch (Exception) { }
                     }
+                    if (Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 0) != 0
+                        && !_stopDiscovery.IsCancellationRequested)
+                    {
+                        await Task.Delay(PrimaryDisconnectRefreshSpacing, _stopDiscovery.Token).ConfigureAwait(false);
+                        Volatile.Write(ref _lastPrimaryDisconnectRefreshSignal, Stopwatch.GetTimestamp());
+                        SignalTopologyRefresh(force: true);
+                    }
                 }
             }));
         }
@@ -449,8 +451,13 @@ internal sealed partial class ClusterRouter
     {
         var now = Stopwatch.GetTimestamp();
         var last = Volatile.Read(ref _lastPrimaryDisconnectRefreshSignal);
-        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < PrimaryDisconnectRefreshSpacing) return;
+        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < PrimaryDisconnectRefreshSpacing)
+        {
+            Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 1);
+            return;
+        }
         if (Interlocked.CompareExchange(ref _lastPrimaryDisconnectRefreshSignal, now, last) != last) return;
+        Interlocked.Exchange(ref _primaryDisconnectRefreshPending, 0);
         SignalTopologyRefresh(force: true);
     }
 
