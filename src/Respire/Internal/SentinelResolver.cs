@@ -34,6 +34,7 @@ internal static class SentinelResolver
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
+        var lastErrorIsDiscoveryTimeout = false;
         var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
         for (var index = 0; index < sentinelEndpoints.Count; index++)
@@ -80,6 +81,8 @@ internal static class SentinelResolver
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, discoveryTimeoutSource.Token))
             {
+                // Preserve the upstream token identity for callers that distinguish their own
+                // deadline from Sentinel's candidate-discovery deadline.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -91,8 +94,9 @@ internal static class SentinelResolver
                 cancellationToken.ThrowIfCancellationRequested();
                 // The discovery deadline usually equals the caller's command timeout. When it
                 // fires first, report the same timeout the caller's deadline would have raised.
-                lastError = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
-                    && (ex is RespireTimeoutException || ContainsCancellation(ex))
+                lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
+                    && (ex is RespireTimeoutException || ContainsCancellation(ex));
+                lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
@@ -110,7 +114,7 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (lastError is RespireTimeoutException timeoutError) throw timeoutError;
+        if (lastErrorIsDiscoveryTimeout && lastError is RespireTimeoutException timeoutError) throw timeoutError;
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
