@@ -334,10 +334,10 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
-        if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken, command.CacheMutation);
+        if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, command.CacheMutation)
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -359,10 +359,10 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
-        if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken, command.CacheMutation);
+        if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken, command.CacheMutation)
+            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken)
             : ValueTask.FromException(prefixError);
     }
 
