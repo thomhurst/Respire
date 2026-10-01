@@ -242,6 +242,7 @@ internal sealed partial class RespireConnection
         var phase = StreamedSetPhase.NotStarted;
         var ownsWritePath = false;
         StreamPayloadReader? payloadReader = null;
+        ReadOnlyMemory<byte> firstChunk = default;
         try
         {
             // Respect the credential-renewal fence like ordinary commands: AUTH must be admitted
@@ -260,7 +261,6 @@ internal sealed partial class RespireConnection
                 effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
-            ReadOnlyMemory<byte> firstChunk = default;
             if (command.SourceStream is { } stream && command.Length > 0)
             {
                 // Read the first chunk before the header goes out. A source that fails, is
@@ -272,12 +272,11 @@ internal sealed partial class RespireConnection
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
             }
 
-            // Until the source is touched, AppendStreamingStart rejects a retired connection so
-            // the untouched request can be retried on the replacement. Once the first chunk has
-            // been consumed the command cannot be replayed, so it is accepted and the retirement
-            // drain (which waits for _streamingActive) lets it finish. A closed connection is
-            // always rejected before any bytes are written.
-            var write = AppendStreamingStart(command, rejectRetired: phase == StreamedSetPhase.NotStarted,
+            // A locally retired connection drains admitted uploads. Cluster generation
+            // retirement rejects this frame; restore its consumed first chunk for a retry.
+            var write = AppendStreamingStart(command,
+                rejectRetired: phase == StreamedSetPhase.NotStarted,
+                rejectGenerationRetired: phase == StreamedSetPhase.ReadingFirstChunk,
                 out var startedBatch, out var requestWriteStart);
             phase = StreamedSetPhase.HeaderQueued;
             ScheduleFlush(startedBatch);
@@ -297,6 +296,9 @@ internal sealed partial class RespireConnection
         }
         catch (Exception error)
         {
+            if (phase == StreamedSetPhase.ReadingFirstChunk && error is RespireConnectionRetiredException
+                && !firstChunk.IsEmpty)
+                command.RestoreSourcePrefixForRetry(firstChunk.Span);
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
             var translated = error is OperationCanceledException canceled
@@ -457,6 +459,12 @@ internal sealed partial class RespireConnection
         if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
     }
 
+    private void ThrowIfGenerationRetired()
+    {
+        if (_generation?.IsRetired == true)
+            throw new RespireConnectionRetiredException(Host, Port);
+    }
+
     private static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
     {
         try
@@ -580,7 +588,10 @@ internal sealed partial class RespireConnection
             var schedule = false;
             lock (_writeGate)
             {
-                ThrowIfStreamingUnavailable(rejectRetired: true);
+                // A locally retired connection drains admitted writes. A retired generation
+                // lost slot ownership, so reject before touching the stream source.
+                ThrowIfStreamingUnavailable(rejectRetired: false);
+                ThrowIfGenerationRetired();
                 if (_activeBuffer.Count > 0)
                 {
                     write = _activeBuffer.WriteCompletion;
@@ -610,25 +621,27 @@ internal sealed partial class RespireConnection
             if (schedule) ScheduleFlush(startedBatch: false);
             if (write is null) continue;
             var drained = write.WaitAsync(cancellationToken);
-            // Nothing of this frame is written yet, so retirement can still reject it for a retry
-            // on the replacement; a stalled earlier write must not pin it to this connection.
+            // Local retirement drains an upload that already owns the streaming path. A cluster
+            // generation retirement rejects it because the endpoint lost slot ownership.
             if (await Task.WhenAny(drained, _retiredSignal.Task).ConfigureAwait(false) != drained)
             {
                 _ = drained.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
-                ThrowIfRetired();
+                ThrowIfGenerationRetired();
             }
             await drained.ConfigureAwait(false);
         }
     }
 
     private Task AppendStreamingStart(
-        StreamedSetCommand command, bool rejectRetired, out bool startedBatch, out long requestWriteStart)
+        StreamedSetCommand command, bool rejectRetired, bool rejectGenerationRetired,
+        out bool startedBatch, out long requestWriteStart)
     {
         lock (_writeGate)
         {
             ThrowIfStreamingUnavailable(rejectRetired);
+            if (rejectGenerationRetired) ThrowIfGenerationRetired();
             var start = _activeBuffer.Count;
             // An earlier reply may still be pending after its frame has been sent and the
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.

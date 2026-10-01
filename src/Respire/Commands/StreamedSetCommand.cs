@@ -10,8 +10,58 @@ namespace Respire.Commands;
 /// </summary>
 internal readonly struct StreamedSetCommand : IStreamingRespCommand
 {
+    private sealed class StreamSource(Stream current)
+    {
+        internal Stream Current { get; private set; } = current;
+
+        internal void RestorePrefix(ReadOnlySpan<byte> prefix)
+            => Current = new PrefixStream(prefix.ToArray(), Current);
+    }
+
+    private sealed class PrefixStream(byte[] prefix, Stream remainder) : Stream
+    {
+        private int _offset;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var copied = Math.Min(buffer.Length, prefix.Length - _offset);
+            if (copied != 0)
+            {
+                prefix.AsSpan(_offset, copied).CopyTo(buffer);
+                _offset += copied;
+                return copied;
+            }
+            return remainder.Read(buffer);
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var copied = Math.Min(buffer.Length, prefix.Length - _offset);
+            if (copied != 0)
+            {
+                prefix.AsMemory(_offset, copied).CopyTo(buffer);
+                _offset += copied;
+                return ValueTask.FromResult(copied);
+            }
+            return remainder.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => Read(buffer.AsSpan(offset, count));
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private readonly RespireValue _key;
-    private readonly Stream? _stream;
+    private readonly StreamSource? _stream;
     private readonly ReadOnlySequence<byte> _sequence;
     private readonly long _length;
     private readonly RespireExpiry _expiry;
@@ -20,7 +70,7 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
     internal StreamedSetCommand(RespireValue key, Stream source, long length, RespireExpiry expiry, SetWhen when)
     {
         _key = key;
-        _stream = source;
+        _stream = new StreamSource(source);
         _sequence = default;
         _length = length;
         _expiry = expiry;
@@ -40,8 +90,11 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
     internal RespireValue Key => _key;
     internal long Length => _length;
 
-    /// <summary>The caller's stream, or <see langword="null"/> when the payload is an in-memory sequence.</summary>
-    internal Stream? SourceStream => _stream;
+    /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
+    internal Stream? SourceStream => _stream?.Current;
+
+    /// <summary>Put a consumed first chunk back for a replacement connection retry.</summary>
+    internal void RestoreSourcePrefixForRetry(ReadOnlySpan<byte> prefix) => _stream?.RestorePrefix(prefix);
 
     /// <summary>The in-memory payload; only meaningful when <see cref="SourceStream"/> is <see langword="null"/>.</summary>
     internal ReadOnlySequence<byte> Sequence => _sequence;

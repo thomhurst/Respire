@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Respire;
 using Respire.Commands;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -762,7 +763,7 @@ public sealed class StreamedSetTests
         await Assert.That(set.IsCompleted).IsFalse();
 
         var retirement = connection.RetireAsync();
-        // Bound every peer read so a write-ordering regression fails the test instead of hanging it.
+        // Bound peer reads so a write-ordering regression fails instead of hanging the test.
         using var peerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await peerStream.ReadExactlyAsync(frame, peerTimeout.Token);
         await peerStream.WriteAsync("+OK\r\n"u8.ToArray(), peerTimeout.Token);
@@ -778,6 +779,36 @@ public sealed class StreamedSetTests
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(blockerReply.AsString()).IsEqualTo("OK");
         await Assert.That(streamedReply.AsString()).IsEqualTo("OK");
+    }
+
+    [Test]
+    public async Task RetirementDuringFirstChunkRestoresSourceAndWritesNoFrame()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        var generation = new TestConnectionGeneration();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = null,
+                Generation = generation,
+            });
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        var source = new PausedStream();
+        var command = new StreamedSetCommand((RespireValue)"retry", source, 4, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        generation.IsRetired = true;
+        source.ContinueReading.TrySetResult();
+        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+
+        var replayed = new byte[4];
+        await command.SourceStream!.ReadExactlyAsync(replayed);
+        await Assert.That(replayed).IsEquivalentTo("data"u8.ToArray());
     }
 
     [Test]
@@ -944,6 +975,15 @@ public sealed class StreamedSetTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class TestConnectionGeneration : IConnectionGeneration
+    {
+        public bool IsRetired { get; set; }
+        public ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
+        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
     }
 
     // First read waits (blocking) until its token is cancelled and still returns a byte; the next
