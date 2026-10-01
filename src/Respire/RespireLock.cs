@@ -138,6 +138,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// <remarks>
     /// Managed extensions that can time out or be cancelled use Redis <c>CLIENT ID</c> and
     /// <c>CLIENT KILL</c> to fence uncertain commands; the authenticated user must permit them.
+    /// Redis stores lock expiry in whole milliseconds, so a positive duration with a fractional
+    /// millisecond is rounded up before it is sent; <see cref="Duration"/> reports the value applied.
     /// </remarks>
     /// <returns>
     /// <see langword="false"/> when the lock is no longer owned — it expired, it was released, or
