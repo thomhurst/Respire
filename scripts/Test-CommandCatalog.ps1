@@ -32,6 +32,7 @@ try {
     # The manual list repeats VCARD for Redis, but adds a second, unaudited provider for JSON.GET.
     Write-CommandFixture $redisPath 'vcard' 'VCARD' @('READONLY')
     Write-CommandFixture $redisPath 'json-get' 'JSON.GET' @('READONLY')
+    Write-CommandFixture $redisPath 'slot-stats' 'SLOT-STATS' @('WRITE') 'CLUSTER'
 
     $generator = Join-Path $PSScriptRoot '../tools/Generate-CommandCatalog.ps1'
     & $generator -RedisCommandPath $redisPath -ValkeyCommandPath $valkeyPath -OutputPath $outputPath
@@ -54,6 +55,19 @@ try {
         if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
         $isReadOnly = $declarations[0].Groups['arguments'].Value.Contains('isReadOnly: true')
         if ($isReadOnly -ne $entry.Value) { throw "Incorrect read-only metadata for $($entry.Key)." }
+    }
+    $mutationExpectations = @{
+        GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
+        'KEYDB.NHGET' = 'Mutation'; 'CLUSTER SLOT-STATS' = 'ReadOnly'
+    }
+    foreach ($entry in $mutationExpectations.GetEnumerator()) {
+        $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +
+            [regex]::Escape($entry.Key) + '", (?<arguments>[^;]+)\);\r?$'
+        $declarations = [regex]::Matches($first, $pattern)
+        if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
+        if (-not $declarations[0].Groups['arguments'].Value.Contains("RespireCacheMutation.$($entry.Value)")) {
+            throw "Incorrect cache mutation metadata for $($entry.Key)."
+        }
     }
     Write-Host 'Command catalog generation checks passed.'
 }

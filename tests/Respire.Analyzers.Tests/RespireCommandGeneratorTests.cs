@@ -80,6 +80,17 @@ public class RespireCommandGeneratorTests
     }
 
     [Test]
+    public async Task CacheMutationMetadataIsEmitted()
+    {
+        var (generated, diagnostics) = Generate(Preamble + "namespace Demo { [RespireCommands] public interface IModule { " +
+            "[RespireCommand(\"X.GET\", Mutation = RespireCacheMutation.ReadOnly)] ValueTask<int> Get(string key); " +
+            "[RespireCommand(\"X.SET\", Mutation = RespireCacheMutation.SingleKey)] ValueTask Set(string key); } }");
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(generated).Contains("RespireCommand.Create(\"X.GET\", global::Respire.RespireCacheMutation.ReadOnly)");
+        await Assert.That(generated).Contains("RespireCommand.Create(\"X.SET\", global::Respire.RespireCacheMutation.SingleKey)");
+    }
+
+    [Test]
     public async Task NullableObliviousDeclarationsCompileWithoutWarnings()
     {
         var (generated, diagnostics) = Generate("""

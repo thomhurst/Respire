@@ -131,6 +131,26 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         => method.GetAttributes().FirstOrDefault(attribute =>
             attribute.AttributeClass?.ToDisplayString() == "Respire.RespireCommandAttribute");
 
+    private static string? CacheMutation(IMethodSymbol method)
+    {
+        var attribute = CommandAttribute(method);
+        if (attribute is null) return null;
+        foreach (var argument in attribute.NamedArguments)
+        {
+            if (argument.Key != "Mutation" || argument.Value.Type is not INamedTypeSymbol enumType) continue;
+            foreach (var member in enumType.GetMembers())
+            {
+                if (member is IFieldSymbol { HasConstantValue: true } field
+                    && Equals(field.ConstantValue, argument.Value.Value))
+                {
+                    return field.Name;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static bool IsTask(INamedTypeSymbol type)
         => type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks"
             && (type.Name is "Task" or "ValueTask");
@@ -191,7 +211,10 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             or "MemberwiseClone" or "ReferenceEquals" or "ToString";
 
         source.Append("    private static readonly global::Respire.RespireCommand ").Append(commandField)
-            .Append(" = global::Respire.RespireCommand.Create(").Append(SymbolDisplay.FormatLiteral(command, true)).Append(");\n")
+            .Append(" = global::Respire.RespireCommand.Create(").Append(SymbolDisplay.FormatLiteral(command, true));
+        if (CacheMutation(method) is { } cacheMutation)
+            source.Append(", global::Respire.RespireCacheMutation.").Append(cacheMutation);
+        source.Append(");\n")
             .Append("    /// <inheritdoc/>\n")
             .Append("    public ").Append(hidesObjectMember ? "new " : "")
             .Append(direct ? "" : "async ").Append(TypeName(task)).Append(' ')

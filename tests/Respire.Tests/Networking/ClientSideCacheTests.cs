@@ -96,6 +96,38 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task PreencodedParentReadUsesNormalizedSubcommandMutationMetadata()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            ":64\r\n"u8.ToArray(),
+            "*0\r\n"u8.ToArray(),
+            "*1\r\n:0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+
+        using var memory = await client.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key");
+        using var config = await client.ExecuteAsync(RespireCommands.Server.CONFIG, "GET", "pattern");
+        using var script = await client.ExecuteAsync(RespireCommands.Scripting.SCRIPT, "EXISTS", "sha1");
+
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.MEMORY, "USAGE", "key");
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.CONFIG, "GET", "pattern");
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Scripting.SCRIPT, "EXISTS", "sha1");
+        await WaitUntilAsync(() => server.CommandsSeen >= 8);
+
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).Contains("MEMORY USAGE key");
+        await Assert.That(server.ReceivedCommands).Contains("CONFIG GET pattern");
+        await Assert.That(server.ReceivedCommands).Contains("SCRIPT EXISTS sha1");
+    }
+
+    [Test]
     public async Task AggregateRead_CachesDeepOwnedReply()
     {
         await using var server = new FakeRespServer(
@@ -308,6 +340,32 @@ public class ClientSideCacheTests
         await Assert.That(server.ReceivedCommands.Count(static command =>
             command == "MEMORY USAGE key SAMPLES 0"))
             .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NormalizedReadOnlySubcommandPreservesCacheForBothExecutionPaths()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            ":42\r\n"u8.ToArray(),
+            ":42\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        using (var result = await client.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0))
+        {
+            await Assert.That(result.AsInteger()).IsEqualTo(42);
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsGreaterThanOrEqualTo(1);
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "GET key")).IsEqualTo(1);
     }
 
     [Test]

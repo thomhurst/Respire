@@ -393,8 +393,14 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 internal readonly struct DynamicCommand(
     RespireValue[] tokens,
     int routingKeyIndex,
-    int argumentOffset = 1) : IRespCommand
+    int argumentOffset = 1,
+    RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown) : IRespCommand
 {
+    public RespireCacheMutation GetCacheMutation(string operation)
+        => cacheMutation == RespireCacheMutation.Unknown
+            ? RespireCommands.GetCacheMutation(operation)
+            : cacheMutation;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, tokens, argumentOffset);
@@ -585,6 +591,11 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
+    public RespireCacheMutation GetCacheMutation(string operation)
+        => command.CacheMutation == RespireCacheMutation.Unknown
+            ? RespireCommands.GetCacheMutation(operation)
+            : command.CacheMutation;
+
     private int RoutingKeyIndex => routing.Known
         ? routing.Index : DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)

@@ -331,13 +331,14 @@ public partial class RespireJsonClientTests
     }
 
     /// <summary>
-    /// RedisJSON command names live in the generated interfaces, the key-layout table, and the client-side
-    /// cache classification. This fails when a command is added to one and not the others.
+    /// RedisJSON commands declare cache mutation beside their generated command metadata.
+    /// This fails when a command has no key layout or leaves its mutation behavior unspecified.
     /// </summary>
     [Test]
     public async Task EveryJsonCommandHasAKeyLayoutAndACacheClassification()
     {
         var operations = new SortedSet<string>(StringComparer.Ordinal);
+        var commandAttributes = new List<RespireCommandAttribute>();
         foreach (var type in new[] { typeof(RespireCommands.Json), typeof(RespireCommands.Dragonfly) })
         {
             foreach (var field in type.GetFields())
@@ -352,15 +353,17 @@ public partial class RespireJsonClientTests
             foreach (var method in type.GetMethods())
             {
                 foreach (var attribute in method.GetCustomAttributes(typeof(RespireCommandAttribute), false))
-                    operations.Add(((RespireCommandAttribute)attribute).Name);
+                {
+                    var commandAttribute = (RespireCommandAttribute)attribute;
+                    operations.Add(commandAttribute.Name);
+                    commandAttributes.Add(commandAttribute);
+                }
             }
         }
 
         var missingLayout = operations.Where(operation => !RawCommandKeyLayouts.HasLayout(operation)).ToArray();
-        var unclassified = operations.Where(operation =>
-            !ClientSideCacheCoordinator.IsReadOnly(operation)
-            && !ClientSideCacheCoordinator.IsSingleKeyMutation(operation)
-            && !ClientSideCacheCoordinator.IsMultiKeyMutation(operation)).ToArray();
+        var unclassified = commandAttributes.Where(attribute => attribute.Mutation == RespireCacheMutation.Unknown)
+            .Select(attribute => attribute.Name).Distinct(StringComparer.Ordinal).ToArray();
 
         await Assert.That(operations.Count).IsGreaterThan(20);
         await Assert.That(missingLayout).IsEmpty();
