@@ -9,6 +9,7 @@ namespace Respire.Extensions.Coordination;
 /// </remarks>
 public sealed class RespireSemaphore
 {
+    private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
@@ -81,13 +82,20 @@ public sealed class RespireSemaphore
         }
     }
 
-    private async ValueTask ReleaseBestEffortAsync(RespireLockToken owner)
+    private ValueTask<bool> ReleaseBestEffortAsync(RespireLockToken owner)
+        => TryReleaseBestEffortAsync(_client, Key, owner);
+
+    internal static async ValueTask<bool> TryReleaseBestEffortAsync(
+        IRespireClient client, RespireKey key, RespireLockToken owner)
     {
+        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
         try
         {
-            using var _ = await _client.Scripts.ExecuteAsync(ReleaseScript, [Key], [owner.Bytes], CancellationToken.None).ConfigureAwait(false);
+            using var _ = await client.Scripts.ExecuteAsync(
+                ReleaseScript, [key], [owner.Bytes], timeout.Token).ConfigureAwait(false);
+            return true;
         }
-        catch (Exception) { }
+        catch (Exception) { return false; }
     }
 
     // Shared by every script: reads Redis server time, prunes expired permits, and defines
@@ -287,13 +295,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             }
             catch
             {
-                Interlocked.Exchange(ref _released, 1);
-                await ReleaseBestEffortAsync().ConfigureAwait(false);
+                if (await ReleaseBestEffortAsync().ConfigureAwait(false))
+                    Interlocked.Exchange(ref _released, 1);
                 throw;
             }
 
-            Interlocked.Exchange(ref _released, 1);
-            await ReleaseBestEffortAsync().ConfigureAwait(false);
+            if (await ReleaseBestEffortAsync().ConfigureAwait(false))
+                Interlocked.Exchange(ref _released, 1);
             return false;
         }
         finally
@@ -312,16 +320,19 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (Interlocked.Exchange(ref _released, 1) != 0) return false;
+            if (Volatile.Read(ref _released) != 0) return false;
             try
             {
                 using var response = await _client.Scripts.ExecuteAsync(
                     RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
-                return response.AsInteger() == 1;
+                var removed = response.AsInteger() == 1;
+                Interlocked.Exchange(ref _released, 1);
+                return removed;
             }
             catch
             {
-                await ReleaseBestEffortAsync().ConfigureAwait(false);
+                if (await ReleaseBestEffortAsync().ConfigureAwait(false))
+                    Interlocked.Exchange(ref _released, 1);
                 throw;
             }
         }
@@ -338,15 +349,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         catch (Exception) { }
     }
 
-    private async ValueTask ReleaseBestEffortAsync()
-    {
-        try
-        {
-            using var _ = await _client.Scripts.ExecuteAsync(
-                RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception) { }
-    }
+    private ValueTask<bool> ReleaseBestEffortAsync()
+        => RespireSemaphore.TryReleaseBestEffortAsync(_client, Key, _owner);
 
     // Saturates below long.MaxValue, which means "no expiry", so a centuries-long expiry cannot
     // overflow after Redis has already accepted the permit.

@@ -437,10 +437,11 @@ if (!attempt.Acquired) return;
 
 Each permit has unique ownership. Release it with `ReleaseAsync` or `DisposeAsync`, verify it
 with `VerifyStillHeldAsync`, or renew/change expiry with `ResetExpiryAsync`. A failed or
-canceled verification throws and leaves the permit held; a failed renewal or release gives the
-permit up and attempts owner-token cleanup. Pass `null` at
-acquisition or renewal for a permit that expires only when its owner releases it. Expiring
-permits use whole-millisecond durations, Redis server time, and are pruned atomically on the
+canceled verification throws and leaves the permit held. A failed renewal or release attempts
+owner-token cleanup with a separate one-second bound. When cleanup cannot confirm release, keep
+the permit handle and retry `ReleaseAsync`; it remains usable until Redis confirms removal.
+Pass `null` at acquisition or renewal for a permit that expires only when its owner releases it.
+Expiring permits use whole-millisecond durations, Redis server time, and are pruned atomically on the
 next operation. Optional expiry removes abandoned capacity usage without a cleanup worker.
 
 Every contender must use the same positive capacity. Capacity changes fail while any permit
