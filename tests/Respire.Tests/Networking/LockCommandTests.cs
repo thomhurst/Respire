@@ -393,6 +393,41 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ReleaseTimeoutWhileWaitingForInflightCapacityRemainsRetryable()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            "+PONG\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 3000);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            MaxInflightCommands = 1,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await client.EnsureReliableCorrectionOrderingAsync();
+        var ping = client.PingAsync().AsTask();
+        await WaitForCommandAsync(server, "PING");
+        await Task.Delay(900);
+
+        await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireTimeoutException>();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+            .IsFalse();
+
+        await Assert.That(async () => await ping).Throws<RespireTimeoutException>();
+        await Task.Delay(2200);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RespireLock_ReleaseWithoutClientPermissionsUsesCompatibleDelete()
     {
         await using var server = new FakeRespServer(
