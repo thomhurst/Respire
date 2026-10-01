@@ -244,14 +244,9 @@ public sealed record RespireSearchQueryOptions
         }
         ArgumentNullException.ThrowIfNull(Parameters);
         AddParameters(args, Parameters);
-        if (Parameters.Count > 0 && Dialect is < 2)
-            throw new ArgumentOutOfRangeException(nameof(Dialect), Dialect, "Named parameters require dialect 2 or later.");
-        if (Parameters.Count > 0 && Dialect is null)
-        {
-            args.Add("DIALECT");
-            args.Add(2);
-        }
-        else if (Dialect is { } dialect)
+        if (Parameters.Count > 0 && Dialect is null or < 2)
+            throw new ArgumentOutOfRangeException(nameof(Dialect), Dialect, "Named parameters require an explicit dialect 2 or later.");
+        if (Dialect is { } dialect)
         {
             if (dialect <= 0) throw new ArgumentOutOfRangeException(nameof(Dialect));
             args.Add("DIALECT");
@@ -287,6 +282,8 @@ public sealed record RespireSearchAggregateOptions
     public IReadOnlyList<string> SortBy { get; init; } = [];
     /// <summary>Group-by stages with their reducer functions.</summary>
     public IReadOnlyList<RespireSearchAggregateGroup> Groups { get; init; } = [];
+    /// <summary>Explicitly ordered pipeline stages for operations with dependencies.</summary>
+    public IReadOnlyList<RespireSearchAggregateStage> Stages { get; init; } = [];
     /// <summary>Zero-based offset and row count.</summary>
     public (int Offset, int Count)? Limit { get; init; }
     /// <summary>Query dialect version.</summary>
@@ -295,21 +292,43 @@ public sealed record RespireSearchAggregateOptions
     internal RespireValue[] ToArguments()
     {
         var args = new List<RespireValue>();
-        if (LoadFields.Count > 0) { args.Add("LOAD"); args.Add(LoadFields.Count); foreach (var field in LoadFields) args.Add(field); }
-        foreach (var filter in Filters) { args.Add("FILTER"); args.Add(filter); }
-        foreach (var item in Apply) { args.Add("APPLY"); args.Add(item.Value); args.Add("AS"); args.Add(item.Key); }
-        foreach (var group in Groups)
+        if (Stages.Count > 0)
         {
-            ArgumentNullException.ThrowIfNull(group.Properties);
-            args.Add("GROUPBY"); args.Add(group.Properties.Count);
-            foreach (var property in group.Properties) args.Add(property);
-            foreach (var reducer in group.Reducers)
+            if (LoadFields.Count > 0 || Filters.Count > 0 || Apply.Count > 0 || Groups.Count > 0)
+                throw new ArgumentException("Use either Stages or the convenience pipeline properties, not both.");
+            foreach (var stage in Stages)
             {
-                ArgumentException.ThrowIfNullOrWhiteSpace(reducer.Function);
-                args.Add("REDUCE"); args.Add(reducer.Function); args.Add(reducer.Arguments.Count);
-                foreach (var argument in reducer.Arguments) args.Add(argument);
-                if (!string.IsNullOrWhiteSpace(reducer.Alias)) { args.Add("AS"); args.Add(reducer.Alias); }
+                ArgumentNullException.ThrowIfNull(stage);
+                switch (stage)
+                {
+                    case RespireSearchAggregateLoad load:
+                        ArgumentNullException.ThrowIfNull(load.Fields);
+                        args.Add("LOAD"); args.Add(load.Fields.Count);
+                        foreach (var field in load.Fields) args.Add(field);
+                        break;
+                    case RespireSearchAggregateFilter filter:
+                        ArgumentException.ThrowIfNullOrWhiteSpace(filter.Expression);
+                        args.Add("FILTER"); args.Add(filter.Expression);
+                        break;
+                    case RespireSearchAggregateApply apply:
+                        ArgumentException.ThrowIfNullOrWhiteSpace(apply.Expression);
+                        ArgumentException.ThrowIfNullOrWhiteSpace(apply.Alias);
+                        args.Add("APPLY"); args.Add(apply.Expression); args.Add("AS"); args.Add(apply.Alias);
+                        break;
+                    case RespireSearchAggregateGroupStage group:
+                        AddGroup(args, group.Group);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(Stages), stage, "Unknown aggregation stage type.");
+                }
             }
+        }
+        else
+        {
+            if (LoadFields.Count > 0) { args.Add("LOAD"); args.Add(LoadFields.Count); foreach (var field in LoadFields) args.Add(field); }
+            foreach (var filter in Filters) { args.Add("FILTER"); args.Add(filter); }
+            foreach (var item in Apply) { args.Add("APPLY"); args.Add(item.Value); args.Add("AS"); args.Add(item.Key); }
+            foreach (var group in Groups) AddGroup(args, group);
         }
         if (SortBy.Count > 0)
         {
@@ -341,7 +360,39 @@ public sealed record RespireSearchAggregateOptions
         if (Dialect is { } dialect) { if (dialect <= 0) throw new ArgumentOutOfRangeException(nameof(Dialect)); args.Add("DIALECT"); args.Add(dialect); }
         return [.. args];
     }
+
+    private static void AddGroup(List<RespireValue> args, RespireSearchAggregateGroup group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        ArgumentNullException.ThrowIfNull(group.Properties);
+        ArgumentNullException.ThrowIfNull(group.Reducers);
+        args.Add("GROUPBY"); args.Add(group.Properties.Count);
+        foreach (var property in group.Properties) args.Add(property);
+        foreach (var reducer in group.Reducers)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(reducer.Function);
+            ArgumentNullException.ThrowIfNull(reducer.Arguments);
+            args.Add("REDUCE"); args.Add(reducer.Function); args.Add(reducer.Arguments.Count);
+            foreach (var argument in reducer.Arguments) args.Add(argument);
+            if (!string.IsNullOrWhiteSpace(reducer.Alias)) { args.Add("AS"); args.Add(reducer.Alias); }
+        }
+    }
 }
+
+/// <summary>Base type for ordered FT.AGGREGATE operations.</summary>
+public abstract record RespireSearchAggregateStage;
+
+/// <summary>Loads fields before later stages.</summary>
+public sealed record RespireSearchAggregateLoad(IReadOnlyList<string> Fields) : RespireSearchAggregateStage;
+
+/// <summary>Filters rows at this point in the pipeline.</summary>
+public sealed record RespireSearchAggregateFilter(string Expression) : RespireSearchAggregateStage;
+
+/// <summary>Adds an expression result at this point in the pipeline.</summary>
+public sealed record RespireSearchAggregateApply(string Expression, string Alias) : RespireSearchAggregateStage;
+
+/// <summary>Groups rows at this point in the pipeline.</summary>
+public sealed record RespireSearchAggregateGroupStage(RespireSearchAggregateGroup Group) : RespireSearchAggregateStage;
 
 /// <summary>One aggregation GROUPBY stage.</summary>
 public sealed record RespireSearchAggregateGroup(IReadOnlyList<string> Properties, IReadOnlyList<RespireSearchReducer> Reducers);

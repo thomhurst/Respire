@@ -97,6 +97,51 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task AggregateStagesPreserveCallerOrder()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await search.AggregateAsync("idx", "*", new()
+        {
+            Stages = [new RespireSearchAggregateApply("@price * 2", "doubled"), new RespireSearchAggregateFilter("@doubled > 10")],
+        });
+
+        var arguments = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
+        await Assert.That(arguments[^9..]).IsEquivalentTo(
+            ["FT.AGGREGATE", "idx", "*", "APPLY", "@price * 2", "AS", "doubled", "FILTER", "@doubled > 10"],
+            CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task NamedParametersRequireExplicitCompatibleDialect()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "*1\r\n:0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.SearchAsync("idx", new("@name:$name", new()
+        {
+            Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
+        }))).Throws<ArgumentOutOfRangeException>();
+
+        await search.SearchAsync("idx", new("@name:$name", new()
+        {
+            Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
+            Dialect = 3,
+        }));
+        var arguments = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
+        await Assert.That(arguments[^2..]).IsEquivalentTo(["DIALECT", "3"], CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task ExplainCliReturnsEveryPlanLine()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
