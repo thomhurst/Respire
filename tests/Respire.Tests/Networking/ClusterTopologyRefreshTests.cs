@@ -478,6 +478,36 @@ public class ClusterTopologyRefreshTests
     }
 
     [Test]
+    public async Task RefreshCandidatesDeduplicateReplicaEndpointsIgnoringHostCase()
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(seed.Port, seed.Port + 1) : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        typeof(ClusterRouter).GetField("_replicas", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(router, new[]
+            {
+                new ClusterTopologyReplica(new RespireEndpoint("redis-1", 6379), "replica-a", []),
+                new ClusterTopologyReplica(new RespireEndpoint("REDIS-1", 6379), "replica-b", []),
+            });
+
+        var buildCandidates = typeof(ClusterRouter).GetMethod("GetTopologyRefreshCandidates",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var candidates = (List<ClusterRouter.TopologyRefreshCandidate>)buildCandidates.Invoke(router, null)!;
+        var aliases = candidates.Where(candidate => candidate.Endpoint.Port == 6379
+            && StringComparer.OrdinalIgnoreCase.Equals(candidate.Endpoint.Host, "redis-1")).ToArray();
+
+        await Assert.That(aliases.Length).IsEqualTo(1);
+        await Assert.That(aliases[0].Node).IsNull();
+    }
+
+    [Test]
     public async Task HealthyRefreshDoesNotCreateReplicaTransports()
     {
         var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

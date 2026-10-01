@@ -340,7 +340,7 @@ internal sealed partial class ClusterRouter
     {
         var candidates = new List<TopologyRefreshCandidate>();
         var seenNodes = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
-        var seenEndpoints = new HashSet<RespireEndpoint>();
+        var seenEndpoints = new HashSet<RespireEndpoint>(RespireEndpointComparer.Instance);
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
