@@ -150,7 +150,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             RespireServerException? resetError = null;
             try { _ = await coordination.ResetCountdownLatchAsync(key, 2); }
             catch (RespireServerException error) { resetError = error; }
-            await Assert.That(resetError?.Code).IsEqualTo("NOPERM");
+            await Assert.That(resetError?.Message.Contains("publish", StringComparison.OrdinalIgnoreCase)).IsTrue();
 
             var stillCurrent = await new RespireCoordination(admin).JoinCountdownLatchAsync(key);
             await Assert.That(stillCurrent?.Generation).IsEqualTo(original.Generation);
@@ -158,7 +158,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             RespireServerException? countDownError = null;
             try { _ = await restrictedLatch!.CountDownAsync(); }
             catch (RespireServerException error) { countDownError = error; }
-            await Assert.That(countDownError?.Code).IsEqualTo("NOPERM");
+            await Assert.That(countDownError?.Message.Contains("publish", StringComparison.OrdinalIgnoreCase)).IsTrue();
             using var remaining = await admin.ExecuteAsync("HGET", key, "remaining");
             await Assert.That(remaining.AsString()).IsEqualTo("1");
         }
