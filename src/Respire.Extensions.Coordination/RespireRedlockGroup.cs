@@ -309,6 +309,7 @@ public sealed class RespireRedlock : IAsyncDisposable
                     ? Math.Min(state.Lease.ValidUntil, pending)
                     : state.Lease.ValidUntil;
                 var remaining = clock.GetElapsedTime(timestamp, deadline);
+                if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
                 return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
             }
         }

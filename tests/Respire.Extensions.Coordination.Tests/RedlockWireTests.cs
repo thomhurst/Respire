@@ -86,6 +86,29 @@ public class RedlockWireTests
     }
 
     [Test]
+    public async Task RemainingEstimateRechecksReleaseAfterClockRead()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        var clock = new ManualClock();
+        var group = new RespireRedlockGroup(nodes.Clients, timeProvider: clock);
+        await using var attempt = await group.TryAcquireAsync("redlock:release-race", TimeSpan.FromSeconds(10));
+        var timestampRead = clock.BlockNextTimestampRead();
+        var remainingTask = Task.Run(() => attempt.Lock.RemainingEstimate);
+        await timestampRead.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        }
+        finally
+        {
+            timestampRead.Release.TrySetResult();
+        }
+
+        await Assert.That(await remainingTask.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task ShorterRenewalBoundsVisibleLeaseBeforeNodeReplies()
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
