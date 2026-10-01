@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
@@ -162,7 +163,8 @@ public class ClusterNodeIdentityTests
     [Test]
     public async Task QueueOverflowDropsOldestAndCountsTheDrops()
     {
-        var options = Options(6379);
+        using var logger = new WarningCaptureLogger();
+        var options = Options(6379) with { LoggerFactory = logger };
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         await using var router = new ClusterRouter(options, primary);
@@ -189,6 +191,8 @@ public class ClusterNodeIdentityTests
             source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
                 [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
         await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(2);
+        await Assert.That(logger.WarningCount).IsEqualTo(1);
+        await Assert.That(logger.LastWarning).Contains("Cluster SMIGRATED queue is full");
         release.TrySetResult();
         await lastApplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -237,7 +241,9 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
-    public async Task DependentMigrationsEnqueuedOutOfOrderBothApply()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EarlierDependentMigrationAppliesInEitherWorkerOrder(bool predecessorFirst)
     {
         var options = Options(6379);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
@@ -247,18 +253,27 @@ public class ClusterNodeIdentityTests
         var bEndpoint = new RespireEndpoint("b", 7001);
         var cEndpoint = new RespireEndpoint("c", 7002);
         var a = router.GetMultiplexer(aEndpoint);
+        var b = router.GetMultiplexer(bEndpoint);
         router.SetSlotOwner(0, a);
         router.SetSlotOwner(1, a);
 
-        // A->B is received first, on one connection; B->C is received later on another
-        // connection but reaches the worker first.
+        // B->C is received first, so it has the lower fence token, even when worker order differs.
+        var bc = router.CaptureSmigratedNotification(b, new object(),
+            new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")]));
         var ab = router.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
-        var bc = router.CaptureSmigratedNotification(a, new object(),
-            new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")]));
-        router.ApplySmigratedNotification(bc);
-        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), a)).IsTrue();
-        router.ApplySmigratedNotification(ab);
+
+        if (predecessorFirst)
+        {
+            router.ApplySmigratedNotification(ab);
+            router.ApplySmigratedNotification(bc);
+        }
+        else
+        {
+            router.ApplySmigratedNotification(bc);
+            await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), a)).IsTrue();
+            router.ApplySmigratedNotification(ab);
+        }
 
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(cEndpoint.Port);
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), a)).IsTrue();
@@ -1321,4 +1336,23 @@ public class ClusterNodeIdentityTests
         Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) },
         Connections = 1,
     };
+
+    private sealed class WarningCaptureLogger : ILoggerFactory, ILogger
+    {
+        private int _warningCount;
+        internal int WarningCount => Volatile.Read(ref _warningCount);
+        internal string LastWarning { get; private set; } = "";
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel < LogLevel.Warning) return;
+            LastWarning = formatter(state, exception);
+            Interlocked.Increment(ref _warningCount);
+        }
+    }
 }

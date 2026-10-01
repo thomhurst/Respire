@@ -57,6 +57,9 @@ internal sealed partial class ClusterRouter
     // Accessed only under _nodesGate. Oldest first; bounded by entry count and total slots.
     private readonly List<DeferredSmigratedMigration> _deferredSmigratedMigrations = [];
     private int _deferredSmigratedSlots;
+    // Zero means the latest owner mutation was not SMIGRATED; otherwise this stores the
+    // receive-time fence immediately before the dependent SMIGRATED chain began, plus one.
+    private readonly long[] _smigratedSlotLineageStarts = new long[ClusterHash.SlotCount];
     // Started on the first queued notification, so routers that never see SMIGRATED own no task.
     // DisposeAsync swaps in a completed task, after which no worker can start.
     private Task? _smigratedWorker;
@@ -92,7 +95,7 @@ internal sealed partial class ClusterRouter
         if (_logger is null) return;
         var now = Environment.TickCount64;
         var last = Volatile.Read(ref _lastSmigratedDropWarning);
-        if (now - last < SmigratedDropWarningIntervalMilliseconds
+        if ((last != long.MinValue && now - last < SmigratedDropWarningIntervalMilliseconds)
             || Interlocked.CompareExchange(ref _lastSmigratedDropWarning, now, last) != last) return;
         _logger.LogWarning(
             "Cluster SMIGRATED queue is full; dropped the oldest notification (from {Host}:{Port}). {Dropped} dropped so far. MOVED handling and topology discovery will correct the affected slots.",
@@ -140,7 +143,10 @@ internal sealed partial class ClusterRouter
         => new(sender, sequenceScope, notification, ClusterSlotMutationClock.Next());
 
     private void MarkSlotMutatedLocked(int slot)
-        => _slotMutationVersions[slot] = ClusterSlotMutationClock.Next();
+    {
+        _slotMutationVersions[slot] = ClusterSlotMutationClock.Next();
+        _smigratedSlotLineageStarts[slot] = 0;
+    }
 
     // Ends when DisposeAsync completes the channel. It deliberately takes no cancellation
     // token: a registration on _stopDiscovery would make disposal's CancelAsync asynchronous.
@@ -266,9 +272,17 @@ internal sealed partial class ClusterRouter
         List<int>? pending = null;
         foreach (var slot in slots)
         {
-            // A later MOVED, slot clear, discovery change or newer migration owns this slot.
-            if (_slotMutationVersions[slot] > token) continue;
             var owner = Volatile.Read(ref _slots[slot]);
+            // A dependent migration can be received before the migration that establishes its
+            // source (B->C before A->B). Permit a continuous SMIGRATED chain to cross its receive
+            // fence only while the slot ends at this source; MOVED, discovery and slot clears
+            // reset the chain and still win.
+            var mutationVersion = _slotMutationVersions[slot];
+            var isDependentTransfer = mutationVersion > token;
+            if (isDependentTransfer
+                && (!ReferenceEquals(owner, source)
+                    || _smigratedSlotLineageStarts[slot] == 0
+                    || _smigratedSlotLineageStarts[slot] - 1 > token)) continue;
             if (owner is not null && ReferenceEquals(owner, source)) (movable ??= []).Add(slot);
             else if (owner is null || !ReferenceEquals(owner, knownTarget)) (pending ??= []).Add(slot);
         }
@@ -289,9 +303,14 @@ internal sealed partial class ClusterRouter
         foreach (var slot in movable)
         {
             PublishSlotLocked(slot, target, migrationVersion);
-            // The fence check above already guarantees token >= the stored value. Max keeps the
-            // never-decreasing invariant explicit if that check ever changes.
-            _slotMutationVersions[slot] = Math.Max(_slotMutationVersions[slot], token);
+            // Keep the slot mutation version monotonic. Preserve the chain's original fence when
+            // this transfer depends on an earlier SMIGRATED migration; otherwise start a new chain.
+            var priorMutationVersion = _slotMutationVersions[slot];
+            var isDependentTransfer = priorMutationVersion > token;
+            _slotMutationVersions[slot] = Math.Max(priorMutationVersion, token);
+            _smigratedSlotLineageStarts[slot] = isDependentTransfer
+                ? _smigratedSlotLineageStarts[slot]
+                : priorMutationVersion + 1;
         }
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count)) (retiredNodes ??= []).Add(source!);
