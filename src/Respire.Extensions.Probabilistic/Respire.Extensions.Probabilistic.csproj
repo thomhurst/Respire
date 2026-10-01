@@ -7,7 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Respire\Respire.csproj" />
-    <!-- Build-time only: the Respire package already ships the generator, so packing it again would run it twice. -->
+    <!-- Runs the command generator for this project only. Consumers get the generator from the Respire
+         package; shipping it here as well would run it twice and duplicate every generated type. -->
     <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 </Project>

@@ -7,20 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Respire\Respire.csproj" />
+    <!-- Runs the command generator for this project only. Consumers get the generator from the Respire
+         package; shipping it here as well would run it twice and duplicate every generated type. -->
     <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
-  <Target Name="_PackRespireTimeSeriesAnalyzer" BeforeTargets="_GetPackageFiles">
-    <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
-      <Output TaskParameter="TargetOutputs" ItemName="_RespireTimeSeriesAnalyzerAssembly" />
-    </MSBuild>
-    <Error Condition="'@(_RespireTimeSeriesAnalyzerAssembly)' == ''" Text="Respire.Analyzers.dll was not produced for packaging." />
-    <PropertyGroup>
-      <_RespireTimeSeriesAnalyzerOutputDir>%(_RespireTimeSeriesAnalyzerAssembly.RootDir)%(_RespireTimeSeriesAnalyzerAssembly.Directory)</_RespireTimeSeriesAnalyzerOutputDir>
-    </PropertyGroup>
-    <ItemGroup>
-      <None Include="@(_RespireTimeSeriesAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-      <_RespireTimeSeriesAnalyzerDependency Include="$(_RespireTimeSeriesAnalyzerOutputDir)*.dll" Exclude="@(_RespireTimeSeriesAnalyzerAssembly);$(_RespireTimeSeriesAnalyzerOutputDir)Respire.Analyzers.dll;$(_RespireTimeSeriesAnalyzerOutputDir)Microsoft.CodeAnalysis.dll;$(_RespireTimeSeriesAnalyzerOutputDir)Microsoft.CodeAnalysis.CSharp.dll" />
-      <None Include="@(_RespireTimeSeriesAnalyzerDependency)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-    </ItemGroup>
-  </Target>
 </Project>

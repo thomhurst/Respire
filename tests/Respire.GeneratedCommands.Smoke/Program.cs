@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Respire;
 using Respire.Extensions.Json;
 using Redis.Search;
+using Respire.Extensions.TimeSeries;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
@@ -9,6 +10,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
     await using var client = await RespireClient.ConnectAsync($"redis://{endpoint}?protocol={(int)protocol}");
     var commands = new ISmokeCommandsImplementation(client);
     var key = "respire:generator-smoke:" + Guid.NewGuid().ToString("N");
+    var seriesKey = key + ":series";
     try
     {
         await commands.Set(key, "generated");
@@ -124,10 +126,18 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         {
             await search.DropIndexAsync(index, deleteDocuments: true);
         }
+        var timeSeries = new RespireTimeSeriesClient(client);
+        await timeSeries.AddAsync(seriesKey, 1, 1.5);
+        await timeSeries.MultiAddAsync([new(seriesKey, 2, 2.5)]);
+        var range = await timeSeries.RangeAsync(seriesKey, new(RespireTimeSeriesTimestamp.Minimum, RespireTimeSeriesTimestamp.Maximum));
+        var info = await timeSeries.GetInfoAsync(seriesKey);
+        if (range.Samples.Count != 2 || range.Samples[1].Value != 2.5 || info.TotalSamples != 2)
+            throw new InvalidOperationException("Generated TimeSeries package commands failed.");
     }
     finally
     {
         await commands.Delete(key);
+        await commands.Delete(seriesKey);
     }
 
     // Respire.Json under Native AOT: caller-supplied metadata, generated module commands, and key prefixes.
@@ -150,7 +160,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         await json.DeleteAsync("doc");
     }
 }
-Console.WriteLine("Generated commands and Respire.Json passed with RESP2 and RESP3.");
+Console.WriteLine("Generated commands, Respire.Json, and Respire.TimeSeries passed with RESP2 and RESP3.");
 
 public sealed record SmokeDocument(string Name, int Count);
 

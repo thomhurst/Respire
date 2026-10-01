@@ -11,8 +11,26 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- Projects that ship as NuGet packages, one per line. Add a new package project here. -->
+    <RespirePackageProjects>
+      Respire;
+      Respire.Compression.Lz4;
+      Respire.Compression.Zstd;
+      Respire.Extensions.Aws;
+      Respire.Extensions.Azure;
+      Respire.Extensions.Caching;
+      Respire.Extensions.Caching.Hybrid;
+      Respire.Extensions.Coordination;
+      Respire.Extensions.DependencyInjection;
+      Respire.Extensions.Json;
+      Respire.Extensions.Probabilistic;
+      Respire.Extensions.TimeSeries;
+      Respire.Testing;
+      Respire.Testing.Containers;
+    </RespirePackageProjects>
+    <_RespirePackageProjectList>;$([System.Text.RegularExpressions.Regex]::Replace('$(RespirePackageProjects)', '\s', ''))</_RespirePackageProjectList>
     <IsRespirePackageProject>false</IsRespirePackageProject>
-    <IsRespirePackageProject Condition="'$(MSBuildProjectName)' == 'Respire.Compression.Lz4' Or '$(MSBuildProjectName)' == 'Respire.Compression.Zstd' Or '$(MSBuildProjectName)' == 'Respire' Or '$(MSBuildProjectName)' == 'Respire.Extensions.DependencyInjection' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Coordination' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Aws' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Azure' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid' Or '$(MSBuildProjectName)' == 'Respire.Testing' Or '$(MSBuildProjectName)' == 'Respire.Testing.Containers' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Probabilistic' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Json' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Search' Or '$(MSBuildProjectName)' == 'Respire.Extensions.TimeSeries'">true</IsRespirePackageProject>
+    <IsRespirePackageProject Condition="$(_RespirePackageProjectList.Contains(';$(MSBuildProjectName);'))">true</IsRespirePackageProject>
     <IsPackable>$(IsRespirePackageProject)</IsPackable>
   </PropertyGroup>
 
