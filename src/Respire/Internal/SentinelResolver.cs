@@ -120,9 +120,17 @@ internal static class SentinelResolver
                 !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
                 && !cancellationToken.IsCancellationRequested)
             {
-                throw new RespireTimeoutException(
+                lastError = new RespireTimeoutException(
                     "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, error,
                     RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+                lastErrorIsDiscoveryTimeout = true;
+                logger?.LogWarning(lastError,
+                    "Redis Sentinel discovery timed out through {Host}:{Port}; trying remaining candidates when available.",
+                    endpoint.Host, endpoint.Port);
+                if (fallbackBudget.StopAfterFailure(endpoint, index + 1 < sentinelEndpoints.Count))
+                {
+                    break;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
