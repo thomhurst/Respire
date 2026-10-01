@@ -82,9 +82,9 @@ internal sealed partial class SubscriptionHub
                                 SubscribeOperation(subscription.Kind), name, cancellationToken, instrument: true)
                                 .ConfigureAwait(false);
                         }
-                        catch
+                        catch (Exception error)
                         {
-                            uncertain.Add(endpoint);
+                            if (!ContainsServerRejection(error)) uncertain.Add(endpoint);
                             throw;
                         }
                     }
@@ -447,7 +447,7 @@ internal sealed partial class SubscriptionHub
                 var otherNodes = _notificationNodes.Values.ToArray();
                 foreach (var subscription in subscriptions)
                 {
-                    _notificationCoverage.Remove(subscription);
+                    EndNotificationCoverageLocked(subscription);
                     foreach (var other in otherNodes)
                     {
                         for (var kindIndex = 0; kindIndex < other.Routes.Length; kindIndex++)
