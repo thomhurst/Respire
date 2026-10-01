@@ -403,6 +403,35 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task HybridSearchPreservesLoadedExtraAttributesField()
+    {
+        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        {
+            await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+            {
+                ReplyOverride = (_, command) => command switch
+                {
+                    "HELLO 3" => Hello,
+                    _ when command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                        ? "*2\r\n:1\r\n*6\r\n$2\r\nid\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray()
+                        : "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%3\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray(),
+                    _ => null,
+                },
+            };
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var search = new RespireSearchClient(client);
+
+            var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+            {
+                LoadFields = ["title", "extra_attributes"],
+            });
+
+            await Assert.That(result.Documents[0].Fields["title"]).IsEqualTo("foo");
+            await Assert.That(result.Documents[0].Fields["extra_attributes"]).IsEqualTo("custom");
+        }
+    }
+
+    [Test]
     public async Task VectorSchemaRejectsUnsupportedFlags()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)

@@ -611,9 +611,13 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             else if (IsHybridScore(key, reserved)) score = value.AsDouble();
             else if (key == "extra_attributes")
             {
-                var parsed = ParseTypedFields(value);
-                fields = parsed.Fields;
-                structuredFields = parsed.Structured;
+                if (TryParseExtraAttributes(value, out var parsed))
+                    MergeFields(fields, structuredFields, parsed);
+                else
+                {
+                    fields[key] = value.IsNull ? null : value.AsString();
+                    structuredFields[key] = RespireSearchValue.From(value);
+                }
             }
             else
             {
@@ -647,9 +651,22 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                         if (reserved ? itemKey == "__key" : itemKey is "id" or "key" or "keyid" or "__key") id = itemValue.AsString();
                         else if (itemKey == "extra_attributes")
                         {
-                            var parsed = ParseTypedFields(itemValue);
-                            fields = parsed.Fields;
-                            structuredFields = parsed.Structured;
+                            if (hybrid)
+                            {
+                                if (TryParseExtraAttributes(itemValue, out var parsed))
+                                    MergeFields(fields, structuredFields, parsed);
+                                else
+                                {
+                                    fields[itemKey] = itemValue.IsNull ? null : itemValue.AsString();
+                                    structuredFields[itemKey] = RespireSearchValue.From(itemValue);
+                                }
+                            }
+                            else
+                            {
+                                var parsed = ParseTypedFields(itemValue);
+                                fields = parsed.Fields;
+                                structuredFields = parsed.Structured;
+                            }
                         }
                         else if (reserved ? itemKey == "__score" : itemKey is "score" or "__score") score = itemValue.AsDouble();
                         else if (hybrid)
@@ -677,6 +694,29 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             structured[name] = RespireSearchValue.From(value);
         }
         return (fields, structured);
+    }
+
+    private static bool TryParseExtraAttributes(RespireResult value,
+        out (Dictionary<string, string?> Fields, Dictionary<string, RespireSearchValue> Structured) parsed)
+    {
+        parsed = default;
+        if (value.Type is not (RespDataType.Array or RespDataType.Map) || (value.Count & 1) != 0)
+            return false;
+        for (var i = 0; i < value.Count; i += 2)
+        {
+            if (value[i].Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
+                return false;
+        }
+        parsed = ParseTypedFields(value);
+        return true;
+    }
+
+    private static void MergeFields(Dictionary<string, string?> fields,
+        Dictionary<string, RespireSearchValue> structuredFields,
+        (Dictionary<string, string?> Fields, Dictionary<string, RespireSearchValue> Structured) parsed)
+    {
+        foreach (var (key, value) in parsed.Fields) fields[key] = value;
+        foreach (var (key, value) in parsed.Structured) structuredFields[key] = value;
     }
 }
 
