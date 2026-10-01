@@ -23,4 +23,9 @@ if [[ -z ${body//[[:space:]]/} ]]; then
   exit 2
 fi
 
+# The hidden marker lets scripts/Assert-PrGreen.ps1 recognise this comment as
+# the Claude review, since it is posted by the generic workflow token.
+marker='<!-- claude-code-review -->'
+body+=$'\n\n'"$marker"
+
 gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body "$body"

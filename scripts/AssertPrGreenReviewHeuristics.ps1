@@ -296,3 +296,116 @@ function Get-ActionableReviewBodyReason {
 
     return $null
 }
+
+# The Claude Code Review workflow posts its review as a plain PR issue comment
+# from the workflow token (`github-actions[bot]` in REST, `github-actions` in
+# GraphQL), not as a pull request review. Those comments never appear in
+# `latestReviews`, so they are evaluated separately here.
+$script:ClaudeReviewCommentMarker = '<!-- claude-code-review -->'
+
+function Get-CommentAuthorLogin {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Comment
+    )
+
+    if ($null -eq $Comment) { return '' }
+    if ($Comment.PSObject.Properties['login']) { return [string]$Comment.login }
+    if ($Comment.PSObject.Properties['user'] -and $null -ne $Comment.user) { return [string]$Comment.user.login }
+    if ($Comment.PSObject.Properties['author'] -and $null -ne $Comment.author) { return [string]$Comment.author.login }
+    return ''
+}
+
+function Get-CommentCreatedAt {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Comment
+    )
+
+    if ($null -eq $Comment) { return $null }
+    foreach ($name in @('createdAt', 'created_at')) {
+        if ($Comment.PSObject.Properties[$name]) {
+            return ConvertTo-UtcDateTimeOffset $Comment.$name
+        }
+    }
+
+    return $null
+}
+
+function Test-IsBotLogin {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Login
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Login)) { return $true }
+    return ($Login -match '\[bot\]$') -or ($Login -eq 'github-actions')
+}
+
+function Test-IsClaudeReviewComment {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Comment
+    )
+
+    $login = Get-CommentAuthorLogin $Comment
+    if ($login -notin @('github-actions[bot]', 'github-actions')) {
+        return $false
+    }
+
+    $body = [string]$Comment.body
+    if ($body.Contains($script:ClaudeReviewCommentMarker)) {
+        return $true
+    }
+
+    # Comments posted before the marker existed: every other github-actions
+    # comment on a PR is an automated report with a fixed heading.
+    if ($body -match '(?m)^\s*#{1,3}\s*\S*\s*Integration Test Results\b') {
+        return $false
+    }
+
+    return $body -match '(?i)\breview\b'
+}
+
+function Get-UnansweredClaudeReviewReason {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object[]]$Comments
+    )
+
+    $ordered = @(
+        $Comments |
+            Where-Object { $null -ne $_ } |
+            Where-Object { $null -ne (Get-CommentCreatedAt $_) } |
+            Sort-Object { Get-CommentCreatedAt $_ }
+    )
+
+    $latestReview = $ordered | Where-Object { Test-IsClaudeReviewComment $_ } | Select-Object -Last 1
+    if ($null -eq $latestReview) {
+        return $null
+    }
+
+    # Claude reviews usually list findings as bold text or plain numbered items,
+    # which the heading heuristics do not see. Fail closed: only an explicit
+    # CLEAR verdict marker makes a Claude review comment non-actionable.
+    $body = [string]$latestReview.body
+    if ($body -match '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*CLEAR\s*-->\s*$' -and
+        $body -notmatch '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*BLOCKING\s*-->\s*$') {
+        return $null
+    }
+
+    $reason = Get-ActionableReviewBodyReason -Body $body
+    if (-not $reason) {
+        $reason = 'no REVIEW_VERDICT: CLEAR marker'
+    }
+
+    $reviewedAt = Get-CommentCreatedAt $latestReview
+    $reply = $ordered | Where-Object {
+        (-not (Test-IsBotLogin (Get-CommentAuthorLogin $_))) -and ((Get-CommentCreatedAt $_) -gt $reviewedAt)
+    } | Select-Object -First 1
+    if ($null -ne $reply) {
+        return $null
+    }
+
+    return "latest Claude review comment ($($reviewedAt.ToString('u'))) has no later reply: $reason"
+}

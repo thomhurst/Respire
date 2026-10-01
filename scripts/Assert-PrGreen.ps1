@@ -9,6 +9,7 @@
 #     conclusion in SUCCESS/SKIPPED/NEUTRAL; StatusContext: state=SUCCESS)
 #   - no current-head top-level review has actionable finding headings
 #   - no unresolved review threads
+#   - the latest Claude review comment is CLEAR or has a later human reply
 #
 # Any other state — pending/queued/in-progress checks, an empty rollup, a failed
 # check, an unresolved thread, or an API hiccup — exits 1 so the caller MUST NOT
@@ -168,5 +169,20 @@ while ($after)
 
 if ($unresolved -gt 0) { Deny "$unresolved unresolved review thread(s)" }
 
-Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads. Safe to merge."
+# Claude Code Review posts as a PR issue comment, so it never shows up in
+# latestReviews. Its latest review must either carry a CLEAR verdict or have a
+# later human reply recording how each finding was handled.
+$commentLines = gh api "repos/$owner/$name/issues/$Pr/comments" --paginate --jq '.[] | {login: .user.login, createdAt: .created_at, body: .body}' 2>$null
+if ($LASTEXITCODE -ne 0) { Deny "could not fetch PR comments (exit $LASTEXITCODE)" }
+try {
+    $issueComments = @($commentLines | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+}
+catch {
+    Deny "could not parse PR comments: $($_.Exception.Message)"
+}
+
+$claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments
+if ($claudeReviewReason) { Deny $claudeReviewReason }
+
+Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."
 exit 0

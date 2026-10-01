@@ -1148,4 +1148,88 @@ foreach ($case in $staleReviewCases) {
     }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases)."
+function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body) {
+    [pscustomobject]@{ login = $Login; createdAt = $CreatedAt; body = $Body }
+}
+
+$claudeFindings = "**Review: streamed SET**`n`n**Concerns**`n`n1. **Lost wakeups.** The waiter is never cancelled.`n`n<!-- claude-code-review -->"
+$legacyClaudeFindings = "**Review of #654**`n`nThe design is sound.`n`n1. Head-of-line blocking: document it."
+$integrationReport = "## 🧪 Integration Test Results (net8.0, RESP2)`n`n- **Status**: success"
+$clearReview = "## Review`n`nNothing needs action.`n`n<!-- REVIEW_VERDICT: CLEAR -->`n<!-- claude-code-review -->"
+
+$claudeCommentCases = @(
+    @{
+        Name = 'blocks unanswered Claude review comment'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks unanswered legacy Claude review without marker'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $legacyClaudeFindings),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $integrationReport)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'allows Claude review answered by a later human reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
+            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' 'Follow-up: fixed in abc123; head-of-line blocking tracked in #686.')
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'blocks when only bots commented after the review'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
+            (New-TestComment 'greptile-apps[bot]' '2026-10-01T10:10:00Z' 'Confidence Score: 5/5'),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:20:00Z' $integrationReport)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks newer Claude review after an earlier reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $claudeFindings),
+            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' 'Addressed in def456.'),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'allows CLEAR verdict without a reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $claudeFindings),
+            (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' 'Addressed in def456.'),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview)
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'ignores integration reports when no Claude review exists'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $integrationReport)
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'reads REST user.login shape'
+        Comments = @(
+            [pscustomobject]@{ user = [pscustomobject]@{ login = 'github-actions[bot]' }; created_at = '2026-10-01T10:00:00Z'; body = $claudeFindings }
+        )
+        Blocks = $true
+    }
+)
+
+foreach ($case in $claudeCommentCases) {
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments
+    $blocks = [bool]$reason
+    if ($blocks -ne $case.Blocks) {
+        throw "Case '$($case.Name)' expected Blocks=$($case.Blocks), got Blocks=$blocks (reason: $reason)"
+    }
+}
+
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases)."
