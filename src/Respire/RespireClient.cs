@@ -326,16 +326,6 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteRawAsync(command.Name, args, flags, cancellationToken);
         }
 
-        bool catalogPrefixed;
-        RespireValue[] catalogPrefixedArguments;
-        // Layout and null-key failures are argument errors; report them through the task.
-        try { catalogPrefixed = TryPrefixCatalogJsonCommand(command, args, out catalogPrefixedArguments); }
-        catch (Exception error) { return ValueTask.FromException<RespireResult>(error); }
-        if (catalogPrefixed)
-        {
-            return ExecuteRawAsync(command.Name, catalogPrefixedArguments, flags, cancellationToken);
-        }
-
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
             if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
@@ -345,26 +335,6 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
-        // Report rejections and malformed layouts through the task, as ExecuteCatalogAsync does.
-        RespireValue[] prefixedArguments;
-        try
-        {
-            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
-        }
-        catch (ArgumentException exception)
-        {
-            return ValueTask.FromException<RespireResult>(exception);
-        if (!TryPrefixGeneratedKeys(operation, rawArguments, out var prefixedArguments))
-        RespireValue[] prefixedArguments;
-        try
-        {
-            // Report the rejection through the task, as ExecuteCatalogAsync does, rather than synchronously.
-            if (!TryPrefixGeneratedKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
-        }
-        catch (Exception error) { return ValueTask.FromException<RespireResult>(error); }
-        return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken)
@@ -379,15 +349,6 @@ public sealed partial class RespireClient : IRespireClient
         if (command.IsCallerSupplied)
         {
             return ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken);
-        }
-
-        bool catalogPrefixed;
-        RespireValue[] catalogPrefixedArguments;
-        try { catalogPrefixed = TryPrefixCatalogJsonCommand(command, args, out catalogPrefixedArguments); }
-        catch (Exception error) { return ValueTask.FromException(error); }
-        if (catalogPrefixed)
-        {
-            return ExecuteRawFireAndForgetAsync(command.Name, catalogPrefixedArguments, cancellationToken);
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
@@ -421,56 +382,6 @@ public sealed partial class RespireClient : IRespireClient
             prefixedArguments = [];
             return exception;
         }
-        return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
-        if (!TryPrefixGeneratedKeys(operation, rawArguments, out var prefixedArguments))
-            return ValueTask.FromException(KeyPrefixNotSupported());
-            if (!TryPrefixGeneratedKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException(KeyPrefixNotSupported());
-        }
-        catch (Exception error) { return ValueTask.FromException(error); }
-        return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
-    }
-
-    private bool TryPrefixGeneratedKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
-    {
-        if (!operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
-            || !RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
-        {
-            prefixedArguments = [];
-            return false;
-        }
-        prefixedArguments = arguments.ToArray();
-        for (var index = 0; index < layout.Count; index++)
-        {
-            var keyIndex = layout.Start + index * layout.Stride;
-            prefixedArguments[keyIndex] = PrefixRoutedKey(arguments[keyIndex]);
-        }
-        if (layout.Extra >= 0)
-            prefixedArguments[layout.Extra] = PrefixRoutedKey(arguments[layout.Extra]);
-        return true;
-    }
-
-    // A null key would otherwise become the bare prefix and address a real, unintended key.
-    private RespireValue PrefixRoutedKey(RespireValue key)
-    {
-        RespireValue.ThrowIfNull(key, "args");
-        return key.AsKey().Prepend(_keyPrefix!).AsValue();
-    }
-
-    private bool TryPrefixCatalogJsonCommand(
-        RespireCommand command,
-        RespireValue[] args,
-        out RespireValue[] prefixedArguments)
-    {
-        if (_keyPrefix is not null
-            && command.Name.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
-            && RawCommandKeyLayouts.TryGetLayout(command.Name, args, out _))
-        {
-            return TryPrefixGeneratedKeys(command.Name, args, out prefixedArguments);
-        }
-
-        prefixedArguments = [];
-        return false;
     }
 
     /// <summary>
@@ -492,11 +403,18 @@ public sealed partial class RespireClient : IRespireClient
         for (var index = 0; index < layout.Count; index++)
         {
             var keyIndex = layout.Start + index * layout.Stride;
-            prefixedArguments[keyIndex] = Key(arguments[keyIndex].AsKey());
+            prefixedArguments[keyIndex] = PrefixModuleKey(arguments[keyIndex]);
         }
         if (layout.Extra >= 0)
-            prefixedArguments[layout.Extra] = Key(arguments[layout.Extra].AsKey());
+            prefixedArguments[layout.Extra] = PrefixModuleKey(arguments[layout.Extra]);
         return true;
+    }
+
+    // A null key would otherwise become the bare prefix and address a real, unintended key.
+    private RespireValue PrefixModuleKey(RespireValue key)
+    {
+        RespireValue.ThrowIfNull(key, "args");
+        return Key(key.AsKey());
     }
 
     /// <summary>
@@ -508,7 +426,8 @@ public sealed partial class RespireClient : IRespireClient
             || operation.StartsWith("CF.", StringComparison.Ordinal)
             || operation.StartsWith("CMS.", StringComparison.Ordinal)
             || operation.StartsWith("TOPK.", StringComparison.Ordinal)
-            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal);
+            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal)
+            || operation.StartsWith("JSON.", StringComparison.Ordinal);
 
     /// <summary>
     /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a

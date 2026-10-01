@@ -32,7 +32,6 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("JSON.MSET")]
     [Arguments("CMS.MERGE")]
     [Arguments("TDIGEST.MERGE")]
-    [Arguments("JSON.MSET")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
     {
         await using var client = RespireClient.Create(new RespireOptions
@@ -214,9 +213,8 @@ public class ImmediateRawKeyLayoutTests
         "XREADGROUP" => ["GROUP", "STREAMS", "consumer", "NOACK", "STREAMS", first, second, ">", ">"],
         "MIGRATE" => ["destination", 6379, "", 0, 1000, "AUTH2", "user", "KEYS", "KEYS", first, second],
         "JSON.MGET" => [first, second, "$.{not-a-key}"],
-        "JSON.MSET" => [first, "$.{not-a-key}", "{value-one}", second, "$", "{value-two}"],
-        "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
         "JSON.MSET" => [first, "$.field", "{value-one}", second, "$.field", "{value-two}"],
+        "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
         _ => [first, second],
     };
 }
