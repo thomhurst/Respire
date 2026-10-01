@@ -35,7 +35,8 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     private readonly object _ownershipSync = new();
     private LeaseSnapshot _snapshot;
     private int _released;
-    private int _ownershipVersion;
+    private Task<bool>? _releaseTask;
+    private bool _releaseCompleted;
 
     internal RespireReadWriteLock(
         IRespireClient client, RespireKey key, RespireLockToken owner,
@@ -76,8 +77,8 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
 
     /// <summary>Checks whether this exact reader or writer lease still exists on Redis.</summary>
     /// <remarks>
-    /// Only a definitive "not held" reply ends local ownership. Cancellation or a transport failure
-    /// leaves the handle unchanged, so a later release or dispose still removes the Redis entry.
+    /// Only a definitive "not held" reply ends local ownership. Once release starts, the handle
+    /// stays closed even if its reply is uncertain; a later owner-checked release can be retried.
     /// </remarks>
     public async ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
     {
@@ -87,7 +88,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             if (IsReleased) return false;
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireCoordination.VerifyReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-            if (response.AsInteger() == 1) return true;
+            if (response.AsInteger() == 1) return Volatile.Read(ref _released) == 0;
             MarkOwnershipUnavailable();
             return false;
         }
@@ -139,42 +140,41 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     /// <summary>Releases only this owner lease. Repeated calls return false.</summary>
-    /// <remarks>
-    /// Release waits for an in-flight renewal or verification so an uncertain release retry cannot
-    /// race a delayed renewal reply and restore a stale local estimate after Redis removed the lease.
-    /// </remarks>
+    /// <remarks>Local ownership closes before the owner-checked Redis command is sent. A lost reply keeps the handle closed and leaves release retryable.</remarks>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Task<bool> releaseTask;
+        lock (_ownershipSync)
+        {
+            if (_releaseCompleted) return false;
+            Volatile.Write(ref _released, 1);
+            _releaseTask ??= ReleaseCoreAsync();
+            releaseTask = _releaseTask;
+        }
+        return await releaseTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> ReleaseCoreAsync()
+    {
+        await Task.Yield();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            int ownershipVersion;
+            using var response = await _client.Scripts.ExecuteAsync(
+                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], timeout.Token).ConfigureAwait(false);
             lock (_ownershipSync)
             {
-                if (_released != 0) return false;
-                Volatile.Write(ref _released, 1);
-                ownershipVersion = _ownershipVersion;
+                _releaseCompleted = true;
+                _releaseTask = null;
             }
-            try
-            {
-                using var response = await _client.Scripts.ExecuteAsync(
-                    RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-                return response.AsInteger() == 1;
-            }
-            catch
-            {
-                // The reply may be lost after Redis removed the member. Keep a retry path; the
-                // owner-checked script safely reports NotOwned if the first request took effect.
-                lock (_ownershipSync)
-                    if (_ownershipVersion == ownershipVersion) Volatile.Write(ref _released, 0);
-                throw;
-            }
+            return response.AsInteger() == 1;
         }
-        finally
+        catch
         {
-            _operationGate.Release();
+            lock (_ownershipSync) _releaseTask = null;
+            throw;
         }
     }
 
@@ -192,7 +192,6 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     {
         lock (_ownershipSync)
         {
-            _ownershipVersion++;
             Volatile.Write(ref _released, 1);
         }
     }
@@ -201,8 +200,9 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     {
         try
         {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             using var _ = await _client.Scripts.ExecuteAsync(
-                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], CancellationToken.None).ConfigureAwait(false);
+                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], timeout.Token).ConfigureAwait(false);
         }
         catch (Exception) { }
     }

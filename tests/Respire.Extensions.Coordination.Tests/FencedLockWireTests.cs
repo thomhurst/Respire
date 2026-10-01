@@ -55,7 +55,7 @@ public class FencedLockWireTests
     }
 
     [Test]
-    public async Task FailedReadWriteReleaseCanBeRetried()
+    public async Task CancelledReleaseWaitKeepsOwnershipClosed()
     {
         var evalCount = 0;
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
@@ -75,20 +75,30 @@ public class FencedLockWireTests
         while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
         cancellation.Cancel();
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
-        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+        await Assert.That(attempt.Lock.IsReleased).IsTrue();
         await server.SendRawAsync(":1\r\n"u8.ToArray());
         await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            .IsEqualTo(3);
+            .IsEqualTo(2);
     }
 
     [Test]
-    public async Task ReleaseWaitsForVerificationBeforeChangingOwnershipState()
+    public async Task ReleaseClosesOwnershipWhileVerificationIsPending()
     {
-        await using var server = new FakeRespServer(
-            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 250);
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var evalCount = 0;
+        await using var server = new FakeRespServer(3,
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 2,
+            CommandTimeout = null,
+        });
         await using var attempt = await new RespireCoordination(client)
             .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -96,13 +106,16 @@ public class FencedLockWireTests
         var verification = attempt.Lock.VerifyStillHeldAsync().AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
-        var release = attempt.Lock.ReleaseAsync().AsTask();
+        var release = attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
 
-        await Assert.That(attempt.Lock.IsReleased).IsFalse();
-        await Assert.That(await verification.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
-        await Assert.That(server.CommandsSeen).IsEqualTo(3);
+        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(verification.IsCompleted).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+        await client.DisposeAsync();
+        await Assert.That(async () => await verification.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
     }
 
     [Test]
