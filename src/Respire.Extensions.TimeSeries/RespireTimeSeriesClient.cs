@@ -106,7 +106,7 @@ public sealed class RespireTimeSeriesClient
                 arguments[index * 3 + 2] = sample.Value;
             }
             using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
-            if (result.Count != count) throw RespireTimeSeriesSeries.UnexpectedReply();
+            if (result.Count != count) throw TimeSeriesReplyParser.UnexpectedReply();
 
             for (var index = 0; index < count; index++)
             {
@@ -156,7 +156,7 @@ public sealed class RespireTimeSeriesClient
     public async ValueTask<RespireTimeSeriesSample?> GetAsync(RespireKey key, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.GetAsync(key, latestPartialBucket ? LatestOption : [], cancellationToken).ConfigureAwait(false);
-        return result.IsNull || result.Count == 0 ? null : RespireTimeSeriesSeries.ParseSample(result);
+        return TimeSeriesReplyParser.ParseLatest(result);
     }
 
     /// <summary>Gets the latest sample of every series matching the label filters.</summary>
@@ -174,7 +174,7 @@ public sealed class RespireTimeSeriesClient
         RespireTimeSeriesRangeOptions.AppendLabelSelection(arguments, withLabels, selectedLabels);
         RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
         using var result = await _commands.MultiGetAsync([.. arguments], cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesSeries.ParseMany(result, latestSample: true);
+        return TimeSeriesReplyParser.ParseSeries(result, latestSample: true);
     }
 
     /// <summary>Reads one series in ascending timestamp order.</summary>
@@ -183,7 +183,7 @@ public sealed class RespireTimeSeriesClient
         var (from, to) = range.ToTokens(nameof(range));
         var arguments = options?.ToArguments(multiSeries: false) ?? [];
         using var result = await _commands.RangeAsync(key, from, to, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesRangeResult.Parse(result);
+        return TimeSeriesReplyParser.ParseRange(result);
     }
 
     /// <summary>Reads one series in descending timestamp order.</summary>
@@ -192,7 +192,7 @@ public sealed class RespireTimeSeriesClient
         var (from, to) = range.ToTokens(nameof(range));
         var arguments = options?.ToArguments(multiSeries: false) ?? [];
         using var result = await _commands.ReverseRangeAsync(key, from, to, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesRangeResult.Parse(result);
+        return TimeSeriesReplyParser.ParseRange(result);
     }
 
     /// <summary>Reads series matching <see cref="RespireTimeSeriesRangeOptions.Filters"/> in ascending timestamp order.</summary>
@@ -202,7 +202,7 @@ public sealed class RespireTimeSeriesClient
         ArgumentNullException.ThrowIfNull(options);
         var (from, to) = range.ToTokens(nameof(range));
         using var result = await _commands.MultiRangeAsync(from, to, options.ToArguments(multiSeries: true), cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesSeries.ParseMany(result, latestSample: false);
+        return TimeSeriesReplyParser.ParseSeries(result, latestSample: false);
     }
 
     /// <summary>Reads series matching <see cref="RespireTimeSeriesRangeOptions.Filters"/> in descending timestamp order.</summary>
@@ -212,7 +212,7 @@ public sealed class RespireTimeSeriesClient
         ArgumentNullException.ThrowIfNull(options);
         var (from, to) = range.ToTokens(nameof(range));
         using var result = await _commands.MultiReverseRangeAsync(from, to, options.ToArguments(multiSeries: true), cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesSeries.ParseMany(result, latestSample: false);
+        return TimeSeriesReplyParser.ParseSeries(result, latestSample: false);
     }
 
     /// <summary>Deletes samples in an inclusive timestamp range and returns the deleted count.</summary>
@@ -268,7 +268,7 @@ public sealed class RespireTimeSeriesClient
     public async ValueTask<RespireTimeSeriesInfo> GetInfoAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.InfoAsync(key, [], cancellationToken).ConfigureAwait(false);
-        return RespireTimeSeriesInfo.Parse(result);
+        return TimeSeriesReplyParser.ParseInfo(result);
     }
 
     /// <summary>

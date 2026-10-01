@@ -242,7 +242,7 @@ public class TimeSeriesClientTests
     }
 
     [Test]
-    public async Task KeyPrefixedView_PrefixesEverySeriesKeyAndRejectsLabelQueries()
+    public async Task KeyPrefixedView_PrefixesEverySeriesKey()
     {
         await using var server = new FakeRespServer(Ok, Frame(":1\r\n"), Frame("*2\r\n:1\r\n:2\r\n"), Ok, Ok, Frame("*0\r\n"));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -259,21 +259,39 @@ public class TimeSeriesClientTests
             "TS.CREATE tenant:series | TS.ADD tenant:series 1 1.5 | TS.MADD tenant:series 2 2.5 tenant:other 3 3.5 | " +
             "TS.CREATERULE tenant:series tenant:compacted AGGREGATION MAX 1000 | " +
             "TS.DELETERULE tenant:series tenant:compacted | TS.RANGE tenant:series 0 10");
+    }
 
+    // One case per label-filter command, so removing any one of them from the non-prefixable layouts fails
+    // its own case. Each case checks both the typed method and the raw catalog command on a prefixed view.
+    [Test]
+    [Arguments("TS.MGET")]
+    [Arguments("TS.MRANGE")]
+    [Arguments("TS.MREVRANGE")]
+    [Arguments("TS.QUERYINDEX")]
+    public async Task KeyPrefixedView_RejectsLabelQuery(string command)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var prefixed = client.WithKeyPrefix("tenant:");
+        var timeSeries = new RespireTimeSeriesClient(prefixed);
         var labelQuery = new RespireTimeSeriesRangeOptions { Filters = ["room=1"] };
-        Func<Task>[] labelQueries =
-        [
-            async () => await timeSeries.MultiGetAsync(["room=1"]),
-            async () => await timeSeries.MultiRangeAsync(new(0, 1), labelQuery),
-            async () => await timeSeries.MultiReverseRangeAsync(new(0, 1), labelQuery),
-            async () => await timeSeries.QueryIndexAsync(["room=1"]),
-        ];
-        foreach (var query in labelQueries)
+
+        Func<Task> typed = command switch
         {
-            var exception = await Assert.That(query).Throws<NotSupportedException>();
-            await Assert.That(exception!.Message).Contains("unprefixed client");
-        }
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(6);
+            "TS.MGET" => async () => await timeSeries.MultiGetAsync(["room=1"]),
+            "TS.MRANGE" => async () => await timeSeries.MultiRangeAsync(new(0, 1), labelQuery),
+            "TS.MREVRANGE" => async () => await timeSeries.MultiReverseRangeAsync(new(0, 1), labelQuery),
+            "TS.QUERYINDEX" => async () => await timeSeries.QueryIndexAsync(["room=1"]),
+            _ => throw new ArgumentOutOfRangeException(nameof(command)),
+        };
+        var exception = await Assert.That(typed).Throws<NotSupportedException>();
+        await Assert.That(exception!.Message).Contains("unprefixed client");
+
+        var catalogCommand = RespireCommands.All.ToArray().Single(candidate => candidate.Name == command);
+        await Assert.That(async () => await prefixed.ExecuteAsync(catalogCommand, "FILTER", "room=1"))
+            .Throws<NotSupportedException>();
+
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(0);
     }
 
     [Test]
