@@ -12,7 +12,12 @@ public class FencedLockWireTests
     [NotInParallel]
     public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
     {
-        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         using var listener = new ActivityListener
@@ -31,6 +36,8 @@ public class FencedLockWireTests
         await Assert.That(async () => await new RespireCoordination(client)
             .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30), cancellation.Token)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(10, cleanupTimeout.Token);
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
     }

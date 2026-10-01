@@ -151,6 +151,7 @@ public sealed class RespireCoordination
     private const string ReadWritePrelude = """
         local t = redis.call('TIME')
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        local deadlineNow = t[1] * 1000 + math.ceil(t[2] / 1000)
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
         local function refreshExpiry()
             local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')[2]
@@ -173,7 +174,7 @@ public sealed class RespireCoordination
             if first and string.sub(first, 1, {{WriterRole.Length}}) == '{{WriterRole}}' then return 0 end
         end
         local member = role .. ARGV[1]
-        local added = redis.call('ZADD', KEYS[1], 'NX', now + tonumber(ARGV[2]), member)
+        local added = redis.call('ZADD', KEYS[1], 'NX', deadlineNow + tonumber(ARGV[2]), member)
         if added == 0 then return 0 end
         local refreshed, refreshError = pcall(refreshExpiry)
         if not refreshed then
@@ -186,7 +187,7 @@ public sealed class RespireCoordination
     internal static readonly RespireScript RenewReadWriteLock = RespireScript.Create(ReadWritePrelude + """
         local member = ARGV[2] .. ARGV[1]
         if not redis.call('ZSCORE', KEYS[1], member) then return 0 end
-        redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[3]), member)
+        redis.call('ZADD', KEYS[1], 'XX', deadlineNow + tonumber(ARGV[3]), member)
         refreshExpiry()
         return 1
         """);
@@ -312,22 +313,13 @@ public sealed class RespireCoordination
 
         var completed = Stopwatch.GetTimestamp();
         var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
-        if (validity <= TimeSpan.Zero)
-        {
-            using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            try
-            {
-                using var _ = await _client.Scripts.ExecuteAsync(
-                    ReleaseReadWriteLock, [key], [owner.Bytes, role], cleanupTimeout.Token).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // The server-side lease expires even when best-effort cleanup cannot finish.
-            }
-            return default;
-        }
         var lease = new RespireReadWriteLock(_client, key, owner, isWriter,
             TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started);
+        if (validity <= TimeSpan.Zero)
+        {
+            _ = lease.DisposeAsync();
+            return default;
+        }
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -335,7 +327,7 @@ public sealed class RespireCoordination
         }
         catch (OperationCanceledException)
         {
-            await lease.DisposeAsync().ConfigureAwait(false);
+            _ = lease.DisposeAsync();
             throw;
         }
     }
