@@ -229,10 +229,20 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     // Uses the single-flight release path, so a later ReleaseAsync or DisposeAsync joins or
-    // observes this cleanup instead of sending a second release.
+    // observes this cleanup instead of sending a second release. A joined or own attempt that
+    // fails resets the release task, so one fresh owner-checked attempt follows; a timed-out
+    // wait leaves the in-flight release running.
     private async ValueTask ReleaseAfterLostRenewalAsync()
     {
-        try { _ = await ReleaseAsync().AsTask().WaitAsync(ReleaseFallbackTimeout).ConfigureAwait(false); }
-        catch (Exception) { }
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                _ = await ReleaseAsync().AsTask().WaitAsync(ReleaseFallbackTimeout).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException) { return; }
+            catch (Exception) { }
+        }
     }
 }

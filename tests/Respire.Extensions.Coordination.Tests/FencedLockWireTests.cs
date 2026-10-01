@@ -169,6 +169,22 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task LostRenewalRetriesFailedReleaseOnce()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), "-ERR transient\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        // The failed release reset the single-flight task, so cleanup sent one more release that succeeded.
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(4);
+    }
+
+    [Test]
     public async Task ReadWriteRolesDoNotPrefixEachOther()
     {
         // Acquisition identifies a writer member by its role prefix.
