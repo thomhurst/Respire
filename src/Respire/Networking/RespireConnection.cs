@@ -2913,15 +2913,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// True when a streamed bulk reply is still open and no bytes have arrived for at least
-    /// <paramref name="idle"/>. A consumer that stops reading fills the stream pipe, which pauses
-    /// the receive loop, so the last-read time stops advancing.
+    /// True when a streamed bulk reply is still open and its consumer has not read bytes for at
+    /// least <paramref name="idle"/>. Socket reads can pause during pipe backpressure even while
+    /// a slow consumer is making progress, so retirement tracks reads from the returned stream.
     /// </summary>
     internal bool HasStalledBulkStream(TimeSpan idle)
     {
-        if (Volatile.Read(ref _activeBulkStreamSource) is null) return false;
-        var lastRead = Volatile.Read(ref _lastReadTimestamp);
-        return lastRead != 0 && Stopwatch.GetElapsedTime(lastRead) >= idle;
+        return Volatile.Read(ref _activeBulkStreamSource)?.HasStalledReader(idle) == true;
     }
 
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>

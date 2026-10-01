@@ -993,7 +993,7 @@ public class ReadEndpointRoutingTests
     [Test]
     public async Task RemovedReplicaFinishesAStreamedReadBeforeClosing()
     {
-        const int payloadLength = 8 * 1024 * 1024;
+        const int payloadLength = 128 * 1024;
         var frame = new byte[payloadLength + 32];
         var header = Encoding.ASCII.GetBytes($"${payloadLength}\r\n");
         header.CopyTo(frame, 0);
@@ -1033,20 +1033,23 @@ public class ReadEndpointRoutingTests
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromMilliseconds(300);
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
         await using var stream = await view.Strings.GetStreamAsync("big");
-        var buffer = new byte[64 * 1024];
+        var buffer = new byte[2 * 1024];
         var total = await stream!.ReadAsync(buffer);
         var serving = first.ReceivedCommands.Contains("GET big") ? first : second;
         var other = ReferenceEquals(serving, first) ? second : first;
 
         Volatile.Write(ref replicaPorts, [other.Port]);
         await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-        // Outlast the retirement grace period and several command timeouts before reading the rest.
-        await Task.Delay(TimeSpan.FromSeconds(1.5));
         int read;
-        while ((read = await stream.ReadAsync(buffer)) > 0) total += read;
+        while ((read = await stream.ReadAsync(buffer)) > 0)
+        {
+            total += read;
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
 
         await Assert.That(total).IsEqualTo(payloadLength);
         // Once the stream completes, the drained replica closes without waiting for client disposal.
