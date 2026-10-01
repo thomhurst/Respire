@@ -114,12 +114,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             if (switchRefreshVersion is { } activeVersion && activeVersion != _switchRefreshVersion)
                 throw new SupersededSentinelRefreshException();
-            if (switchRefreshVersion is null && _pendingSwitchPrimary is { } pendingTargetForDiscovery)
+            if (switchRefreshVersion is null)
             {
-                expectedPrimary = pendingTargetForDiscovery;
-                rejectedPrimary = _pendingSwitchPrevious;
-                pendingSwitchTarget = pendingTargetForDiscovery;
                 pendingSwitchVersion = _switchRefreshVersion;
+                if (_pendingSwitchPrimary is { } pendingTargetForDiscovery)
+                {
+                    expectedPrimary = pendingTargetForDiscovery;
+                    rejectedPrimary = _pendingSwitchPrevious;
+                    pendingSwitchTarget = pendingTargetForDiscovery;
+                }
             }
             // Another discovery owner may have published while this caller awaited the gate.
             Generation? expectedGeneration = null;
@@ -228,6 +231,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             error, cancellationToken, linked.Token))
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+        catch (SupersededSentinelRefreshException) when (switchRefreshVersion is null)
+        {
+            if (Current is { IsRetired: false } recovered && recovered.Multiplexer.IsConnected) return recovered;
+            throw new RespireConnectionException("Sentinel discovery was superseded by a newer switch event.");
         }
         finally
         {

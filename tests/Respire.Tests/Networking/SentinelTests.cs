@@ -771,6 +771,45 @@ public class SentinelTests
 
     [Test]
     [NotInParallel]
+    public async Task SwitchEventSupersedesCompetingCommandDiscovery()
+    {
+        await using var first = CreatePrimary();
+        await using var replacement = CreatePrimary();
+        var primaryPort = first.Port;
+        await using var sentinel = CreateSentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
+        await WaitUntilQuietAsync(() => sentinel.ReceivedCommands.Count + first.ReceivedCommands.Count);
+        var monitor = sentinel.ReceivedConnectionIds[sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command == "SUBSCRIBE +switch-master")];
+        var discoveryCount = sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
+
+        sentinel.DelayReply(0, 1_000);
+        var competingDiscovery = Task.Run(async () => await client.Core.Sentinel!.GetGenerationAsync(
+            CancellationToken.None,
+            new RespireEndpoint("127.0.0.1", sentinel.Port),
+            new RespireEndpoint("127.0.0.1", replacement.Port),
+            new RespireEndpoint("127.0.0.1", first.Port)));
+        await WaitUntilAsync(() => sentinel.ReceivedCommands.Count(command => command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster") > discoveryCount);
+
+        sentinel.DelayReply(0, 0);
+        Volatile.Write(ref primaryPort, replacement.Port);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, replacement.Port), monitor);
+        await Assert.That(async () => await competingDiscovery).Throws<RespireConnectionException>();
+        await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
+            && current.Endpoint.Port == replacement.Port);
+        await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DuplicateSwitchEventsFromSeveralSentinelsReplacePrimaryOnce()
     {
         await using var first = CreatePrimary();
