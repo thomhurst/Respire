@@ -11,7 +11,12 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Projects that ship as NuGet packages, one per line. Add a new package project here. -->
+    <!--
+      Projects that ship as NuGet packages, one per line. Add a new package project here.
+      Whitespace is stripped and the list gets a leading ';', so membership is an exact ';Name;' match.
+      _RespireValidatePackageProjectList (below) fails the build when a listed name has no project under
+      src/, or when a src/ project is neither listed nor in RespireNonPackageProjects.
+    -->
     <RespirePackageProjects>
       Respire;
       Respire.Compression.Lz4;
@@ -32,7 +37,21 @@
     <IsRespirePackageProject>false</IsRespirePackageProject>
     <IsRespirePackageProject Condition="$(_RespirePackageProjectList.Contains(';$(MSBuildProjectName);'))">true</IsRespirePackageProject>
     <IsPackable>$(IsRespirePackageProject)</IsPackable>
+    <!-- src/ projects that deliberately do not ship as their own package. -->
+    <RespireNonPackageProjects>;Respire.Analyzers;</RespireNonPackageProjects>
   </PropertyGroup>
+
+  <!-- Runs once, in the core project, so a typo in the package list cannot silently make a project unpackable. -->
+  <Target Name="_RespireValidatePackageProjectList" BeforeTargets="Build" Condition="'$(MSBuildProjectName)' == 'Respire'">
+    <ItemGroup>
+      <_RespireListedPackageProject Include="$([MSBuild]::Unescape($(_RespirePackageProjectList)))" />
+      <_RespireSourceProject Include="$(MSBuildThisFileDirectory)src/*/*.csproj" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj')"
+           Text="RespirePackageProjects lists '%(_RespireListedPackageProject.Identity)', but src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj does not exist." />
+    <Error Condition="!$(_RespirePackageProjectList.Contains(';%(_RespireSourceProject.Filename);')) And !$(RespireNonPackageProjects.Contains(';%(_RespireSourceProject.Filename);'))"
+           Text="src project '%(_RespireSourceProject.Filename)' is not in RespirePackageProjects or RespireNonPackageProjects in Directory.Build.props." />
+  </Target>
 
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Respire.Extensions.Coordination.Tests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Azure.Tests' Or '$(MSBuildProjectName)' == 'Respire.Tests' Or '$(MSBuildProjectName)' == 'Respire.IntegrationTests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Tests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid.Tests' Or '$(MSBuildProjectName)' == 'Respire.Pipeline.Tests'">
     <IsTestProject>true</IsTestProject>

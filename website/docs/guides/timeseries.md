@@ -37,7 +37,7 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 
 ## Writes
 
-`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
+`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample. The whole batch goes to Redis as one `TS.MADD` command, and Respire does not limit its size. Redis finishes the command before it serves other clients, so split very large batches, for example into chunks of a few thousand samples. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
 
 Timestamps are checked before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions, and `Align` take a non-negative millisecond timestamp, `Minimum`, or `Maximum`.
 
@@ -51,10 +51,14 @@ Timestamps are checked before anything is sent. Writes take a non-negative milli
 
 `CreateRuleAsync` creates a compaction rule from a source series into an existing destination series, with an optional alignment timestamp. The bucket duration is given in milliseconds or as a `TimeSpan`. `DeleteRuleAsync` removes the rule between a source and a destination.
 
-`GetInfoAsync` returns a typed `RespireTimeSeriesInfo` with the sample count, first and last timestamps, retention, chunk settings, duplicate policy, labels, source key, and compaction rules. `GetRawInfoAsync` returns the raw `TS.INFO` or `TS.INFO DEBUG` response for fields the typed model does not cover. The caller must dispose that result.
+`GetInfoAsync` returns a typed `RespireTimeSeriesInfo` with the sample count, first and last timestamps, retention, chunk settings, duplicate policy, labels, source key, and compaction rules. `GetRawInfoAsync` reads the raw `TS.INFO` or `TS.INFO DEBUG` response for fields the typed model does not cover. Pass a projection, such as `GetRawInfoAsync(key, static info => info.Count)`, and Respire disposes the response after the projection runs. The overload without a projection returns the response itself, and the caller must dispose it.
 
 ## Key prefixes and Cluster
 
+:::warning Label-filter queries in Redis Cluster
+`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync` name no keys, so in Redis Cluster Respire sends each call to one node. Whether the result covers every shard depends on the server's RedisTimeSeries cluster support. Without that support, you only see the series stored on the node that answered.
+:::
+
 The package uses Respire's generated command infrastructure and does not use reflection. On a `WithKeyPrefix` view, every series key is prefixed, including both keys of a compaction rule and every key passed to `MultiAddAsync`. Label-filter queries (`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync`) name no keys and would return series outside the prefix. A prefixed view therefore rejects them with `NotSupportedException`. Run them through an unprefixed client instead.
 
-In Redis Cluster, `MultiAddAsync` and `CreateRuleAsync` require all their keys to share a hash slot. Label-filter queries are sent to one node, and whether they cover every shard depends on the server's RedisTimeSeries cluster support. The caller owns the underlying client.
+In Redis Cluster, `MultiAddAsync` and `CreateRuleAsync` require all their keys to share a hash slot. The caller owns the underlying client.

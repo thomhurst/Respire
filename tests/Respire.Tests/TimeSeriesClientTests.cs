@@ -291,12 +291,14 @@ public class TimeSeriesClientTests
                 "$5\r\nrules\r\n*1\r\n*4\r\n$4\r\ndest\r\n:10\r\n$3\r\navg\r\n:5\r\n" +
                 "$16\r\nignoreMaxValDiff\r\n$3\r\n0.5\r\n" +
                 "$11\r\nfutureField\r\n:1\r\n"),
-            Frame("*0\r\n"));
+            Frame("*0\r\n"),
+            Frame("*2\r\n$12\r\ntotalSamples\r\n:2\r\n"));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var timeSeries = new RespireTimeSeriesClient(client);
 
         var info = await timeSeries.GetInfoAsync("series");
         using (await timeSeries.GetRawInfoAsync("series", debug: true)) { }
+        var rawCount = await timeSeries.GetRawInfoAsync("series", static result => result.Count);
 
         await Assert.That(info.TotalSamples).IsEqualTo(2);
         await Assert.That(info.RetentionMilliseconds).IsEqualTo(1000);
@@ -307,7 +309,8 @@ public class TimeSeriesClientTests
         await Assert.That(info.Rules.Select(static rule => (rule.DestinationKey.ToString(), rule.BucketDurationMilliseconds, rule.Aggregation, rule.AlignTimestamp)))
             .IsEquivalentTo([("dest", 10L, "avg", 5L)]);
         await Assert.That(info.IgnoreMaxValueDifference).IsEqualTo(0.5);
-        await Assert.That(Sent(server)).IsEqualTo("TS.INFO series | TS.INFO series DEBUG");
+        await Assert.That(rawCount).IsGreaterThan(0);
+        await Assert.That(Sent(server)).IsEqualTo("TS.INFO series | TS.INFO series DEBUG | TS.INFO series");
     }
 
     [Test]

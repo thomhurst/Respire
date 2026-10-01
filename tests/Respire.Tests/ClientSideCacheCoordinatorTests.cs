@@ -415,7 +415,7 @@ public class ClientSideCacheCoordinatorTests
     public async Task TimeSeriesMutationsFenceTheirKeyOrFlushWhenTheyWriteSeveralKeys()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
-        foreach (var operation in new[] { "TS.CREATE", "TS.ALTER", "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.DEL" })
+        foreach (var operation in new[] { "TS.CREATE", "TS.ALTER" })
         {
             Insert(cache, "unrelated", "retained");
             Insert(cache, "series", "old");
@@ -427,9 +427,10 @@ public class ClientSideCacheCoordinatorTests
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         }
 
-        // TS.MADD writes every listed series and rules change the destination, so they take the
-        // conservative unknown-mutation path and flush everything.
-        foreach (var operation in new[] { "TS.MADD", "TS.CREATERULE", "TS.DELETERULE" })
+        // TS.MADD writes every listed series and rules change the destination. Sample writes and
+        // deletes on a source series with a compaction rule also update the destination series,
+        // so all of these take the conservative unknown-mutation path and flush everything.
+        foreach (var operation in new[] { "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.DEL", "TS.MADD", "TS.CREATERULE", "TS.DELETERULE" })
         {
             Insert(cache, "unrelated", "dropped");
             var command = new Cmd1N(new Verb(operation), "series", ["other"]);
@@ -443,6 +444,26 @@ public class ClientSideCacheCoordinatorTests
         {
             await Assert.That(ClientSideCacheCoordinator.CanCacheOperation(operation)).IsFalse();
         }
+    }
+
+    [Test]
+    public async Task SingleKeyMutationsOnlyUseLayoutsThatNameOneWrittenKey()
+    {
+        // Guards drift between the hand-maintained cache classification and the key layout table:
+        // a command that writes several keys must flush instead of fencing only its first key.
+        var checkedCount = 0;
+        foreach (var (operation, namesOneWrittenKey) in RawCommandKeyLayouts.AllLayouts)
+        {
+            if (!ClientSideCacheCoordinator.IsSingleKeyMutation(operation))
+            {
+                continue;
+            }
+
+            checkedCount++;
+            await Assert.That(namesOneWrittenKey).IsTrue().Because($"{operation} is fenced as a single-key mutation");
+        }
+
+        await Assert.That(checkedCount).IsGreaterThan(0);
     }
 
     [Test]

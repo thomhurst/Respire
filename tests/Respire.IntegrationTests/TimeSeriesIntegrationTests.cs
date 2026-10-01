@@ -92,6 +92,7 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         await Assert.That(compactedInfo.Labels["kind"]).IsEqualTo("compacted");
         using (var rawInfo = await timeSeries.GetRawInfoAsync(source, debug: true))
             await Assert.That(rawInfo.Count).IsGreaterThan(0);
+        await Assert.That(await timeSeries.GetRawInfoAsync(source, static info => info.Count)).IsGreaterThan(0);
         await timeSeries.DeleteRuleAsync(source, compacted);
         await Assert.That(await timeSeries.DeleteRangeAsync(source, new(0, 5))).IsEqualTo(2);
         await Assert.That(await timeSeries.GetAsync(compacted, latestPartialBucket: true)).IsNotNull();

@@ -25,6 +25,10 @@ internal static class RawCommandKeyLayouts
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
     // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
     internal static IEnumerable<string> DeferredOperations => Layouts.Where(pair => pair.Value.Deferred).Select(pair => pair.Key);
+    // Test-only enumeration lets cache tests check that every single-key cache mutation has a layout
+    // that names one written key (the first key, or the destination of a counted merge).
+    internal static IEnumerable<(string Operation, bool NamesOneWrittenKey)> AllLayouts
+        => Layouts.Select(pair => (pair.Key, pair.Value.Kind is LayoutKind.First or LayoutKind.CountedWithDestination));
 
     private static FrozenDictionary<string, Definition> CreateLayouts()
     {

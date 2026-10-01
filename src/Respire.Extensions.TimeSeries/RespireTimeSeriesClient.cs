@@ -53,6 +53,12 @@ public sealed class RespireTimeSeriesClient
     }
 
     /// <summary>Adds samples to existing series and returns each assigned timestamp, in request order.</summary>
+    /// <remarks>
+    /// The whole batch is sent as one TS.MADD command, and Respire applies no batch size limit. Redis runs the
+    /// command to completion before it serves other clients, and the command and reply are buffered in full,
+    /// so split very large batches (for example, into chunks of a few thousand samples) to keep latency and
+    /// buffer use bounded.
+    /// </remarks>
     /// <exception cref="RespireTimeSeriesMultiAddException">
     /// The server rejected one or more samples. Accepted samples were written; the exception reports the
     /// timestamp or error of every sample.
@@ -234,9 +240,27 @@ public sealed class RespireTimeSeriesClient
     }
 
     /// <summary>Returns the raw TS.INFO, or TS.INFO DEBUG, response, including fields <see cref="RespireTimeSeriesInfo"/> does not model.</summary>
-    /// <remarks>The caller owns the returned result and must dispose it.</remarks>
+    /// <remarks>
+    /// The caller owns the returned result and must dispose it. Prefer
+    /// <see cref="GetRawInfoAsync{T}(RespireKey, Func{RespireResult, T}, bool, CancellationToken)"/>, which disposes it for you.
+    /// </remarks>
     public ValueTask<RespireResult> GetRawInfoAsync(RespireKey key, bool debug = false, CancellationToken cancellationToken = default)
         => _commands.InfoAsync(key, debug ? DebugOption : [], cancellationToken);
+
+    /// <summary>
+    /// Reads the raw TS.INFO, or TS.INFO DEBUG, response with <paramref name="read"/> and disposes it afterwards,
+    /// so pooled response buffers cannot leak.
+    /// </summary>
+    /// <param name="key">Series key.</param>
+    /// <param name="read">Projects the response. The result is disposed when it returns, so it must not escape.</param>
+    /// <param name="debug">Sends TS.INFO DEBUG, which adds per-chunk details.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    public async ValueTask<T> GetRawInfoAsync<T>(RespireKey key, Func<RespireResult, T> read, bool debug = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        using var result = await _commands.InfoAsync(key, debug ? DebugOption : [], cancellationToken).ConfigureAwait(false);
+        return read(result);
+    }
 
     /// <summary>Finds binary-safe keys of series matching label filters.</summary>
     /// <exception cref="NotSupportedException">The client is a key-prefixed view.</exception>
