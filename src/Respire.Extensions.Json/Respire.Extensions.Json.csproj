@@ -14,28 +14,4 @@
                       ReferenceOutputAssembly="false"
                       PrivateAssets="all" />
   </ItemGroup>
-
-  <Target Name="_PackRespireJsonAnalyzer" BeforeTargets="_GetPackageFiles">
-    <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj"
-             Targets="GetTargetPath"
-             Properties="Configuration=$(Configuration)">
-      <Output TaskParameter="TargetOutputs" ItemName="_RespireJsonAnalyzerAssembly" />
-    </MSBuild>
-    <Error Condition="'@(_RespireJsonAnalyzerAssembly)' == ''"
-           Text="Respire.Analyzers.dll was not produced for packaging." />
-    <PropertyGroup>
-      <_RespireJsonAnalyzerOutputDir>%(_RespireJsonAnalyzerAssembly.RootDir)%(_RespireJsonAnalyzerAssembly.Directory)</_RespireJsonAnalyzerOutputDir>
-    </PropertyGroup>
-    <ItemGroup>
-      <None Include="@(_RespireJsonAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-      <_RespireJsonAnalyzerDependency
-          Include="$(_RespireJsonAnalyzerOutputDir)*.dll"
-          Exclude="@(_RespireJsonAnalyzerAssembly);
-                   $(_RespireJsonAnalyzerOutputDir)Respire.Analyzers.dll;
-                   $(_RespireJsonAnalyzerOutputDir)Microsoft.CodeAnalysis.dll;
-                   $(_RespireJsonAnalyzerOutputDir)Microsoft.CodeAnalysis.CSharp.dll" />
-      <None Include="@(_RespireJsonAnalyzerDependency)"
-            Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-    </ItemGroup>
-  </Target>
 </Project>

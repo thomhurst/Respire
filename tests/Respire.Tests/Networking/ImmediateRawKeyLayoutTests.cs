@@ -32,6 +32,7 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("JSON.MSET")]
     [Arguments("CMS.MERGE")]
     [Arguments("TDIGEST.MERGE")]
+    [Arguments("JSON.MSET")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
     {
         await using var client = RespireClient.Create(new RespireOptions
@@ -118,7 +119,9 @@ public class ImmediateRawKeyLayoutTests
         await using var standalone = await FakeRespServer.ConnectClientAsync(standaloneServer.Port);
         using var crossSlot = await standalone.ExecuteAsync(RespireCommands.String.MGET, "{a}:one", "{b}:two");
         using var malformed = await standalone.ExecuteAsync(RespireCommands.String.MSET, "unpaired-key");
-        await Assert.That(standaloneServer.CommandsSeen).IsEqualTo(2);
+        using var jsonDebugHelp = await standalone.ExecuteAsync("JSON.DEBUG HELP");
+        await Assert.That(standaloneServer.ReceivedCommands).Contains("JSON.DEBUG HELP");
+        await Assert.That(standaloneServer.CommandsSeen).IsEqualTo(3);
 
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), FakeRespServer.OkReply);
         await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
@@ -152,6 +155,13 @@ public class ImmediateRawKeyLayoutTests
         var prefixed = client.WithKeyPrefix("tenant:");
         await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.String.MGET, "one", "two"))
             .Throws<NotSupportedException>();
+
+        var debugMemory = RawCommandKeyLayouts.ValidateClusterKeys("JSON.DEBUG", ["MEMORY", "{tag}:doc", "."]);
+        await Assert.That(debugMemory.Known).IsTrue();
+        await Assert.That(debugMemory.Index).IsEqualTo(1);
+        var debugHelp = RawCommandKeyLayouts.ValidateClusterKeys("JSON.DEBUG", ["HELP"]);
+        await Assert.That(debugHelp.Known).IsTrue();
+        await Assert.That(debugHelp.Index).IsEqualTo(RawCommandKeyLayouts.KeyRouting.NoKeyIndex);
     }
 
     [Test]
@@ -206,6 +216,7 @@ public class ImmediateRawKeyLayoutTests
         "JSON.MGET" => [first, second, "$.{not-a-key}"],
         "JSON.MSET" => [first, "$.{not-a-key}", "{value-one}", second, "$", "{value-two}"],
         "CMS.MERGE" or "TDIGEST.MERGE" => [first, 1, second],
+        "JSON.MSET" => [first, "$.field", "{value-one}", second, "$.field", "{value-two}"],
         _ => [first, second],
     };
 }
