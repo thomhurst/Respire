@@ -122,12 +122,13 @@ internal sealed partial class RespireConnection
 
     internal event Action<Respire.Infrastructure.MovingAnnouncement>? MovingNotification;
 
-    private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
-        long deadline = long.MaxValue)
+    // The relaxed timeout for work that is not tied to one command deadline (the deadline sweep
+    // applies MaintenanceTimeoutState.Relaxes per entry, using the returned window start).
+    private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started)
     {
         var window = Volatile.Read(ref _maintenanceState)?.GetWindow(now);
         started = window?.Started ?? long.MaxValue;
-        remainingWindow = window is not null && deadline > window.Started ? window.Expires - now : 0;
+        remainingWindow = window is not null ? window.Expires - now : 0;
         return remainingWindow > 0 && _maintenanceOptions!.MaintenanceRelaxedTimeout > normal
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
@@ -148,22 +149,15 @@ internal sealed partial class RespireConnection
             : deadline;
     }
 
-    /// <summary>
-    /// The timeout that applies to a parked producer at <paramref name="now"/>, and how far it
-    /// extends the stamped deadline. An already relaxed rerouted deadline keeps its allowance
-    /// and gets no second extension from this socket's window.
-    /// </summary>
-    private TimeSpan CapacityTimeout(CommandDeadline deadline, long now, out long extension, out long window)
+    // Shared by the full-ring capacity wait and the streamed SET timer; see
+    // MaintenanceTimeoutState.RemainingUntilDeadline for the rule the deadline sweep also applies.
+    private long RemainingUntilCommandDeadline(long deadline, long now, out TimeSpan effectiveTimeout,
+        out long remainingWindow, bool alreadyRelaxed = false)
     {
         var normal = _commandTimeout!.Value;
-        var windowTimeout = MaintenanceTimeout(normal, now, out window, out _, deadline.Ticks);
-        if (deadline.IsRelaxed)
-        {
-            extension = 0;
-            return Max(normal, _maintenanceOptions!.MaintenanceRelaxedTimeout);
-        }
-        extension = (long)(windowTimeout - normal).TotalMilliseconds;
-        return windowTimeout;
+        return MaintenanceTimeoutState.RemainingUntilDeadline(Volatile.Read(ref _maintenanceState), normal,
+            _maintenanceOptions?.MaintenanceRelaxedTimeout ?? normal, deadline, now, out effectiveTimeout,
+            out remainingWindow, alreadyRelaxed);
     }
 
     private async Task WaitForMaintenanceCapacityAsync(Task capacityAvailable, CommandDeadline deadline,
@@ -173,8 +167,7 @@ internal sealed partial class RespireConnection
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
-            var timeout = CapacityTimeout(deadline, now, out var extension, out var window);
-            var remaining = deadline.Ticks + extension - now;
+            var remaining = RemainingUntilCommandDeadline(deadline.Ticks, now, out var timeout, out var window, deadline.IsRelaxed);
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
                     CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
@@ -184,8 +177,8 @@ internal sealed partial class RespireConnection
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
-                var resumedTimeout = CapacityTimeout(deadline, resumedAt, out var resumedExtension, out _);
-                if (deadline.Ticks + resumedExtension - resumedAt <= 0)
+                var resumedRemaining = RemainingUntilCommandDeadline(deadline.Ticks, resumedAt, out var resumedTimeout, out _, deadline.IsRelaxed);
+                if (resumedRemaining <= 0)
                     throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
                         CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
                 return;

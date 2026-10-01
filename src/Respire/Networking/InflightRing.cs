@@ -149,7 +149,7 @@ internal sealed class InflightRing
             }
 
             // A late notification cannot revive a deadline that elapsed before maintenance.
-            var extension = !alreadyRelaxed && deadline > maintenanceStarted ? deadlineExtension : 0;
+            var extension = !alreadyRelaxed && MaintenanceTimeoutState.Relaxes(deadline, maintenanceStarted) ? deadlineExtension : 0;
             var remaining = deadline + extension - nowMilliseconds;
             if (remaining > 0)
             {

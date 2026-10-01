@@ -889,6 +889,58 @@ public class MaintenanceNotificationTests
         dequeued.ReleaseRef();
     }
 
+    // The streamed SET timer and the full-ring capacity wait compute their deadline with
+    // MaintenanceTimeoutState.RemainingUntilDeadline; the in-flight sweep applies the same rule per
+    // entry. Run identical windows through both so streamed and ordinary commands cannot drift.
+    [Test]
+    [Arguments(900L, 1100L, true)]   // Expired before maintenance started: never revived.
+    [Arguments(1000L, 1100L, true)]  // Deadline exactly at the window start: not relaxed.
+    [Arguments(1001L, 1100L, true)]  // Relaxed by the window.
+    [Arguments(1001L, 2100L, true)]  // Relaxed deadline has also passed.
+    [Arguments(1250L, 1100L, false)] // Relaxed timeout shorter than normal: never shortened.
+    [Arguments(1250L, 7000L, true)]  // Window expired: the normal deadline applies again.
+    [Arguments(1250L, 1100L, null)]  // No maintenance at all.
+    public async Task StreamedAndSweptDeadlinesAgreeAcrossMaintenanceWindows(long deadline, long now, bool? longerRelaxation)
+    {
+        var normal = TimeSpan.FromMilliseconds(200);
+        var relaxed = longerRelaxation == false ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromMilliseconds(1200);
+        MaintenanceTimeoutState? state = null;
+        if (longerRelaxation is not null)
+        {
+            state = new MaintenanceTimeoutState(5000);
+            state.Apply(new("MIGRATING", 1), 1000);
+        }
+
+        var streamedRemaining = MaintenanceTimeoutState.RemainingUntilDeadline(state, normal, relaxed, deadline, now,
+            out var streamedTimeout, out _);
+
+        // The sweep path, exactly as SweepCommandDeadlinesAsync feeds the ring.
+        var window = state?.GetWindow(now);
+        var sweepTimeout = window is not null && relaxed > normal ? relaxed : normal;
+        var pool = new PendingResponsePool(1);
+        var ring = new InflightRing(1);
+        var source = pool.Rent(commandName: "PING");
+        source.Deadline = CommandDeadline.At(deadline);
+        ring.TryEnqueue(source);
+        var sweptRemaining = ring.SweepExpired(now, normal, null,
+            (long)(sweepTimeout - normal).TotalMilliseconds, window?.Started ?? long.MaxValue);
+
+        if (streamedRemaining <= 0)
+        {
+            await Assert.That(sweptRemaining).IsEqualTo(-1);
+            var error = await Assert.That(async () => await source.Task).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Timeout).IsEqualTo(streamedTimeout);
+        }
+        else
+        {
+            await Assert.That(sweptRemaining).IsEqualTo(streamedRemaining);
+            source.TrySetResult(RespValue.Integer(1));
+            using var result = await source.Task;
+        }
+        ring.TryDequeue(out var dequeued);
+        dequeued.ReleaseRef();
+    }
+
     [Test]
     public async Task DeadlineSweepHonorsRerouteMarkerWithoutReextending()
     {

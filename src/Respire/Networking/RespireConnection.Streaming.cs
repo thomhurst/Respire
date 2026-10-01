@@ -18,10 +18,6 @@ internal sealed partial class RespireConnection
     /// </summary>
     internal const int StreamChunkSize = 32 * 1024;
 
-    // System.Threading.Timer accepts at most about 49.7 days. CommandTimeout has no upper bound,
-    // so a longer deadline re-arms the timer in slices instead of failing to schedule.
-    private const long StreamTimeoutTimerSliceMilliseconds = 30L * 24 * 60 * 60 * 1000;
-
     private enum StreamedSetPhase
     {
         /// <summary>Nothing written: the request and the caller's source are untouched and retryable.</summary>
@@ -30,7 +26,8 @@ internal sealed partial class RespireConnection
         /// <summary>
         /// Reading the first chunk of a stream source before the header is queued. Nothing is on the
         /// wire, so a failure (including early EOF) reclaims the request without closing the
-        /// connection, but the source has been consumed and the command is no longer retryable.
+        /// connection. The source has been consumed, so only a retirement rejection is retryable:
+        /// it restores the consumed chunk in front of the source for the replacement connection.
         /// </summary>
         ReadingFirstChunk,
 
@@ -42,144 +39,6 @@ internal sealed partial class RespireConnection
 
         /// <summary>The complete frame is on the socket; cancellation only abandons the reply wait.</summary>
         FrameWritten,
-    }
-
-    /// <summary>
-    /// Cancels a streamed upload at its command deadline. The connection's deadline sweep only
-    /// inspects commands published to <c>_inflight</c>, and a streamed SET is not published until
-    /// its frame is queued (so a reply can never be matched to a partial frame), so each upload
-    /// needs its own timer. It follows maintenance windows the same way the sweep does.
-    /// </summary>
-    /// <remarks>
-    /// Lock order: <c>_scheduleGate</c>, then the connection's <c>_maintenancePublicationGate</c>.
-    /// Maintenance publication takes only the publication gate and raises
-    /// <c>MaintenanceStateChanged</c> after releasing it, so <see cref="Recheck"/> never takes the
-    /// two gates in the opposite order.
-    /// </remarks>
-    private sealed class StreamDeadlineCancellation : IDisposable
-    {
-        private readonly RespireConnection _connection;
-        private readonly long _deadline;
-        private readonly CancellationTokenSource _source = new();
-        private readonly Timer _timer;
-        private readonly Action? _maintenanceChanged;
-        private readonly Lock _scheduleGate = new();
-        // Bumped by every maintenance change; a Schedule that read an older value recomputes
-        // instead of installing (or acting on) a stale deadline.
-        private int _version;
-        private int _disposed;
-        private long _effectiveTimeoutTicks;
-        private long _committedTimeoutTicks = long.MinValue;
-
-        internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
-        {
-            _connection = connection;
-            _deadline = deadline;
-            _effectiveTimeoutTicks = connection._commandTimeout!.Value.Ticks;
-            _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
-                this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            if (connection._maintenanceOptions is not null) _maintenanceChanged = Recheck;
-        }
-
-        internal CancellationToken Token => _source.Token;
-
-        internal bool IsCancellationRequested => _source.IsCancellationRequested;
-
-        /// <summary>The timeout that applied when the deadline fired, including any maintenance relaxation.</summary>
-        internal TimeSpan EffectiveTimeout
-        {
-            get
-            {
-                var committedTicks = Interlocked.Read(ref _committedTimeoutTicks);
-                return committedTicks == long.MinValue
-                    ? TimeSpan.FromTicks(Interlocked.Read(ref _effectiveTimeoutTicks))
-                    : TimeSpan.FromTicks(committedTicks);
-            }
-        }
-
-        internal void Start()
-        {
-            // A maintenance start or completion changes the effective deadline immediately.
-            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged += _maintenanceChanged;
-            Schedule();
-        }
-
-        // Runs on the receive loop: never cancel inline (that would run caller continuations
-        // there); fire the timer so Schedule recomputes the deadline on a pool thread.
-        private void Recheck()
-        {
-            lock (_scheduleGate)
-            {
-                _version++;
-                try { _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
-                catch (ObjectDisposedException) { }
-            }
-        }
-
-        private void Schedule()
-        {
-            while (true)
-            {
-                if (Volatile.Read(ref _disposed) != 0) return;
-                var version = Volatile.Read(ref _version);
-                Task? cancellationCallbacks = null;
-                lock (_scheduleGate)
-                {
-                    // A maintenance change raced this calculation; the newest state must win.
-                    if (version != _version) continue;
-                    lock (_connection._maintenancePublicationGate)
-                    {
-                        var delay = ComputeDelay(out var effectiveTimeout);
-                        Interlocked.Exchange(ref _effectiveTimeoutTicks, effectiveTimeout.Ticks);
-                        if (delay is { } next)
-                        {
-                            try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
-                            catch (ObjectDisposedException) { }
-                            return;
-                        }
-
-                        // Commit cancellation while maintenance-state publication is excluded.
-                        // CancelAsync only marks the token here; callbacks run asynchronously.
-                        Interlocked.Exchange(ref _committedTimeoutTicks, effectiveTimeout.Ticks);
-                        try { cancellationCallbacks = _source.CancelAsync(); }
-                        catch (ObjectDisposedException) { }
-                    }
-                }
-
-                ObserveCancellationCallbacks(cancellationCallbacks);
-                return;
-            }
-        }
-
-        // Null once the effective deadline has passed.
-        private TimeSpan? ComputeDelay(out TimeSpan effectiveTimeout)
-        {
-            effectiveTimeout = _connection._commandTimeout!.Value;
-            var now = Environment.TickCount64;
-            var remaining = _deadline - now;
-            long window = 0;
-            if (_connection._maintenanceOptions is not null && _connection._commandTimeout is { } normal)
-            {
-                // Like the capacity wait and deadline sweep, an active maintenance window relaxes
-                // the deadline measured from the command's original start; its end restores it.
-                effectiveTimeout = _connection.MaintenanceTimeout(normal, now, out window, out _, _deadline);
-                remaining += (long)(effectiveTimeout - normal).TotalMilliseconds;
-            }
-            if (remaining <= 0) return null;
-
-            var sleep = Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds);
-            // Recheck when the window closes so a restored, shorter deadline is enforced.
-            if (window > 0) sleep = Math.Min(sleep, window);
-            return TimeSpan.FromMilliseconds(sleep);
-        }
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged -= _maintenanceChanged;
-            _timer.Dispose();
-            _source.Dispose();
-        }
     }
 
     // Cancellation callbacks registered by a caller's stream are user code; they may throw or
@@ -205,9 +64,11 @@ internal sealed partial class RespireConnection
         StreamedSetCommand command, CancellationToken cancellationToken, bool armCommandDeadline)
     {
         var deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
-            ? Environment.TickCount64 + _commandTimeoutMilliseconds
-            : 0;
-        using var timeoutCancellation = deadline == 0 ? null : new StreamDeadlineCancellation(this, deadline);
+            ? CommandDeadline.After(_commandTimeoutMilliseconds)
+            : CommandDeadline.None;
+        using var timeoutCancellation = deadline.IsSet
+            ? new StreamDeadlineCancellation(this, deadline.Ticks)
+            : null;
         timeoutCancellation?.Start();
         // Streamed SETs are rare and large, so one linked source per call is cheap. It observes the
         // caller, the command deadline and a connection abort; the reply is not yet published to
@@ -252,13 +113,13 @@ internal sealed partial class RespireConnection
                 if (connection._credentialRenewalPending) return false;
                 connection._streamingActive = true;
                 return true;
-            }, rejectLocallyRetired: true, effectiveCancellation).ConfigureAwait(false);
+            }, effectiveCancellation).ConfigureAwait(false);
             ownsWritePath = true;
 
             await DrainBufferedWritesAsync(effectiveCancellation).ConfigureAwait(false);
             await WaitForStreamingAdmissionAsync(
                 static connection => connection._inflight.Capacity - connection._inflight.Count > 0,
-                rejectLocallyRetired: false, effectiveCancellation).ConfigureAwait(false);
+                effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
             if (command.SourceStream is { } stream && command.Length > 0)
@@ -278,12 +139,11 @@ internal sealed partial class RespireConnection
             // would have to abort the connection for.
             effectiveCancellation.ThrowIfCancellationRequested();
 
-            // A locally retired connection drains admitted uploads. Cluster generation
-            // retirement rejects this frame; restore its consumed first chunk for a retry.
-            var write = AppendStreamingStart(command,
-                rejectRetired: phase == StreamedSetPhase.NotStarted,
-                rejectGenerationRetired: phase == StreamedSetPhase.ReadingFirstChunk,
-                out var startedBatch, out var requestWriteStart);
+            // Retirement (local or cluster generation) rejects the upload until its header is
+            // queued, exactly like an ordinary command that was not yet enqueued. The catch below
+            // restores a consumed first chunk so the router's retry sends the whole value to the
+            // replacement connection instead of the retiring (possibly demoted) node.
+            var write = AppendStreamingStart(command, out var startedBatch, out var requestWriteStart);
             phase = StreamedSetPhase.HeaderQueued;
             ScheduleFlush(startedBatch);
             // A peer that stops reading stalls the socket write; bound every wait by the caller,
@@ -434,29 +294,28 @@ internal sealed partial class RespireConnection
     /// completes that waiter instead of being lost.
     /// </summary>
     private async ValueTask WaitForStreamingAdmissionAsync(
-        Func<RespireConnection, bool> admit, bool rejectLocallyRetired, CancellationToken cancellationToken)
+        Func<RespireConnection, bool> admit, CancellationToken cancellationToken)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (TryAdmitStreaming(admit, rejectLocallyRetired)) return;
-            var signaled = _capacitySignal.WaitAsync(cancellationToken);
-            // Rarely abandoned when this re-check passes; it completes at the next shared pulse
-            // and never consumes a wakeup meant for another producer.
-            if (TryAdmitStreaming(admit, rejectLocallyRetired)) return;
-            await signaled.ConfigureAwait(false);
+            if (TryAdmitStreaming(admit)) return;
+            // Capture the pulse generation before re-checking so a pulse in between is not lost.
+            // Capturing registers no cancellation callback, so abandoning it when the re-check
+            // passes costs nothing; the shared task completes at the next pulse regardless.
+            var signaled = _capacitySignal.CaptureGeneration();
+            if (TryAdmitStreaming(admit)) return;
+            await signaled.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
-    // Taking the write path rejects a locally retired connection. Once the upload owns it, local
-    // retirement drains the upload like the buffered-write drain does, and only a retired cluster
-    // generation (lost slot ownership) rejects it.
-    private bool TryAdmitStreaming(Func<RespireConnection, bool> admit, bool rejectLocallyRetired)
+    // Every pre-header step rejects a retired connection so the router can retry the upload on
+    // the replacement; nothing has been written for it yet.
+    private bool TryAdmitStreaming(Func<RespireConnection, bool> admit)
     {
         lock (_writeGate)
         {
-            ThrowIfStreamingUnavailable(rejectLocallyRetired);
-            ThrowIfGenerationRetired();
+            ThrowIfStreamingUnavailable(rejectRetired: true);
             return admit(this);
         }
     }
@@ -467,12 +326,6 @@ internal sealed partial class RespireConnection
     {
         if (rejectRetired) ThrowIfRetired();
         if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
-    }
-
-    private void ThrowIfGenerationRetired()
-    {
-        if (_generation?.IsRetired == true)
-            throw new RespireConnectionRetiredException(Host, Port);
     }
 
     private static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
@@ -527,65 +380,6 @@ internal sealed partial class RespireConnection
         }
     }
 
-    /// <summary>
-    /// Reads a stream source in filled chunks of at most <see cref="StreamChunkSize"/> bytes into
-    /// one pooled buffer. Each returned chunk is valid until the next read or <see cref="Dispose"/>.
-    /// </summary>
-    private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
-    {
-        private byte[]? _chunk;
-        private long _remaining = length;
-
-        internal bool IsComplete => _remaining == 0;
-
-        internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
-        {
-            var chunk = _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
-            // Fill the chunk before returning it so sources that return small reads (network
-            // streams, for example) do not cost one socket write and flush wait per read.
-            var target = (int)Math.Min(StreamChunkSize, _remaining);
-            var filled = 0;
-            while (filled < target)
-            {
-                var pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
-                int read;
-                try
-                {
-                    // WaitAsync also bounds streams that ignore their cancellation token.
-                    read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // The read may still be writing into this pooled memory. Retain it until
-                    // that read finishes instead of returning it while the source can mutate it.
-                    _chunk = null;
-                    _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
-                    throw;
-                }
-
-                if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
-                filled += read;
-            }
-
-            _remaining -= filled;
-            return chunk.AsMemory(0, filled);
-        }
-
-        public void Dispose()
-        {
-            if (_chunk is not { } chunk) return;
-            _chunk = null;
-            ArrayPool<byte>.Shared.Return(chunk);
-        }
-
-        private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
-        {
-            try { _ = await pendingRead.ConfigureAwait(false); }
-            catch { /* The original streamed SET owns its failure. */ }
-            finally { ArrayPool<byte>.Shared.Return(chunk); }
-        }
-    }
-
     private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
         => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",
             Volatile.Read(ref _abortReason) ?? error);
@@ -598,10 +392,8 @@ internal sealed partial class RespireConnection
             var schedule = false;
             lock (_writeGate)
             {
-                // A locally retired connection drains admitted writes. A retired generation
-                // lost slot ownership, so reject before touching the stream source.
-                ThrowIfStreamingUnavailable(rejectRetired: false);
-                ThrowIfGenerationRetired();
+                // Reject retirement before touching the stream source, so a retry starts clean.
+                ThrowIfStreamingUnavailable(rejectRetired: true);
                 if (_activeBuffer.Count > 0)
                 {
                     write = _activeBuffer.WriteCompletion;
@@ -631,27 +423,25 @@ internal sealed partial class RespireConnection
             if (schedule) ScheduleFlush(startedBatch: false);
             if (write is null) continue;
             var drained = write.WaitAsync(cancellationToken);
-            // Local retirement drains an upload that already owns the streaming path. A cluster
-            // generation retirement rejects it because the endpoint lost slot ownership.
+            // Retirement must not wait behind a stalled earlier write: reject the upload (its
+            // source is untouched) so the router retries it on the replacement connection.
             if (await Task.WhenAny(drained, _retiredSignal.Task).ConfigureAwait(false) != drained)
             {
                 _ = drained.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
-                ThrowIfGenerationRetired();
+                ThrowIfRetired();
             }
             await drained.ConfigureAwait(false);
         }
     }
 
     private Task AppendStreamingStart(
-        StreamedSetCommand command, bool rejectRetired, bool rejectGenerationRetired,
-        out bool startedBatch, out long requestWriteStart)
+        StreamedSetCommand command, out bool startedBatch, out long requestWriteStart)
     {
         lock (_writeGate)
         {
-            ThrowIfStreamingUnavailable(rejectRetired);
-            if (rejectGenerationRetired) ThrowIfGenerationRetired();
+            ThrowIfStreamingUnavailable(rejectRetired: true);
             var start = _activeBuffer.Count;
             // An earlier reply may still be pending after its frame has been sent and the
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.

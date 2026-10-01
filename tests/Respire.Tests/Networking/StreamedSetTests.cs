@@ -427,7 +427,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task RetirementDrainsAcceptedStreamedSet()
+    public async Task LocalRetirementDuringFirstChunkRejectsAndRestoresSource()
     {
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
@@ -439,16 +439,21 @@ public sealed class StreamedSetTests
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Cluster node retirement is local retirement. The upload has no header on the wire, so it
+        // must be rejected for the router to retry on the new owner, not drained to this node.
         var retirement = connection.RetireAsync();
         await Task.Delay(100);
-        await Assert.That(retirement.IsCompleted).IsFalse();
+        await Assert.That(retirement.IsCompleted).IsFalse(); // Waits for the read that owns the write path.
 
         source.ContinueReading.TrySetResult();
-        using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(reply.AsString()).IsEqualTo("OK");
+        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(connection.DrainedSuccessfully).IsTrue();
-        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
+        await Assert.That(server.Commands).IsEmpty();
+        var replayed = new byte[4];
+        await command.SourceStream!.ReadExactlyAsync(replayed);
+        await Assert.That(replayed).IsEquivalentTo("data"u8.ToArray());
     }
 
     [Test]
@@ -475,11 +480,12 @@ public sealed class StreamedSetTests
             .Throws<RespireConnectionRetiredException>();
         await Assert.That(queuedSource.ReadStarted.Task.IsCompleted).IsFalse();
 
+        // The active upload was still reading its first chunk, so it is rejected for a retry too.
         activeSource.ContinueReading.TrySetResult();
-        using var reply = await activeSet.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await activeSet.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(reply.AsString()).IsEqualTo("OK");
-        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
+        await Assert.That(server.Commands).IsEmpty();
     }
 
     [Test]
@@ -735,7 +741,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task RetirementDrainsStreamedSetQueuedBehindStalledEarlierWrite()
+    public async Task RetirementRejectsStreamedSetQueuedBehindStalledEarlierWrite()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -771,26 +777,22 @@ public sealed class StreamedSetTests
         await Assert.That(set.IsCompleted).IsFalse();
         await Assert.That(source.ReadStarted.Task.IsCompleted).IsFalse();
 
-        // Local retirement drains the admitted upload after the earlier frame.
+        // Retirement rejects the upload without waiting for the stalled frame or reading the
+        // source, so a router can retry it on the replacement with an untouched source.
         var retirement = connection.RetireAsync();
-        await Task.Delay(50);
-        await Assert.That(set.IsCompleted).IsFalse();
+        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+        await Assert.That(source.ReadStarted.Task.IsCompleted).IsFalse();
+
+        // The earlier, accepted frame still drains.
         transport.OpenGate();
         using var peerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await peerStream.ReadExactlyAsync(new byte[14], peerTimeout.Token); // "*1\r\n$4\r\nPING\r\n"
         await peerStream.WriteAsync("+PONG\r\n"u8.ToArray(), peerTimeout.Token);
-        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        source.ContinueReading.TrySetResult();
-        await peerStream.ReadExactlyAsync(
-            "*3\r\n$3\r\nSET\r\n$6\r\nqueued\r\n$4\r\n"u8.ToArray(), peerTimeout.Token);
-        await peerStream.ReadExactlyAsync(new byte[6], peerTimeout.Token); // "data\r\n"
-        await peerStream.WriteAsync("+OK\r\n"u8.ToArray(), peerTimeout.Token);
-
         using var blockerReply = await blocker.WaitAsync(TimeSpan.FromSeconds(5));
-        using var streamedReply = await set.WaitAsync(TimeSpan.FromSeconds(5));
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(blockerReply.AsString()).IsEqualTo("PONG");
-        await Assert.That(streamedReply.AsString()).IsEqualTo("OK");
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
     }
 
     [Test]
@@ -844,6 +846,11 @@ public sealed class StreamedSetTests
         var replayed = new byte[4];
         await command.SourceStream!.ReadExactlyAsync(replayed);
         await Assert.That(replayed).IsEquivalentTo("data"u8.ToArray());
+
+        // Nothing reached the retired connection's peer: no SET header or payload bytes. The
+        // connection is still open, so readability within the window could only mean data.
+        await Assert.That(peer.Poll(TimeSpan.FromMilliseconds(500), SelectMode.SelectRead)).IsFalse();
+        await Assert.That(peer.Available).IsEqualTo(0);
     }
 
     [Test]

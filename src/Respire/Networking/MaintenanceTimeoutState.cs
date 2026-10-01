@@ -68,6 +68,30 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
         _order.Add(key);
     }
 
+    /// <summary>
+    /// Whether a maintenance window that started at <paramref name="windowStarted"/> relaxes a
+    /// command whose normal deadline is <paramref name="deadline"/>. A late notification cannot
+    /// revive a deadline that had already elapsed when maintenance began. Every deadline path
+    /// (the in-flight sweep, the full-ring capacity wait and the streamed SET timer) applies this
+    /// one rule, so ordinary and streamed commands cannot drift apart during maintenance.
+    /// </summary>
+    internal static bool Relaxes(long deadline, long windowStarted) => deadline > windowStarted;
+
+    /// <summary>
+    /// Milliseconds until a command with the normal <paramref name="deadline"/> expires, after any
+    /// maintenance relaxation (zero or negative once expired). <paramref name="remainingWindow"/>
+    /// is how long the relaxing window stays open, so a waiter can recheck when it closes.
+    /// </summary>
+    internal static long RemainingUntilDeadline(MaintenanceTimeoutState? state, TimeSpan normal, TimeSpan relaxed,
+        long deadline, long now, out TimeSpan effectiveTimeout, out long remainingWindow, bool alreadyRelaxed = false)
+    {
+        var window = state?.GetWindow(now);
+        remainingWindow = !alreadyRelaxed && window is not null && Relaxes(deadline, window.Started) ? window.Expires - now : 0;
+        effectiveTimeout = alreadyRelaxed ? (relaxed > normal ? relaxed : normal)
+            : remainingWindow > 0 && relaxed > normal ? relaxed : normal;
+        return deadline + (alreadyRelaxed ? 0 : (long)(effectiveTimeout - normal).TotalMilliseconds) - now;
+    }
+
     internal ActiveWindow? GetWindow(long now)
         => Volatile.Read(ref _active) is { } active && active.Expires > now ? active : null;
 
