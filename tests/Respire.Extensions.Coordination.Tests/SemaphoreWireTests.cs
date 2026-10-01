@@ -8,11 +8,21 @@ namespace Respire.Extensions.Coordination.Tests;
 
 public class SemaphoreWireTests
 {
+    // The default command timeout makes acquisition capture CLIENT ID and validate CLIENT KILL
+    // permission before its first tracked script.
+    internal static readonly byte[] ClientIdReply = ":7\r\n"u8.ToArray();
+    internal static readonly byte[] ClientKillReply = ":0\r\n"u8.ToArray();
+
+    internal static string[] EvalCommands(FakeRespServer server)
+        => server.ReceivedCommands.Where(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)).ToArray();
+
     [Test]
     [NotInParallel]
     public async Task FailedReleaseRemainsRetryableForNonExpiringPermit()
     {
         await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
             ":1\r\n"u8.ToArray(),
             "-ERR release failed\r\n"u8.ToArray(),
             "-ERR cleanup failed\r\n"u8.ToArray(),
@@ -25,7 +35,7 @@ public class SemaphoreWireTests
         await Assert.That(attempt.Permit.IsReleased).IsFalse();
         await Assert.That(await attempt.Permit.ReleaseAsync()).IsTrue();
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(4);
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(4);
     }
 
     [Test]
@@ -33,6 +43,8 @@ public class SemaphoreWireTests
     public async Task FailedRenewalCleanupLeavesPermitRetryable()
     {
         await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
             ":1\r\n"u8.ToArray(),
             "-ERR renewal failed\r\n"u8.ToArray(),
             "-ERR cleanup failed\r\n"u8.ToArray(),
@@ -45,7 +57,38 @@ public class SemaphoreWireTests
         await Assert.That(attempt.Permit.IsReleased).IsFalse();
         await Assert.That(await attempt.Permit.ReleaseAsync()).IsTrue();
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(4);
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(4);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task UnansweredFenceDoesNotDelayCanceledAcquisition()
+    {
+        // Suppresses the acquire and the correction's CLIENT KILL barrier (but not the SKIPME
+        // permission probe), so the ordered cleanup can never complete.
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                || (command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
+                    && !command.Contains("SKIPME", StringComparison.OrdinalIgnoreCase)),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var semaphore = new RespireSemaphore(client, "{retry}:fence", capacity: 1);
+
+        var started = Stopwatch.GetTimestamp();
+        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(3)).IsTrue();
+        // The release must never overtake the unacknowledged barrier.
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
     }
 
     [Test]
@@ -114,7 +157,7 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
-    public async Task DisposalWaitsForBusyRenewalThenReleasesPermit()
+    public async Task DisposalReleasesPermitWithoutWaitingForBusyRenewal()
     {
         var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var evalCount = 0;

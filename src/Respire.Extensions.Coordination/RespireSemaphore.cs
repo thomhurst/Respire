@@ -6,8 +6,9 @@ namespace Respire.Extensions.Coordination;
 /// <remarks>
 /// Every contender for a key must use the same capacity. Capacity changes fail while any
 /// permit remains active. Acquisitions do not queue and provide no fairness guarantee.
-/// With <see cref="RespireClient"/>, command timeouts or cancellation require Redis ACL permission
-/// for <c>CLIENT ID</c> and <c>CLIENT KILL</c> to fence uncertain writes before cleanup.
+/// With <see cref="RespireClient"/>, acquisitions under a command timeout or cancellation require
+/// Redis ACL permission for <c>CLIENT ID</c> and <c>CLIENT KILL</c> to fence an uncertain acquire
+/// before cleanup.
 /// </remarks>
 public sealed class RespireSemaphore
 {
@@ -64,9 +65,10 @@ public sealed class RespireSemaphore
         }
         catch (Exception error)
         {
-            if (error is not RespireServerException)
-                await FenceCorrectionAsync(trackedWire, trackedExecution).ConfigureAwait(false);
-            await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
+            if (error is RespireServerException)
+                await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
+            else
+                await CleanupUncertainAcquisitionAsync(trackedWire, trackedExecution, owner).ConfigureAwait(false);
             throw;
         }
         if (!acquired) return default;
@@ -96,7 +98,39 @@ public sealed class RespireSemaphore
     private ValueTask<bool> ReleaseBestEffortAsync(RespireLockToken owner)
         => TryReleaseBestEffortAsync(_client, Key, owner);
 
-    internal static async ValueTask<RespireClient?> GetTrackedWireAsync(
+    // A release that overtakes a delayed acquire would let that acquire recreate the permit, so
+    // cleanup must follow the CLIENT KILL barrier. The barrier itself cannot be abandoned, but
+    // the caller's failure is surfaced once the bounded wait elapses and the ordered release
+    // finishes in the background.
+    private async ValueTask CleanupUncertainAcquisitionAsync(
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
+    {
+        var cleanup = FenceThenReleaseAsync(wire, execution, owner);
+        try
+        {
+            await cleanup.WaitAsync(BestEffortCleanupTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+        }
+    }
+
+    private async Task FenceThenReleaseAsync(
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
+    {
+        try
+        {
+            await FenceCorrectionAsync(wire, execution).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Without the barrier the release may still win; finite expiry remains the fallback.
+        }
+
+        await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireClient?> GetTrackedWireAsync(
         IRespireClient client, CancellationToken cancellationToken)
     {
         if (client is not RespireClient wire) return null;
@@ -110,7 +144,7 @@ public sealed class RespireSemaphore
             ? wire : null;
     }
 
-    internal static async ValueTask<RespireResult> ExecuteTrackedAsync(
+    private static async ValueTask<RespireResult> ExecuteTrackedAsync(
         RespireClient wire, RespireScript script, RespireKey[] keys, RespireValue[] args,
         CancellationToken cancellationToken,
         Action<RespireClient.TrackedScriptExecution> onStarted)
@@ -121,7 +155,7 @@ public sealed class RespireSemaphore
         return await execution.Response.ConfigureAwait(false);
     }
 
-    internal static ValueTask FenceCorrectionAsync(
+    private static ValueTask FenceCorrectionAsync(
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution)
     {
         if (wire is null || execution is not { ConnectionIdentity.ServerClientId: > 0 }) return default;
@@ -243,15 +277,11 @@ public readonly struct RespireSemaphorePermitAttempt : IAsyncDisposable
 /// <summary>A uniquely owned semaphore permit with optional Redis expiry.</summary>
 public sealed class RespireSemaphorePermit : IAsyncDisposable
 {
-    private sealed record CorrectionTarget(
-        RespireClient Wire, RespireClient.TrackedConnectionIdentity Identity);
-
     private static readonly TimeSpan DisposeReleaseTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
     private readonly int _capacity;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private CorrectionTarget? _pendingRenewal;
     private long _validUntil;
     private long _expiryTicks;
     private int _released;
@@ -328,25 +358,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (IsReleased) return false;
-            var trackedWire = await RespireSemaphore.GetTrackedWireAsync(_client, cancellationToken).ConfigureAwait(false);
-            if (Volatile.Read(ref _disposeReleaseScheduled) != 0) return false;
-            RespireClient.TrackedScriptExecution? trackedExecution = null;
-            CorrectionTarget? correctionTarget = null;
+            if (IsReleased || Volatile.Read(ref _disposeReleaseScheduled) != 0) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
-                using var response = trackedWire is null
-                    ? await _client.Scripts.ExecuteAsync(
-                        RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false)
-                    : await RespireSemaphore.ExecuteTrackedAsync(trackedWire, RespireSemaphore.RenewScript,
-                        [Key], [_owner.Bytes, milliseconds], cancellationToken,
-                        execution =>
-                        {
-                            trackedExecution = execution;
-                            correctionTarget = new CorrectionTarget(trackedWire!, execution.ConnectionIdentity);
-                            Volatile.Write(ref _pendingRenewal, correctionTarget);
-                        }).ConfigureAwait(false);
+                // Renewal only updates an existing member, so a delayed renewal that executes after
+                // a cleanup release cannot recreate the permit; no CLIENT KILL fence is needed.
+                using var response = await _client.Scripts.ExecuteAsync(
+                    RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 var completed = Stopwatch.GetTimestamp();
                 var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
                 var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
@@ -358,21 +377,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
                     Volatile.Write(ref _finiteOutcomeUncertain, 0);
                 }
-                if (correctionTarget is not null)
-                    Interlocked.CompareExchange(ref _pendingRenewal, null, correctionTarget);
                 if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
                     && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
             }
-            catch (Exception error)
+            catch
             {
                 if (milliseconds == 0)
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
                 else
                     Volatile.Write(ref _finiteOutcomeUncertain, 1);
-                if (error is not RespireServerException)
-                    await RespireSemaphore.FenceCorrectionAsync(trackedWire, trackedExecution).ConfigureAwait(false);
-                if (correctionTarget is not null)
-                    Interlocked.CompareExchange(ref _pendingRenewal, null, correctionTarget);
                 if (await ReleaseBestEffortAsync().ConfigureAwait(false))
                     Interlocked.Exchange(ref _released, 1);
                 throw;
@@ -465,23 +478,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private bool RequiresPersistentCleanup
         => Interlocked.Read(ref _expiryTicks) == 0 || Volatile.Read(ref _nonExpiringOutcomeUncertain) != 0;
 
+    // Deliberately bypasses the operation gate: a renewal or release stuck behind an unanswered
+    // reply must not block cleanup. The owner-checked release is idempotent, and a renewal that
+    // lands afterwards finds no member and cannot recreate the permit.
     private async ValueTask<bool?> TryReleaseAfterDisposeAsync()
     {
-        var pendingRenewal = Volatile.Read(ref _pendingRenewal);
-        var entered = false;
         using var timeout = new CancellationTokenSource(RespireSemaphore.BestEffortCleanupTimeout);
         try
         {
-            if (pendingRenewal is not null)
-            {
-                await pendingRenewal.Wire.FenceCorrectionConnectionAsync(pendingRenewal.Identity).ConfigureAwait(false);
-                Interlocked.CompareExchange(ref _pendingRenewal, null, pendingRenewal);
-            }
-            else
-            {
-                await _operationGate.WaitAsync(timeout.Token).ConfigureAwait(false);
-                entered = true;
-            }
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], timeout.Token).ConfigureAwait(false);
             Interlocked.Exchange(ref _released, 1);
@@ -502,10 +506,6 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         catch (Exception)
         {
             return false;
-        }
-        finally
-        {
-            if (entered) _operationGate.Release();
         }
     }
 
