@@ -12,7 +12,7 @@
 
   <PropertyGroup>
     <IsRespirePackageProject>false</IsRespirePackageProject>
-    <IsRespirePackageProject Condition="'$(MSBuildProjectName)' == 'Respire.Compression.Lz4' Or '$(MSBuildProjectName)' == 'Respire.Compression.Zstd' Or '$(MSBuildProjectName)' == 'Respire' Or '$(MSBuildProjectName)' == 'Respire.Extensions.DependencyInjection' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Coordination' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid' Or '$(MSBuildProjectName)' == 'Respire.Testing' Or '$(MSBuildProjectName)' == 'Respire.Testing.Containers'">true</IsRespirePackageProject>
+    <IsRespirePackageProject Condition="'$(MSBuildProjectName)' == 'Respire.Compression.Lz4' Or '$(MSBuildProjectName)' == 'Respire.Compression.Zstd' Or '$(MSBuildProjectName)' == 'Respire' Or '$(MSBuildProjectName)' == 'Respire.Extensions.DependencyInjection' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Coordination' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Aws' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid' Or '$(MSBuildProjectName)' == 'Respire.Testing' Or '$(MSBuildProjectName)' == 'Respire.Testing.Containers'">true</IsRespirePackageProject>
     <IsPackable>$(IsRespirePackageProject)</IsPackable>
   </PropertyGroup>
 

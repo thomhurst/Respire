@@ -29,6 +29,7 @@ const sidebars = {
         'guides/vector-sets',
         'guides/reconnect-policy',
         'guides/renewable-credentials',
+        'guides/aws-iam-credentials',
         'guides/pub-sub',
         'guides/keyspace-notifications',
         'guides/pub-sub-introspection',
