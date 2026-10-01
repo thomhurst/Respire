@@ -200,6 +200,7 @@ public readonly struct RespireSemaphorePermitAttempt : IAsyncDisposable
 /// <summary>A uniquely owned semaphore permit with optional Redis expiry.</summary>
 public sealed class RespireSemaphorePermit : IAsyncDisposable
 {
+    private static readonly TimeSpan DisposeReleaseTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
     private readonly int _capacity;
@@ -345,7 +346,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <summary>Releases this permit on a best-effort basis.</summary>
     public async ValueTask DisposeAsync()
     {
-        try { _ = await ReleaseAsync().ConfigureAwait(false); }
+        using var timeout = new CancellationTokenSource(DisposeReleaseTimeout);
+        try { _ = await ReleaseAsync(timeout.Token).ConfigureAwait(false); }
         catch (Exception) { }
     }
 

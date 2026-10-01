@@ -236,6 +236,31 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task SemaphoreDisposeBoundsTheInitialReleaseWhenCommandTimeoutIsDisabled()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) > 1,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        var attempt = await new RespireSemaphore(client, "{job}:semaphore", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await attempt.Permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+
+        await Assert.That(server.CommandsSeen >= 2).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AcceptedAcquisitionIsNotReplayedAfterCancellationOrDisconnect(bool disconnect)
