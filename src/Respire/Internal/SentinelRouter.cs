@@ -50,6 +50,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var options = (original.Multiplexer?.Options ?? core.Options.ToConnectionOptions()) with
             {
                 Generation = null, EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
+                MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             if (options.UseTls)
                 options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
@@ -324,7 +325,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             ConnectionOptions = options.ToConnectionOptions() with { Generation = this };
             RespirePushHandler? pushHandler = core.ClientCache is { } cache ? cache.HandlePush : null;
             var commandOptions = options.ToConnectionOptions(pushHandler,
-                enableClientTracking: core.ClientCache is not null) with { Generation = this };
+                enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true) with { Generation = this };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
             Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged);
         }

@@ -181,6 +181,15 @@ public sealed record RespireOptions
     /// and malformed-reply failures never cause fallback. Client-side caching always requires RESP3.</remarks>
     public RespProtocol Protocol { get; init; } = RespProtocol.Auto;
 
+    /// <summary>Opt-in RESP3 maintenance notifications. Disabled by default; Auto tolerates an unsupported server.</summary>
+    public RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
+
+    /// <summary>Minimum command/receive timeout during maintenance. Never shortens an existing timeout.</summary>
+    public TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Maximum maintenance window when its completion notification is lost.</summary>
+    public TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
+
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
@@ -302,6 +311,14 @@ public sealed record RespireOptions
         }
 
         Require(Protocol is RespProtocol.Auto or RespProtocol.Resp2 or RespProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
+        var effectiveProtocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3;
+        Require(Enum.IsDefined(MaintenanceNotifications), nameof(MaintenanceNotifications), "must be Disabled, Auto, or Enabled");
+        Require(MaintenanceNotifications != RespireMaintenanceNotificationMode.Enabled || effectiveProtocol != RespProtocol.Resp2,
+            nameof(MaintenanceNotifications), "requires RESP3 when Enabled");
+        Require(MaintenanceRelaxedTimeout >= TimeSpan.FromMilliseconds(1) && MaintenanceRelaxedTimeout <= TimeSpan.FromDays(1),
+            nameof(MaintenanceRelaxedTimeout), "must be between one millisecond and one day");
+        Require(MaintenanceWindowTimeout >= TimeSpan.FromMilliseconds(1) && MaintenanceWindowTimeout <= TimeSpan.FromDays(1),
+            nameof(MaintenanceWindowTimeout), "must be between one millisecond and one day");
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
@@ -376,7 +393,7 @@ public sealed record RespireOptions
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
-            Protocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3,
+            Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };
     }
@@ -393,9 +410,13 @@ public sealed record RespireOptions
 
     internal RespireConnectionOptions ToConnectionOptions(
         RespirePushHandler? pushHandler = null,
-        bool enableClientTracking = false)
+        bool enableClientTracking = false,
+        bool enableMaintenanceNotifications = false)
         => new()
         {
+            MaintenanceNotifications = enableMaintenanceNotifications ? MaintenanceNotifications : RespireMaintenanceNotificationMode.Disabled,
+            MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
+            MaintenanceWindowTimeout = MaintenanceWindowTimeout,
             TestingStreamFactory = TestingStreamFactory,
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,

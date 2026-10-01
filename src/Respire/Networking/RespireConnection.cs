@@ -39,7 +39,7 @@ namespace Respire.Networking;
 /// multiplexer, never revived in place.
 /// </para>
 /// </remarks>
-internal sealed class RespireConnection : IAsyncDisposable
+internal sealed partial class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
     private const int MaxResponseSize = 512 * 1024 * 1024;
@@ -144,6 +144,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         _generation = options.Generation;
         _pushHandler = options.PushHandler;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
+        _maintenanceOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled ? null : options;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
@@ -490,6 +491,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         if (pending is null)
         {
+            await NegotiateMaintenanceAsync(options, negotiatedProtocol, cancellationToken, armCommandDeadline).ConfigureAwait(false);
             return;
         }
 
@@ -545,6 +547,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
         }
+        await NegotiateMaintenanceAsync(options, negotiatedProtocol, cancellationToken, armCommandDeadline).ConfigureAwait(false);
     }
 
     private async ValueTask CompleteHandshakeStepAsync<TCommand>(string step, TCommand command,
@@ -1609,6 +1612,11 @@ internal sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
+        if (_maintenanceOptions is not null)
+        {
+            await WaitForMaintenanceCapacityAsync(capacityAvailable, deadline, commandName, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         var remaining = deadline - Environment.TickCount64;
         if (remaining <= 0)
         {
@@ -2266,6 +2274,11 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         MarkReplyReceived();
 
+        if (_maintenanceStatus == MaintenanceNegotiating)
+        {
+            ObserveMaintenanceAcknowledgement(in value);
+        }
+
         _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
@@ -2377,6 +2390,11 @@ internal sealed class RespireConnection : IAsyncDisposable
         var elements = value.AsArray();
         if (elements.Length > 0)
         {
+            if (isPushFrame && TryHandleMaintenancePush(in value))
+            {
+                value.Dispose();
+                return true;
+            }
             var kind = elements[0].AsSpan();
             if (kind.SequenceEqual("message"u8)
                 || kind.SequenceEqual("pmessage"u8)
@@ -2490,8 +2508,15 @@ internal sealed class RespireConnection : IAsyncDisposable
                     continue;
                 }
 
+                var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out var window, out _);
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
-                var delay = GetWatchdogDelay(timeout, elapsed);
+                var delay = GetWatchdogDelay(effectiveTimeout, elapsed);
+                if (window > 0)
+                {
+                    // Completion can restore the normal timeout while this timer is sleeping.
+                    var checkMilliseconds = Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
+                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, Math.Min(window, checkMilliseconds)));
+                }
                 if (delay > TimeSpan.Zero)
                 {
                     await DelayWatchdogAsync(delay, cancellationToken).ConfigureAwait(false);
@@ -2502,13 +2527,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                 {
                     if (deadlineStart != _receiveDeadlineTimestamp
                         || _sentReplyCount <= _receivedReplyCount
-                        || Volatile.Read(ref _responseTimeoutSuppressions) != 0)
+                        || Volatile.Read(ref _responseTimeoutSuppressions) != 0
+                        || Stopwatch.GetElapsedTime(deadlineStart) < MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _))
                     {
                         continue;
                     }
 
                     Abort(new RespireConnectionException(
-                        $"Connection to {Host}:{Port} received no data for {timeout} while responses were pending."));
+                        $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."));
                 }
 
                 return;
@@ -2536,7 +2562,10 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
-                var next = _inflight.SweepExpired(Environment.TickCount64, timeout, this);
+                var now = Environment.TickCount64;
+                var effectiveTimeout = MaintenanceTimeout(timeout, now, out _, out var maintenanceStarted);
+                var next = _inflight.SweepExpired(now, timeout, this,
+                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted);
                 var delay = next < 0 || next > granularityMilliseconds
                     ? granularity
                     : TimeSpan.FromMilliseconds(next);
@@ -2785,6 +2814,9 @@ internal sealed record RespireConnectionOptions
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
+    internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
+    internal TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see

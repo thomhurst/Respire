@@ -638,6 +638,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     ConnectTimeout = Timeout.InfiniteTimeSpan,
                     Generation = null,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
+                    MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                     TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
                 };
                 try

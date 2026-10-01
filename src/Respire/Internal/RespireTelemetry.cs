@@ -49,6 +49,11 @@ internal static class RespireTelemetry
     public static readonly Histogram<double> ReconnectDelays = Meter.CreateHistogram<double>(
         "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement or discovery fallback attempt.");
 
+    public static readonly Counter<long> MaintenanceNotifications = Meter.CreateCounter<long>(
+        "respire.maintenance.notifications", unit: "{notification}", description: "Valid maintenance notifications delivered to diagnostics.");
+    public static readonly Counter<long> MaintenanceNotificationsDropped = Meter.CreateCounter<long>(
+        "respire.maintenance.notifications.dropped", unit: "{notification}", description: "Maintenance diagnostics dropped while listeners lag; protocol handling is unaffected.");
+
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 

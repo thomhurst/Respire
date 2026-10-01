@@ -115,7 +115,8 @@ internal sealed class InflightRing
     /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
     /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
-    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection)
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection, long deadlineExtension = 0,
+        long maintenanceStarted = long.MinValue)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
@@ -145,7 +146,9 @@ internal sealed class InflightRing
                 continue;
             }
 
-            var remaining = deadline - nowMilliseconds;
+            // A late notification cannot revive a deadline that elapsed before maintenance.
+            var extension = deadline > maintenanceStarted ? deadlineExtension : 0;
+            var remaining = deadline + extension - nowMilliseconds;
             if (remaining > 0)
             {
                 if (next < 0 || remaining < next)
@@ -156,7 +159,7 @@ internal sealed class InflightRing
                 continue;
             }
 
-            source.TrySetTimedOut(state, timeout, ref diagnostics, connection);
+            source.TrySetTimedOut(state, timeout + TimeSpan.FromMilliseconds(extension), ref diagnostics, connection);
         }
 
         return next;
