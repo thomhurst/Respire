@@ -330,7 +330,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         foreach (var notificationConnection in notificationConnections)
         {
             if (!interrupted.Add(notificationConnection)) continue;
-            interruptedDisposals.Add(notificationConnection.DisposeAsync().AsTask());
+            // Observe the fault here: the guarded close loop may see this same disposal fail,
+            // and the final WhenAll must not rethrow it and skip the remaining cleanup.
+            interruptedDisposals.Add(ObserveAbandonedConnectionAsync(notificationConnection.DisposeAsync().AsTask()));
         }
     }
 

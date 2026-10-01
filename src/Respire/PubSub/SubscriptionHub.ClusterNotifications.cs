@@ -30,6 +30,8 @@ internal sealed partial class SubscriptionHub
     private readonly Dictionary<RespireSubscription, (RespireEndpoint? Endpoint, int Count)> _notificationReconciliationAttempts = [];
     private readonly HashSet<RespireEndpoint> _notificationDisconnectedEndpoints = [];
     private readonly HashSet<RespireEndpoint> _notificationExhaustedEndpoints = [];
+    // Endpoints reported Reconnecting because topology reconciliation could not reach them.
+    private readonly HashSet<RespireEndpoint> _notificationRetryingEndpoints = [];
     private long _notificationTopologyVersion;
     private NotificationTopology? _latestNotificationTopology;
 
@@ -281,7 +283,8 @@ internal sealed partial class SubscriptionHub
         bool recovered;
         lock (_gate)
         {
-            recovered = node.InterruptedAt is not null || _notificationDisconnectedEndpoints.Remove(endpoint);
+            recovered = node.InterruptedAt is not null | _notificationDisconnectedEndpoints.Remove(endpoint)
+                | _notificationRetryingEndpoints.Remove(endpoint);
         }
         PublishNotificationReconnectGaps(node);
         if (recovered)
@@ -630,9 +633,13 @@ internal sealed partial class SubscriptionHub
             lock (_gate)
             {
                 _notificationExhaustedEndpoints.RemoveWhere(endpoint => Array.IndexOf(endpoints, endpoint) < 0);
-                foreach (var endpoint in _notificationDisconnectedEndpoints)
+                foreach (var endpoint in _notificationDisconnectedEndpoints.Union(_notificationRetryingEndpoints))
                     if (Array.IndexOf(endpoints, endpoint) < 0) departed.Add(endpoint);
-                foreach (var endpoint in departed) _notificationDisconnectedEndpoints.Remove(endpoint);
+                foreach (var endpoint in departed)
+                {
+                    _notificationDisconnectedEndpoints.Remove(endpoint);
+                    _notificationRetryingEndpoints.Remove(endpoint);
+                }
             }
             foreach (var endpoint in departed)
                 core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
@@ -692,9 +699,14 @@ internal sealed partial class SubscriptionHub
                         if (policy?.IsExhausted(subscriptionAttempt) == true)
                             await ExhaustNotificationSubscriptionAsync(subscription, endpoint, error, subscriptionAttempt)
                                 .ConfigureAwait(false);
-                        else retry = true;
+                        else
+                        {
+                            retry = true;
+                            ReportNotificationReconciliationRetry(endpoint, error, subscriptionAttempt);
+                        }
                     }
                 }
+                else ClearNotificationReconciliationRetries();
             }
             finally { _controlGate.Release(); }
         }
@@ -895,10 +907,12 @@ internal sealed partial class SubscriptionHub
             }
         }
         var disconnected = false;
+        var wasRetrying = false;
         lock (_gate)
         {
             _notificationCoverage.Remove(subscription);
             _notificationReconciliationAttempts.Remove(subscription);
+            if (endpoint is { } retrying) wasRetrying = _notificationRetryingEndpoints.Remove(retrying);
             // Report the endpoint as exhausted only when no notification node remains for it. A
             // rejected SUBSCRIBE is not a connection outage, and a node still serving other
             // subscriptions owns its endpoint's health: its watcher reconnects a socket this
@@ -921,6 +935,9 @@ internal sealed partial class SubscriptionHub
                     ReconnectAttempt = attempt,
                     ReconnectExhausted = true,
                 });
+            else if (wasRetrying)
+                core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
+                    exhaustedEndpoint, RespireConnectionState.Connected, null));
             try
             {
                 RespireTelemetry.RecordReconnectExhaustion(
@@ -943,6 +960,38 @@ internal sealed partial class SubscriptionHub
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
         if (!_disposed && version == Volatile.Read(ref _notificationTopologyVersion))
             await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt).ConfigureAwait(false);
+    }
+
+    // A topology route that cannot reach its endpoint has no node watcher to report the outage,
+    // because rollback retires the empty node. Report it as reconnecting until a later pass
+    // succeeds, the endpoint recovers, or the subscription exhausts.
+    private void ReportNotificationReconciliationRetry(RespireEndpoint? endpoint, Exception error, int attempt)
+    {
+        if (endpoint is not { } failed || ContainsServerRejection(error)) return;
+        lock (_gate)
+        {
+            if (_notificationNodes.ContainsKey(failed)) return;
+            _notificationRetryingEndpoints.Add(failed);
+        }
+        core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
+            failed, RespireConnectionState.Reconnecting, error)
+        {
+            ReconnectAttempt = attempt,
+        });
+    }
+
+    private void ClearNotificationReconciliationRetries()
+    {
+        RespireEndpoint[] cleared;
+        lock (_gate)
+        {
+            if (_notificationRetryingEndpoints.Count == 0) return;
+            cleared = [.. _notificationRetryingEndpoints];
+            _notificationRetryingEndpoints.Clear();
+        }
+        foreach (var endpoint in cleared)
+            core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
+                endpoint, RespireConnectionState.Connected, null));
     }
 
     private static bool ContainsServerRejection(Exception error)

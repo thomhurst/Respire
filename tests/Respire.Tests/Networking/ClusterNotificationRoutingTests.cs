@@ -642,6 +642,46 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task TopologyReconciliationRetriesReportReconnectingUntilRecovered()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var suppress = true;
+        second.SuppressReply = command => suppress && command == $"PSUBSCRIBE {descriptor}";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+                recovered.TrySetResult();
+        };
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+
+        suppress = false;
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Test]
     public async Task ActivationAppliesTopologyChangePublishedBeforeItsFinalAck()
     {
         await using var first = new FakeRespServer(20);
