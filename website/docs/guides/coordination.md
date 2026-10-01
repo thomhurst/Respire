@@ -219,6 +219,8 @@ waiters complete at zero. Reset replaces the generation, wakes old waiters, and 
 already completed generation fails rather than underflowing.
 
 ```csharp
+using Respire.Extensions.Coordination;
+
 await using var latchClient = await RespireClient.ConnectAsync("localhost:6379");
 var coordination = new RespireCoordination(latchClient);
 var latch = await coordination.CreateCountdownLatchAsync("{batch:42}:latch", count: 3);
