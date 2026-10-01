@@ -246,8 +246,11 @@ internal sealed partial class ClusterRouter
             }
             foreach (var replica in Volatile.Read(ref _replicas))
             {
-                var replicaNode = GetOrCreateNode(replica.Endpoint);
-                if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
+                foreach (var endpoint in replica.Aliases.Prepend(replica.Endpoint))
+                {
+                    var replicaNode = GetOrCreateNode(endpoint);
+                    if (!replicaNode.IsRetired && seen.Add(replicaNode)) candidates.Add(replicaNode);
+                }
             }
             foreach (var endpoint in _seeds)
             {
@@ -266,11 +269,20 @@ internal sealed partial class ClusterRouter
                 maxTotalTicks / boundedCandidateCount));
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
-            foreach (var candidate in candidates)
+            var refreshStarted = Stopwatch.GetTimestamp();
+            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
+                var candidate = candidates[candidateIndex];
                 linked.Token.ThrowIfCancellationRequested();
                 if (round is not null)
-                    await round.BeforeCandidateAsync(Endpoint(candidate), linked.Token).ConfigureAwait(false);
+                {
+                    var remainingCandidates = candidates.Count - candidateIndex;
+                    var remainingBudget = MaximumTopologyRefreshDeadline - Stopwatch.GetElapsedTime(refreshStarted)
+                        - TimeSpan.FromTicks(Math.Min(MaximumTopologyRefreshDeadline.Ticks,
+                            candidateTimeout.Ticks * (long)remainingCandidates));
+                    await round.BeforeCandidateAsync(Endpoint(candidate), linked.Token,
+                        remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero).ConfigureAwait(false);
+                }
                 using var candidateDeadline = new CancellationTokenSource(candidateTimeout);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
                 try
@@ -605,7 +617,8 @@ internal sealed partial class ClusterRouter
             finally { Exit(); }
         }
 
-        internal async ValueTask BeforeCandidateAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
+        internal async ValueTask BeforeCandidateAsync(RespireEndpoint endpoint, CancellationToken cancellationToken,
+            TimeSpan? maximumDelay = null)
         {
             Enter();
             try
@@ -632,8 +645,10 @@ internal sealed partial class ClusterRouter
                 if (_attempts < int.MaxValue) _attempts++;
                 if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
                 var delay = policy.GetDelay(_attempts);
+                if (maximumDelay is { } maximum && delay > maximum) delay = maximum;
                 Publish(RespireConnectionState.Reconnecting, failure, delay);
-                await WaitAsync(delay, cancellationToken).ConfigureAwait(false);
+                if (delay > TimeSpan.Zero)
+                    await WaitAsync(delay, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error)
             {

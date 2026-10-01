@@ -122,6 +122,13 @@ public class ClusterScanIntegrationTests
                 .WithPortBinding(ports[0], ports[0]).WithPortBinding(ports[1], ports[1])
                 .WithPortBinding(ports[2], ports[2]).WithPortBinding(ports[3], ports[3])
                 .WithPortBinding(ports[4], ports[4]).WithPortBinding(ports[5], ports[5])
+                .WithCreateParameterModifier(parameters =>
+                {
+                    foreach (var binding in parameters.HostConfig.PortBindings.Values.SelectMany(static bindings => bindings))
+                    {
+                        binding.HostIP = "127.0.0.1";
+                    }
+                })
                 .WithEntrypoint("sh", "-c")
                 .WithCommand($"for port in {string.Join(' ', ports)}; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --cluster-announce-port $port --cluster-announce-bus-port $((port + 10000)) --appendonly no --protected-mode no & done; wait")
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(ports[0])
