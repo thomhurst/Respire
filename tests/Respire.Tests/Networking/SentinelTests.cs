@@ -658,17 +658,17 @@ public class SentinelTests
         await Task.Delay(50);
         var subscribeIndex = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal));
         var monitorConnection = sentinel.ReceivedConnectionIds[subscribeIndex];
-        await sentinel.SendRawAsync(SwitchMasterMessage("othermaster", replacement.Port), monitorConnection);
+        await sentinel.SendRawAsync(SwitchMasterMessage("othermaster", first.Port, replacement.Port), monitorConnection);
         await Task.Delay(50);
         await Assert.That(first.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
         Volatile.Write(ref switched, 1);
-        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port), monitorConnection);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", first.Port, replacement.Port), monitorConnection);
 
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
         await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
-        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port), monitorConnection);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port, replacement.Port), monitorConnection);
         await Task.Delay(50);
         await Assert.That(replacement.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
     }
@@ -692,7 +692,7 @@ public class SentinelTests
             && reportingSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
         var commandIndex = reportingSentinel.ReceivedCommands.ToList()
             .FindIndex(command => command == "SUBSCRIBE +switch-master");
-        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390),
+        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", previous.Port, replacement.Port),
             reportingSentinel.ReceivedConnectionIds[commandIndex]);
 
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
@@ -700,6 +700,13 @@ public class SentinelTests
         await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
         await Assert.That(staleSentinel.ReceivedCommands.Count(command =>
+            command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
+
+        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", previous.Port, 6390),
+            reportingSentinel.ReceivedConnectionIds[commandIndex]);
+        await Task.Delay(50);
+        await Assert.That(client.Core.Sentinel!.Current!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replacement.Port));
+        await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsEqualTo(1);
     }
 
@@ -754,9 +761,9 @@ public class SentinelTests
     private static byte[] PrimaryReply(int port)
         => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
 
-    private static byte[] SwitchMasterMessage(string service, int newPort)
+    private static byte[] SwitchMasterMessage(string service, int oldPort, int newPort)
     {
-        var details = $"{service} 127.0.0.1 6379 127.0.0.1 {newPort}";
+        var details = $"{service} 127.0.0.1 {oldPort} 127.0.0.1 {newPort}";
         return Encoding.ASCII.GetBytes(
             $"*3\r\n$7\r\nmessage\r\n$14\r\n+switch-master\r\n${details.Length}\r\n{details}\r\n");
     }

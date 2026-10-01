@@ -346,6 +346,7 @@ The replacement still must pass `ROLE`; accepted commands drain on their origina
 and Respire never replays an ambiguous write. `+sdown` and `+odown` events go to Debug logs.
 Sentinel monitor connections use `SentinelUsername`, `SentinelPassword`, `SentinelUseTls`,
 and `SentinelTlsOptions`; Sentinel ACLs must allow `SUBSCRIBE` for these channels.
+Set `DisableSentinelEventMonitoring = true` in `RespireOptions` to disable background subscriptions.
 Disconnects, `READONLY`, and replica `ROLE` replies continue to trigger discovery when no
 Sentinel event arrives.
 

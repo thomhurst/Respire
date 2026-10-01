@@ -105,7 +105,8 @@ public sealed record RespireOptions
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
-    internal bool DisableSentinelEventMonitoring { get; init; }
+    /// <summary>Disables Sentinel event subscriptions. Event monitoring is enabled by default.</summary>
+    public bool DisableSentinelEventMonitoring { get; init; }
     private bool _useCluster;
     private string? _sentinelPrimaryName;
     private TimeSpan? _connectionIdleReadTimeout;
