@@ -1,3 +1,5 @@
+using Respire.Protocol;
+
 namespace Respire.Extensions.Search;
 
 /// <summary>Search index source type.</summary>
