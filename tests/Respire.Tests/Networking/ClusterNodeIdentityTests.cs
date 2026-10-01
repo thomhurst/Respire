@@ -12,6 +12,69 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityTests
 {
     [Test]
+    public async Task SmigratedUpdatesOwnedSlotsOnceAndRetiresTheLastSourceSlot()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var duplicateTargetEndpoint = new RespireEndpoint("other", 7002);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var target = router.GetMultiplexer(targetEndpoint);
+        var duplicateTarget = router.GetMultiplexer(duplicateTargetEndpoint);
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+        var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.TopologyChanged += () => topologyChanged.TrySetResult();
+
+        source.PublishMaintenanceNotification(new("SMIGRATED", 42, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0-1")]));
+        await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => source.IsRetired);
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
+        source.PublishMaintenanceNotification(new("SMIGRATED", 42, Migrations:
+            [new(sourceEndpoint, duplicateTargetEndpoint, "0-1")]));
+        await Task.Delay(50);
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
+        await Assert.That(ReferenceEquals(source, duplicateTarget)).IsFalse();
+    }
+
+    [Test]
+    public async Task QueuedSmigratedNotificationCannotOverwriteAnAbaSlotChange()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var intermediateEndpoint = new RespireEndpoint("intermediate", 7002);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var target = router.GetMultiplexer(targetEndpoint);
+        var intermediate = router.GetMultiplexer(intermediateEndpoint);
+        router.SetSlotOwner(0, source);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+        var notification = new MaintenanceNotification("SMIGRATED", 7, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]);
+        var queuedType = typeof(ClusterRouter).GetNestedType("QueuedSmigratedNotification", flags)!;
+        var queued = Activator.CreateInstance(queuedType,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
+            binder: null, args: [source, notification, version], culture: null)!;
+
+        router.SetSlotOwner(0, intermediate);
+        router.SetSlotOwner(0, source);
+        typeof(ClusterRouter).GetMethod("ApplySmigratedNotification", flags)!.Invoke(router, [queued]);
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task CacheMetricsRunOutsideMembershipAndHealthGates(bool retirement)
@@ -735,6 +798,12 @@ public class ClusterNodeIdentityTests
             + (includeAliases ? $"%2\r\n+hostname\r\n{Bulk(hostname)}+ip\r\n{Bulk("127.0.0.1")}" : "");
 
     private static string Bulk(string value) => $"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n";
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!predicate()) await Task.Delay(5, timeout.Token);
+    }
 
     private static RespireOptions Options(int seedPort) => new()
     {
