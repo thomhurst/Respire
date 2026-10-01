@@ -153,6 +153,20 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task CoalescedFailbackKeepsEveryAnnouncedTargetAliveDuringRediscovery()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        var a = new RespireEndpoint("10.0.0.1", 6379);
+        coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary), targetIsCurrent: false);
+
+        await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
+        await Assert.That(coalescer.Pending!.Value.AdditionalTargets!).Contains(NewPrimary);
+        await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(a);
+    }
+
+    [Test]
     public async Task EveryOrderingOfSwitchDownAndGapHintsKeepsTheMergeInvariants()
     {
         var c = new RespireEndpoint("10.0.0.3", 6381);

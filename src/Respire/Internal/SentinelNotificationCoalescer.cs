@@ -12,6 +12,7 @@ namespace Respire.Internal;
 /// </param>
 /// <param name="OldPrimaryAddresses">Resolved addresses of a hostname <paramref name="OldPrimary"/>, if any.</param>
 /// <param name="AdditionalOldPrimaries">Other switch sources retained while pending hints merge.</param>
+/// <param name="AdditionalTargets">Other announced targets retained while pending hints merge.</param>
 /// <param name="ReportingSentinel">The Sentinel that delivered the switch hint.</param>
 internal readonly record struct SentinelHint(
     string Key,
@@ -20,7 +21,8 @@ internal readonly record struct SentinelHint(
     bool MustRediscover = false,
     string[]? OldPrimaryAddresses = null,
     RespireEndpoint[]? AdditionalOldPrimaries = null,
-    RespireEndpoint? ReportingSentinel = null);
+    RespireEndpoint? ReportingSentinel = null,
+    RespireEndpoint[]? AdditionalTargets = null);
 
 /// <summary>
 /// Coalesces failover hints for the single notification rediscovery worker. At most one hint is
@@ -97,6 +99,8 @@ internal sealed class SentinelNotificationCoalescer
         var additionalSources = merged.OldPrimary is { } selected
             ? sources.Where(source => !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source, selected)).ToArray()
             : sources;
+        var targets = EnumerateTargets(previous).Concat(EnumerateTargets(hint))
+            .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
         return merged with
         {
             AdditionalOldPrimaries = additionalSources.Length == 0 ? null : additionalSources,
@@ -107,7 +111,17 @@ internal sealed class SentinelNotificationCoalescer
             ReportingSentinel = hint.Target is not null
                 ? hint.ReportingSentinel ?? previous.ReportingSentinel
                 : previous.ReportingSentinel ?? hint.ReportingSentinel,
+            AdditionalTargets = targets.Where(target => merged.Target is not { } primary
+                || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary)).ToArray() is { Length: > 0 } extraTargets
+                ? extraTargets : null,
         };
+    }
+
+    private static IEnumerable<RespireEndpoint> EnumerateTargets(SentinelHint hint)
+    {
+        if (hint.Target is { } target) yield return target;
+        if (hint.AdditionalTargets is { } additional)
+            foreach (var endpoint in additional) yield return endpoint;
     }
 
     private static IEnumerable<RespireEndpoint> EnumerateOldPrimaries(SentinelHint hint)

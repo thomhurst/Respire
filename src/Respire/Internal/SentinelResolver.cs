@@ -95,8 +95,7 @@ internal static class SentinelResolver
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
-        RespireEndpoint? preferredSentinel = null,
-        RespireEndpoint? expectedPrimary = null)
+        RespireEndpoint? preferredSentinel = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -153,12 +152,6 @@ internal static class SentinelResolver
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
-                if (expectedPrimary is { } expected
-                    && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, expected))
-                {
-                    throw new RespireConnectionException(
-                        $"Sentinel {endpoint} reports primary {primary}, which does not match its switch target {expected}.");
-                }
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
                 var primaryOptions = options with
                 {

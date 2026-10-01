@@ -134,13 +134,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             Func<RespireOptions, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
                 ? (options, token) => ReuseOrConnectGenerationAsync(previous, options, token)
                 : ConnectGenerationAsync;
-            RespireEndpoint? expectedPrimary = null;
-            if (notificationHint is { MustRediscover: false, Target: { } target })
-                expectedPrimary = target;
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
-                notificationHint?.ReportingSentinel,
-                expectedPrimary).ConfigureAwait(false);
+                notificationHint?.ReportingSentinel).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -491,10 +487,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 if (_disposed) return;
                 var current = Current;
-                if (!ReferenceEquals(current, arrivedDuring)) return;
-                var targetIsCurrent = !hint.MustRediscover && hint.Target is { } target
-                    && current is { IsRetired: false } && SameEndpoint(current.Endpoint, target);
-                if (!targetIsCurrent && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
+                if (!IsAnnouncedTarget(current, in hint)
+                    && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
                     Invalidate(current!);
             }
         }
@@ -601,7 +595,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // Compare the switch source with Current under the gate, immediately before retirement.
             // This also covers hints that wait behind an active discovery, so a direct endpoint
             // match never waits for that attempt or for DNS.
-            if (!targetIsCurrent && IsSwitchSource(current, in hint)) Invalidate(current!);
+            if (!IsAnnouncedTarget(current, in hint) && IsSwitchSource(current, in hint)) Invalidate(current!);
             if (startWorker) _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
         }
     }
@@ -675,7 +669,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         _notificationRediscovery = null;
                         return;
                     }
-                    if (IsSwitchSource(current, in next)) Invalidate(current!);
+                    if (!IsAnnouncedTarget(current, in next) && IsSwitchSource(current, in next)) Invalidate(current!);
                 }
             }
 
@@ -696,6 +690,18 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         if (hint.AdditionalOldPrimaries is { } additional)
             foreach (var endpoint in additional)
                 if (IsCurrentPeer(current, endpoint, addresses: null)) return true;
+        return false;
+    }
+
+    // A coalesced A→B→A sequence must rediscover, but B can already be a valid current
+    // primary. Keep any announced target alive while that fresh discovery runs.
+    private static bool IsAnnouncedTarget(Generation? current, in SentinelHint hint)
+    {
+        if (current is not { IsRetired: false }) return false;
+        if (hint.Target is { } target && SameEndpoint(current.Endpoint, target)) return true;
+        if (hint.AdditionalTargets is { } additional)
+            foreach (var endpoint in additional)
+                if (SameEndpoint(current.Endpoint, endpoint)) return true;
         return false;
     }
 
