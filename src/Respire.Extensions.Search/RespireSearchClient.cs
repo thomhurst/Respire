@@ -141,6 +141,8 @@ public sealed class RespireSearchClient
         }
         finally
         {
+            // A failed cursor read leaves page at the last known cursor ID. Best-effort cleanup
+            // may then target a cursor Redis already advanced or expired.
             if (!page.IsComplete) await TryDeleteCursorAsync(RequirePageIndex(page), page.CursorId).ConfigureAwait(false);
         }
     }

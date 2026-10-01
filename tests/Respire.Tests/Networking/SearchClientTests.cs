@@ -1,4 +1,5 @@
 using Redis.Search;
+using Respire.Internal;
 using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;
@@ -448,6 +449,13 @@ public class SearchClientTests
         await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("COMMAND", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task HybridSearchIsClassifiedAsReadOnlyForClientCache()
+    {
+        await Assert.That(ClientSideCacheCoordinator.IsReadOnly("FT.HYBRID")).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.IsSingleKeyMutation("FT.HYBRID")).IsFalse();
     }
 
     [Test]
