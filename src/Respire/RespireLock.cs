@@ -374,7 +374,16 @@ public sealed class RespireLock : IAsyncDisposable
     }
 
     private static TimeSpan NormalizeDuration(TimeSpan duration)
-        => TimeSpan.FromMilliseconds((long)duration.TotalMilliseconds);
+    {
+        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+        if (duration.Ticks % TimeSpan.TicksPerMillisecond > 0
+            && milliseconds < TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond)
+        {
+            milliseconds++;
+        }
+
+        return TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
+    }
 
     private bool TryMarkOwnershipLost()
     {

@@ -628,6 +628,17 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_RoundsSubMillisecondExpiryUp()
+    {
+        var commands = new CoordinatedLockCommands(blockFirstExtension: false);
+        var mutex = new RespireLock(commands, "resource", "owner", TimeSpan.FromMinutes(1), Stopwatch.GetTimestamp());
+
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond + 1)))
+            .IsTrue();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(2));
+    }
+
+    [Test]
     public async Task RespireLock_UncertainRenewalCancelsProtectedWorkBeforeFenceCompletes()
     {
         var commands = new CoordinatedLockCommands(reportUncertain: true);
