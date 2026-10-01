@@ -43,7 +43,7 @@ internal sealed partial class ClusterRouter
     private int _topologyRefreshStarted;
     private int _topologyRefreshForce;
 
-    private sealed class ReadOnlyRefreshFlight(
+    internal sealed class ReadOnlyRefreshFlight(
         CancellationTokenSource cancellation, int slot, RespireEndpoint source)
     {
         internal CancellationTokenSource Cancellation { get; } = cancellation;
@@ -57,7 +57,8 @@ internal sealed partial class ClusterRouter
 
     private Task<bool> RefreshReadOnlySharedAsync(
         RespireServerException rejection, RespireConnection source, int slot, CancellationToken waiterToken,
-        DiscoveryRound? discovery, out bool joinedDifferentRecovery, out bool joinedTopologyRefresh)
+        DiscoveryRound? discovery, out bool joinedDifferentRecovery, out bool joinedTopologyRefresh,
+        out ReadOnlyRefreshFlight? participatingFlight)
     {
         TaskCompletionSource<bool>? start = null;
         Task<bool> task;
@@ -86,6 +87,7 @@ internal sealed partial class ClusterRouter
             }
             task = _sharedRefreshTask;
             flight = _readOnlyRefreshFlight;
+            participatingFlight = flight;
             joinedDifferentRecovery = flight is not null && !ReferenceEquals(start?.Task, task)
                 && (flight.Slot != slot || flight.Source.Port != source.Port
                     || !string.Equals(flight.Source.Host, source.Host, StringComparison.OrdinalIgnoreCase));
@@ -96,6 +98,14 @@ internal sealed partial class ClusterRouter
             _ = CompleteSharedRefreshAsync(start, async () =>
                 await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery).ConfigureAwait(false), flight);
         return AwaitReadOnlyRefreshAsync(task, waiterToken, flight);
+    }
+
+    private bool HasSurvivingReadOnlyWaiter(DiscoveryRound round)
+    {
+        var flight = round.JoinedReadOnlyFlight;
+        if (flight is null) return false;
+        lock (_sharedRefreshGate)
+            return ReferenceEquals(_readOnlyRefreshFlight, flight) && !flight.Completed && flight.Waiters > 0;
     }
 
     private async Task<bool> AwaitReadOnlyRefreshAsync(
@@ -330,7 +340,7 @@ internal sealed partial class ClusterRouter
         // stale masters and replicas when no candidate is connected.
         foreach (var endpoint in _seeds)
         {
-            var seedNode = GetOrCreateNode(endpoint);
+            var seedNode = GetOrCreateNode(endpoint, observe: false);
             if (seen.Add(seedNode)) candidates.Add(seedNode);
         }
         foreach (var master in Volatile.Read(ref _masters))
@@ -648,6 +658,8 @@ internal sealed partial class ClusterRouter
         private long _episode;
         internal RespireReconnectLimitException? Exhaustion { get; private set; }
         private Exception? _terminalError;
+        internal ReadOnlyRefreshFlight? JoinedReadOnlyFlight { get; private set; }
+        internal void JoinReadOnlyFlight(ReadOnlyRefreshFlight flight) => JoinedReadOnlyFlight = flight;
         internal Exception? TerminalError
         {
             get => _terminalError;
@@ -665,7 +677,8 @@ internal sealed partial class ClusterRouter
         {
             // A canceled waiter does not own the result of a shared recovery flight. The
             // flight records its own terminal outcome when its work completes.
-            if (error is OperationCanceledException && callerToken.IsCancellationRequested) return;
+        if (error is OperationCanceledException && callerToken.IsCancellationRequested
+            && owner.HasSurvivingReadOnlyWaiter(this)) return;
             // Retirement rejects a command before admission, including when the command's
             // redirect cap prevents another retry. Application errors after admission do not
             // change the outcome of an otherwise successful discovery episode.
@@ -675,7 +688,8 @@ internal sealed partial class ClusterRouter
         internal void RecordCommandFailure(Exception error, bool discoveryPending, int? commandSlot,
             bool noRedirect = false, CancellationToken callerToken = default)
         {
-            if (error is OperationCanceledException && callerToken.IsCancellationRequested) return;
+            if (error is OperationCanceledException && callerToken.IsCancellationRequested
+                && owner.HasSurvivingReadOnlyWaiter(this)) return;
             // A route can reject the final send after selection succeeded. Reaching the command's
             // redirect cap ends recovery unsuccessfully even when the policy still permits retries.
             // NoRedirect and unkeyed READONLY deliberately remain ordinary command errors.

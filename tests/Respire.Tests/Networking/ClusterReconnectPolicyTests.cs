@@ -770,7 +770,9 @@ public class ClusterReconnectPolicyTests
             catch (OperationCanceledException) { }
         }
         // Cancellation releases the guard, allowing the owner to report its terminal outcome.
-        round.TerminalError = new OperationCanceledException(cancellation.Token);
+        var canceledCommand = new OperationCanceledException(cancellation.Token);
+        round.RecordCommandFailure(canceledCommand, discoveryPending: true, callerToken: cancellation.Token);
+        await Assert.That(round.TerminalError).IsSameReferenceAs(canceledCommand);
         round.Finish();
     }
 

@@ -706,7 +706,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
             var sharedRefresh = RefreshReadOnlySharedAsync(
                 error, source, slot, cancellationToken, discovery,
-                out var joinedDifferentRecovery, out var joinedTopologyRefresh);
+                out var joinedDifferentRecovery, out var joinedTopologyRefresh, out var readOnlyFlight);
+            if (readOnlyFlight is not null) discovery?.JoinReadOnlyFlight(readOnlyFlight);
             _ = await sharedRefresh.ConfigureAwait(false);
             var owner = Volatile.Read(ref _slots[slot]);
             if ((owner is null || IsSameEndpoint(owner, source))
