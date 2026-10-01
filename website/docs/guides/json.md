@@ -31,10 +31,24 @@ if (loaded.Found)
     Console.WriteLine(loaded.Value?.Name);
 ```
 
-Use `RespireJsonPath.Root` for legacy root path `.`. Use `RespireJsonPath.JsonPathRoot` or another `$` path for JSONPath. JSONPath reads return all matches; `GetAsync` requires at most one match, while `GetManyAsync` returns every match. `RespireJsonValue<T>.Found` distinguishes a missing key or path from a JSON `null` value.
+## Paths and response shapes
 
-`GetJsonAsync` returns formatted JSON text. `RespireJsonGetOptions` supports `INDENT`, `NEWLINE`, `SPACE`, `NOESCAPE`, and one or more paths. `SetAsync` serializes typed values; `SetJsonAsync` accepts pre-serialized JSON. Both support `NX` and `XX` through `RespireJsonSetCondition`. `MultiGetAsync` and `MultiSetAsync` provide `JSON.MGET` and `JSON.MSET` operations.
+The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath.Root`); legacy paths return one value. Use `RespireJsonPath.JsonPathRoot` or another `$` path for JSONPath, which returns every match. `GetAsync` requires at most one match and throws `InvalidOperationException` otherwise, so use `GetManyAsync` for wildcard paths. `GetAsync` reads one path; read several paths at once as text with `GetJsonAsync`.
 
-`RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, toggle, and debug-memory commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use.
+`RespireJsonValue<T>.Found` is false when the key is missing or a JSONPath matches nothing. A stored JSON `null` returns `Found = true` with a default `Value`, even when `T` is a non-nullable reference type. With a legacy path, a missing path inside an existing document is a server error; use a `$` path to get `Found = false` instead.
 
-Known RedisJSON key arguments receive the prefix configured by `WithKeyPrefix`. All keys in `JSON.MGET` and `JSON.MSET` must share a Redis Cluster hash slot; Respire validates these layouts before dispatch. RESP2 and RESP3 use Respire's shared command transport.
+## Reading and writing
+
+`GetJsonAsync` returns formatted JSON text. `RespireJsonGetOptions` supports `INDENT`, `NEWLINE`, `SPACE`, `NOESCAPE`, and one or more paths; do not mix legacy and `$` paths. `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` accepts pre-serialized JSON as a string or as UTF-8 bytes. All three return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the write.
+
+`MultiGetAsync` returns one entry per key: `null` when the key does not exist, otherwise the values matched by the path. `MultiSetAsync` writes every entry atomically with `JSON.MSET`; it serializes all entries before sending, so a serialization failure writes nothing. `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
+
+## Low-level commands
+
+`RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, and toggle commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use. Conditional `JSON.SET` and `JSON.DEBUG MEMORY` take fixed modifier tokens, so they are available only through the typed `SetAsync`, `SetJsonAsync`, and `GetMemoryUsageAsync` methods.
+
+## Key prefixes, Cluster, and client-side caching
+
+Known RedisJSON key arguments receive the prefix configured by `WithKeyPrefix`. All keys in `JSON.MGET` and `JSON.MSET` must share a Redis Cluster hash slot; Respire validates these layouts before dispatch and fails with a `CROSSSLOT` error without sending the command. RESP2 and RESP3 use Respire's shared command transport.
+
+With client-side caching enabled, JSON reads such as `JSON.GET` and `JSON.MGET` can be served from the local cache. Single-key JSON writes invalidate only their document key. `JSON.MSET` writes several keys, so it clears the whole local cache, as core `MSET` does.

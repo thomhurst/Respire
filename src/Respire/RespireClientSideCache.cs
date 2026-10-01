@@ -563,7 +563,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     }
 
     // Read-only here means preserving cached keyspace values. Diagnostic and script state may change.
-    private static bool IsReadOnly(string operation)
+    internal static bool IsReadOnly(string operation)
         => IsCacheableRead(operation)
            || operation is
             "DUMP" or "TTL" or "PTTL" or "HTTL" or "HPTTL" or
@@ -589,7 +589,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "FT.CURSOR GC" or "FT.CURSOR READ" or "FT.DICTDUMP" or "FT.EXPLAIN" or
             "FT.EXPLAINCLI" or "FT.INFO" or "FT.PROFILE" or "FT.SEARCH" or
             "FT.SPELLCHECK" or "FT.SUGGET" or "FT.SUGLEN" or "FT.SYNDUMP" or "FT.TAGVALS" or
-            "JSON.DEBUG" or "LOLWUT" or
+            "JSON.DEBUG" or "JSON.DEBUG MEMORY" or "JSON.DEBUG FIELDS" or "JSON.DEBUG HELP" or "LOLWUT" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
             "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
@@ -792,7 +792,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return false;
     }
 
-    private static bool IsSingleKeyMutation(string operation)
+    // RedisJSON writes must appear here (or be deliberately left to BeginUnknownMutation, like JSON.MSET);
+    // RespireJsonCommandClassificationTests fails when a JSON command is not classified.
+    internal static bool IsSingleKeyMutation(string operation)
         => operation is
             "SET" or "DELEX" or "DELIFEQ" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
             "BF.RESERVE" or "BF.ADD" or "BF.MADD" or "BF.INSERT" or "BF.LOADCHUNK" or

@@ -72,6 +72,7 @@ internal static class RawCommandKeyLayouts
             "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",
             "JSON.ARRINSERT", "JSON.ARRPOP", "JSON.ARRTRIM", "JSON.NUMINCRBY", "JSON.NUMMULTBY", "JSON.OBJKEYS",
             "JSON.OBJLEN", "JSON.STRAPPEND", "JSON.STRLEN", "JSON.TOGGLE", "JSON.TYPE", "JSON.RESP");
+        // AfterFirst assumes one subcommand token before the key (JSON.DEBUG MEMORY key, JSON.DEBUG FIELDS key).
         AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
         AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
         AddImmediate(LayoutKind.Triples, "JSON.MSET");
@@ -109,6 +110,9 @@ internal static class RawCommandKeyLayouts
             throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
         return Parse(definition.Kind, args);
     }
+
+    /// <summary>Whether <paramref name="operation"/> has an explicit key layout.</summary>
+    internal static bool HasLayout(string operation) => Layouts.ContainsKey(operation);
 
     internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
     {
@@ -179,6 +183,7 @@ internal static class RawCommandKeyLayouts
                 Require(args.Length >= 2);
                 return new(0, 2);
             case LayoutKind.AfterFirst:
+                // HELP is the only keyless subcommand; every other subcommand takes the key next.
                 if (args.Length == 1 && args[0].EqualsAsciiIgnoreCase("HELP"))
                 {
                     return new(0, 0);

@@ -1,6 +1,11 @@
 namespace Respire.Extensions.Json;
 
 /// <summary>Source-generated command methods for the supported RedisJSON command set.</summary>
+/// <remarks>
+/// Every method sends exactly the arguments it declares. Commands whose modifiers are fixed tokens, such as
+/// <c>JSON.SET ... NX</c> and <c>JSON.DEBUG MEMORY</c>, are exposed only through the typed
+/// <see cref="RespireJsonClient"/> methods so that invalid modifiers cannot be sent.
+/// </remarks>
 [RespireCommands]
 public interface IRespireJsonCommands
 {
@@ -9,14 +14,14 @@ public interface IRespireJsonCommands
     ValueTask<RespireResult> GetAsync(RespireKey key, string[] optionsAndPaths,
         CancellationToken cancellationToken = default);
 
-    /// <summary>JSON.SET without a conditional modifier.</summary>
-    [RespireCommand("JSON.SET")]
-    ValueTask<RespireResult> SetAsync(RespireKey key, string path, string json,
+    /// <summary>JSON.GET for one path.</summary>
+    [RespireCommand("JSON.GET")]
+    ValueTask<RespireResult> GetPathAsync(RespireKey key, string path,
         CancellationToken cancellationToken = default);
 
-    /// <summary>JSON.SET with NX or XX.</summary>
+    /// <summary>JSON.SET without a conditional modifier. <paramref name="json"/> may be UTF-8 bytes or text.</summary>
     [RespireCommand("JSON.SET")]
-    ValueTask<RespireResult> SetConditionalAsync(RespireKey key, string path, string json, string condition,
+    ValueTask<RespireResult> SetAsync(RespireKey key, string path, RespireValue json,
         CancellationToken cancellationToken = default);
 
     /// <summary>JSON.MGET for keys sharing a Redis Cluster slot.</summary>
@@ -25,6 +30,10 @@ public interface IRespireJsonCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>JSON.MSET with flattened key, path, JSON triples.</summary>
+    /// <remarks>
+    /// The generator cannot express typed triples, so keys travel as values. The core key-layout table treats
+    /// every third argument as a key for prefixing and Cluster slot validation.
+    /// </remarks>
     [RespireCommand("JSON.MSET")]
     ValueTask<RespireResult> MultiSetAsync(RespireValue[] keyPathJsonTriples,
         CancellationToken cancellationToken = default);
@@ -113,9 +122,19 @@ public interface IRespireJsonCommands
     [RespireCommand("JSON.RESP")]
     ValueTask<RespireResult> ResponseAsync(RespireKey key, string path,
         CancellationToken cancellationToken = default);
+}
 
-    /// <summary>JSON.DEBUG MEMORY.</summary>
+/// <summary>Generated commands whose fixed modifier tokens are supplied only by <see cref="RespireJsonClient"/>.</summary>
+[RespireCommands]
+internal interface IRespireJsonModifierCommands
+{
+    /// <summary>JSON.SET with a fixed NX or XX token.</summary>
+    [RespireCommand("JSON.SET")]
+    ValueTask<RespireResult> SetConditionalAsync(RespireKey key, string path, RespireValue json, string condition,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>JSON.DEBUG with the fixed MEMORY subcommand.</summary>
     [RespireCommand("JSON.DEBUG")]
-    ValueTask<RespireResult> DebugMemoryAsync(string subcommand, RespireKey key, string path,
+    ValueTask<RespireResult> DebugAsync(string subcommand, RespireKey key, string path,
         CancellationToken cancellationToken = default);
 }

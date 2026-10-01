@@ -365,6 +365,10 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error) { return ValueTask.FromException<RespireResult>(error); }
         return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
+        var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
+        return prefixError is null
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken)
+            : ValueTask.FromException<RespireResult>(prefixError);
     }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
@@ -395,15 +399,27 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
-        RespireValue[] prefixedArguments;
+        var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
+        return prefixError is null
+            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken)
+            : ValueTask.FromException(prefixError);
+    }
+
+    /// <summary>
+    /// Shared by the result and fire-and-forget paths. Returns the exception to report through the task,
+    /// as ExecuteCatalogAsync does, instead of throwing synchronously: a rejection for commands without a
+    /// known layout, or the layout's own argument error for malformed arguments.
+    /// </summary>
+    private Exception? PrefixModuleKeysOrError(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    {
         try
         {
-            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException(KeyPrefixNotSupported());
+            return TryPrefixModuleKeys(operation, arguments, out prefixedArguments) ? null : KeyPrefixNotSupported();
         }
         catch (ArgumentException exception)
         {
-            return ValueTask.FromException(exception);
+            prefixedArguments = [];
+            return exception;
         }
         return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
         if (!TryPrefixGeneratedKeys(operation, rawArguments, out var prefixedArguments))
@@ -471,6 +487,7 @@ public sealed partial class RespireClient : IRespireClient
             return false;
         }
 
+        // Every key is rewritten, so the copy is always needed; it keeps the caller's array untouched.
         prefixedArguments = arguments.ToArray();
         for (var index = 0; index < layout.Count; index++)
         {
@@ -926,11 +943,14 @@ public sealed partial class RespireClient : IRespireClient
         var validated = ValidateClusterRawKeys(operation, arguments);
         if (validated.Known)
             return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
-        if (operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+        // Registered module commands route by their layout even outside Cluster validation, so commands whose
+        // key is not the first argument (JSON.DEBUG MEMORY, CMS.MERGE) still pick the right key.
+        if (IsPrefixableModuleCommand(operation)
             && RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
-            return layout.Count > 0
-                ? firstArgumentIndex + layout.Start
-                : layout.Extra >= 0 ? firstArgumentIndex + layout.Extra : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
+            // Same precedence as RawCommandKeyLayouts.ValidateClusterKeys: a destination key comes first.
+            return layout.Extra >= 0 ? firstArgumentIndex + layout.Extra
+                : layout.Count > 0 ? firstArgumentIndex + layout.Start
+                : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
         return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
     }
 

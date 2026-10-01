@@ -3,8 +3,22 @@ namespace Respire.Extensions.Json;
 /// <summary>Formatting options and paths for JSON.GET.</summary>
 public sealed class RespireJsonGetOptions
 {
+    private readonly IReadOnlyList<RespireJsonPath> _paths = [RespireJsonPath.Root];
+
     /// <summary>Paths to return. Defaults to the legacy root path <c>.</c>.</summary>
-    public IReadOnlyList<RespireJsonPath> Paths { get; init; } = [RespireJsonPath.Root];
+    /// <remarks>Do not mix legacy and JSONPath (<c>$</c>) paths; Redis rejects the request.</remarks>
+    /// <exception cref="ArgumentNullException">The value is null.</exception>
+    /// <exception cref="ArgumentException">The value is empty.</exception>
+    public IReadOnlyList<RespireJsonPath> Paths
+    {
+        get => _paths;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (value.Count == 0) throw new ArgumentException("At least one JSON path is required.", nameof(Paths));
+            _paths = value;
+        }
+    }
 
     /// <summary>Optional indentation string.</summary>
     public string? Indent { get; init; }
