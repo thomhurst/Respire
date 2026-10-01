@@ -43,8 +43,11 @@ $requiredPackages = @(
     'Respire.Extensions.Aws'
     'Respire.Extensions.Caching.Hybrid'
     'Respire.Extensions.DependencyInjection'
+    'Respire.Extensions.Azure'
     'Respire.Testing.Containers'
 )
+
+$allowedExternalPackages = @('Azure.Identity')
 
 foreach ($packageId in $requiredPackages)
 {
@@ -190,7 +193,7 @@ foreach ($documentPath in $documentPaths)
 
 foreach ($packageId in $installPackageIds)
 {
-    if ($packageId -notin $requiredPackages)
+    if ($packageId -notin $requiredPackages -and $packageId -notin $allowedExternalPackages)
     {
         throw "Shell sample references unexpected package ID '$packageId'."
     }

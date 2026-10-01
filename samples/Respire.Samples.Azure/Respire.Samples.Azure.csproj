@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="..\..\src\Respire.Extensions.Azure\Respire.Extensions.Azure.csproj" />
+    <ProjectReference Include="..\..\src\Respire.Extensions.DependencyInjection\Respire.Extensions.DependencyInjection.csproj" />
+  </ItemGroup>
+</Project>
