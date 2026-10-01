@@ -34,11 +34,11 @@ public class HashFieldLeaseWireTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
 
         var commands = server.ReceivedCommands;
-        await Assert.That(commands.Count).IsEqualTo(2);
-        await Assert.That(commands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
-        var owner = server.ReceivedArguments[0][5];
-        await Assert.That(server.ReceivedArguments[1][5]).IsEquivalentTo(owner);
-        await Assert.That(server.ReceivedArguments[0][1]).IsNotEqualTo(server.ReceivedArguments[1][1]);
+        var acquireIndex = commands.ToList().FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+        var cleanupIndex = commands.ToList().FindIndex(command => command.StartsWith("EVAL ", StringComparison.Ordinal));
+        await Assert.That(acquireIndex >= 0 && cleanupIndex > acquireIndex).IsTrue();
+        var owner = server.ReceivedArguments[acquireIndex][5];
+        await Assert.That(server.ReceivedArguments[cleanupIndex][5]).IsEquivalentTo(owner);
     }
 
     [Test]
@@ -62,7 +62,7 @@ public class HashFieldLeaseWireTests
     public async Task ConcurrentReleaseCallersShareTheServerOperationButNotCallerCancellation()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 500);
+        server.DelayReply(3, 500);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var lease = await new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
@@ -86,7 +86,7 @@ public class HashFieldLeaseWireTests
     public async Task UncertainRenewalFailsClosedAndCannotBeRetried()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 250);
+        server.DelayReply(3, 250);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var lease = await new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
@@ -112,8 +112,9 @@ public class HashFieldLeaseWireTests
     public async Task FailedQueuedReleasePreservesUncertainRenewalState()
     {
         await using var server = new FakeRespServer(
-            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), "-ERR release failed\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 250);
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(),
+            "-ERR release failed\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 250);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var lease = await new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
@@ -132,6 +133,30 @@ public class HashFieldLeaseWireTests
         await Assert.That(lease.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsFalse();
         await Assert.That(lease.IsReleased).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedReleaseWaitsForRenewalBeforeStartingItsCommandTimeout()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 2500);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var lease = await new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+
+        var renewal = lease.ResetExpiryAsync(TimeSpan.FromSeconds(20)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+        var release = lease.ReleaseAsync().AsTask();
+        await Task.Delay(2200, timeout.Token);
+
+        await Assert.That(release.IsCompleted).IsFalse();
+        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(await release.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(3);
     }
@@ -165,7 +190,7 @@ public class HashFieldLeaseWireTests
     public async Task CancellationBeforeAcquireReplyAttemptsOwnerCheckedCleanup()
     {
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(0, 250);
+        server.DelayReply(2, 250);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var pending = new RespireCoordination(client)
@@ -177,10 +202,50 @@ public class HashFieldLeaseWireTests
 
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
-        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            .IsEqualTo(2);
-        var owner = server.ReceivedArguments[0][5];
-        await Assert.That(server.ReceivedArguments[1][5]).IsEquivalentTo(owner);
+        var commands = server.ReceivedCommands;
+        var acquireIndex = commands.ToList().FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+        var cleanupIndex = commands.ToList().FindIndex(command => command.StartsWith("EVAL ", StringComparison.Ordinal));
+        await Assert.That(acquireIndex >= 0 && cleanupIndex > acquireIndex).IsTrue();
+        var owner = server.ReceivedArguments[acquireIndex][5];
+        await Assert.That(server.ReceivedArguments[cleanupIndex][5]).IsEquivalentTo(owner);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task UncertainAcquisitionCorrectionFollowsEveryPossibleConnectionCopy()
+    {
+        await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 2,
+        });
+        using var cancellation = new CancellationTokenSource();
+        var pending = new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            await Task.Delay(5, timeout.Token);
+        var acquireIndex = server.ReceivedCommands.ToList().FindIndex(
+            command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+        var acquisitionConnection = server.ReceivedConnectionIds[acquireIndex];
+        cancellation.Cancel();
+
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        var cleanupConnections = server.ReceivedCommands
+            .Select((command, index) => (command, ConnectionId: server.ReceivedConnectionIds[index]))
+            .Where(item => item.command.StartsWith("EVAL ", StringComparison.Ordinal))
+            .Select(item => item.ConnectionId)
+            .Distinct()
+            .Order()
+            .ToArray();
+        await Assert.That(cleanupConnections).IsEquivalentTo(new[] { 0, 1 });
+        await Assert.That(cleanupConnections.Contains(acquisitionConnection)).IsTrue();
     }
 
     [Test]
@@ -200,8 +265,7 @@ public class HashFieldLeaseWireTests
 
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
-        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            .IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]

@@ -307,12 +307,26 @@ public sealed class RespireCoordination
         field = field.Snapshot();
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
+        var concreteClient = _client as RespireClient;
+        RespireClient.TrackedScriptExecution? execution = null;
         bool acquired;
         try
         {
-            using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
-                [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
-            acquired = !response.IsNull && response.AsInteger() != 0;
+            if (concreteClient is null)
+            {
+                using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
+                    [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+                acquired = !response.IsNull && response.AsInteger() != 0;
+            }
+            else
+            {
+                await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                execution = await concreteClient.StartTrackedScriptExecutionAsync(
+                    AcquireHashFieldLease, [hashKey], [field, owner.Bytes, milliseconds], cancellationToken,
+                    requireReliableCorrectionOrdering: true).ConfigureAwait(false);
+                using var response = await execution.Response.ConfigureAwait(false);
+                acquired = !response.IsNull && response.AsInteger() != 0;
+            }
         }
         catch (RespireServerException)
         {
@@ -321,13 +335,18 @@ public sealed class RespireCoordination
         }
         catch
         {
-            await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
+            await BestEffortReleaseHashFieldLeaseAsync(
+                hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
             throw;
         }
 
         if (cancellationToken.IsCancellationRequested)
         {
-            if (acquired) await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
+            if (acquired)
+            {
+                await BestEffortReleaseHashFieldLeaseAsync(
+                    hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
+            }
             cancellationToken.ThrowIfCancellationRequested();
         }
         if (!acquired) return null;
@@ -335,7 +354,8 @@ public sealed class RespireCoordination
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
         var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
         if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
-        await BestEffortReleaseHashFieldLeaseAsync(hashKey, field, owner).ConfigureAwait(false);
+        await BestEffortReleaseHashFieldLeaseAsync(
+            hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
         return null;
     }
 
@@ -364,18 +384,44 @@ public sealed class RespireCoordination
     }
 
     private async ValueTask BestEffortReleaseHashFieldLeaseAsync(
-        RespireKey hashKey, RespireKey field, RespireLockToken owner)
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient? concreteClient = null,
+        RespireClient.TrackedConnectionIdentity connectionIdentity = default)
     {
         using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
         try
         {
-            _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, timeout.Token).ConfigureAwait(false);
+            if (concreteClient is null)
+            {
+                _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, timeout.Token).ConfigureAwait(false);
+                return;
+            }
+
+            var correction = concreteClient.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
+            try
+            {
+                await correction.WaitAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                ObserveCorrectionFailure(correction);
+            }
         }
         catch
         {
             // The owner-checked lease expires naturally if cleanup cannot reach Redis.
         }
     }
+
+    private static void ObserveCorrectionFailure(Task correction)
+        => _ = correction.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, long milliseconds, CancellationToken cancellationToken)
