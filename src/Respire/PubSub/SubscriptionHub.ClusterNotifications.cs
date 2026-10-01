@@ -73,6 +73,9 @@ internal sealed partial class SubscriptionHub
     private readonly HashSet<RespireEndpoint> _notificationRetryingEndpoints = [];
     private long _notificationTopologyVersion;
     private NotificationTopology? _latestNotificationTopology;
+    private bool _notificationReconciliationScheduled;
+    private bool _notificationReconciliationScheduledAgain;
+    private long _scheduledNotificationReconciliationVersion;
 
     // Test seams for the route bookkeeping invariants.
     internal int ClusterNotificationNodeCount
@@ -983,8 +986,40 @@ internal sealed partial class SubscriptionHub
         {
             latest = _latestNotificationTopology;
             version = _notificationTopologyVersion;
+            if (_notificationReconciliationScheduled)
+            {
+                if (version != _scheduledNotificationReconciliationVersion)
+                {
+                    _notificationReconciliationScheduledAgain = true;
+                    _scheduledNotificationReconciliationVersion = version;
+                }
+                return;
+            }
+            _notificationReconciliationScheduled = true;
+            _scheduledNotificationReconciliationVersion = version;
         }
-        _ = ReconcileNotificationsAsync(version, latest?.Endpoints, latest?.Authoritative ?? false);
+        _ = RunScheduledNotificationReconciliationAsync(version, latest);
+    }
+
+    private async Task RunScheduledNotificationReconciliationAsync(
+        long version, NotificationTopology? topology)
+    {
+        while (true)
+        {
+            await ReconcileNotificationsAsync(version, topology?.Endpoints, topology?.Authoritative ?? false)
+                .ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (!_notificationReconciliationScheduledAgain)
+                {
+                    _notificationReconciliationScheduled = false;
+                    return;
+                }
+                _notificationReconciliationScheduledAgain = false;
+                version = _scheduledNotificationReconciliationVersion;
+                topology = _latestNotificationTopology;
+            }
+        }
     }
 
     private async ValueTask<bool> ReconcileNotificationSubscriptionAsync(
@@ -1161,6 +1196,7 @@ internal sealed partial class SubscriptionHub
         }
         var disconnected = false;
         var wasRetrying = false;
+        var watcherOwnsRecovery = false;
         lock (_gate)
         {
             EndNotificationSubscriptionLocked(subscription);
@@ -1177,6 +1213,11 @@ internal sealed partial class SubscriptionHub
                 _notificationExhaustedEndpoints.Add(failed);
                 disconnected = true;
             }
+            else if (endpoint is { } surviving
+                && _notificationNodes.TryGetValue(surviving, out var node))
+            {
+                lock (node.Gate) watcherOwnsRecovery = node.InterruptedAt is not null;
+            }
         }
         if (endpoint is { } exhaustedEndpoint)
         {
@@ -1187,7 +1228,7 @@ internal sealed partial class SubscriptionHub
                     ReconnectAttempt = attempt,
                     ReconnectExhausted = true,
                 });
-            else if (wasRetrying)
+            else if (wasRetrying && !watcherOwnsRecovery)
                 core.ClearClusterSubscriptionState(exhaustedEndpoint);
             try
             {

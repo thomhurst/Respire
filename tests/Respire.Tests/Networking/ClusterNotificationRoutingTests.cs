@@ -862,6 +862,54 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ReplayRejectionsCoalesceFullReconciliationForSameTopology()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var reject = false;
+        var firstRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        foreach (var (server, rejected) in new[] { (first, firstRejected), (second, secondRejected) })
+        {
+            var configured = server.ReplyOverride!;
+            server.ReplyOverride = (connectionId, command) =>
+            {
+                if (Volatile.Read(ref reject) && command == $"PSUBSCRIBE {descriptor}")
+                {
+                    rejected.TrySetResult();
+                    return "-NOPERM denied\r\n"u8.ToArray();
+                }
+                return configured(connectionId, command);
+            };
+        }
+        await using var client = CreateClusterClient(first.Port, resp3: false, new RespireReconnectPolicy
+        {
+            InitialDelay = TimeSpan.FromSeconds(2),
+            MaxDelay = TimeSpan.FromSeconds(2),
+            JitterRatio = 0,
+            MaxAttempts = 2,
+        });
+        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var firstCommand = first.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
+        var secondCommand = second.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
+        var firstConnection = first.ReceivedConnectionIds[firstCommand];
+        var secondConnection = second.ReceivedConnectionIds[secondCommand];
+
+        Volatile.Write(ref reject, true);
+        first.CloseConnection(firstConnection);
+        second.CloseConnection(secondConnection);
+        await Task.WhenAll(firstRejected.Task, secondRejected.Task).WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(300);
+
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+        await subscription.DisposeAsync();
+    }
+
+    [Test]
     public async Task ActivationAppliesTopologyChangePublishedBeforeItsFinalAck()
     {
         await using var first = new FakeRespServer(20);
