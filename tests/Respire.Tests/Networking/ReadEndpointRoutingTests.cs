@@ -256,11 +256,14 @@ public class ReadEndpointRoutingTests
     public async Task CursorReadsKeepReplicaSelectedAfterFirstPageFallback()
     {
         var recovered = 0;
+        var firstRoleChecks = 0;
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
         await using var firstCandidate = new FakeRespServer(ReplicaRole)
         {
             ReplyOverride = (_, command) => command == "ROLE"
-                ? Volatile.Read(ref recovered) == 0 ? PrimaryRole : ReplicaRole
+                ? Interlocked.Increment(ref firstRoleChecks) == 1 && Volatile.Read(ref recovered) == 0
+                    ? PrimaryRole
+                    : ReplicaRole
                 : command.StartsWith("SCAN ", StringComparison.Ordinal) ? ScanReply("99") : null,
         };
         await using var secondCandidate = new FakeRespServer(ReplicaRole)
@@ -281,6 +284,11 @@ public class ReadEndpointRoutingTests
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
         using (await view.ExecuteAsync("SCAN", ["0"])) { }
+        await Assert.That(Volatile.Read(ref firstRoleChecks)).IsEqualTo(1);
+        await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("SCAN ", StringComparison.Ordinal)))
+            .IsEqualTo(0);
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
         Volatile.Write(ref recovered, 1);
         using (await view.ExecuteAsync("SCAN", ["1"])) { }
 
