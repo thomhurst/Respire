@@ -15,17 +15,22 @@ internal sealed partial class ClusterRouter
     // episode ID when an observer aggregates them without retaining the client instance.
     private static long _nextDiscoveryEpisode;
     internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
+    internal TimeProvider TopologyRefreshClock { get; set; } = TimeProvider.System;
+    private static readonly TimeSpan TopologyRefreshCoalescingWindow = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MaximumTopologyRefreshDeadline = TimeSpan.FromSeconds(60);
+    private const int MovedTopologyRefreshDelayMilliseconds = 5_000;
     private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
     private Task? _topologyRefreshWorker;
     private int _topologyRefreshDelayMilliseconds;
     private readonly object _sharedRefreshGate = new();
     // READONLY recovery and topology refresh share one flight so overlapping triggers do not
-    // launch independent discovery loops; result is a multiplexer for READONLY or bool otherwise.
-    private Task<object?>? _sharedRefreshTask;
+    // launch independent discovery loops. Callers read the published slot map after success.
+    private Task<bool>? _sharedRefreshTask;
     private ReadOnlyRefreshFlight? _readOnlyRefreshFlight;
     private long _lastTopologyRefreshTimestamp;
     private bool _hasTopologyRefreshTimestamp;
     private int _topologyRefreshStarted;
+    private int _topologyRefreshForce;
 
     private sealed class ReadOnlyRefreshFlight(CancellationTokenSource cancellation)
     {
@@ -35,12 +40,12 @@ internal sealed partial class ClusterRouter
         internal IDisposable? DiscoveryLease;
     }
 
-    private Task<RespireConnectionMultiplexer?> RefreshReadOnlySharedAsync(
+    private Task<bool> RefreshReadOnlySharedAsync(
         RespireServerException rejection, RespireConnection source, int slot, CancellationToken waiterToken,
         DiscoveryRound? discovery)
     {
-        TaskCompletionSource<object?>? start = null;
-        Task<object?> task;
+        TaskCompletionSource<bool>? start = null;
+        Task<bool> task;
         ReadOnlyRefreshFlight? flight;
         lock (_sharedRefreshGate)
         {
@@ -65,10 +70,10 @@ internal sealed partial class ClusterRouter
         return AwaitReadOnlyRefreshAsync(task, waiterToken, flight);
     }
 
-    private async Task<RespireConnectionMultiplexer?> AwaitReadOnlyRefreshAsync(
-        Task<object?> task, CancellationToken waiterToken, ReadOnlyRefreshFlight? flight)
+    private async Task<bool> AwaitReadOnlyRefreshAsync(
+        Task<bool> task, CancellationToken waiterToken, ReadOnlyRefreshFlight? flight)
     {
-        try { return await task.WaitAsync(waiterToken).ConfigureAwait(false) as RespireConnectionMultiplexer; }
+        try { return await task.WaitAsync(waiterToken).ConfigureAwait(false); }
         finally { ReleaseReadOnlyWaiter(flight); }
     }
 
@@ -85,7 +90,7 @@ internal sealed partial class ClusterRouter
         catch (ObjectDisposedException) { }
     }
 
-    private async Task CompleteSharedRefreshAsync(TaskCompletionSource<object?> completion, Func<Task<object?>> work,
+    private async Task CompleteSharedRefreshAsync(TaskCompletionSource<bool> completion, Func<Task<bool>> work,
         ReadOnlyRefreshFlight? readOnlyFlight = null)
     {
         try
@@ -93,9 +98,9 @@ internal sealed partial class ClusterRouter
             var result = await work().ConfigureAwait(false);
             lock (_sharedRefreshGate)
             {
-                if (result is true or RespireConnectionMultiplexer)
+                if (readOnlyFlight is null && result)
                 {
-                    _lastTopologyRefreshTimestamp = DiscoveryClock.GetTimestamp();
+                    _lastTopologyRefreshTimestamp = TopologyRefreshClock.GetTimestamp();
                     _hasTopologyRefreshTimestamp = true;
                 }
             }
@@ -118,7 +123,7 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private async Task<RespireConnectionMultiplexer?> RunReadOnlyRefreshAsync(
+    private async Task<bool> RunReadOnlyRefreshAsync(
         RespireServerException rejection, RespireConnection source, int slot, CancellationToken cancellationToken,
         DiscoveryRound? discovery)
     {
@@ -126,8 +131,9 @@ internal sealed partial class ClusterRouter
         try
         {
             scope.Round?.Failed(new RespireEndpoint(source.Host, source.Port), rejection);
-            return await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
+            _ = await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
                 .ConfigureAwait(false);
+            return true;
         }
         catch (Exception error)
         {
@@ -136,7 +142,7 @@ internal sealed partial class ClusterRouter
             {
                 try { _logger?.LogDebug(error, "Redis Cluster READONLY recovery failed"); }
                 catch (Exception) { }
-                return null;
+                return false;
             }
             throw;
         }
@@ -144,13 +150,13 @@ internal sealed partial class ClusterRouter
 
     private Task<bool> RefreshTopologySharedAsync(CancellationToken waiterToken, bool allowRecentSuccessfulResult = true)
     {
-        Task<object?> refresh;
-        TaskCompletionSource<object?>? start = null;
+        Task<bool> refresh;
+        TaskCompletionSource<bool>? start = null;
         ReadOnlyRefreshFlight? readOnlyFlight;
         lock (_sharedRefreshGate)
         {
             if (allowRecentSuccessfulResult && _sharedRefreshTask is null && _hasTopologyRefreshTimestamp
-                && DiscoveryClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TimeSpan.FromSeconds(5))
+                && TopologyRefreshClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TopologyRefreshCoalescingWindow)
             {
                 return waiterToken.CanBeCanceled
                     ? Task.FromResult(true).WaitAsync(waiterToken)
@@ -165,26 +171,21 @@ internal sealed partial class ClusterRouter
             readOnlyFlight = _readOnlyRefreshFlight;
             if (readOnlyFlight is not null) readOnlyFlight.Waiters++;
         }
-        if (start is not null) _ = CompleteSharedRefreshAsync(start, async () =>
-            await RunTopologyRefreshAsync().ConfigureAwait(false));
+        if (start is not null) _ = CompleteSharedRefreshAsync(start, RunTopologyRefreshAsync);
         return AwaitTopologyRefreshAsync(refresh, waiterToken, readOnlyFlight);
     }
 
-    private async Task<bool> AwaitTopologyRefreshAsync(Task<object?> task, CancellationToken waiterToken,
+    private async Task<bool> AwaitTopologyRefreshAsync(Task<bool> task, CancellationToken waiterToken,
         ReadOnlyRefreshFlight? flight)
     {
         try
         {
-            var refresh = AwaitTopologyRefreshResultAsync(task);
             return waiterToken.CanBeCanceled
-                ? await refresh.WaitAsync(waiterToken).ConfigureAwait(false)
-                : await refresh.ConfigureAwait(false);
+                ? await task.WaitAsync(waiterToken).ConfigureAwait(false)
+                : await task.ConfigureAwait(false);
         }
         finally { ReleaseReadOnlyWaiter(flight); }
     }
-
-    private static async Task<bool> AwaitTopologyRefreshResultAsync(Task<object?> task)
-        => await task.ConfigureAwait(false) is true or RespireConnectionMultiplexer;
 
     private async Task<bool> RunTopologyRefreshAsync()
     {
@@ -208,13 +209,12 @@ internal sealed partial class ClusterRouter
                 .Select(static candidate => candidate.index).ToArray();
             var position = connected.Length == 0 ? -1 : connected[Random.Shared.Next(connected.Length)];
             if (position > 0) candidates = candidates.Skip(position).Concat(candidates.Take(position)).ToList();
-            var candidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
-            var maxTotalTicks = TimeSpan.FromSeconds(60).Ticks;
             var boundedCandidateCount = Math.Max(1, candidates.Count);
-            var totalTimeoutTicks = Math.Min(maxTotalTicks,
-                candidateTimeout.Ticks > maxTotalTicks / boundedCandidateCount
-                    ? maxTotalTicks
-                    : candidateTimeout.Ticks * boundedCandidateCount);
+            var maxTotalTicks = MaximumTopologyRefreshDeadline.Ticks;
+            var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
+            var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
+                maxTotalTicks / boundedCandidateCount));
+            var totalTimeoutTicks = candidateTimeout.Ticks * boundedCandidateCount;
             using var deadline = new CancellationTokenSource(TimeSpan.FromTicks(totalTimeoutTicks));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
             foreach (var candidate in candidates)
@@ -267,7 +267,7 @@ internal sealed partial class ClusterRouter
                 using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
                 var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
                 var timer = interval is { } delay && delay > TimeSpan.Zero
-                    ? Task.Delay(delay, TimeProvider.System, waitCancellation.Token)
+                    ? Task.Delay(delay, TopologyRefreshClock, waitCancellation.Token)
                     : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
                 var completed = await Task.WhenAny(timer, signal).ConfigureAwait(false);
                 await waitCancellation.CancelAsync().ConfigureAwait(false);
@@ -276,19 +276,24 @@ internal sealed partial class ClusterRouter
                 if (_stopDiscovery.IsCancellationRequested) return;
                 var wasSignaled = ReferenceEquals(completed, signal);
                 var delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
+                var force = wasSignaled && Interlocked.Exchange(ref _topologyRefreshForce, 0) != 0;
                 if (wasSignaled)
                 {
                     if (delayMilliseconds > 0)
                     {
                         try
                         {
-                            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TimeProvider.System, _stopDiscovery.Token)
+                            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TopologyRefreshClock, _stopDiscovery.Token)
                                 .ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) when (_stopDiscovery.IsCancellationRequested) { return; }
                     }
                 }
-                try { await RefreshTopologySharedAsync(_stopDiscovery.Token, allowRecentSuccessfulResult: wasSignaled).ConfigureAwait(false); }
+                try
+                {
+                    await RefreshTopologySharedAsync(_stopDiscovery.Token,
+                        allowRecentSuccessfulResult: wasSignaled && !force).ConfigureAwait(false);
+                }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
                     try { _logger?.LogDebug(error, "Periodic Redis Cluster topology refresh failed"); }
@@ -298,11 +303,12 @@ internal sealed partial class ClusterRouter
         });
     }
 
-    internal void SignalTopologyRefresh(int delayMilliseconds = 0)
+    internal void SignalTopologyRefresh(int delayMilliseconds = 0, bool force = false)
     {
         if (Volatile.Read(ref _disposed) != 0) return;
         if (delayMilliseconds == 0) Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
         else Interlocked.CompareExchange(ref _topologyRefreshDelayMilliseconds, delayMilliseconds, 0);
+        if (force) Interlocked.Exchange(ref _topologyRefreshForce, 1);
         try { _topologyRefreshSignal.Release(); }
         catch (SemaphoreFullException) { }
     }

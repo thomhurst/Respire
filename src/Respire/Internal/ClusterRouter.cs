@@ -107,7 +107,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal RespireEndpoint? GetSlotOwnerEndpoint(int slot)
     {
         var owner = Volatile.Read(ref _slots[slot]);
-        if (owner is null) return default;
+        if (owner is null) return null;
         return Endpoint(owner);
     }
 
@@ -369,7 +369,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             for (var attempt = 0; ; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (error.Code == RespireErrorCodes.Moved) SignalTopologyRefresh(delayMilliseconds: 5_000);
+                if (error.Code == RespireErrorCodes.Moved)
+                    SignalTopologyRefresh(delayMilliseconds: MovedTopologyRefreshDelayMilliseconds);
                 var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
                 try
                 {
@@ -1377,7 +1378,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 SlotStateChanged?.Invoke(node, slot, change);
                 if (change.State == RespireConnectionState.Disconnected
-                    && Volatile.Read(ref _masters).Contains(node)) SignalTopologyRefresh();
+                    && Volatile.Read(ref _masters).Contains(node)) SignalTopologyRefresh(force: true);
             };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;

@@ -11,6 +11,7 @@ public class ClusterTopologyRefreshTests
     public async Task CreateDoesNotConnectUntilFirstClusterOperation()
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var clock = new ManualTopologyRefreshClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -18,14 +19,50 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(50),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
 
-        await Task.Delay(250);
         await Assert.That(seed.ReceivedCommands).IsEmpty();
+        await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
 
-        await client.Core.Cluster!.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        var timer = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        timer.Fire();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
             await Task.Delay(10, timeout.Token);
+    }
+
+    [Test]
+    public async Task ForcedRefreshSignalBypassesRecentSuccessWindow()
+    {
+        var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thirdRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            var call = Interlocked.Increment(ref calls);
+            if (call == 2) secondRefresh.TrySetResult();
+            if (call >= 3) thirdRefresh.TrySetResult();
+            return Topology(seed.Port, seed.Port);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = new ManualTopologyRefreshClock();
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+
+        router.SignalTopologyRefresh();
+        await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        router.SignalTopologyRefresh(force: true);
+        await thirdRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -119,4 +156,28 @@ public class ClusterTopologyRefreshTests
             "*1\r\n*4\r\n:0\r\n:16383\r\n"
             + $"*3\r\n$9\r\n127.0.0.1\r\n:{masterPort}\r\n$9\r\nmaster-id\r\n"
             + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n");
+
+    private sealed class ManualTopologyRefreshClock : TimeProvider
+    {
+        internal TaskCompletionSource<ManualTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ManualTimer(callback, state);
+            Created.TrySetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private int _fired;
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _fired, 1) == 0) callback(state);
+        }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _fired) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _fired, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
+    }
 }
