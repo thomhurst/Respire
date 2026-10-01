@@ -1,4 +1,6 @@
 using System.Text;
+using System.Net;
+using System.Net.Sockets;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
@@ -197,6 +199,42 @@ public class ReadEndpointRoutingTests
         await Assert.That(activity.GetTagItem("server.address")).IsEqualTo("127.0.0.1");
         await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(replica.Port);
         await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ScriptAcquisitionFailureTelemetryUsesStandaloneEndpoint()
+    {
+        var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", port)],
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+        var activities = new System.Collections.Concurrent.ConcurrentQueue<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                    activities.Enqueue(activity);
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
+        await Assert.That(async () => await client.Scripts.ExecuteAsync(RespireScript.Create("return 1")))
+            .Throws<OperationCanceledException>();
+
+        var activity = activities.Single();
+        await Assert.That(activity.GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(port);
     }
 
     [Test]

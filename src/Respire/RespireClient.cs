@@ -3526,7 +3526,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (connection is null)
                 RespireTelemetry.RecordUnroutedFailure(script.EvalShaOperation, core.Options.Database,
-                    started, ex, script.Sha1);
+                    started, ex, script.Sha1, endpoint: core.Sentinel is null && _readFrom == RespireReadFrom.Primary
+                        ? core.Endpoint : (RespireEndpoint?)null);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }
