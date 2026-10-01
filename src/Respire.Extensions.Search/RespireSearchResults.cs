@@ -7,8 +7,26 @@ namespace Redis.Search;
 /// <summary>Search response document with identifier and projected fields.</summary>
 public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string, string?> Fields, double? Score = null)
 {
+    private string _id = Id;
+    private RespireKey _documentKey = new(Id);
+
+    /// <summary>Document identifier. Setting it also resets <see cref="DocumentKey"/> to its UTF-8 key.</summary>
+    public string Id
+    {
+        get => _id;
+        init
+        {
+            _id = value;
+            _documentKey = new RespireKey(value);
+        }
+    }
+
     /// <summary>Binary-safe Redis document key. Use this when the identifier is not valid UTF-8.</summary>
-    public RespireKey DocumentKey { get; init; } = new(Id);
+    public RespireKey DocumentKey
+    {
+        get => _documentKey;
+        init => _documentKey = value;
+    }
 
     /// <summary>Typed projected values, including binary string fields.</summary>
     public IReadOnlyDictionary<string, RespireSearchValue> StructuredFields { get; init; } = RespireSearchEmpty.SearchValues;

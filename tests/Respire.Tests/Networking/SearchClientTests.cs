@@ -17,6 +17,15 @@ public class SearchClientTests
     private static readonly byte[] EmptyResp3Search = "%2\r\n$13\r\ntotal_results\r\n:0\r\n$7\r\nresults\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    public async Task ChangingDocumentIdOnRecordCopyResetsDocumentKey()
+    {
+        var document = new RespireSearchDocument("old", new Dictionary<string, string?>());
+        var updated = document with { Id = "new" };
+
+        await Assert.That(updated.DocumentKey).IsEqualTo(new RespireKey("new"));
+    }
+
+    [Test]
     public async Task AggregateParsesResp3RowsAndSortsBySeparateTokens()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
