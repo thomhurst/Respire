@@ -145,6 +145,18 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private async Task MonitorSentinelAsync(RespireEndpoint endpoint)
     {
+        try
+        {
+            await MonitorSentinelCoreAsync(endpoint).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate) _monitoredSentinels.Remove(endpoint);
+        }
+    }
+
+    private async Task MonitorSentinelCoreAsync(RespireEndpoint endpoint)
+    {
         var attempts = 0;
         var options = core.Options with
         {
@@ -158,6 +170,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             UseTls = core.Options.SentinelUseTls ?? core.Options.UseTls,
             TlsOptions = core.Options.SentinelTlsOptions ?? core.Options.TlsOptions,
             Protocol = RespProtocol.Resp2,
+            Connections = 1,
             ClientName = null,
             Database = 0,
             ClientSideCache = null,
@@ -175,7 +188,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 {
                     if (message.Kind == RespireMessageKind.Gap) continue;
                     if (message.Channel.ToString() == "+switch-master")
-                        OnSentinelPrimaryChanged(endpoint);
+                    {
+                        if (TryParseSwitchMasterEvent(message.Text, core.Options.SentinelPrimaryName!, out var newPrimary))
+                            OnSentinelPrimaryChanged(endpoint, newPrimary);
+                    }
                     else
                     {
                         var eventName = message.Channel.ToString();
@@ -204,11 +220,28 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private void OnSentinelPrimaryChanged(RespireEndpoint sentinel)
+    private static bool TryParseSwitchMasterEvent(string? details, string expectedMaster, out RespireEndpoint newPrimary)
     {
-        var current = Current;
-        if (current is null) return;
-        Invalidate(current);
+        newPrimary = default;
+        if (details is null) return false;
+        var parts = details.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 5 || !string.Equals(parts[0], expectedMaster, StringComparison.Ordinal)
+            || !int.TryParse(parts[4], out var port) || port is < 1 or > 65535) return false;
+        newPrimary = new RespireEndpoint(parts[3], port);
+        return true;
+    }
+
+    private void OnSentinelPrimaryChanged(RespireEndpoint sentinel, RespireEndpoint newPrimary)
+    {
+        Generation? current;
+        lock (_gate)
+        {
+            current = Current;
+            if (current is null || current.IsRetired) return;
+            if (string.Equals(current.Endpoint.Host, newPrimary.Host, StringComparison.OrdinalIgnoreCase)
+                && current.Endpoint.Port == newPrimary.Port) return;
+            Invalidate(current);
+        }
         _ = RefreshAfterSentinelEventAsync(sentinel);
     }
 

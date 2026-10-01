@@ -399,10 +399,6 @@ that server-side ordering obligation; a time or attempt cap could discard it bef
 server acknowledges the fence. Repeated failovers during an outage can therefore grow retained
 state until the fences succeed or client disposal aborts cleanup.
 
-This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
-remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
-monitor proactively moves an otherwise healthy connection before a failure is observed.
-
 ## Cancellation and timeouts
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.

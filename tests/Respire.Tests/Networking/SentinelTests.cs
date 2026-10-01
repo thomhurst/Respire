@@ -657,13 +657,19 @@ public class SentinelTests
         await Task.Delay(50);
         var subscribeIndex = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal));
         var monitorConnection = sentinel.ReceivedConnectionIds[subscribeIndex];
+        await sentinel.SendRawAsync(SwitchMasterMessage("othermaster", replacement.Port), monitorConnection);
+        await Task.Delay(50);
+        await Assert.That(first.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
         Volatile.Write(ref switched, 1);
-        await sentinel.SendRawAsync("*3\r\n$7\r\nmessage\r\n$14\r\n+switch-master\r\n$38\r\nmymaster 127.0.0.1 6379 127.0.0.1 6380\r\n"u8.ToArray(), monitorConnection);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port), monitorConnection);
 
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
         await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port), monitorConnection);
+        await Task.Delay(50);
+        await Assert.That(replacement.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -678,4 +684,11 @@ public class SentinelTests
 
     private static byte[] PrimaryReply(int port)
         => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+
+    private static byte[] SwitchMasterMessage(string service, int newPort)
+    {
+        var details = $"{service} 127.0.0.1 6379 127.0.0.1 {newPort}";
+        return Encoding.ASCII.GetBytes(
+            $"*3\r\n$7\r\nmessage\r\n$14\r\n+switch-master\r\n${details.Length}\r\n{details}\r\n");
+    }
 }

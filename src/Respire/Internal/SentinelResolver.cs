@@ -94,6 +94,13 @@ internal static class SentinelResolver
                 // deadline from Sentinel's candidate-discovery deadline.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
+            catch (OperationCanceledException error) when (
+                discoveryTimeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException(
+                    "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, error,
+                    RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+            }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
