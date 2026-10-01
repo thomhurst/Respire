@@ -50,7 +50,7 @@ jobs:
           # Keep shared feature sources identical across phases so each revision builds.
           # The copied semaphore source compiles against baseline internals (for example
           # RespireLock.NewToken and the tracked-script types); the shims below add only the
-          # client members that this PR introduces. Baseline phases benchmark the standard lease,
+          # client and telemetry members that this PR introduces. Baseline phases benchmark the standard lease,
           # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
@@ -88,6 +88,21 @@ jobs:
           assert source.count('bool captureSendTimestampOnly)') == 1
           assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)') == 1
           path.write_text(source)
+
+          # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.
+          # The baseline never runs semaphore cleanup, so a no-op stub is enough to compile.
+          telemetry = Path('baseline/src/Respire/Internal/RespireTelemetry.cs')
+          telemetry_source = telemetry.read_text()
+          if 'RecordCoordinationCleanupAbandoned(' not in telemetry_source:
+              telemetry_marker = 'internal static class RespireTelemetry\n{\n'
+              telemetry_shim = ('    internal static void RecordCoordinationCleanupAbandoned(\n'
+                                '        string primitive, string stage, string reason, ILogger? logger)\n'
+                                '    {\n'
+                                '    }\n\n')
+              assert telemetry_source.count(telemetry_marker) == 1
+              assert 'using Microsoft.Extensions.Logging;' in telemetry_source
+              telemetry_source = telemetry_source.replace(telemetry_marker, telemetry_marker + telemetry_shim, 1)
+              telemetry.write_text(telemetry_source)
           PY
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline

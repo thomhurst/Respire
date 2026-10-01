@@ -465,7 +465,8 @@ every permit allows a new capacity. A lower capacity never revokes existing perm
 does not queue, poll or promise fairness; callers choose retry behavior. Use a dedicated key.
 Binary keys and client prefixes work, and one-key Lua scripts need no Cluster hash-tag
 coordination. The scripts read Redis `TIME` before writing, so they need Redis 5 or later (or a
-compatible server) for effects-based script replication.
+compatible server) for effects-based script replication. Each script requests effects replication
+first, so Redis 5 and 6 work even with `lua-replicate-commands` disabled.
 
 Redis asynchronous failover can roll back permit state. Expiry scores are absolute server
 timestamps, so after failover a replica with a skewed clock expires permits early or late. After an

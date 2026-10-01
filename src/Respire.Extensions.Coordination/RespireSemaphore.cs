@@ -12,7 +12,8 @@ namespace Respire.Extensions.Coordination;
 /// </para>
 /// <para>
 /// The scripts read Redis <c>TIME</c> before they write, so they need effects-based script
-/// replication: Redis 5 or later, or a compatible server.
+/// replication: Redis 5 or later, or a compatible server. Each script requests effects
+/// replication first, so Redis 5 and 6 work even with <c>lua-replicate-commands</c> disabled.
 /// </para>
 /// <para>
 /// With <see cref="RespireClient"/>, acquisitions under a command timeout or cancellation require
@@ -296,7 +297,11 @@ public sealed class RespireSemaphore
     // permits score +inf, so each lookup touches one end of the sorted set in O(log N).
     // Scores reach Redis as Lua numbers, which redis.call formats with 17 significant digits, so
     // epoch-millisecond scores stay exact.
+    // Redis 5 and 6 replicate scripts by effects by default, but lua-replicate-commands no would
+    // reject a write after TIME. Requesting effects replication first covers that setting; Redis 7
+    // always replicates effects and keeps the call as a no-op, and the guard skips servers without it.
     private const string ScriptPrelude = """
+        if redis.replicate_commands then redis.replicate_commands() end
         local t = redis.call('TIME')
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
         redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, now)
