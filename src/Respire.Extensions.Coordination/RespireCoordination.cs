@@ -151,7 +151,7 @@ public sealed class RespireCoordination
     /// <param name="field">The binary-safe lease name.</param>
     /// <param name="duration">A positive lease duration of at least one millisecond.</param>
     /// <param name="cancellationToken">Cancels this attempt; an accepted lease can remain until expiry.</param>
-    /// <remarks>Requires Redis 7.4 or later, where hash-field expiration is supported.</remarks>
+    /// <remarks>Requires Redis 7.4 or later and a hash key without key-level expiration.</remarks>
     public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {

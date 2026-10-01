@@ -85,8 +85,10 @@ Lease fields and hash keys accept binary bytes. The owner token guards renewal, 
 and release, so an expired owner's handle cannot change a replacement lease or another field in
 the same hash.
 
-Hash-field expiration requires Redis 7.4 or later. Older servers fail before the lease field is
-written, with an error that identifies the required Redis feature.
+Hash-field expiration requires Redis 7.4 or later. The containing hash key must have no key-level
+expiry; Redis deletes the whole hash when that expiry elapses. Acquisition rejects expiring hash
+keys before writing the lease field. Older servers fail before the lease field is written, with
+an error that identifies the required Redis feature.
 
 ```csharp
 using Respire.Extensions.Coordination;
