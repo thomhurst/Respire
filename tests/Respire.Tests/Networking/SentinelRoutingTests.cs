@@ -1171,7 +1171,8 @@ public class SentinelRoutingTests
 
         var values = await client.Strings.GetManyAsync(["cached", "missing"]).AsTask().WaitAsync(Limit);
 
-        await Assert.That(values).IsEquivalentTo(["new", "new"]);
+        string?[] expectedValues = ["new", "new"];
+        await Assert.That(values).IsEquivalentTo(expectedValues);
         await Assert.That(generation.IsRetired).IsTrue();
         await Assert.That(promoted.ReceivedCommands.Contains("MGET cached missing")).IsTrue();
 
