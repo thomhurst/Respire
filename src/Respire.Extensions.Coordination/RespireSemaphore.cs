@@ -47,15 +47,23 @@ public sealed class RespireSemaphore
     {
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
+        var trackedWire = await GetTrackedWireAsync(_client, cancellationToken).ConfigureAwait(false);
+        RespireClient.TrackedScriptExecution? trackedExecution = null;
         bool acquired;
         try
         {
-            using var response = await _client.Scripts.ExecuteAsync(AcquireScript, [Key],
-                [Capacity, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+            using var response = trackedWire is null
+                ? await _client.Scripts.ExecuteAsync(AcquireScript, [Key],
+                    [Capacity, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false)
+                : await ExecuteTrackedAsync(trackedWire, AcquireScript, [Key],
+                    [Capacity, owner.Bytes, milliseconds], cancellationToken,
+                    execution => trackedExecution = execution).ConfigureAwait(false);
             acquired = response.AsInteger() == 1;
         }
-        catch
+        catch (Exception error)
         {
+            if (error is not RespireServerException)
+                await FenceCorrectionAsync(trackedWire, trackedExecution).ConfigureAwait(false);
             await ReleaseBestEffortAsync(owner).ConfigureAwait(false);
             throw;
         }
@@ -85,6 +93,38 @@ public sealed class RespireSemaphore
 
     private ValueTask<bool> ReleaseBestEffortAsync(RespireLockToken owner)
         => TryReleaseBestEffortAsync(_client, Key, owner);
+
+    internal static async ValueTask<RespireClient?> GetTrackedWireAsync(
+        IRespireClient client, CancellationToken cancellationToken)
+    {
+        if (client is not RespireClient wire) return null;
+        if (wire.RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            await wire.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            return wire;
+        }
+
+        return await wire.TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false)
+            ? wire : null;
+    }
+
+    internal static async ValueTask<RespireResult> ExecuteTrackedAsync(
+        RespireClient wire, RespireScript script, RespireKey[] keys, RespireValue[] args,
+        CancellationToken cancellationToken,
+        Action<RespireClient.TrackedScriptExecution> onStarted)
+    {
+        var execution = await wire.StartTrackedScriptExecutionAsync(
+            script, keys, args, cancellationToken, requireReliableCorrectionOrdering: true).ConfigureAwait(false);
+        onStarted(execution);
+        return await execution.Response.ConfigureAwait(false);
+    }
+
+    internal static ValueTask FenceCorrectionAsync(
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution)
+    {
+        if (wire is null || execution is not { ConnectionIdentity.ServerClientId: > 0 }) return default;
+        return wire.FenceCorrectionConnectionAsync(execution.ConnectionIdentity);
+    }
 
     internal static async ValueTask<bool> TryReleaseBestEffortAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner)
@@ -201,11 +241,15 @@ public readonly struct RespireSemaphorePermitAttempt : IAsyncDisposable
 /// <summary>A uniquely owned semaphore permit with optional Redis expiry.</summary>
 public sealed class RespireSemaphorePermit : IAsyncDisposable
 {
+    private sealed record CorrectionTarget(
+        RespireClient Wire, RespireClient.TrackedConnectionIdentity Identity);
+
     private static readonly TimeSpan DisposeReleaseTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
     private readonly int _capacity;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private CorrectionTarget? _pendingRenewal;
     private long _validUntil;
     private long _expiryTicks;
     private int _released;
@@ -283,30 +327,50 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         try
         {
             if (IsReleased) return false;
+            var trackedWire = await RespireSemaphore.GetTrackedWireAsync(_client, cancellationToken).ConfigureAwait(false);
+            if (Volatile.Read(ref _disposeReleaseScheduled) != 0) return false;
+            RespireClient.TrackedScriptExecution? trackedExecution = null;
+            CorrectionTarget? correctionTarget = null;
             var started = Stopwatch.GetTimestamp();
             try
             {
-                using var response = await _client.Scripts.ExecuteAsync(
-                    RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+                using var response = trackedWire is null
+                    ? await _client.Scripts.ExecuteAsync(
+                        RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false)
+                    : await RespireSemaphore.ExecuteTrackedAsync(trackedWire, RespireSemaphore.RenewScript,
+                        [Key], [_owner.Bytes, milliseconds], cancellationToken,
+                        execution =>
+                        {
+                            trackedExecution = execution;
+                            correctionTarget = new CorrectionTarget(trackedWire!, execution.ConnectionIdentity);
+                            Volatile.Write(ref _pendingRenewal, correctionTarget);
+                        }).ConfigureAwait(false);
                 var completed = Stopwatch.GetTimestamp();
                 var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
                 var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
-                if (response.AsInteger() == 1 && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
-                    && Volatile.Read(ref _disposeReleaseScheduled) == 0)
+                var renewed = response.AsInteger() == 1;
+                if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero))
                 {
                     Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
                     Interlocked.Exchange(ref _validUntil, remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
                     Volatile.Write(ref _finiteOutcomeUncertain, 0);
-                    return Volatile.Read(ref _disposeReleaseScheduled) == 0;
                 }
+                if (correctionTarget is not null)
+                    Interlocked.CompareExchange(ref _pendingRenewal, null, correctionTarget);
+                if (renewed && (!remaining.HasValue || remaining.Value > TimeSpan.Zero)
+                    && Volatile.Read(ref _disposeReleaseScheduled) == 0) return true;
             }
-            catch
+            catch (Exception error)
             {
                 if (milliseconds == 0)
                     Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
                 else
                     Volatile.Write(ref _finiteOutcomeUncertain, 1);
+                if (error is not RespireServerException)
+                    await RespireSemaphore.FenceCorrectionAsync(trackedWire, trackedExecution).ConfigureAwait(false);
+                if (correctionTarget is not null)
+                    Interlocked.CompareExchange(ref _pendingRenewal, null, correctionTarget);
                 if (await ReleaseBestEffortAsync().ConfigureAwait(false))
                     Interlocked.Exchange(ref _released, 1);
                 throw;
@@ -377,9 +441,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         var started = Stopwatch.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(100);
         while (Volatile.Read(ref _released) == 0
-            && (RequiresPersistentCleanup
-                || (Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
-                    && (RemainingEstimate != TimeSpan.Zero || Volatile.Read(ref _finiteOutcomeUncertain) != 0))))
+            && Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
+            && (RequiresPersistentCleanup || RemainingEstimate != TimeSpan.Zero
+                || Volatile.Read(ref _finiteOutcomeUncertain) != 0))
         {
             var released = await TryReleaseAfterDisposeAsync().ConfigureAwait(false);
             if (released is null or true) return;
@@ -401,13 +465,29 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     private async ValueTask<bool?> TryReleaseAfterDisposeAsync()
     {
+        var pendingRenewal = Volatile.Read(ref _pendingRenewal);
+        var entered = false;
         using var timeout = new CancellationTokenSource(RespireSemaphore.BestEffortCleanupTimeout);
         try
         {
+            if (pendingRenewal is not null)
+            {
+                await pendingRenewal.Wire.FenceCorrectionConnectionAsync(pendingRenewal.Identity).ConfigureAwait(false);
+                Interlocked.CompareExchange(ref _pendingRenewal, null, pendingRenewal);
+            }
+            else
+            {
+                await _operationGate.WaitAsync(timeout.Token).ConfigureAwait(false);
+                entered = true;
+            }
             using var response = await _client.Scripts.ExecuteAsync(
                 RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], timeout.Token).ConfigureAwait(false);
             Interlocked.Exchange(ref _released, 1);
             return true;
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            return false;
         }
         catch (ObjectDisposedException)
         {
@@ -420,6 +500,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         catch (Exception)
         {
             return false;
+        }
+        finally
+        {
+            if (entered) _operationGate.Release();
         }
     }
 
