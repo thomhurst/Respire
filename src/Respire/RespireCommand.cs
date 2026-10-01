@@ -13,15 +13,18 @@ public readonly struct RespireCommand
     private const int CacheMutationShift = 8;
     private const int CacheMutationMask = 0xF << CacheMutationShift;
     private const int ReadOnlyMetadataFlag = 1 << 12;
+    private const int ExplicitCacheMutationFlag = 1 << 13;
     private readonly Verb _verb;
     private readonly int _sourceAndMutationMetadata;
 
     internal RespireCommand(string name, RespireCommandSource sources,
-        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown, bool isReadOnly = false)
+        RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown, bool isReadOnly = false,
+        bool hasExplicitCacheMutation = false)
     {
         Name = name;
         _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
-            | (isReadOnly ? ReadOnlyMetadataFlag : 0);
+            | (isReadOnly ? ReadOnlyMetadataFlag : 0)
+            | (hasExplicitCacheMutation ? ExplicitCacheMutationFlag : 0);
         var readKind = Verb.GetReadKind(name, isReadOnly);
         _verb = new Verb(name, readKind);
         Behavior = Classify(name);
@@ -63,6 +66,8 @@ public readonly struct RespireCommand
 
     internal bool IsCallerSupplied => _verb.Bulk is null;
 
+    internal bool HasExplicitCacheMutation => (_sourceAndMutationMetadata & ExplicitCacheMutationFlag) != 0;
+
     /// <summary>
     /// Encodes a single command token once for repeated execution, including custom module commands.
     /// The token is normalized to uppercase ASCII. Pass subcommands and options as arguments.
@@ -74,10 +79,13 @@ public readonly struct RespireCommand
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
     public static RespireCommand Create(string name)
-        => Create(name, RespireCacheMutation.Unknown);
+        => Create(name, RespireCacheMutation.Unknown, hasExplicitCacheMutation: false);
 
     /// <summary>Creates a caller-supplied command descriptor with an explicit cache mutation policy.</summary>
     public static RespireCommand Create(string name, RespireCacheMutation cacheMutation)
+        => Create(name, cacheMutation, hasExplicitCacheMutation: true);
+
+    private static RespireCommand Create(string name, RespireCacheMutation cacheMutation, bool hasExplicitCacheMutation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         foreach (var character in name)
@@ -88,7 +96,8 @@ public readonly struct RespireCommand
             }
         }
 
-        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None, cacheMutation);
+        return new RespireCommand(name.ToUpperInvariant(), RespireCommandSource.None, cacheMutation,
+            hasExplicitCacheMutation: hasExplicitCacheMutation);
     }
 
     /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>

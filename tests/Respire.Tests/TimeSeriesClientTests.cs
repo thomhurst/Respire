@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text;
+using Respire.Commands;
 using Respire.Extensions.TimeSeries;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -14,6 +16,40 @@ public class TimeSeriesClientTests
     private static byte[] Frame(string text) => Encoding.UTF8.GetBytes(text);
 
     private static string Sent(FakeRespServer server) => string.Join(" | ", server.ReceivedCommands);
+
+    [Test]
+    public async Task CommandsDeclareCacheMutationBehavior()
+    {
+        var commands = typeof(RespireTimeSeriesClient).Assembly
+            .GetType("Respire.Extensions.TimeSeries.IRespireTimeSeriesCommands", throwOnError: true)!;
+        var expected = new Dictionary<string, RespireCacheMutation>
+        {
+            ["CreateAsync"] = RespireCacheMutation.SingleKey,
+            ["AlterAsync"] = RespireCacheMutation.SingleKey,
+            ["AddAsync"] = RespireCacheMutation.Unknown,
+            ["MultiAddAsync"] = RespireCacheMutation.Unknown,
+            ["IncrementByAsync"] = RespireCacheMutation.Unknown,
+            ["DecrementByAsync"] = RespireCacheMutation.Unknown,
+            ["GetAsync"] = RespireCacheMutation.ReadOnly,
+            ["MultiGetAsync"] = RespireCacheMutation.ReadOnly,
+            ["RangeAsync"] = RespireCacheMutation.ReadOnly,
+            ["ReverseRangeAsync"] = RespireCacheMutation.ReadOnly,
+            ["MultiRangeAsync"] = RespireCacheMutation.ReadOnly,
+            ["MultiReverseRangeAsync"] = RespireCacheMutation.ReadOnly,
+            ["DeleteRangeAsync"] = RespireCacheMutation.Unknown,
+            ["CreateRuleAsync"] = RespireCacheMutation.MultiKey,
+            ["DeleteRuleAsync"] = RespireCacheMutation.MultiKey,
+            ["InfoAsync"] = RespireCacheMutation.ReadOnly,
+            ["QueryIndexAsync"] = RespireCacheMutation.ReadOnly,
+        };
+        foreach (var (method, mutation) in expected)
+        {
+            var attribute = commands.GetMethod(method)!.GetCustomAttribute<RespireCommandAttribute>()!;
+            await Assert.That(attribute.Mutation).IsEqualTo(mutation).Because(method);
+            if (mutation == RespireCacheMutation.SingleKey)
+                await Assert.That(RawCommandKeyLayouts.HasSingleFirstKeyLayout(attribute.Name)).IsTrue().Because(method);
+        }
+    }
 
     [Test]
     public async Task Writes_PlaceTerminalLabelsLastAndKeepOptionTokens()

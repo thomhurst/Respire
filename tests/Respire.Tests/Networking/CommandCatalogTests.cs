@@ -62,6 +62,11 @@ public class CommandCatalogTests
         await Assert.That(callerCommand.CacheMutation).IsEqualTo(RespireCacheMutation.ReadOnly);
         await Assert.That(callerCommand.IsReadOnly).IsFalse();
         await Assert.That(callerCommand.Sources).IsEqualTo(RespireCommandSource.None);
+
+        var explicitUnknown = new CatalogCommand(RespireCommand.Create("GET", RespireCacheMutation.Unknown), ["key"]);
+        var inferred = new CatalogCommand(RespireCommand.Create("GET"), ["key"]);
+        await Assert.That(explicitUnknown.GetCacheMutation("GET")).IsEqualTo(RespireCacheMutation.Unknown);
+        await Assert.That(inferred.GetCacheMutation("GET")).IsEqualTo(RespireCacheMutation.ReadOnly);
     }
 
     [Test]

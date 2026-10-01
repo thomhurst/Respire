@@ -411,6 +411,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             return default;
         }
 
+        // A time series sample write or delete can also update destinations of any
+        // configured compaction rules. The ordinary key layout names only the source series.
+        if (operation is "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD")
+        {
+            return BeginUnknownMutation();
+        }
+
         if (mutation == RespireCacheMutation.SingleKey
             && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
             && RawCommandKeyLayouts.TryGetMutationLayout(operation, in singleKeyArguments, out var singleKeyLayout)
