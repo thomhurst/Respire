@@ -810,6 +810,41 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task SentinelMonitorOptionsUseSentinelCredentialProvider()
+    {
+        var data = new FixedCredentials("redis-user", "redis-secret");
+        var sentinel = new FixedCredentials("sentinel-user", "sentinel-secret");
+        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespProtocol.Resp2,
+            CredentialProvider = data,
+            SentinelCredentialProvider = sentinel,
+        }, new RespireEndpoint("localhost", 26379));
+
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(ReferenceEquals(options.CredentialProvider, sentinel)).IsTrue();
+        await Assert.That(options.SentinelCredentialProvider).IsNull();
+
+        var inherited = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            SentinelPrimaryName = "mymaster",
+            CredentialProvider = data,
+        }, new RespireEndpoint("localhost", 26379));
+        await Assert.That(inherited.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(ReferenceEquals(inherited.CredentialProvider, data)).IsTrue();
+
+        var anonymous = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            SentinelPrimaryName = "mymaster",
+            CredentialProvider = data,
+            SentinelPassword = string.Empty,
+        }, new RespireEndpoint("localhost", 26379));
+        await Assert.That(anonymous.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(anonymous.CredentialProvider).IsNull();
+    }
+
+    [Test]
     public async Task MonitorDisposalDoesNotWaitForCommandTimeoutOnUnsubscribe()
     {
         await using var primary = CreatePrimary();

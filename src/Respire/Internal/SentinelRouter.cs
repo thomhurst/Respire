@@ -241,26 +241,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private async Task MonitorSentinelCoreAsync(RespireEndpoint endpoint)
     {
         var attempts = 0;
-        var options = core.Options with
-        {
-            Endpoints = new List<RespireEndpoint> { endpoint },
-            UseCluster = false,
-            SentinelPrimaryName = null,
-            Username = core.Options.SentinelPassword is { Length: 0 } ? null
-                : core.Options.SentinelUsername ?? core.Options.Username,
-            Password = core.Options.SentinelPassword is { Length: 0 } ? null
-                : core.Options.SentinelPassword ?? core.Options.Password,
-            UseTls = core.Options.SentinelUseTls ?? core.Options.UseTls,
-            TlsOptions = core.Options.SentinelTlsOptions ?? core.Options.TlsOptions,
-            Protocol = RespProtocol.Resp2,
-            Connections = 1,
-            CommandTimeout = core.Options.CommandTimeout ?? TimeSpan.FromSeconds(2),
-            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
-            ThreadPoolMonitoring = false,
-            ClientName = null,
-            Database = 0,
-            ClientSideCache = null,
-        };
+        var options = CreateSentinelMonitorOptions(core.Options, endpoint);
 
         while (!_lifetime.IsCancellationRequested)
         {
@@ -313,6 +294,35 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
+    internal static RespireOptions CreateSentinelMonitorOptions(RespireOptions source, RespireEndpoint endpoint)
+    {
+        var authenticationDisabled = source.SentinelPassword is { Length: 0 };
+        var credentialProvider = authenticationDisabled ? null
+            : source.SentinelCredentialProvider
+                ?? (source.SentinelPassword is null && source.SentinelUsername is null
+                    ? source.CredentialProvider : null);
+        return source with
+        {
+            Endpoints = new List<RespireEndpoint> { endpoint },
+            UseCluster = false,
+            SentinelPrimaryName = null,
+            Username = authenticationDisabled ? null : source.SentinelUsername ?? source.Username,
+            Password = authenticationDisabled ? null : source.SentinelPassword ?? source.Password,
+            UseTls = source.SentinelUseTls ?? source.UseTls,
+            TlsOptions = source.SentinelTlsOptions ?? source.TlsOptions,
+            Protocol = credentialProvider is null ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            CredentialProvider = credentialProvider,
+            SentinelCredentialProvider = null,
+            Connections = 1,
+            CommandTimeout = source.CommandTimeout ?? TimeSpan.FromSeconds(2),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ThreadPoolMonitoring = false,
+            ClientName = null,
+            Database = 0,
+            ClientSideCache = null,
+        };
+    }
+
     private static bool TryParseSwitchMasterEvent(string? details, string expectedMaster,
         out RespireEndpoint oldPrimary, out RespireEndpoint newPrimary)
     {
@@ -346,12 +356,15 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // This covers rapid A->B->C changes and switchbacks such as A->B->A.
             var followsPending = _pendingSwitchPrimary is { } pending
                 && SentinelResolver.SameEndpoint(oldPrimary, pending);
-            var reversesPending = _pendingSwitchPrevious is { } prior
+            var reversesPending = _pendingSwitchPrimary is { } pendingTarget
+                && SentinelResolver.SameEndpoint(oldPrimary, pendingTarget)
+                && _pendingSwitchPrevious is { } prior
                 && SentinelResolver.SameEndpoint(newPrimary, prior);
+            if (_pendingSwitchPrimary is not null && !followsPending && !reversesPending) return;
             if (current is { IsRetired: false }
                 && !SentinelResolver.SameEndpoint(current.Endpoint, oldPrimary)
                 && !followsPending && !reversesPending) return;
-            previousPrimary = _pendingSwitchPrevious ?? current?.Endpoint;
+            previousPrimary = oldPrimary;
             _pendingSwitchPrevious = previousPrimary;
             _pendingSwitchPrimary = newPrimary;
             version = ++_switchRefreshVersion;
