@@ -47,9 +47,24 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             selected.Should().BeEquivalentTo(serverKeys, $"{operation} must select exactly the keys Redis discovers");
         }
 
-        // New allowlisted commands must have a server fixture; unsupported server versions
-        // cannot silently turn this check into partial coverage.
-        verified.Should().BeEquivalentTo(Respire.Commands.RawCommandKeyLayouts.DeferredOperations);
+        // Redis may not expose commands added in newer server releases.
+        var serverOperations = Commands(catalog)
+            .Select(metadata => metadata[0].AsString()!.Replace('|', ' ').ToUpperInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+        var deferredOperations = Respire.Commands.RawCommandKeyLayouts.DeferredOperations.ToArray();
+        var unavailable = deferredOperations.Except(serverOperations).ToArray();
+        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ"]);
+        verified.Should().BeEquivalentTo(deferredOperations.Except(unavailable));
+    }
+
+    [Test]
+    public void VersionGatedStringDeletionCommandsUseTheirFirstKey()
+    {
+        var delex = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("DELEX", ["key", "IFEQ", "value"]);
+        var delifeq = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("DELIFEQ", ["key", "value"]);
+
+        delex.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
+        delifeq.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
     }
 
     private static async Task<RespireResult> DiscoverKeys(RespireClient client, string operation, RespireValue[] query)
