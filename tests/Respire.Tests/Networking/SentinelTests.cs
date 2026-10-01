@@ -799,7 +799,7 @@ public class SentinelTests
         await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
             && current.Endpoint.Port == second.Port);
 
-        // The second -> unknown transition was missed; the next event names a primary the client never used.
+        // The client missed second -> 6390; the next event names a primary it never used.
         Volatile.Write(ref primaryPort, third.Port);
         await sentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390, third.Port), monitor);
         await WaitUntilAsync(() => client.Core.Sentinel!.Current is { IsRetired: false } current
@@ -818,29 +818,21 @@ public class SentinelTests
         var reportingPort = first.Port;
         var laggingPort = first.Port;
         var reportingFailures = 0;
-        await using var reporting = new FakeRespServer(16, "*0
-"u8.ToArray())
+        await using var reporting = new FakeRespServer(16, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) =>
             {
                 if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")
                 {
-                    if (Interlocked.Decrement(ref reportingFailures) >= 0) return "-ERR busy
-"u8.ToArray();
-                    return PrimaryReply(Volatile.Read(ref reportingPort));
+                    return Interlocked.Decrement(ref reportingFailures) >= 0
+                        ? "-ERR busy\r\n"u8.ToArray()
+                        : PrimaryReply(Volatile.Read(ref reportingPort));
                 }
-                if (command == "SENTINEL SENTINELS mymaster") return "*0
-"u8.ToArray();
+                if (command == "SENTINEL SENTINELS mymaster") return "*0\r\n"u8.ToArray();
                 if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
                 {
                     var channel = command["SUBSCRIBE ".Length..];
-                    return Encoding.ASCII.GetBytes($"*3
-$9
-subscribe
-${channel.Length}
-{channel}
-:1
-");
+                    return Encoding.ASCII.GetBytes($"*3\r\n$9\r\nsubscribe\r\n${channel.Length}\r\n{channel}\r\n:1\r\n");
                 }
                 return null;
             },
