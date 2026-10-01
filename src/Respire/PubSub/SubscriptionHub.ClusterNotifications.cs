@@ -778,8 +778,17 @@ internal sealed partial class SubscriptionHub
         var desired = await GetNotificationCoverageAsync(subscription, _lifetimeCancellation.Token, endpoints).ConfigureAwait(false);
         if (version != Volatile.Read(ref _notificationTopologyVersion)) return false;
         HashSet<RespireEndpoint> current;
-        lock (_gate) current = _notificationCoverage.TryGetValue(subscription, out var coverage)
-            ? new HashSet<RespireEndpoint>(coverage) : [];
+        lock (_gate)
+        {
+            current = _notificationCoverage.TryGetValue(subscription, out var coverage)
+                ? new HashSet<RespireEndpoint>(coverage) : [];
+            current.RemoveWhere(endpoint => !_notificationNodes.TryGetValue(endpoint, out var node) || node.Retired);
+            if (coverage is not null)
+            {
+                coverage.RemoveWhere(endpoint => !current.Contains(endpoint));
+                if (coverage.Count == 0) _notificationCoverage.Remove(subscription);
+            }
+        }
         // A partial topology cannot prove that a primary left, so it never removes
         // all-primary routes. Key-owner routes still follow their resolved slot owner.
         // Route tables cache names without metadata, so resolve scope from the descriptors.
