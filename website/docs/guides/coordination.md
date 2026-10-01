@@ -84,6 +84,7 @@ and compatible Valkey deployments; it does not require Redis 8.8 commands.
 implementations of `System.Threading.RateLimiting.RateLimiter`. Redis scripts use server time
 and apply each permit decision atomically. Fixed windows use `INCREX` on Redis 8.8 and later;
 older Redis versions use an equivalent Lua counter with the same first-request window expiry.
+Each limiter probes `INCREX` once and then uses the Lua counter directly on older servers.
 Sliding-window state stores at most the permits allowed in one window. Token-bucket state stores
 only its current token count and last server refill time.
 
@@ -107,13 +108,20 @@ if (!lease.IsAcquired
 Limiter keys accept binary values and use the configured client prefix. Each algorithm accesses one
 Redis key, so one atomic script stays on one Cluster slot. Permit leases are consumptive: disposing
 a successful lease does not return permits. Redis expiry and refill time govern availability.
-Use `AcquireAsync`; synchronous `AttemptAcquire` throws `NotSupportedException` because Redis
-requires a network round trip. Queued asynchronous acquisitions observe caller cancellation and
-limiter disposal. Waiting follows the next server-calculated availability time instead of polling
-Redis. `GetStatistics()` returns
-`null` because a local snapshot cannot represent shared limiter state across processes.
-If cancellation or a disconnect races with an accepted Redis script, the permit may be consumed
-even when the caller does not receive an acquired lease.
+Use `AcquireAsync`. Synchronous `AttemptAcquire` cannot reach Redis, so it returns an unacquired
+lease without `RetryAfter` metadata. Callers that probe synchronously first, such as ASP.NET Core
+rate-limiting middleware and chained limiters, then fall back to `AcquireAsync`. Queued
+asynchronous acquisitions observe caller cancellation and limiter disposal. Waiting follows the
+next server-calculated availability time instead of polling Redis. Queue order is local to one
+limiter instance: callers in other processes, and new local callers that arrive while a queued
+request is being retried, can take permits first.
+
+`GetStatistics()` reports leases granted and rejected by this instance, its queued permits, and
+the available permits from the latest Redis response. Other processes may have consumed permits
+since that response. `IdleDuration` measures time without local acquisitions or queued requests,
+so `PartitionedRateLimiter` can dispose idle limiters; the shared state stays in Redis.
+If cancellation, disposal or a disconnect races with an accepted Redis script, the permit is
+consumed even when the caller does not receive an acquired lease.
 
 ### Fixed window
 

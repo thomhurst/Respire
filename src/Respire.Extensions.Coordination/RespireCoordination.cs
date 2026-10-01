@@ -52,7 +52,9 @@ public sealed class RespireCoordination
         RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
 
     /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
-    public RespireRateLimiters RateLimiters => new(this);
+    public RespireRateLimiters RateLimiters => _rateLimiters ??= new(this);
+
+    private RespireRateLimiters? _rateLimiters;
 
     internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)

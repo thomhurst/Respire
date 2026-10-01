@@ -25,17 +25,35 @@ public class RedisRateLimiterTests
         await Assert.That(denied.IsAcquired).IsFalse();
         await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
         await Assert.That(retry > TimeSpan.Zero).IsTrue();
+        await Assert.That(((RedisRateLimiter)limiter).IncrexUnsupported).IsFalse();
+
+        var statistics = limiter.GetStatistics()!;
+        await Assert.That(statistics.TotalSuccessfulLeases).IsEqualTo(1);
+        await Assert.That(statistics.TotalFailedLeases).IsEqualTo(1);
+        await Assert.That(statistics.CurrentAvailablePermits).IsEqualTo(0);
+        await Assert.That(statistics.CurrentQueuedCount).IsEqualTo(0);
+        await Assert.That(limiter.IdleDuration).IsNotNull();
     }
 
     [Test]
-    public async Task SynchronousAttemptAcquireExplainsAsyncRequirement()
+    public async Task SynchronousAttemptAcquireDefersToAsynchronousAcquisition()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "sync", permitLimit: 1, TimeSpan.FromSeconds(1));
+            "sync", permitLimit: 1, TimeSpan.FromSeconds(5));
 
-        await Assert.That(() => limiter.AttemptAcquire()).Throws<NotSupportedException>();
+        // ASP.NET Core middleware and chained limiters probe synchronously first, then await AcquireAsync.
+        using var probe = limiter.AttemptAcquire();
+        await Assert.That(probe.IsAcquired).IsFalse();
+        await Assert.That(probe.MetadataNames).IsEmpty();
+        using var oversized = limiter.AttemptAcquire(2);
+        await Assert.That(oversized.IsAcquired).IsFalse();
+        await Assert.That(() => limiter.AttemptAcquire(-1)).Throws<ArgumentOutOfRangeException>();
+
+        using var acquired = await limiter.AcquireAsync(1);
+        await Assert.That(acquired.IsAcquired).IsTrue();
+        await Assert.That(limiter.GetStatistics()!.TotalFailedLeases).IsEqualTo(0);
     }
 
     [Test]
@@ -62,6 +80,7 @@ public class RedisRateLimiterTests
 
         using var recovered = await limiter.AcquireAsync(1);
         await Assert.That(recovered.IsAcquired).IsTrue();
+        await Assert.That(((RedisRateLimiter)limiter).IncrexUnsupported).IsTrue();
         using var denied = await limiter.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
         await Task.Delay(2100);

@@ -4,7 +4,8 @@ using System.Threading.RateLimiting;
 namespace Respire.Extensions.Coordination;
 
 /// <summary>Creates Redis-backed implementations of .NET rate limiters.
-/// Acquisitions are asynchronous; synchronous attempts are unsupported because they require a network round trip.</summary>
+/// Acquisitions are asynchronous. Synchronous attempts cannot reach Redis, so they return an unacquired lease
+/// without retry metadata; callers such as ASP.NET Core rate-limiting middleware then fall back to <c>AcquireAsync</c>.</summary>
 public sealed class RespireRateLimiters(RespireCoordination coordination)
 {
     private readonly RespireCoordination _coordination = coordination ?? throw new ArgumentNullException(nameof(coordination));
@@ -39,15 +40,20 @@ internal sealed class RedisRateLimiter : RateLimiter
         local width = tonumber(ARGV[1])
         local requested = tonumber(ARGV[2])
         local limit = tonumber(ARGV[3])
-        local result = redis.pcall('INCREX', KEYS[1], 'BYINT', requested, 'UBOUND', limit, 'PX', width, 'ENX')
-        if type(result) == 'table' and not result.err then
-            local current = tonumber(result[1])
-            local applied = tonumber(result[2])
-            if applied == requested then return {1, 0, limit - current} end
-            return {0, math.max(1, redis.call('PTTL', KEYS[1])), limit - current}
-        end
-        if not string.find(string.lower(result.err or ''), 'unknown', 1, true) then
-            return redis.error_reply(result.err or 'ERR INCREX failed')
+        -- The fourth result element reports that INCREX is unavailable so the caller stops probing it.
+        local unsupported = 0
+        if ARGV[4] == '1' then
+            local result = redis.pcall('INCREX', KEYS[1], 'BYINT', requested, 'UBOUND', limit, 'PX', width, 'ENX')
+            if type(result) == 'table' and not result.err then
+                local current = tonumber(result[1])
+                local applied = tonumber(result[2])
+                if applied == requested then return {1, 0, limit - current, 0} end
+                return {0, math.max(1, redis.call('PTTL', KEYS[1])), limit - current, 0}
+            end
+            if not string.find(string.lower(result.err or ''), 'unknown', 1, true) then
+                return redis.error_reply(result.err or 'ERR INCREX failed')
+            end
+            unsupported = 1
         end
         local value = tonumber(redis.call('GET', KEYS[1]) or '0')
         local ttl = redis.call('PTTL', KEYS[1])
@@ -55,9 +61,9 @@ internal sealed class RedisRateLimiter : RateLimiter
             value = value + requested
             if ttl < 0 then redis.call('SET', KEYS[1], value, 'PX', width)
             else redis.call('SET', KEYS[1], value, 'KEEPTTL') end
-            return {1, 0, limit - value}
+            return {1, 0, limit - value, unsupported}
         end
-        return {0, math.max(1, ttl), limit - value}
+        return {0, math.max(1, ttl), limit - value, unsupported}
         """);
 
     private static readonly RespireScript SlidingWindowScript = RespireScript.Create("""
@@ -70,6 +76,7 @@ internal sealed class RedisRateLimiter : RateLimiter
         local bucketEnd = bucket + segment
         local cutoff = now - width
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff)
+        -- At most one member per segment of the current window remains, so this scan is bounded.
         local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
         local count = 0
         for i = 1, #entries, 2 do
@@ -122,6 +129,7 @@ internal sealed class RedisRateLimiter : RateLimiter
         local missing = requested - tokens
         local retry = math.ceil(missing / tonumber(ARGV[3])) * tonumber(ARGV[2]) - (now - last)
         redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
+        redis.call('PEXPIRE', KEYS[1], ARGV[5])
         return {0, math.max(1, retry), tokens}
         """);
 
@@ -141,6 +149,13 @@ internal sealed class RedisRateLimiter : RateLimiter
     private int _queuedPermits;
     private bool _pumpRunning;
     private volatile bool _disposed;
+    private volatile bool _increxUnsupported;
+    internal bool IncrexUnsupported => _increxUnsupported;
+    private int _activeAcquisitions;
+    private long _lastActivity = Stopwatch.GetTimestamp();
+    private long _availablePermits;
+    private long _successfulLeases;
+    private long _failedLeases;
 
     internal RedisRateLimiter(RespireCoordination coordination, RespireKey key, int permitLimit, int queueLimit,
         QueueProcessingOrder queueOrder, RedisRateLimiterKind kind, TimeSpan period, int segments = 0,
@@ -172,17 +187,34 @@ internal sealed class RedisRateLimiter : RateLimiter
                 throw new ArgumentOutOfRangeException(nameof(period), "Token-bucket refill duration exceeds Redis/Lua's exact integer range.");
             _tokenBucketExpiryMs = _periodMs * periodsToFull;
         }
+        _availablePermits = permitLimit;
     }
 
-    public override TimeSpan? IdleDuration => null;
+    // Shared state lives in Redis, so idle means no local acquisition or queued request.
+    // PartitionedRateLimiter may dispose an idle limiter safely; a replacement resumes from Redis state.
+    public override TimeSpan? IdleDuration
+        => Volatile.Read(ref _activeAcquisitions) != 0 || Volatile.Read(ref _queuedPermits) != 0
+            ? null
+            : Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActivity));
 
-    public override RateLimiterStatistics? GetStatistics() => null;
+    // Available permits reflect the latest Redis response seen by this instance; other processes may
+    // have consumed permits since.
+    public override RateLimiterStatistics GetStatistics() => new()
+    {
+        CurrentAvailablePermits = Volatile.Read(ref _availablePermits),
+        CurrentQueuedCount = Volatile.Read(ref _queuedPermits),
+        TotalSuccessfulLeases = Volatile.Read(ref _successfulLeases),
+        TotalFailedLeases = Volatile.Read(ref _failedLeases),
+    };
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
-        if (_disposed) throw new ObjectDisposedException(nameof(RedisRateLimiter));
-        throw new NotSupportedException("Redis-backed rate limiters require asynchronous acquisition. Use AcquireAsync.");
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        // A synchronous probe cannot reach Redis. Report "not acquired" without retry metadata so callers
+        // that probe first (ASP.NET Core middleware, chained limiters) fall back to AcquireAsync. The probe
+        // never consulted the shared limiter, so it is not counted in statistics.
+        return new RedisRateLimitLease(false, null);
     }
 
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
@@ -190,6 +222,23 @@ internal sealed class RedisRateLimiter : RateLimiter
         if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+        Interlocked.Increment(ref _activeAcquisitions);
+        try
+        {
+            var lease = await AcquireCoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
+            if (lease.IsAcquired) Interlocked.Increment(ref _successfulLeases);
+            else Interlocked.Increment(ref _failedLeases);
+            return lease;
+        }
+        finally
+        {
+            Volatile.Write(ref _lastActivity, Stopwatch.GetTimestamp());
+            Interlocked.Decrement(ref _activeAcquisitions);
+        }
+    }
+
+    private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
+    {
         if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
         if (permitCount == 0) return new RedisRateLimitLease(true, TimeSpan.Zero);
         if (Volatile.Read(ref _queuedPermits) != 0)
@@ -207,7 +256,7 @@ internal sealed class RedisRateLimiter : RateLimiter
     {
         RespireValue[] args = _kind switch
         {
-            RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit],
+            RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit, _increxUnsupported ? 0 : 1],
             RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit],
             _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
@@ -219,7 +268,11 @@ internal sealed class RedisRateLimiter : RateLimiter
         };
         using var result = await _coordination.ExecuteRateLimitScriptAsync(script, _key, args, cancellationToken)
             .ConfigureAwait(false);
-        if (result.Count != 3) throw new RespireProtocolException("Rate-limit script returned an invalid response.");
+        var expectedCount = _kind == RedisRateLimiterKind.FixedWindow ? 4 : 3;
+        if (result.Count != expectedCount) throw new RespireProtocolException("Rate-limit script returned an invalid response.");
+        // Pre-8.8 servers reject INCREX; remember that so later calls skip the failing probe.
+        if (expectedCount == 4 && result[3].AsInteger() == 1) _increxUnsupported = true;
+        Volatile.Write(ref _availablePermits, Math.Max(0, result[2].AsInteger()));
         var granted = result[0].AsInteger() == 1;
         var retry = Math.Clamp(result[1].AsInteger(), 0, MaxTimeSpanMilliseconds);
         return new RedisRateLimitLease(granted, TimeSpan.FromMilliseconds(retry));
@@ -273,6 +326,23 @@ internal sealed class RedisRateLimiter : RateLimiter
     }
 
     private async Task PumpQueueAsync()
+    {
+        try
+        {
+            await RunPumpAsync().ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            // Never leave waiters behind a faulted pump: fail them and let the next request start a new pump.
+            lock (_queueGate)
+            {
+                _pumpRunning = false;
+                FailQueuedRequests(error);
+            }
+        }
+    }
+
+    private async Task RunPumpAsync()
     {
         while (true)
         {
@@ -343,6 +413,8 @@ internal sealed class RedisRateLimiter : RateLimiter
     {
         if (!TryRemoveQueued(request))
         {
+            // Cancellation or disposal won the race after Redis granted the permits. Leases are consumptive
+            // and Redis has no refund path, so those permits stay consumed until the window or refill.
             lease.Dispose();
             return;
         }
