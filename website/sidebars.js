@@ -27,6 +27,7 @@ const sidebars = {
         'guides/coordination',
         'guides/blocking-queues',
         'guides/vector-sets',
+        'guides/search',
         'guides/reconnect-policy',
         'guides/renewable-credentials',
         'guides/aws-iam-credentials',
