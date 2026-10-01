@@ -12,6 +12,117 @@ public sealed class RespireCoordination
     public RespireCoordination(IRespireClient client)
         => _client = client ?? throw new ArgumentNullException(nameof(client));
 
+    internal static readonly RespireScript CreateCountdownLatch = RespireScript.Create("""
+        if redis.call('EXISTS', KEYS[1]) == 1 then return redis.error_reply('ERR latch already exists; use reset') end
+        redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'remaining', ARGV[2], 'channel', ARGV[3])
+        return 1
+        """);
+
+    internal static readonly RespireScript ResetCountdownLatch = RespireScript.Create("""
+        local oldChannel = redis.call('HGET', KEYS[1], 'channel')
+        if oldChannel then redis.call('PUBLISH', oldChannel, ARGV[1]) end
+        redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'remaining', ARGV[2], 'channel', ARGV[3])
+        return 1
+        """);
+
+    internal static readonly RespireScript CountDownLatch = RespireScript.Create("""
+        if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then return '-1' end
+        if redis.call('HGET', KEYS[1], 'channel') ~= ARGV[2] then
+            return redis.error_reply('ERR latch channel does not match generation')
+        end
+        local remaining = redis.call('HGET', KEYS[1], 'remaining')
+        if not remaining or not string.match(remaining, '^%d+$')
+            or (#remaining > 1 and string.sub(remaining, 1, 1) == '0') then
+            return redis.error_reply('ERR latch count is invalid')
+        end
+        if remaining == '0' then return redis.error_reply('ERR latch count is already zero') end
+        if remaining == '1' then redis.call('PUBLISH', ARGV[2], ARGV[1]) end
+        redis.call('HINCRBY', KEYS[1], 'remaining', -1)
+        return redis.call('HGET', KEYS[1], 'remaining')
+        """);
+
+    private const string ReadCountdownLatchSource = """
+        if redis.call('EXISTS', KEYS[1]) == 0 then return {'0', '', '', ''} end
+        local values = redis.call('HMGET', KEYS[1], 'generation', 'remaining', 'channel')
+        return {'1', values[1] or '', values[2] or '-1', values[3] or ''}
+        """;
+
+    internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create(ReadCountdownLatchSource, readOnly: true);
+    private static readonly RespireScript ReadCountdownLatchCompatibility =
+        RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
+
+    /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
+    /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
+    /// <param name="count">Initial number of signals required to release waiters.</param>
+    /// <param name="cancellationToken">Cancels before or during the accepted Redis command.</param>
+    public ValueTask<RespireCountdownLatch> CreateCountdownLatchAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => CreateLatchAsync(key, count, reset: false, cancellationToken);
+
+    /// <summary>Joins the current countdown-latch generation stored at <paramref name="key"/>.</summary>
+    /// <param name="key">The latch key, before the client's key prefix.</param>
+    /// <param name="cancellationToken">Cancels the Redis state read.</param>
+    /// <returns>A handle for the current generation, or <see langword="null"/> when no latch exists.</returns>
+    public async ValueTask<RespireCountdownLatch?> JoinCountdownLatchAsync(
+        RespireKey key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = key.Snapshot();
+        using var result = await ReadLatchStateAsync(_client, snapshot, cancellationToken).ConfigureAwait(false);
+        if (result[0].AsString() == "0") return null;
+        var generation = result[1].AsString();
+        var remainingText = result[2].AsString();
+        var channel = result[3].AsString();
+        if (generation.Length == 0 || channel.Length == 0
+            || !long.TryParse(remainingText, NumberStyles.None, CultureInfo.InvariantCulture, out var remaining)
+            || remaining < 0)
+            throw new RespireProtocolException("Redis returned invalid countdown-latch state.");
+        return new RespireCountdownLatch(_client, snapshot, generation, channel);
+    }
+
+    internal static async ValueTask<RespireResult> ReadLatchStateAsync(
+        IRespireClient client, RespireKey key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.Scripts.ExecuteAsync(ReadCountdownLatch, [key], cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RespireServerException error) when (IsUnsupportedReadOnlyScriptCommand(error))
+        {
+            return await client.Scripts.ExecuteAsync(ReadCountdownLatchCompatibility, [key], cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsUnsupportedReadOnlyScriptCommand(RespireServerException error)
+        => error.Code == "ERR"
+            && error.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase)
+            && (error.Message.Contains("EVALSHA_RO", StringComparison.OrdinalIgnoreCase)
+                || error.Message.Contains("EVAL_RO", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Atomically replaces the latch state with a fresh generation and count.</summary>
+    /// <param name="key">The latch key, before the client's key prefix.</param>
+    /// <param name="count">Nonnegative count for the new generation.</param>
+    /// <param name="cancellationToken">Cancels before or during the accepted Redis command.</param>
+    public ValueTask<RespireCountdownLatch> ResetCountdownLatchAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => CreateLatchAsync(key, count, reset: true, cancellationToken);
+
+    private async ValueTask<RespireCountdownLatch> CreateLatchAsync(
+        RespireKey key, long count, bool reset, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), "Latch count must be nonnegative.");
+        var snapshot = key.Snapshot();
+        var generation = Guid.NewGuid().ToString("N");
+        var channel = "respire:latch:" + Guid.NewGuid().ToString("N");
+        using var result = await _client.Scripts.ExecuteAsync(
+            reset ? ResetCountdownLatch : CreateCountdownLatch,
+            [snapshot], [generation, count, channel], cancellationToken).ConfigureAwait(false);
+        return new RespireCountdownLatch(_client, snapshot, generation, channel);
+    }
+
     internal static readonly RespireScript AcquireFencedLock = RespireScript.Create("""
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then

@@ -22,11 +22,12 @@ public sealed class RespireScript
     private const int StackallocThreshold = 256;
     private const string HexDigits = "0123456789abcdef";
 
-    private RespireScript(string source, string sha1, bool readOnly)
+    private RespireScript(string source, string sha1, bool readOnly, bool cacheReadOnly)
     {
         Source = source;
         Sha1 = sha1;
         IsReadOnly = readOnly;
+        IsCacheReadOnly = cacheReadOnly;
     }
 
     /// <summary>The Lua source text.</summary>
@@ -39,6 +40,8 @@ public sealed class RespireScript
     /// <remarks>This selects the Redis command contract; it does not select a replica connection.</remarks>
     public bool IsReadOnly { get; }
 
+    internal bool IsCacheReadOnly { get; }
+
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
     internal string EvalShaOperation => IsReadOnly ? "EVALSHA_RO" : "EVALSHA";
     internal Verb EvalVerb => IsReadOnly ? Verbs.EvalRo : Verbs.Eval;
@@ -49,6 +52,9 @@ public sealed class RespireScript
 
     /// <summary>Creates a reusable script. Read-only execution requires Redis 7 or later.</summary>
     public static RespireScript Create(string source, bool readOnly)
+        => Create(source, readOnly, cacheReadOnly: readOnly);
+
+    internal static RespireScript Create(string source, bool readOnly, bool cacheReadOnly)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         var byteCount = Encoding.UTF8.GetByteCount(source);
@@ -78,7 +84,7 @@ public sealed class RespireScript
                 hex[i * 2 + 1] = HexDigits[hash[i] & 0xF];
             }
 
-            return new RespireScript(source, new string(hex), readOnly);
+            return new RespireScript(source, new string(hex), readOnly, cacheReadOnly);
         }
         finally
         {
