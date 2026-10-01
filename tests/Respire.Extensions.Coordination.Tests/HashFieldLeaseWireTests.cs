@@ -380,7 +380,18 @@ public class HashFieldLeaseWireTests
 
         primaryPort = promotedPrimary.Port;
         oldPrimary.CloseConnections();
-        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        using var promotionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Endpoint.Port != promotedPrimary.Port)
+        {
+            try
+            {
+                await client.PingAsync().AsTask().WaitAsync(promotionTimeout.Token);
+            }
+            catch (RespireConnectionException) when (!promotionTimeout.IsCancellationRequested)
+            {
+                await Task.Delay(10, promotionTimeout.Token);
+            }
+        }
         await Assert.That(client.Endpoint.Port).IsEqualTo(promotedPrimary.Port);
         await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
             "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity);
