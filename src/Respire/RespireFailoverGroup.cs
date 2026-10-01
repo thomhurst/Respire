@@ -268,31 +268,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
                 logger ??= snapshot.CreateLogger("Respire.FailoverGroup");
                 var client = RespireClient.Create(snapshot);
-                states.Add(new CandidateState(client, candidate.Priority, states.Count, fallbackEndpoint, snapshot.SentinelPrimaryName));
+                states.Add(new CandidateState(client, candidate.Priority, states.Count, fallbackEndpoint,
+                    snapshot.SentinelPrimaryName, snapshot.Endpoints.ToArray()));
             }
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
 
             var created = group = new RespireFailoverGroup(states.ToArray(), settings, clock, logger);
             await Task.WhenAll(states.Select(state => created.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
-            var discoveredSentinels = new List<(string PrimaryName, RespireEndpoint[] Endpoints, RespireEndpoint? Primary)>();
-            foreach (var state in states)
-            {
-                if (state.SentinelPrimaryName is not { Length: > 0 } primaryName
-                    || state.Client.Core.Sentinel is not { } sentinel)
-                    continue;
-                var discoveredEndpoints = sentinel.DiscoveredEndpoints;
-                var discoveredPrimary = state.Endpoint;
-                if (discoveredSentinels.Any(existing =>
-                    (discoveredPrimary is { } primary && existing.Primary is { } existingPrimary && SameEndpoint(primary, existingPrimary))
-                    || (string.Equals(existing.PrimaryName, primaryName, StringComparison.Ordinal)
-                        && existing.Endpoints.Any(endpoint => discoveredEndpoints.Any(candidate => SameEndpoint(endpoint, candidate))))))
-                {
-                    throw new RespireConfigurationException(
-                        $"Failover candidates for Sentinel service '{primaryName}' discovered the same primary or overlapping Sentinel endpoints.");
-                }
-                discoveredSentinels.Add((primaryName, discoveredEndpoints, discoveredPrimary));
-            }
+            foreach (var state in states) ValidateSentinelIdentity(state, states);
             await group.SelectActiveAsync().ConfigureAwait(false);
             if (Volatile.Read(ref group._active) is null)
             {
@@ -328,6 +312,45 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
+
+    private static void ValidateSentinelIdentity(CandidateState candidate, IReadOnlyList<CandidateState> candidates)
+    {
+        if (candidate.SentinelPrimaryName is not { Length: > 0 } primaryName
+            || candidate.Client.Core.Sentinel is not { } sentinel)
+            return;
+
+        var discoveredEndpoints = sentinel.DiscoveredEndpoints;
+        var discoveredPrimary = candidate.Endpoint;
+        foreach (var other in candidates)
+        {
+            if (ReferenceEquals(candidate, other)) continue;
+            if (other.SentinelPrimaryName is { Length: > 0 } otherPrimaryName)
+            {
+                var otherSentinel = other.Client.Core.Sentinel;
+                var samePrimary = discoveredPrimary is { } primary && other.Endpoint is { } existingPrimary
+                    && SameEndpoint(primary, existingPrimary);
+                var sameServiceOverlaps = string.Equals(primaryName, otherPrimaryName, StringComparison.Ordinal)
+                    && otherSentinel is not null
+                    && otherSentinel.DiscoveredEndpoints.Any(endpoint =>
+                        discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered)));
+                if (samePrimary || sameServiceOverlaps)
+                {
+                    throw new RespireConfigurationException(
+                        $"Failover candidates for Sentinel service '{primaryName}' discovered the same primary or overlapping Sentinel endpoints.");
+                }
+
+                continue;
+            }
+
+            if (other.ConfiguredEndpoints.Any(endpoint =>
+                discoveredEndpoints.Any(discovered => SameEndpoint(endpoint, discovered))
+                || discoveredPrimary is { } primary && SameEndpoint(endpoint, primary)))
+            {
+                throw new RespireConfigurationException(
+                    $"Sentinel candidate '{primaryName}' discovered an endpoint configured as another failover candidate's data endpoint.");
+            }
+        }
+    }
 
     private static RespireEndpoint[] NormalizeEndpoints(IEnumerable<RespireEndpoint> endpoints)
     {
@@ -376,9 +399,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             if (candidate.Client.Core.Cluster is null)
             {
-                if (candidate.Client.Core.Sentinel is { } sentinel
-                    && !await sentinel.ProbePrimaryAsync(timeout.Token).ConfigureAwait(false))
-                    throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
+                if (candidate.Client.Core.Sentinel is { } sentinel)
+                {
+                    if (!await sentinel.ProbePrimaryAsync(timeout.Token).ConfigureAwait(false))
+                        throw new RespireConnectionException("Sentinel candidate endpoint no longer reports the primary ROLE.");
+                    ValidateSentinelIdentity(candidate, _candidates);
+                }
                 await candidate.Client.PingAsync(timeout.Token).ConfigureAwait(false);
             }
             else
@@ -558,7 +584,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         if (failures is { Count: > 1 }) throw new AggregateException(failures);
     }
 
-    private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint, string? sentinelPrimaryName)
+    private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint,
+        string? sentinelPrimaryName, RespireEndpoint[] configuredEndpoints)
     {
         private readonly object _gate = new();
         private bool _isHealthy;
@@ -571,6 +598,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
         public RespireClient Client { get; } = client;
         public string? SentinelPrimaryName { get; } = sentinelPrimaryName;
+        public RespireEndpoint[] ConfiguredEndpoints { get; } = configuredEndpoints;
         public int Priority { get; } = priority;
         public int Order { get; } = order;
         public RespireEndpoint? Endpoint
