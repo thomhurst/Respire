@@ -40,6 +40,7 @@ public class ReadEndpointRoutingTests
 
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await view.GetStringAsync("key")).IsEqualTo("replica");
+        await Assert.That(client.IsConnected).IsTrue();
         await Assert.That(await view.SetAsync("key", "new-value")).IsTrue();
 
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "GET key"]);
@@ -155,6 +156,42 @@ public class ReadEndpointRoutingTests
         using var result = await view.Scripts.ExecuteAsync(RespireScript.Create("return 1", readOnly: true));
         await Assert.That(replica.ReceivedCommands.Select(command => command.Split(' ')[0]))
             .IsEquivalentTo(["ROLE", "GET", "EVALSHA_RO"]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ReadOnlyScriptTelemetryUsesSelectedReplicaEndpoint()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole, ":1\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var activities = new System.Collections.Concurrent.ConcurrentQueue<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName.StartsWith("EVALSHA_RO", StringComparison.Ordinal))
+                    activities.Enqueue(activity);
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
+        using var result = await client.WithReadFrom(RespireReadFrom.Replica).Scripts
+            .ExecuteAsync(RespireScript.Create("return 1", readOnly: true));
+
+        var activity = activities.Single();
+        await Assert.That(activity.GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(replica.Port);
         await Assert.That(primary.ReceivedCommands).IsEmpty();
     }
 

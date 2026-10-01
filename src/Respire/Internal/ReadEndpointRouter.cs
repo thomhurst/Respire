@@ -85,6 +85,8 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             .Distinct(RespireEndpointComparer.Instance)
             .ToArray();
 
+    internal bool IsConnected => _entries.Values.Any(static entry => entry.IsConnected);
+
     private void SetEndpoints(IEnumerable<RespireEndpoint> replicas)
     {
         // SENTINEL REPLICAS never lists the current primary, and ROLE validation rejects a node
@@ -441,6 +443,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 
         internal RespireEndpoint Endpoint => endpoint;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;
+        internal bool IsConnected => !_closed && Volatile.Read(ref _multiplexer)?.IsConnected == true;
 
         internal bool IsCoolingDown => _health.IsCoolingDown(router.FailedReplicaCooldown);
 

@@ -186,7 +186,8 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <inheritdoc/>
     public bool IsConnected
-        => !_core.Disposed && (_core.Sentinel?.IsConnected ?? _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
+        => !_core.Disposed && (_core.Sentinel?.IsConnected == true || _core.Cluster?.IsConnected == true
+            || _core.Multiplexer.IsConnected || _core.ReadRouter.IsConnected);
 
     /// <summary>Captures owned Cluster retirement diagnostics, or null for a non-Cluster client.</summary>
     /// <remarks>Performs no network I/O. Prefix views share the underlying router's state.
@@ -3502,12 +3503,8 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
-        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
-        var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
-            script.EvalShaOperation,
-            core.Endpoint,
-            core.Options.Database,
-            storedProcedureName: script.Sha1) : default;
+        var started = RespireTelemetry.CaptureStartTimestamp();
+        var telemetry = default(RespireTelemetry.OperationScope);
         RespireConnection? connection = null;
         try
         {
@@ -3518,9 +3515,8 @@ public sealed partial class RespireClient : IRespireClient
                 await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 connection = core.Multiplexer.GetConnection();
             }
-            if (core.Sentinel is not null)
-                telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
-                    core.Options.Database, storedProcedureName: script.Sha1, started: sentinelStarted);
+            telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
+                core.Options.Database, storedProcedureName: script.Sha1, started: started);
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
@@ -3530,7 +3526,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (connection is null)
                 RespireTelemetry.RecordUnroutedFailure(script.EvalShaOperation, core.Options.Database,
-                    sentinelStarted, ex, script.Sha1);
+                    started, ex, script.Sha1);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }
