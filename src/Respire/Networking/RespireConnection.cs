@@ -2292,14 +2292,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (source is BulkStreamPendingResponseSource streamSource)
             streamSource.ObservePrefix(in value);
 
+        // Retire a demoted generation before MarkReplyReceived pulses freed capacity: a parked
+        // full-ring waiter must observe retirement at admission, not enqueue onto the old primary.
+        _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
+
         MarkReplyReceived();
 
         if (_maintenanceStatus == MaintenanceNegotiating)
         {
             ObserveMaintenanceAcknowledgement(in value);
         }
-
-        _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {

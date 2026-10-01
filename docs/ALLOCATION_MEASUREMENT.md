@@ -129,3 +129,20 @@ with an exact 4,000-byte subkey-length total. The ordinary path must allocate ex
 zero bytes; the positive control adds an escaping 37-byte array per iteration and
 must observe at least 37,000 bytes. The test does not discard samples, retry or
 relax its allocation requirement. Production parsing is unchanged.
+
+## Remaining zero-allocation regressions
+
+A CI sweep on 2026-10-01 found `Utf8Lookup_DoesNotAllocate` reporting 2,136 bytes
+on net8.0 for a PR that did not change pub/sub routing. Five zero-allocation tests
+still measured the thread counter directly: `Utf8Lookup_DoesNotAllocate`,
+`RawBytesDoNotAllocate`, `UnkeyedBuiltInRouting_DoesNotAllocate`,
+`UnrelatedResp3PushKindsDoNotAllocateDuringMaintenanceParsing`, and
+`RawMember_AllocatesOnlyDecodedTextAndOwnedBytes`.
+
+All five now follow the boundary above: unkeyed `NotInParallel`, warmed no-inline
+measurements, the shared no-GC region, and assertions outside that region. The four
+exact zero-byte tests also run a positive control with one escaping 37-byte array per
+iteration. The `GeoSearchResult` test keeps its relative comparison against
+decoding the same member. No assertion is relaxed.
+
+New allocation tests must use `AllocationMeasurement.WithoutConcurrentGc` from the start.

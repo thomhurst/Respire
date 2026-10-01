@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -52,14 +53,34 @@ public class RespireChannelTests
     }
 
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task RawBytesDoNotAllocate()
     {
         RespireChannel channel = "notifications";
+        _ = MeasureRawBytes(channel, allocate: false);
+        _ = MeasureRawBytes(channel, allocate: true);
+
+        // Concurrent GC can perturb the thread allocation counter. See docs/ALLOCATION_MEASUREMENT.md.
+        var (measured, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureRawBytes(channel, allocate: false), MeasureRawBytes(channel, allocate: true)));
+        await Assert.That(measured.Length).IsEqualTo(13000);
+        await Assert.That(measured.Allocated).IsEqualTo(0);
+        await Assert.That(control.Allocated).IsGreaterThanOrEqualTo(1000 * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (long Allocated, int Length) MeasureRawBytes(RespireChannel channel, bool allocate)
+    {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var length = 0;
-        for (var i = 0; i < 1000; i++) length += channel.Bytes.Length;
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        await Assert.That(length).IsEqualTo(13000);
-        await Assert.That(allocated).IsEqualTo(0);
+        for (var i = 0; i < 1000; i++)
+        {
+            length += channel.Bytes.Length;
+            if (allocate) GC.KeepAlive(AllocateControl());
+        }
+        return (GC.GetAllocatedBytesForCurrentThread() - before, length);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateControl() => new byte[37];
 }

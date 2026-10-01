@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,26 +9,44 @@ namespace Respire.Tests.Networking;
 public class GeoSearchResultTests
 {
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task RawMember_AllocatesOnlyDecodedTextAndOwnedBytes()
     {
         byte[] member = Encoding.UTF8.GetBytes(new string('x', 4096));
-        _ = new GeoSearchResult(member.AsSpan());
+        _ = MeasureExpected(member, out _);
+        _ = MeasureResult(member, out _);
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        var text = Encoding.UTF8.GetString(member);
-        var bytes = member.AsSpan().ToArray();
-        var expected = GC.GetAllocatedBytesForCurrentThread() - before;
-        GC.KeepAlive(text);
-        GC.KeepAlive(bytes);
-
-        before = GC.GetAllocatedBytesForCurrentThread();
-        var result = new GeoSearchResult(member.AsSpan());
-        var actual = GC.GetAllocatedBytesForCurrentThread() - before;
+        // Concurrent GC can perturb the thread allocation counter. See docs/ALLOCATION_MEASUREMENT.md.
+        var (expected, actual, text, result) = AllocationMeasurement.WithoutConcurrentGc(() =>
+        {
+            var expectedBytes = MeasureExpected(member, out var decoded);
+            var actualBytes = MeasureResult(member, out var created);
+            return (expectedBytes, actualBytes, decoded, created);
+        });
 
         // Allow small runtime bookkeeping differences, but never the extra 4 KB member array.
         await Assert.That(actual).IsLessThanOrEqualTo(expected + 128);
         await Assert.That(result.Member).IsEqualTo(text);
         await Assert.That(result.MemberBytes.Span.SequenceEqual(member)).IsTrue();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureExpected(byte[] member, out string text)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        text = Encoding.UTF8.GetString(member);
+        var bytes = member.AsSpan().ToArray();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(bytes);
+        return allocated;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureResult(byte[] member, out GeoSearchResult result)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        result = new GeoSearchResult(member.AsSpan());
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     [Test]

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Text;
 using Respire.Commands;
@@ -512,6 +513,7 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task UnrelatedResp3PushKindsDoNotAllocateDuringMaintenanceParsing()
     {
         var bytes = ">3\r\n+invalidate\r\n:1\r\n*0\r\n"u8.ToArray();
@@ -520,13 +522,30 @@ public class MaintenanceNotificationTests
             throw new Exception("Invalid test fixture");
         using (value)
         {
-            _ = MaintenanceNotification.Parse(in value); // JIT warm-up.
-            var before = GC.GetAllocatedBytesForCurrentThread();
-            for (var i = 0; i < 100; i++) _ = MaintenanceNotification.Parse(in value);
-            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            _ = MeasureMaintenanceParsing(value, allocate: false); // JIT warm-up.
+            _ = MeasureMaintenanceParsing(value, allocate: true);
+            // Concurrent GC can perturb the thread allocation counter. See docs/ALLOCATION_MEASUREMENT.md.
+            var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+                (MeasureMaintenanceParsing(value, allocate: false), MeasureMaintenanceParsing(value, allocate: true)));
             await Assert.That(allocated).IsEqualTo(0L);
+            await Assert.That(control).IsGreaterThanOrEqualTo(100L * 37);
         }
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureMaintenanceParsing(RespValue value, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 100; i++)
+        {
+            _ = MaintenanceNotification.Parse(in value);
+            if (allocate) GC.KeepAlive(AllocateControl());
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateControl() => new byte[37];
 
     [Test]
     public async Task FailingActivityListenerDoesNotSuppressMetricOrLog()

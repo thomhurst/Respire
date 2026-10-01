@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Commands;
 using Respire.Protocol;
@@ -1695,19 +1696,34 @@ public class ClusterTests
     }
 
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task UnkeyedBuiltInRouting_DoesNotAllocate()
     {
         var command = new Cmd(Verbs.ClusterSlots);
-        _ = TryGetSlot(command, out _);
+        _ = MeasureUnkeyedRouting(command, allocate: false);
+        _ = MeasureUnkeyedRouting(command, allocate: true);
+
+        // Concurrent GC can perturb the thread allocation counter. See docs/ALLOCATION_MEASUREMENT.md.
+        var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureUnkeyedRouting(command, allocate: false), MeasureUnkeyedRouting(command, allocate: true)));
+        await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(1_000 * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureUnkeyedRouting(Cmd command, bool allocate)
+    {
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
             _ = TryGetSlot(command, out _);
+            if (allocate) GC.KeepAlive(AllocateControl());
         }
-
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        await Assert.That(allocated).IsEqualTo(0);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateControl() => new byte[37];
 
     [Test]
     public async Task ArgumentBearingServerCommands_RemainUnkeyed()
