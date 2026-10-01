@@ -210,6 +210,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private long _expiryTicks;
     private int _released;
     private int _disposeReleaseScheduled;
+    private int _nonExpiringOutcomeUncertain;
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
@@ -294,11 +295,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 {
                     Interlocked.Exchange(ref _expiryTicks, requestedExpiry?.Ticks ?? 0);
                     Interlocked.Exchange(ref _validUntil, remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
+                    Volatile.Write(ref _nonExpiringOutcomeUncertain, 0);
                     return Volatile.Read(ref _disposeReleaseScheduled) == 0;
                 }
             }
             catch
             {
+                if (milliseconds == 0)
+                    Volatile.Write(ref _nonExpiringOutcomeUncertain, 1);
                 if (await ReleaseBestEffortAsync().ConfigureAwait(false))
                     Interlocked.Exchange(ref _released, 1);
                 throw;
@@ -368,13 +372,16 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         var started = Stopwatch.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(100);
-        while (Volatile.Read(ref _released) == 0 && Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
-            && RemainingEstimate != TimeSpan.Zero)
+        while (Volatile.Read(ref _released) == 0
+            && (RequiresPersistentCleanup
+                || (Stopwatch.GetElapsedTime(started) < RespireSemaphore.DisposeReleaseRetryLimit
+                    && RemainingEstimate != TimeSpan.Zero)))
         {
             var released = await TryReleaseAfterDisposeAsync().ConfigureAwait(false);
             if (released is null or true) return;
 
-            if (Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero)
+            if (Volatile.Read(ref _released) != 0
+                || (!RequiresPersistentCleanup && RemainingEstimate == TimeSpan.Zero))
             {
                 return;
             }
@@ -383,6 +390,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
         }
     }
+
+    private bool RequiresPersistentCleanup
+        => Interlocked.Read(ref _expiryTicks) == 0 || Volatile.Read(ref _nonExpiringOutcomeUncertain) != 0;
 
     private async ValueTask<bool?> TryReleaseAfterDisposeAsync()
     {
@@ -395,6 +405,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             return true;
         }
         catch (ObjectDisposedException)
+        {
+            return null;
+        }
+        catch (RespireServerException error) when (error.Code is "ERR" or "NOPERM")
         {
             return null;
         }
