@@ -209,13 +209,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         using var role = await generation.Multiplexer.GetConnection()
             .SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-        if (role.Type != RespDataType.Array) return false;
-        var fields = role.AsArray();
-        return fields.Length >= 3
-            && fields[0].Type is RespDataType.BulkString or RespDataType.SimpleString
-            && fields[0].AsString() == "master"
-            && fields[1].Type == RespDataType.Integer
-            && fields[2].Type == RespDataType.Array;
+        return Generation.IsPrimary(in role);
     }
 
     private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,

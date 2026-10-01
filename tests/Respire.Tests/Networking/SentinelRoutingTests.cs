@@ -775,7 +775,7 @@ public class SentinelRoutingTests
             await Assert.That(original.IsAcceptingCommands).IsFalse();
             await client.SetAsync("new", "value").AsTask().WaitAsync(Limit);
             await Assert.That(accepted.Skip(1).All(task => !task.IsCompleted)).IsTrue();
-            await Assert.That(oldPrimary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING", "PING", "PING", "PING"]);
+            await Assert.That(oldPrimary.ReceivedCommands).IsEquivalentTo(["ROLE", "ROLE", "PING", "PING", "PING", "PING"]);
             await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET new value"]);
         }
         finally
