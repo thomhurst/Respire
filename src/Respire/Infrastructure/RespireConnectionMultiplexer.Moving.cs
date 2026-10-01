@@ -49,8 +49,10 @@ internal sealed partial class RespireConnectionMultiplexer
     // True while a worker owns the queue. It is set and cleared together with _movingCompletion.
     private bool _movingWorker;
     private TaskCompletionSource? _movingCompletion;
-    // Old sockets drain off the handoff worker so a later MOVING can start immediately.
-    private Task _movingDrains = Task.CompletedTask;
+    // Old sockets drain off the handoff worker so a later MOVING can start immediately. Counted
+    // under _movingGate, like _activeReconnects, so a MOVING burst does not nest Task.WhenAll.
+    private int _activeMovingDrains;
+    private TaskCompletionSource? _movingDrainsIdle;
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
@@ -295,10 +297,14 @@ internal sealed partial class RespireConnectionMultiplexer
         var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
         lock (_movingGate)
         {
-            var drain = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
-            _movingDrains = _movingDrains.IsCompleted ? drain : Task.WhenAll(_movingDrains, drain);
+            _activeMovingDrains++;
+            _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
-        _options.CredentialCacheRetirementFence?.Invoke();
+
+        // The handoff has published, so neither the second cache fence nor a metrics observer
+        // can fail it. The fence's metrics reach MeterListener callbacks synchronously.
+        try { _options.CredentialCacheRetirementFence?.Invoke(); }
+        catch (Exception error) { _logger?.LogDebug(error, "MOVING retirement cache fence observer failed"); }
 
         // Metrics listeners can run user code, so publish outside the lifecycle locks.
         if (cacheEvictions is { } removed)
@@ -326,6 +332,20 @@ internal sealed partial class RespireConnectionMultiplexer
         finally
         {
             ForgetMovingSequences(connectedOnly: false);
+            lock (_movingGate)
+            {
+                if (--_activeMovingDrains == 0) _movingDrainsIdle?.TrySetResult();
+            }
+        }
+    }
+
+    /// <summary>Completes when no old MOVING socket is still draining.</summary>
+    private Task WaitForMovingDrainsAsync()
+    {
+        lock (_movingGate)
+        {
+            return _activeMovingDrains == 0 ? Task.CompletedTask
+                : (_movingDrainsIdle ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
     }
 
@@ -395,13 +415,17 @@ internal sealed partial class RespireConnectionMultiplexer
     /// <summary>
     /// Drains the unpublished sockets until the grace deadline and aborts any still busy. Every
     /// identity whose socket did not drain cleanly is fenced, whatever ended the drain.
+    /// Disposal ends the drain at once, because the old sockets are no longer in
+    /// <c>_connections</c> for the disposal loop to close.
     /// </summary>
     private async Task DrainMovedConnectionsAsync(RespireConnection?[] old, Task[] drains, long deadline)
     {
         try
         {
             var remainingMilliseconds = Math.Max(0, deadline - Environment.TickCount64);
-            await Task.WhenAll(drains).WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds)).ConfigureAwait(false);
+            await Task.WhenAll(drains)
+                .WaitAsync(TimeSpan.FromMilliseconds(remainingMilliseconds), _abortCancellation.Token)
+                .ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -409,6 +433,8 @@ internal sealed partial class RespireConnectionMultiplexer
             // sockets that did not drain; a faulted drain must not leave them open.
             if (error is TimeoutException)
                 _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+            else if (error is OperationCanceledException && _abortCancellation.IsCancellationRequested)
+                _logger?.LogDebug("Disposal ended the MOVING handoff drain; aborting remaining old sockets");
             else
                 _logger?.LogWarning(error, "MOVING handoff drain of old sockets failed; aborting remaining old sockets");
             foreach (var connection in old)

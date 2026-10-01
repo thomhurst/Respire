@@ -1148,9 +1148,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         lock (_movingGate) moving = _movingCompletion?.Task;
         if (moving is not null) await moving.ConfigureAwait(false);
         // The worker has stopped, so no further drain can start after this snapshot.
-        Task drains;
-        lock (_movingGate) drains = _movingDrains;
-        await drains.ConfigureAwait(false);
+        await WaitForMovingDrainsAsync().ConfigureAwait(false);
     }
 
     private async Task RetireCoreAsync(TaskCompletionSource completion)

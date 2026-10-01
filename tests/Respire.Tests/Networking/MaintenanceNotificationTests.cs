@@ -717,6 +717,76 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task DisposingWhileOldMovingSocketsDrainAbortsThemPromptly()
+    {
+        await using var source = Server(maxConnections: 2);
+        source.SuppressReply = command => command == "PING";
+        await using var target = Server(maxConnections: 2);
+        var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                CommandTimeout = TimeSpan.FromSeconds(120),
+            });
+        var accepted = multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(source, 3);
+
+        // The old socket holds an accepted command that never completes, inside a long grace.
+        await source.SendRawAsync(Moving(1, target.Port, seconds: 60));
+        await WaitForPort(multiplexer, target.Port);
+        await Assert.That(accepted.IsCompleted).IsFalse();
+
+        // The old socket is no longer published, so only the drain can close it on disposal.
+        await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(async () => await accepted.WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireException>();
+    }
+
+    [Test]
+    public async Task FailingRetirementCacheFenceObserverDoesNotFailPublishedHandoff()
+    {
+        // A distinctive count identifies this test's continuity flush among process-wide metrics.
+        const int continuityEvictions = 7919;
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var evictions = MeterFor("respire.client_cache.evictions", (value, _) =>
+        {
+            if (value == continuityEvictions) published.TrySetResult();
+        });
+        var logger = new HandoffFailureLogger();
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            logger: logger,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                CredentialCacheInvalidation = () => continuityEvictions,
+                CredentialCacheRetirementFence = () => throw new InvalidOperationException("Metrics observer failure."),
+            });
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+
+        // The first continuity flush still publishes its metrics after the fence throws.
+        await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(logger.HandoffFailed).IsFalse();
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    private sealed class HandoffFailureLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        internal volatile bool HandoffFailed;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning && exception is InvalidOperationException)
+                HandoffFailed = true;
+        }
+    }
+
+    [Test]
     public async Task RapidMovingBurstEndsOnTheNewestTarget()
     {
         await using var source = Server(maxConnections: 2);
