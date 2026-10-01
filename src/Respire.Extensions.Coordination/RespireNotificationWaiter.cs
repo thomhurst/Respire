@@ -5,13 +5,12 @@ internal static class RespireNotificationWaiter
 {
     internal static readonly TimeSpan MaxExpiryWait = TimeSpan.FromMilliseconds(int.MaxValue);
 
-    internal static async ValueTask<TResult> WaitAsync<TResult>(
+    internal static async ValueTask<TResult> WaitAsync<TTarget, TResult>(
         IRespireClient client,
         RespireKey key,
-        Func<CancellationToken, ValueTask> trackedRead,
-        Func<CancellationToken, ValueTask<RespireTtl>> getTimeToLive,
-        Func<CancellationToken, ValueTask<(bool Succeeded, TResult Result)>> tryOperation,
+        TTarget target,
         CancellationToken cancellationToken)
+        where TTarget : struct, IRespireNotificationWaitTarget<TResult>
     {
         var cache = client.ClientSideCache
             ?? throw new RespireConfigurationException(
@@ -42,10 +41,10 @@ internal static class RespireNotificationWaiter
                 linkedCancellation.Token.ThrowIfCancellationRequested();
                 // Subscribe first, then perform a tracked read and the atomic ownership attempt.
                 // An invalidation at any point before WaitAsync leaves one queued signal.
-                await trackedRead(linkedCancellation.Token).ConfigureAwait(false);
-                var (succeeded, result) = await tryOperation(linkedCancellation.Token).ConfigureAwait(false);
+                await target.TrackAsync(linkedCancellation.Token).ConfigureAwait(false);
+                var (succeeded, result) = await target.TryAsync(linkedCancellation.Token).ConfigureAwait(false);
                 if (succeeded) return result;
-                var ttl = await getTimeToLive(linkedCancellation.Token).ConfigureAwait(false);
+                var ttl = await target.GetTimeToLiveAsync(linkedCancellation.Token).ConfigureAwait(false);
                 if (!ttl.Exists) continue;
                 if (ttl.TimeToLive is { } remaining)
                 {
@@ -69,4 +68,11 @@ internal static class RespireNotificationWaiter
                 "The client cache stopped its coordination invalidation subscription.");
         }
     }
+}
+
+internal interface IRespireNotificationWaitTarget<TResult>
+{
+    ValueTask TrackAsync(CancellationToken cancellationToken);
+    ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken);
+    ValueTask<(bool Succeeded, TResult Result)> TryAsync(CancellationToken cancellationToken);
 }

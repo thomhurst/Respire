@@ -6,7 +6,45 @@ namespace Respire.Extensions.Coordination;
 /// <summary>Coordination primitives using a caller-owned Redis client.</summary>
 public sealed class RespireCoordination
 {
+    private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
+
+    private readonly struct FencedLockWaitTarget(
+        RespireCoordination coordination, RespireKey leaseKey, RespireKey counterKey, long milliseconds)
+        : IRespireNotificationWaitTarget<RespireFencedLock>
+    {
+        public async ValueTask TrackAsync(CancellationToken cancellationToken)
+            => _ = await coordination._client.Strings.GetStringAsync(leaseKey, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+            => coordination._client.Keys.ExpiryAsync(leaseKey, cancellationToken);
+
+        public async ValueTask<(bool Succeeded, RespireFencedLock Result)> TryAsync(CancellationToken cancellationToken)
+        {
+            var attempt = await coordination.AcquireAsync(leaseKey, counterKey, milliseconds, cancellationToken)
+                .ConfigureAwait(false);
+            return attempt.Acquired ? (true, attempt.Lock) : (false, default!);
+        }
+    }
+
+    private readonly struct HashFieldLeaseWaitTarget(
+        RespireCoordination coordination, RespireKey hashKey, RespireKey field, long milliseconds)
+        : IRespireNotificationWaitTarget<RespireCoordinationLease>
+    {
+        public async ValueTask TrackAsync(CancellationToken cancellationToken)
+            => _ = await coordination._client.Hashes.GetBytesAsync(hashKey, field, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+            => coordination._client.Hashes.ExpiryAsync(hashKey, field, cancellationToken);
+
+        public async ValueTask<(bool Succeeded, RespireCoordinationLease Result)> TryAsync(CancellationToken cancellationToken)
+        {
+            var duration = TimeSpan.FromMilliseconds(milliseconds);
+            var lease = await coordination.TryAcquireLeaseAsync(hashKey, field, duration, cancellationToken)
+                .ConfigureAwait(false);
+            return lease is null ? (false, default!) : (true, lease);
+        }
+    }
 
     /// <summary>Creates coordination operations without taking ownership of <paramref name="client"/>.</summary>
     public RespireCoordination(IRespireClient client)
@@ -158,6 +196,9 @@ public sealed class RespireCoordination
         local expiry = redis.pcall('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
         if type(expiry) == 'table' and expiry.err then
             redis.call('HDEL', KEYS[1], ARGV[1])
+            if string.find(string.lower(expiry.err), 'unknown', 1, true) then
+                return redis.error_reply('ERR coordination leases require hash-field expiration (Redis 7.4+ or compatible server)')
+            end
             return redis.error_reply(expiry.err)
         end
         if expiry[1] ~= 1 then
@@ -236,15 +277,9 @@ public sealed class RespireCoordination
         var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
         var leaseKey = key.Snapshot();
         var counterKey = fencingCounterKey.Snapshot();
-        return await RespireNotificationWaiter.WaitAsync(_client, leaseKey,
-            async token => { _ = await _client.Strings.GetStringAsync(leaseKey, token).ConfigureAwait(false); },
-            token => _client.Keys.ExpiryAsync(leaseKey, token),
-            async token =>
-        {
-            var attempt = await AcquireAsync(leaseKey, counterKey, milliseconds, token).ConfigureAwait(false);
-            if (!attempt.Acquired) return (false, default(RespireFencedLock)!);
-            return (true, attempt.Lock);
-        }, cancellationToken).ConfigureAwait(false);
+        return await RespireNotificationWaiter.WaitAsync<FencedLockWaitTarget, RespireFencedLock>(
+            _client, leaseKey, new FencedLockWaitTarget(this, leaseKey, counterKey, milliseconds), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
@@ -261,53 +296,292 @@ public sealed class RespireCoordination
     /// <param name="hashKey">The hash key, before the client's prefix.</param>
     /// <param name="field">The binary-safe lease name.</param>
     /// <param name="duration">A positive lease duration of at least one millisecond.</param>
-    /// <param name="cancellationToken">Cancels this attempt; an accepted lease can remain until expiry.</param>
-    /// <remarks>Requires Redis 7.4 or later and a hash key without key-level expiration.</remarks>
+    /// <param name="cancellationToken">Cancels this attempt; when acceptance is uncertain, Respire best-effort releases the owner-checked field.</param>
+    /// <remarks>
+    /// Requires Redis 7.4 or later and a hash key without key-level expiration. With a concrete
+    /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
+    /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
+    /// </remarks>
     public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = ValidateLease(hashKey, duration);
+        var milliseconds = ValidateLease(hashKey, field, duration);
         cancellationToken.ThrowIfCancellationRequested();
         hashKey = hashKey.Snapshot();
         field = field.Snapshot();
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
-        using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
-            [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
-        if (response.IsNull || response.AsInteger() == 0) return null;
-        cancellationToken.ThrowIfCancellationRequested();
+        var concreteClient = _client as RespireClient;
+        RespireClient.TrackedScriptExecution? execution = null;
+        bool acquired;
+        try
+        {
+            if (concreteClient is null)
+            {
+                using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
+                    [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
+                acquired = !response.IsNull && response.AsInteger() != 0;
+            }
+            else
+            {
+                await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                execution = await concreteClient.StartTrackedScriptExecutionAsync(
+                    AcquireHashFieldLease, [hashKey], [field, owner.Bytes, milliseconds], cancellationToken,
+                    requireReliableCorrectionOrdering: true).ConfigureAwait(false);
+                using var response = await execution.Response.ConfigureAwait(false);
+                acquired = !response.IsNull && response.AsInteger() != 0;
+            }
+        }
+        catch (RespireServerException)
+        {
+            // The script returned a definitive Redis error, so there is no uncertain acquisition to clean up.
+            throw;
+        }
+        catch
+        {
+            if (concreteClient is null || execution is not null)
+            {
+                await BestEffortReleaseHashFieldLeaseAsync(
+                    hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
+            }
+            throw;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            if (acquired)
+            {
+                await BestEffortReleaseHashFieldLeaseAsync(
+                    hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        if (!acquired) return null;
+
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
-        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
+        var acquiredTimestamp = execution?.StartedTimestamp ?? started;
+        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, acquiredTimestamp);
         if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
-        await lease.DisposeAsync().ConfigureAwait(false);
+        await BestEffortReleaseHashFieldLeaseAsync(
+            hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
         return null;
     }
 
     /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
-    /// <remarks>Requires RESP3 client-side caching/tracking and Redis 7.4 or later.</remarks>
+    /// <remarks>
+    /// Requires RESP3 client-side caching/tracking and Redis 7.4 or later. With a concrete
+    /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
+    /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
+    /// </remarks>
     public async ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = ValidateLease(hashKey, duration);
+        var milliseconds = ValidateLease(hashKey, field, duration);
         cancellationToken.ThrowIfCancellationRequested();
         hashKey = hashKey.Snapshot();
         field = field.Snapshot();
-        return await RespireNotificationWaiter.WaitAsync(_client, hashKey,
-            async token => { _ = await _client.Hashes.GetBytesAsync(hashKey, field, token).ConfigureAwait(false); },
-            token => _client.Hashes.ExpiryAsync(hashKey, field, token),
-            async token =>
-            {
-                var lease = await TryAcquireLeaseAsync(hashKey, field, duration, token).ConfigureAwait(false);
-                return lease is null ? (false, default(RespireCoordinationLease)!) : (true, lease);
-            }, cancellationToken).ConfigureAwait(false);
+        return await RespireNotificationWaiter.WaitAsync<HashFieldLeaseWaitTarget, RespireCoordinationLease>(
+            _client, hashKey, new HashFieldLeaseWaitTarget(this, hashKey, field, milliseconds), cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    internal static long ValidateLease(RespireKey hashKey, TimeSpan duration)
+    internal static long ValidateLease(RespireKey hashKey, RespireKey field, TimeSpan duration)
     {
+        if (hashKey.IsEmpty) throw new ArgumentException("The hash key must not be empty.", nameof(hashKey));
+        if (field.IsEmpty) throw new ArgumentException("The lease field must not be empty.", nameof(field));
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
         if (milliseconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
         return milliseconds;
+    }
+
+    internal async ValueTask BestEffortReleaseHashFieldLeaseAsync(
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient? concreteClient = null,
+        RespireClient.TrackedConnectionIdentity connectionIdentity = default)
+    {
+        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        try
+        {
+            if (concreteClient is null)
+            {
+                _ = await ReleaseHashFieldLeaseAsync(hashKey, field, owner, timeout.Token).ConfigureAwait(false);
+                return;
+            }
+
+            var correction = CorrectHashFieldLeaseAsync(
+                concreteClient, hashKey, field, owner, connectionIdentity);
+            try
+            {
+                await correction.WaitAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                ObserveCorrectionFailure(correction);
+            }
+        }
+        catch
+        {
+            // The owner-checked lease expires naturally if cleanup cannot reach Redis.
+        }
+    }
+
+    private static async Task CorrectHashFieldLeaseAsync(
+        RespireClient client,
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient.TrackedConnectionIdentity connectionIdentity)
+    {
+        if (connectionIdentity.Connection is null)
+        {
+            await client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+            return;
+        }
+
+        Exception? originalFailure = null;
+        Task? originalCorrection = null;
+        SentinelCorrection? sentinelCorrection = null;
+        // Releases sent through the current Sentinel generation or Cluster slot owner. Each one targets
+        // the route known when it starts. A send stuck on a node that stopped replying must not block
+        // later sends that follow a newer route, so they run independently and are only settled, within
+        // the cleanup bound, once monitoring ends.
+        List<Task>? routedReleases = null;
+        try
+        {
+            originalCorrection = client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
+        }
+        catch (Exception error)
+        {
+            originalFailure = error;
+        }
+
+        await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+
+        // Keep following route changes while any correction is still unanswered: a stalled original
+        // or routed release means the lease may now live on a node that a later route points to.
+        var probeDelay = TimeSpan.FromMilliseconds(100);
+        using (var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout))
+        {
+            while (!monitoringTimeout.IsCancellationRequested && HasPendingCorrection())
+            {
+                var probe = Task.Delay(probeDelay, monitoringTimeout.Token);
+                await (originalCorrection is { IsCompleted: false }
+                    ? Task.WhenAny(originalCorrection, probe)
+                    : Task.WhenAny(probe)).ConfigureAwait(false);
+                if (monitoringTimeout.IsCancellationRequested || !HasPendingCorrection()) break;
+                await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+                probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
+            }
+        }
+
+        if (originalCorrection is { IsCompleted: true })
+        {
+            try { await originalCorrection.ConfigureAwait(false); }
+            catch (Exception error) { originalFailure ??= error; }
+        }
+        else if (originalCorrection is not null)
+        {
+            ObserveCorrectionFailure(originalCorrection);
+        }
+
+        await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+
+        if (routedReleases is not null)
+        {
+            var settled = Task.WhenAll(routedReleases);
+            try
+            {
+                await settled.WaitAsync(BestEffortCleanupTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                ObserveCorrectionFailure(settled);
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
+            }
+        }
+
+        if (originalFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
+
+        bool HasPendingCorrection()
+            => originalCorrection is { IsCompleted: false }
+               || routedReleases?.Exists(static release => !release.IsCompleted) == true;
+
+        async ValueTask ReleaseOnCurrentRoutesAsync()
+        {
+            try
+            {
+                sentinelCorrection = await StartSentinelGenerationReleaseAsync(
+                    client, hashKey, field, owner, connectionIdentity, sentinelCorrection).ConfigureAwait(false);
+                if (sentinelCorrection is { IsNew: true } started)
+                    (routedReleases ??= []).Add(started.Release);
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
+            }
+
+            if (client.Core.Cluster is not null)
+                (routedReleases ??= []).Add(ReleaseOnCurrentClusterOwnerAsync(client, hashKey, field, owner));
+        }
+    }
+
+    private static async Task ReleaseOnCurrentClusterOwnerAsync(
+        RespireClient client, RespireKey hashKey, RespireKey field, RespireLockToken owner)
+    {
+        using var response = await client.Scripts.ExecuteAsync(
+            ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static void ObserveCorrectionFailure(Task correction)
+        => _ = correction.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    /// <summary>A release sent through one promoted Sentinel generation.</summary>
+    private sealed record SentinelCorrection(object Generation, Task Release, bool IsNew);
+
+    private static async ValueTask<SentinelCorrection?> StartSentinelGenerationReleaseAsync(
+        RespireClient client,
+        RespireKey hashKey,
+        RespireKey field,
+        RespireLockToken owner,
+        RespireClient.TrackedConnectionIdentity originalIdentity,
+        SentinelCorrection? previous)
+    {
+        var sentinel = client.Core.Sentinel;
+        if (sentinel is null || originalIdentity.Connection is null) return null;
+        var current = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
+        // The original correction already covers the generation that accepted the acquisition.
+        if (ReferenceEquals(current.Multiplexer, originalIdentity.Connection.Multiplexer)) return null;
+        // One release per promoted generation, unless it failed and should be retried.
+        if (previous is not null && ReferenceEquals(current, previous.Generation)
+            && !previous.Release.IsFaulted && !previous.Release.IsCanceled)
+        {
+            return previous with { IsNew = false };
+        }
+
+        Task release;
+        try
+        {
+            release = client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).AsTask();
+        }
+        catch (Exception error)
+        {
+            release = Task.FromException(error);
+        }
+        return new SentinelCorrection(current, release, IsNew: true);
     }
 
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(

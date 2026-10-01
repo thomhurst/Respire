@@ -89,7 +89,14 @@ the same hash.
 Hash-field expiration requires Redis 7.4 or later. The containing hash key must have no key-level
 expiry; Redis deletes the whole hash when that expiry elapses. Acquisition rejects expiring hash
 keys before writing the lease field. Older servers fail before the lease field is written, with
-an error that identifies the required Redis feature.
+an error that identifies the required Redis feature. Waiters subscribe to invalidations for the
+whole hash key, so unrelated field changes can wake them and cause another owner-checked attempt.
+Many waiters sharing one hash can therefore retry together after one field changes.
+
+When you pass a concrete `RespireClient`, hash-field lease acquisition also requires Redis
+`CLIENT ID` and `CLIENT KILL` permissions. Respire uses these commands to order owner-checked
+cleanup after an acquisition whose result is uncertain. Other `IRespireClient` implementations use
+their own command-ordering behavior.
 
 ```csharp
 using Respire.Extensions.Coordination;
@@ -158,15 +165,23 @@ later write. `RemainingEstimate` measures elapsed time from before acquisition a
 local estimate. Stop protected work when the lease expires or ownership becomes uncertain.
 
 Renewal and release reuse the existing [managed lock lifecycle](distributed-locks.md).
-Managed renewal requires `CLIENT ID` and `CLIENT KILL` permissions to fence uncertain
-commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing a copied
+Managed renewal and concrete-client hash-field lease acquisition require `CLIENT ID` and
+`CLIENT KILL` permissions to fence uncertain commands. Release reports `Released`, `AlreadyReleased` or `NotOwned`. Disposing a copied
 attempt is idempotent through the shared handle and never deletes another owner's lease.
 
-Cancellation, timeout or disconnect can occur after Redis accepted acquisition. Respire
-does not replay that command after uncertain acceptance. It can leave a counter gap and
-an unreturned lease that expires after its server-side duration. A reply arriving after the
-local lease estimate elapses is not returned as acquired. There is no acquisition-owned
-keep-alive loop in this API; explicitly renew within a valid lease when needed.
+Cancellation, timeout or disconnect can occur after Redis accepts acquisition. Fenced-lock
+acquisition can leave a counter gap and an unreturned lease that expires after its server-side
+duration. For named hash-field leases, Respire does not replay the command after uncertain
+acceptance; it makes a best-effort owner-checked release. If Redis cannot be reached for
+cleanup, the lease expires after its server-side duration. A reply arriving after the local
+lease estimate elapses is not returned as acquired. Fenced-lock acquisitions retain their
+separate expiry behavior. There is no acquisition-owned keep-alive loop in this API; explicitly
+renew within a valid lease when needed. When renewal or release outcome is uncertain, the handle
+fails closed for its local estimate. Renewal returns `false` while ownership is uncertain
+because an earlier renewal may still execute later and shorten server expiry. An owner-checked
+release can ask Redis to settle ownership. A release queued behind an in-flight operation stays
+pending and retries after that operation exits, even if its bounded wait expires. Create a new
+handle only after Redis reports that this owner no longer holds the lease.
 
 ## Multi-node Redlock
 

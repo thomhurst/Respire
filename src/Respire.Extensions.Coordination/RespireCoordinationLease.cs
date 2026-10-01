@@ -15,11 +15,13 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private LeaseSnapshot _snapshot;
     private int _state;
     private Task<LockReleaseOutcome>? _releaseTask;
+    private int _releasePreviousState;
 
     private const int StateHeld = 0;
     private const int StateReleasing = 1;
     private const int StateReleased = 2;
     private const int StateNotOwned = 3;
+    private const int StateUncertain = 4;
 
     internal RespireCoordinationLease(RespireCoordination coordination,
         RespireKey hashKey, RespireKey field, RespireLockToken owner, TimeSpan duration, long acquiredTimestamp)
@@ -55,21 +57,25 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Whether this handle was released or its local lease estimate elapsed.</summary>
+    /// <summary>Whether this handle is released, no longer owned, uncertain, or past its local lease estimate.</summary>
     public bool IsReleased => Volatile.Read(ref _state) != StateHeld || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks that this owner still holds the expiring hash field.</summary>
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
         => _coordination.VerifyHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken);
 
-    /// <summary>Renews only this owner and preserves the hash field's independent expiry.</summary>
+    /// <summary>Renews only this owner and preserves the hash field's independent expiry; uncertain state fails closed.</summary>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
-        var milliseconds = RespireCoordination.ValidateLease(HashKey, duration);
+        var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (IsReleased) return false;
+            var state = Volatile.Read(ref _state);
+            if (state is StateReleasing or StateReleased or StateNotOwned) return false;
+            // An earlier timed-out renewal may still execute on another Redis connection.
+            // Its late execution could shorten a later renewal, so uncertain state stays fail-closed.
+            if (state == StateUncertain) return false;
             var started = Stopwatch.GetTimestamp();
             try
             {
@@ -86,41 +92,71 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             }
             catch
             {
-                Volatile.Write(ref _state, StateNotOwned);
+                lock (_releaseSync)
+                {
+                    if (_state == StateReleasing) _releasePreviousState = StateUncertain;
+                    else Volatile.Write(ref _state, StateUncertain);
+                }
                 throw;
             }
 
             var appliedTicks = checked(milliseconds * TimeSpan.TicksPerMillisecond);
             Volatile.Write(ref _snapshot, new LeaseSnapshot(appliedTicks, started));
+            _ = Interlocked.CompareExchange(ref _state, StateHeld, StateUncertain);
             return true;
         }
         finally
         {
             _operationGate.Release();
+            ResumeQueuedRelease();
         }
     }
 
-    /// <summary>Releases only this owner, leaving unrelated hash fields untouched.</summary>
+    /// <summary>Releases only this owner, leaving unrelated hash fields untouched. Each attempt has a two-second deadline.</summary>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_releaseSync)
         {
             if (_state == StateReleased) return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
             if (_state == StateNotOwned) return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
-            if (_state == StateReleasing) return new ValueTask<LockReleaseOutcome>(_releaseTask!);
+            if (_state == StateReleasing)
+            {
+                if (_releaseTask is null)
+                {
+                    var retryTask = ReleaseCoreAsync();
+                    _releaseTask = retryTask;
+                    ObserveReleaseFailure(retryTask);
+                }
+                return new ValueTask<LockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
+            }
+            _releasePreviousState = _state;
             _state = StateReleasing;
-            return new ValueTask<LockReleaseOutcome>(_releaseTask = ReleaseCoreAsync(cancellationToken));
+            // The shared release outlives each caller so cancellation cannot cancel another waiter's operation.
+            var releaseTask = ReleaseCoreAsync();
+            _releaseTask = releaseTask;
+            ObserveReleaseFailure(releaseTask);
+            return new ValueTask<LockReleaseOutcome>(releaseTask.WaitAsync(cancellationToken));
         }
     }
 
-    private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
+    private static void ObserveReleaseFailure(Task releaseTask)
+        => _ = releaseTask.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
+        var retryAfterGateRelease = false;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _operationGate.WaitAsync(deadline.Token).ConfigureAwait(false);
             entered = true;
-            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken)
+            var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, deadline.Token)
                 .ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
@@ -129,7 +165,10 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                if (_state == StateReleasing) Volatile.Write(ref _state, StateHeld);
+                if (_state == StateReleasing)
+                {
+                    Volatile.Write(ref _state, _releasePreviousState);
+                }
                 _releaseTask = null;
             }
             throw;
@@ -138,9 +177,17 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         {
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateNotOwned);
+                if (_state == StateReleasing)
+                {
+                    if (entered) Volatile.Write(ref _state, StateUncertain);
+                }
                 _releaseTask = null;
+                // If the gate owner has already released before we cleared the task, its
+                // ResumeQueuedRelease call observed the old task and could not restart it.
+                // Retry only in that race. Otherwise the gate owner's finally resumes release.
+                retryAfterGateRelease = !entered && _state == StateReleasing && _operationGate.CurrentCount != 0;
             }
+            if (retryAfterGateRelease) ResumeQueuedRelease();
             throw;
         }
         finally
@@ -149,7 +196,18 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases this lease.</summary>
+    private void ResumeQueuedRelease()
+    {
+        lock (_releaseSync)
+        {
+            if (_state != StateReleasing || _releaseTask is not null) return;
+            var releaseTask = ReleaseCoreAsync();
+            _releaseTask = releaseTask;
+            ObserveReleaseFailure(releaseTask);
+        }
+    }
+
+    /// <summary>Releases this lease on a best-effort basis.</summary>
     public async ValueTask DisposeAsync()
     {
         try
