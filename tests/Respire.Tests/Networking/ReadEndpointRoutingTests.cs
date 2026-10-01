@@ -15,6 +15,17 @@ public class ReadEndpointRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    public async Task ReplicaEndpointOrderingDeduplicatesDnsHostsWithoutCaseSensitivity()
+    {
+        var endpoints = ReadEndpointRouter.Order(
+            [new("Replica.Example", 7001), new("replica.example", 7001), new("replica.example", 7002)]);
+
+        await Assert.That(endpoints.Length).IsEqualTo(2);
+        await Assert.That(endpoints[0].Port).IsEqualTo(7001);
+        await Assert.That(endpoints[1].Port).IsEqualTo(7002);
+    }
+
+    [Test]
     public async Task ReadViewUsesReplicaWithoutTelemetryAndKeepsWritesOnPrimary()
     {
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);

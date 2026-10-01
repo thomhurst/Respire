@@ -16,7 +16,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     // connection stops accepting commands; the drain then waits for its reply.
     private static readonly TimeSpan s_retirementGrace = TimeSpan.FromSeconds(1);
 
-    private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new();
+    private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new(RespireEndpointComparer.Instance);
     // Entries removed from the topology drain before closing so reads already using them can finish.
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();
     private readonly SemaphoreSlim _sentinelRefreshGate = new(1, 1);
@@ -71,8 +71,8 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     private static readonly TimeSpan s_maxSentinelRetryDelay = TimeSpan.FromSeconds(30);
 
     // Sorted so replica order survives Sentinel reply reordering.
-    private static RespireEndpoint[] Order(IEnumerable<RespireEndpoint> endpoints)
-        => endpoints.Distinct()
+    internal static RespireEndpoint[] Order(IEnumerable<RespireEndpoint> endpoints)
+        => endpoints.Distinct(RespireEndpointComparer.Instance)
             .OrderBy(static endpoint => endpoint.Host, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static endpoint => endpoint.Port)
             .ToArray();
@@ -82,7 +82,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         => _entries.Values.Concat(_retiring.Keys)
             .Where(static entry => entry.IsOpen)
             .Select(static entry => entry.Endpoint)
-            .Distinct()
+            .Distinct(RespireEndpointComparer.Instance)
             .ToArray();
 
     private void SetEndpoints(IEnumerable<RespireEndpoint> replicas)
@@ -92,13 +92,28 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         // primary that rejoined as a replica while the cached generation is stale.
         var endpoints = Order(replicas);
         Volatile.Write(ref _replicas, endpoints);
-        var retained = endpoints.ToHashSet();
+        var retained = endpoints.ToHashSet(RespireEndpointComparer.Instance);
         foreach (var pair in _entries)
         {
             if (retained.Contains(pair.Key) || !_entries.TryRemove(pair)) continue;
             _retiring.TryAdd(pair.Value, 0);
             _ = RetireAsync(pair.Value);
         }
+    }
+
+    private static bool ContainsEndpoint(RespireEndpoint[] endpoints, RespireEndpoint endpoint)
+    {
+        foreach (var candidate in endpoints)
+            if (RespireEndpointComparer.Instance.Equals(candidate, endpoint)) return true;
+        return false;
+    }
+
+    private static bool SameEndpoints(RespireEndpoint[] left, RespireEndpoint[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (var i = 0; i < left.Length; i++)
+            if (!RespireEndpointComparer.Instance.Equals(left[i], right[i])) return false;
+        return true;
     }
 
     private async Task RetireAsync(Entry entry)
@@ -236,12 +251,12 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             // A stale replica can fail while Sentinel already knows its replacement. Refresh once
             // before reporting failure or falling back to the primary.
             var refreshed = Volatile.Read(ref _replicas);
-            if (refreshed.AsSpan().SequenceEqual(endpoints) && IsSentinelRefreshDue())
+            if (SameEndpoints(refreshed, endpoints) && IsSentinelRefreshDue())
             {
                 await RefreshSentinelReplicasAsync(refreshSentinel, cancellationToken).ConfigureAwait(false);
                 refreshed = Volatile.Read(ref _replicas);
             }
-            if (refreshed.AsSpan().SequenceEqual(endpoints)) throw;
+            if (SameEndpoints(refreshed, endpoints)) throw;
             return await GetReplicaFromEndpointsAsync(refreshed, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -264,6 +279,17 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
             var entry = _entries.GetOrAdd(endpoint, static (value, state) => new Entry(value, state.core, state.router),
                 (core, router: this));
+            if (!ContainsEndpoint(Volatile.Read(ref _replicas), endpoint))
+            {
+                // SetEndpoints can finish its removal sweep before this GetOrAdd publishes.
+                // Recheck after insertion so the late stale entry cannot survive indefinitely.
+                if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
+                {
+                    _retiring.TryAdd(entry, 0);
+                    _ = RetireAsync(entry);
+                }
+                continue;
+            }
             if (Volatile.Read(ref _disposed) != 0)
             {
                 // Disposal may already have drained _entries; never leave a late entry open.
