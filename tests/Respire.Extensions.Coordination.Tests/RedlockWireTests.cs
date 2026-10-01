@@ -60,6 +60,32 @@ public class RedlockWireTests
     }
 
     [Test]
+    public async Task RemainingEstimateKeepsLeaseSnapshotBeforeClockRead()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        var clock = new ManualClock();
+        var group = new RespireRedlockGroup(nodes.Clients, timeProvider: clock);
+        await using var attempt = await group.TryAcquireAsync("redlock:remaining-race", TimeSpan.FromSeconds(10));
+        var lease = attempt.Lock;
+        var timestampRead = clock.BlockNextTimestampRead();
+        var remainingTask = Task.Run(() => lease.RemainingEstimate);
+        await timestampRead.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(20))).IsTrue();
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            timestampRead.Release.TrySetResult();
+        }
+
+        var remaining = await remainingTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(remaining).IsEqualTo(TimeSpan.FromMilliseconds(8_898));
+    }
+
+    [Test]
     public async Task RenewalWithoutQuorumEndsTheLeaseAndReleasesEveryNode()
     {
         await using var nodes = await Nodes.StartAsync(static (node, command) =>
@@ -256,10 +282,30 @@ public class RedlockWireTests
     {
         private readonly long _frequency = frequency;
         private long _timestamp = frequency;
+        private TaskCompletionSource? _timestampReadEntered;
+        private TaskCompletionSource? _releaseTimestampRead;
 
         public override long TimestampFrequency => _frequency;
 
-        public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+        public override long GetTimestamp()
+        {
+            var entered = Interlocked.Exchange(ref _timestampReadEntered, null);
+            if (entered is not null)
+            {
+                entered.TrySetResult();
+                Volatile.Read(ref _releaseTimestampRead)!.Task.GetAwaiter().GetResult();
+            }
+            return Volatile.Read(ref _timestamp);
+        }
+
+        public (TaskCompletionSource Entered, TaskCompletionSource Release) BlockNextTimestampRead()
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _releaseTimestampRead, release);
+            Volatile.Write(ref _timestampReadEntered, entered);
+            return (entered, release);
+        }
 
         public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks * _frequency / TimeSpan.TicksPerSecond);
     }

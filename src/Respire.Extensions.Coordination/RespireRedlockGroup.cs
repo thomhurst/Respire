@@ -293,8 +293,9 @@ public sealed class RespireRedlock : IAsyncDisposable
         get
         {
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+            var lease = Volatile.Read(ref _lease);
             var clock = _nodes.Clock;
-            var remaining = clock.GetElapsedTime(clock.GetTimestamp(), Volatile.Read(ref _lease).ValidUntil);
+            var remaining = clock.GetElapsedTime(clock.GetTimestamp(), lease.ValidUntil);
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
