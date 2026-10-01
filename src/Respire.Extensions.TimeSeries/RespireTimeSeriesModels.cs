@@ -7,18 +7,60 @@ namespace Respire.Extensions.TimeSeries;
 public readonly record struct RespireTimeSeriesLabel(string Name, string Value);
 
 /// <summary>A sample timestamp: Unix milliseconds or a RedisTimeSeries timestamp marker.</summary>
+/// <remarks>
+/// Timestamps are validated before any I/O. Writes accept a non-negative millisecond timestamp or
+/// <see cref="Now"/>; ranges accept a non-negative millisecond timestamp, <see cref="Minimum"/>, or
+/// <see cref="Maximum"/>.
+/// </remarks>
 public readonly record struct RespireTimeSeriesTimestamp(string Value)
 {
-    /// <summary>Earliest timestamp marker.</summary>
+    /// <summary>Earliest timestamp marker (<c>-</c>). Valid for ranges only.</summary>
     public static RespireTimeSeriesTimestamp Minimum => new("-");
-    /// <summary>Latest timestamp marker.</summary>
+    /// <summary>Latest timestamp marker (<c>+</c>). Valid for ranges only.</summary>
     public static RespireTimeSeriesTimestamp Maximum => new("+");
-    /// <summary>Server clock marker for writes (<c>*</c>); range commands do not accept it.</summary>
+    /// <summary>Server clock marker (<c>*</c>). Valid for writes only; range commands reject it.</summary>
     public static RespireTimeSeriesTimestamp Now => new("*");
-    /// <summary>Creates a millisecond timestamp.</summary>
+    /// <summary>Creates a millisecond timestamp. Negative values are rejected when the timestamp is used.</summary>
     public static implicit operator RespireTimeSeriesTimestamp(long value) => new(value.ToString(CultureInfo.InvariantCulture));
     /// <summary>Converts to the Redis timestamp token.</summary>
     public override string ToString() => Value;
+
+    internal string RequireWrite(string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Value, parameterName);
+        if (Value == "*") return Value;
+        if (Value is "-" or "+")
+        {
+            throw new ArgumentException(
+                $"The '{Value}' marker is only valid for ranges. Writes take a millisecond timestamp or RespireTimeSeriesTimestamp.Now.",
+                parameterName);
+        }
+        return RequireMilliseconds(parameterName);
+    }
+
+    internal string RequireRange(string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Value, parameterName);
+        if (Value is "-" or "+") return Value;
+        if (Value == "*")
+        {
+            throw new ArgumentException(
+                "RespireTimeSeriesTimestamp.Now is only valid for writes. Ranges take a millisecond timestamp, Minimum, or Maximum.",
+                parameterName);
+        }
+        return RequireMilliseconds(parameterName);
+    }
+
+    private string RequireMilliseconds(string parameterName)
+    {
+        // NumberStyles.None rejects signs, so negative timestamps fail here rather than on the server.
+        if (!long.TryParse(Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName, Value, "A time-series timestamp must be a non-negative number of milliseconds.");
+        }
+        return Value;
+    }
 }
 
 /// <summary>Duplicate sample handling policy.</summary>
@@ -71,50 +113,51 @@ public sealed record RespireTimeSeriesOptions
             throw new ArgumentException("ClearLabels can only be used while altering a series.", nameof(ClearLabels));
         if (ClearLabels && Labels is { Count: > 0 })
             throw new ArgumentException("ClearLabels cannot be combined with label values.", nameof(ClearLabels));
+        if (Encoding is not null && !allowEncoding)
+            throw new ArgumentException("Encoding can only be set while creating a series.", nameof(Encoding));
 
         var args = new List<RespireValue>();
-        AppendRetention(args, RetentionMilliseconds);
-        if (Encoding is { } encoding)
-        {
-            if (!allowEncoding) throw new ArgumentException("Encoding can only be set while creating a series.", nameof(Encoding));
-            AppendEncoding(args, encoding);
-        }
-        AppendChunkSize(args, ChunkSizeBytes);
-        if (DuplicatePolicy is { } duplicatePolicy)
-        {
-            args.Add("DUPLICATE_POLICY");
-            args.Add(ToPolicy(duplicatePolicy));
-        }
+        AppendSeriesSettings(args, RetentionMilliseconds, Encoding, ChunkSizeBytes, DuplicatePolicy);
         AppendIgnore(args, Ignore);
         AppendLabels(args, Labels, includeWhenEmpty: ClearLabels);
-        return [.. args];
+        return ToArray(args);
     }
 
-    internal static void AppendRetention(List<RespireValue> args, long? retentionMilliseconds)
+    // Shared by TS.CREATE, TS.ALTER, TS.ADD, TS.INCRBY, and TS.DECRBY, which list these options in this order.
+    internal static void AppendSeriesSettings(
+        List<RespireValue> args,
+        long? retentionMilliseconds,
+        RespireTimeSeriesEncoding? encoding,
+        int? chunkSizeBytes,
+        RespireTimeSeriesDuplicatePolicy? duplicatePolicy)
     {
-        if (retentionMilliseconds is not { } retention) return;
-        if (retention < 0) throw new ArgumentOutOfRangeException(nameof(RetentionMilliseconds));
-        args.Add("RETENTION");
-        args.Add(retention);
-    }
-
-    internal static void AppendChunkSize(List<RespireValue> args, int? chunkSizeBytes)
-    {
-        if (chunkSizeBytes is not { } chunkSize) return;
-        if (chunkSize <= 0) throw new ArgumentOutOfRangeException(nameof(ChunkSizeBytes));
-        args.Add("CHUNK_SIZE");
-        args.Add(chunkSize);
-    }
-
-    internal static void AppendEncoding(List<RespireValue> args, RespireTimeSeriesEncoding encoding)
-    {
-        args.Add("ENCODING");
-        args.Add(encoding switch
+        if (retentionMilliseconds is { } retention)
         {
-            RespireTimeSeriesEncoding.Compressed => "COMPRESSED",
-            RespireTimeSeriesEncoding.Uncompressed => "UNCOMPRESSED",
-            _ => throw new ArgumentOutOfRangeException(nameof(Encoding)),
-        });
+            if (retention < 0) throw new ArgumentOutOfRangeException(nameof(RetentionMilliseconds));
+            args.Add("RETENTION");
+            args.Add(retention);
+        }
+        if (encoding is { } chunkEncoding)
+        {
+            args.Add("ENCODING");
+            args.Add(chunkEncoding switch
+            {
+                RespireTimeSeriesEncoding.Compressed => "COMPRESSED",
+                RespireTimeSeriesEncoding.Uncompressed => "UNCOMPRESSED",
+                _ => throw new ArgumentOutOfRangeException(nameof(Encoding)),
+            });
+        }
+        if (chunkSizeBytes is { } chunkSize)
+        {
+            if (chunkSize <= 0) throw new ArgumentOutOfRangeException(nameof(ChunkSizeBytes));
+            args.Add("CHUNK_SIZE");
+            args.Add(chunkSize);
+        }
+        if (duplicatePolicy is { } policy)
+        {
+            args.Add("DUPLICATE_POLICY");
+            args.Add(ToPolicy(policy));
+        }
     }
 
     internal static void AppendIgnore(List<RespireValue> args, (long MaxTimeDifference, double MaxValueDifference)? ignore)
@@ -153,6 +196,20 @@ public sealed record RespireTimeSeriesOptions
         RespireTimeSeriesDuplicatePolicy.Sum => "SUM",
         _ => throw new ArgumentOutOfRangeException(nameof(policy)),
     };
+
+    internal static RespireTimeSeriesDuplicatePolicy? FromPolicy(string? policy) => policy?.ToUpperInvariant() switch
+    {
+        "BLOCK" => RespireTimeSeriesDuplicatePolicy.Block,
+        "FIRST" => RespireTimeSeriesDuplicatePolicy.First,
+        "LAST" => RespireTimeSeriesDuplicatePolicy.Last,
+        "MIN" => RespireTimeSeriesDuplicatePolicy.Min,
+        "MAX" => RespireTimeSeriesDuplicatePolicy.Max,
+        "SUM" => RespireTimeSeriesDuplicatePolicy.Sum,
+        _ => null,
+    };
+
+    // A collection expression over an empty list still allocates; options that add nothing share the empty array.
+    internal static RespireValue[] ToArray(List<RespireValue> args) => args.Count == 0 ? [] : [.. args];
 }
 
 /// <summary>Options for one sample write.</summary>
@@ -176,14 +233,7 @@ public sealed record RespireTimeSeriesAddOptions
     internal RespireValue[] ToArguments()
     {
         var args = new List<RespireValue>();
-        RespireTimeSeriesOptions.AppendRetention(args, RetentionMilliseconds);
-        if (Encoding is { } encoding) RespireTimeSeriesOptions.AppendEncoding(args, encoding);
-        RespireTimeSeriesOptions.AppendChunkSize(args, ChunkSizeBytes);
-        if (DuplicatePolicy is { } duplicatePolicy)
-        {
-            args.Add("DUPLICATE_POLICY");
-            args.Add(RespireTimeSeriesOptions.ToPolicy(duplicatePolicy));
-        }
+        RespireTimeSeriesOptions.AppendSeriesSettings(args, RetentionMilliseconds, Encoding, ChunkSizeBytes, DuplicatePolicy);
         if (OnDuplicate is { } onDuplicate)
         {
             args.Add("ON_DUPLICATE");
@@ -191,7 +241,43 @@ public sealed record RespireTimeSeriesAddOptions
         }
         RespireTimeSeriesOptions.AppendIgnore(args, Ignore);
         RespireTimeSeriesOptions.AppendLabels(args, Labels);
-        return [.. args];
+        return RespireTimeSeriesOptions.ToArray(args);
+    }
+}
+
+/// <summary>Options for TS.INCRBY and TS.DECRBY.</summary>
+public sealed record RespireTimeSeriesIncrementOptions
+{
+    /// <summary>
+    /// Timestamp of the updated sample. Defaults to the server clock. It must not be earlier than the
+    /// latest sample.
+    /// </summary>
+    public RespireTimeSeriesTimestamp? Timestamp { get; init; }
+    /// <summary>Retention used when this write creates a series.</summary>
+    public long? RetentionMilliseconds { get; init; }
+    /// <summary>Encoding used when this write creates a series.</summary>
+    public RespireTimeSeriesEncoding? Encoding { get; init; }
+    /// <summary>Chunk size used when this write creates a series.</summary>
+    public int? ChunkSizeBytes { get; init; }
+    /// <summary>Duplicate policy used when this write creates a series.</summary>
+    public RespireTimeSeriesDuplicatePolicy? DuplicatePolicy { get; init; }
+    /// <summary>Ignore this update when both differences from the latest sample are within these limits.</summary>
+    public (long MaxTimeDifference, double MaxValueDifference)? Ignore { get; init; }
+    /// <summary>Labels used when this write creates a series.</summary>
+    public IReadOnlyDictionary<string, string> Labels { get; init; } = new Dictionary<string, string>();
+
+    internal RespireValue[] ToArguments()
+    {
+        var args = new List<RespireValue>();
+        if (Timestamp is { } timestamp)
+        {
+            args.Add("TIMESTAMP");
+            args.Add(timestamp.RequireWrite(nameof(Timestamp)));
+        }
+        RespireTimeSeriesOptions.AppendSeriesSettings(args, RetentionMilliseconds, Encoding, ChunkSizeBytes, DuplicatePolicy);
+        RespireTimeSeriesOptions.AppendIgnore(args, Ignore);
+        RespireTimeSeriesOptions.AppendLabels(args, Labels);
+        return RespireTimeSeriesOptions.ToArray(args);
     }
 }
 
@@ -202,7 +288,41 @@ public readonly record struct RespireTimeSeriesWrite(RespireKey Key, RespireTime
 public readonly record struct RespireTimeSeriesSample(long Timestamp, double Value);
 
 /// <summary>Inclusive range bounds.</summary>
-public readonly record struct RespireTimeSeriesRange(RespireTimeSeriesTimestamp From, RespireTimeSeriesTimestamp To);
+public readonly record struct RespireTimeSeriesRange(RespireTimeSeriesTimestamp From, RespireTimeSeriesTimestamp To)
+{
+    internal (string From, string To) ToTokens(string parameterName)
+        => (From.RequireRange(parameterName), To.RequireRange(parameterName));
+}
+
+/// <summary>TS.MADD rejected one or more samples. Accepted samples were still written.</summary>
+public sealed class RespireTimeSeriesMultiAddException : RespireException
+{
+    internal RespireTimeSeriesMultiAddException(long?[] timestamps, string?[] errors)
+        : base(CreateMessage(errors))
+    {
+        Timestamps = timestamps;
+        Errors = errors;
+    }
+
+    /// <summary>The assigned timestamp of each sample, in request order, or null where the sample was rejected.</summary>
+    public IReadOnlyList<long?> Timestamps { get; }
+
+    /// <summary>The server error of each sample, in request order, or null where the sample was written.</summary>
+    public IReadOnlyList<string?> Errors { get; }
+
+    private static string CreateMessage(string?[] errors)
+    {
+        var failed = 0;
+        var first = -1;
+        for (var index = 0; index < errors.Length; index++)
+        {
+            if (errors[index] is null) continue;
+            failed++;
+            if (first < 0) first = index;
+        }
+        return $"TS.MADD rejected {failed} of {errors.Length} samples. Sample {first} failed: {errors[first]}";
+    }
+}
 
 /// <summary>Time bucket aggregation function.</summary>
 public enum RespireTimeSeriesAggregation
@@ -297,7 +417,11 @@ public sealed record RespireTimeSeriesRangeOptions
         if (FilterByTimestamps.Count > 0)
         {
             args.Add("FILTER_BY_TS");
-            foreach (var timestamp in FilterByTimestamps) args.Add(timestamp);
+            foreach (var timestamp in FilterByTimestamps)
+            {
+                if (timestamp < 0) throw new ArgumentOutOfRangeException(nameof(FilterByTimestamps), "Timestamps must be non-negative.");
+                args.Add(timestamp);
+            }
         }
         if (FilterByValue is { } valueRange)
         {
@@ -319,7 +443,7 @@ public sealed record RespireTimeSeriesRangeOptions
             if (Align is { } align)
             {
                 args.Add("ALIGN");
-                args.Add(RequireTimestamp(align, nameof(Align)));
+                args.Add(align.RequireRange(nameof(Align)));
             }
             args.Add("AGGREGATION");
             args.Add(ToAggregationName(aggregation.Aggregation));
@@ -354,7 +478,7 @@ public sealed record RespireTimeSeriesRangeOptions
                 args.Add(group.Reducer);
             }
         }
-        return [.. args];
+        return RespireTimeSeriesOptions.ToArray(args);
     }
 
     internal static void AppendLabelSelection(List<RespireValue> args, bool withLabels, IReadOnlyList<string>? selectedLabels)
@@ -375,24 +499,23 @@ public sealed record RespireTimeSeriesRangeOptions
         }
     }
 
+    /// <summary>Appends <c>FILTER</c> and the validated label filter expressions.</summary>
     internal static void AppendFilters(List<RespireValue> args, IReadOnlyList<string> filters, string parameterName)
+    {
+        ValidateFilters(filters, parameterName);
+        args.Add("FILTER");
+        foreach (var filter in filters) args.Add(filter);
+    }
+
+    /// <summary>Requires at least one label filter and rejects blank expressions.</summary>
+    internal static void ValidateFilters(IReadOnlyList<string> filters, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(filters, parameterName);
         if (filters.Count == 0) throw new ArgumentException("At least one label filter is required.", parameterName);
-        args.Add("FILTER");
-        foreach (var filter in filters)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(filter, parameterName);
-            args.Add(filter);
-        }
+        foreach (var filter in filters) ArgumentException.ThrowIfNullOrWhiteSpace(filter, parameterName);
     }
 
-    internal static string RequireTimestamp(RespireTimeSeriesTimestamp timestamp, string parameterName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(timestamp.Value, parameterName);
-        return timestamp.Value;
-    }
-
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="aggregation"/> is not a defined value.</exception>
     internal static string ToAggregationName(RespireTimeSeriesAggregation aggregation) => aggregation switch
     {
         RespireTimeSeriesAggregation.Avg => "AVG",
@@ -416,21 +539,26 @@ public sealed record RespireTimeSeriesRangeOptions
 public sealed record RespireTimeSeriesRangeResult(IReadOnlyList<RespireTimeSeriesSample> Samples)
 {
     internal static RespireTimeSeriesRangeResult Parse(RespireResult result)
-        => new(RespireTimeSeriesSeries.ParseSamples(result));
+        => new(RespireTimeSeriesSeries.ParseSampleList(result));
 }
 
 /// <summary>Series labels and samples returned by multi-series commands.</summary>
+/// <param name="KeyValue">The original series key bytes, preserved for binary-safe follow-up commands.</param>
+/// <param name="Labels">Labels returned for the series; values are null for selected labels the series lacks.</param>
+/// <param name="Samples">Samples in the order the server returned them.</param>
 /// <remarks>
-/// <see cref="Key"/> is the display form of the server-side key; <see cref="KeyValue"/> preserves the original bytes.
+/// <see cref="Key"/> is derived from <see cref="KeyValue"/>, so the two always agree.
 /// For GROUPBY results the key is the group name, such as <c>label=value</c>, and RESP2 replies list the reducer and
 /// sources as the <c>__reducer__</c> and <c>__source__</c> labels.
 /// </remarks>
-public sealed record RespireTimeSeriesSeries(string Key, IReadOnlyDictionary<string, string?> Labels, IReadOnlyList<RespireTimeSeriesSample> Samples)
+public sealed record RespireTimeSeriesSeries(RespireKey KeyValue, IReadOnlyDictionary<string, string?> Labels, IReadOnlyList<RespireTimeSeriesSample> Samples)
 {
-    /// <summary>The original series key bytes, preserved for binary-safe follow-up commands.</summary>
-    public RespireKey KeyValue { get; init; } = new(Key);
+    /// <summary>The display form of the server-side key. Invalid UTF-8 bytes are replacement-decoded; use <see cref="KeyValue"/> to reuse the key.</summary>
+    public string Key => KeyValue.ToString();
 
-    internal static IReadOnlyList<RespireTimeSeriesSeries> ParseMany(RespireResult result)
+    /// <param name="result">The TS.MGET, TS.MRANGE, or TS.MREVRANGE reply.</param>
+    /// <param name="latestSample">True for TS.MGET, whose series hold one optional sample instead of a list.</param>
+    internal static IReadOnlyList<RespireTimeSeriesSeries> ParseMany(RespireResult result, bool latestSample)
     {
         if (result.Type == RespDataType.Map)
         {
@@ -440,10 +568,10 @@ public sealed record RespireTimeSeriesSeries(string Key, IReadOnlyDictionary<str
             {
                 var data = result[index + 1];
                 if (data.Count < 2) throw UnexpectedReply();
-                mapped.Add(new(result[index].AsString(), ParseLabels(data[0]), ParseSamples(data[data.Count - 1]))
-                {
-                    KeyValue = new RespireKey(result[index].AsBytes()),
-                });
+                mapped.Add(new(
+                    new RespireKey(result[index].AsBytes()),
+                    ParseLabels(data[0]),
+                    ParseSeriesSamples(data[data.Count - 1], latestSample)));
             }
             return mapped;
         }
@@ -453,15 +581,12 @@ public sealed record RespireTimeSeriesSeries(string Key, IReadOnlyDictionary<str
         foreach (var item in result)
         {
             if (item.Count != 3) throw UnexpectedReply();
-            series.Add(new(item[0].AsString(), ParseLabels(item[1]), ParseSamples(item[2]))
-            {
-                KeyValue = new RespireKey(item[0].AsBytes()),
-            });
+            series.Add(new(new RespireKey(item[0].AsBytes()), ParseLabels(item[1]), ParseSeriesSamples(item[2], latestSample)));
         }
         return series;
     }
 
-    private static Dictionary<string, string?> ParseLabels(RespireResult labels)
+    internal static Dictionary<string, string?> ParseLabels(RespireResult labels)
     {
         var result = new Dictionary<string, string?>(StringComparer.Ordinal);
         if (labels.Type == RespDataType.Map)
@@ -480,11 +605,16 @@ public sealed record RespireTimeSeriesSeries(string Key, IReadOnlyDictionary<str
 
     private static string? ReadLabelValue(RespireResult value) => value.IsNull ? null : value.AsString();
 
-    // A single sample is [timestamp, value]; a sample list is [[timestamp, value], ...].
-    internal static IReadOnlyList<RespireTimeSeriesSample> ParseSamples(RespireResult samples)
+    private static IReadOnlyList<RespireTimeSeriesSample> ParseSeriesSamples(RespireResult samples, bool latestSample)
+        => latestSample ? ParseLatestSample(samples) : ParseSampleList(samples);
+
+    // TS.MGET returns [timestamp, value], or an empty array for a series without samples.
+    private static IReadOnlyList<RespireTimeSeriesSample> ParseLatestSample(RespireResult sample)
+        => sample.Count == 0 ? [] : [ParseSample(sample)];
+
+    // Ranges return [[timestamp, value], ...].
+    internal static IReadOnlyList<RespireTimeSeriesSample> ParseSampleList(RespireResult samples)
     {
-        if (samples.Count == 2 && samples[0].Type == RespDataType.Integer)
-            return [ParseSample(samples)];
         var result = new List<RespireTimeSeriesSample>(samples.Count);
         foreach (var sample in samples) result.Add(ParseSample(sample));
         return result;
@@ -496,6 +626,111 @@ public sealed record RespireTimeSeriesSeries(string Key, IReadOnlyDictionary<str
         return new(sample[0].AsInteger(), sample[1].AsDouble());
     }
 
-    private static InvalidOperationException UnexpectedReply()
+    internal static InvalidOperationException UnexpectedReply()
         => new("Unexpected RedisTimeSeries reply shape.");
+}
+
+/// <summary>A compaction rule reported by TS.INFO.</summary>
+/// <param name="DestinationKey">The series that receives the aggregated buckets.</param>
+/// <param name="BucketDurationMilliseconds">Bucket duration in milliseconds.</param>
+/// <param name="Aggregation">The aggregator name as the server reports it, such as <c>avg</c> or <c>std.p</c>.</param>
+/// <param name="AlignTimestamp">The bucket alignment timestamp.</param>
+public readonly record struct RespireTimeSeriesRule(RespireKey DestinationKey, long BucketDurationMilliseconds, string Aggregation, long AlignTimestamp);
+
+/// <summary>Series metadata returned by TS.INFO.</summary>
+/// <remarks>Fields the server does not report keep their defaults. Unrecognized fields are ignored.</remarks>
+public sealed record RespireTimeSeriesInfo
+{
+    /// <summary>Number of samples in the series.</summary>
+    public long TotalSamples { get; init; }
+    /// <summary>Memory used by the series, in bytes.</summary>
+    public long MemoryUsageBytes { get; init; }
+    /// <summary>Timestamp of the first sample, or zero for an empty series.</summary>
+    public long FirstTimestamp { get; init; }
+    /// <summary>Timestamp of the last sample, or zero for an empty series.</summary>
+    public long LastTimestamp { get; init; }
+    /// <summary>Retention period in milliseconds. Zero means no retention limit.</summary>
+    public long RetentionMilliseconds { get; init; }
+    /// <summary>Number of memory chunks.</summary>
+    public long ChunkCount { get; init; }
+    /// <summary>Chunk size in bytes.</summary>
+    public long ChunkSizeBytes { get; init; }
+    /// <summary>Chunk encoding as the server reports it, such as <c>compressed</c>.</summary>
+    public string? ChunkType { get; init; }
+    /// <summary>Duplicate policy of the series, or null when the server reports none or an unknown policy.</summary>
+    public RespireTimeSeriesDuplicatePolicy? DuplicatePolicy { get; init; }
+    /// <summary>The IGNORE maximum time difference, in milliseconds.</summary>
+    public long IgnoreMaxTimeDifference { get; init; }
+    /// <summary>The IGNORE maximum value difference.</summary>
+    public double IgnoreMaxValueDifference { get; init; }
+    /// <summary>Labels of the series.</summary>
+    public IReadOnlyDictionary<string, string?> Labels { get; init; } = new Dictionary<string, string?>();
+    /// <summary>The source series when this series is a compaction destination; otherwise null.</summary>
+    public RespireKey? SourceKey { get; init; }
+    /// <summary>Compaction rules whose source is this series.</summary>
+    public IReadOnlyList<RespireTimeSeriesRule> Rules { get; init; } = [];
+
+    internal static RespireTimeSeriesInfo Parse(RespireResult result)
+    {
+        // RESP2 replies are flat name/value arrays and RESP3 replies are maps; both index as pairs.
+        if (result.Type is not (RespDataType.Map or RespDataType.Array) || result.Count % 2 != 0)
+            throw RespireTimeSeriesSeries.UnexpectedReply();
+
+        var info = new RespireTimeSeriesInfo();
+        for (var index = 0; index + 1 < result.Count; index += 2)
+        {
+            var value = result[index + 1];
+            info = result[index].AsString() switch
+            {
+                "totalSamples" => info with { TotalSamples = value.AsInteger() },
+                "memoryUsage" => info with { MemoryUsageBytes = value.AsInteger() },
+                "firstTimestamp" => info with { FirstTimestamp = value.AsInteger() },
+                "lastTimestamp" => info with { LastTimestamp = value.AsInteger() },
+                "retentionTime" => info with { RetentionMilliseconds = value.AsInteger() },
+                "chunkCount" => info with { ChunkCount = value.AsInteger() },
+                "chunkSize" => info with { ChunkSizeBytes = value.AsInteger() },
+                "chunkType" => info with { ChunkType = value.IsNull ? null : value.AsString() },
+                "duplicatePolicy" => info with
+                {
+                    DuplicatePolicy = RespireTimeSeriesOptions.FromPolicy(value.IsNull ? null : value.AsString()),
+                },
+                "ignoreMaxTimeDiff" => info with { IgnoreMaxTimeDifference = value.AsInteger() },
+                "ignoreMaxValDiff" => info with { IgnoreMaxValueDifference = value.AsDouble() },
+                "labels" => info with { Labels = RespireTimeSeriesSeries.ParseLabels(value) },
+                "sourceKey" => info with { SourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes()) },
+                "rules" => info with { Rules = ParseRules(value) },
+                _ => info,
+            };
+        }
+        return info;
+    }
+
+    private static RespireTimeSeriesRule[] ParseRules(RespireResult rules)
+    {
+        if (rules.Type == RespDataType.Map)
+        {
+            // RESP3: destination => [bucketDuration, aggregator, alignment].
+            var mapped = new RespireTimeSeriesRule[rules.Count / 2];
+            for (var index = 0; index + 1 < rules.Count; index += 2)
+                mapped[index / 2] = ParseRule(rules[index], rules[index + 1], offset: 0);
+            return mapped;
+        }
+
+        // RESP2: [destination, bucketDuration, aggregator, alignment] per rule.
+        var parsed = new RespireTimeSeriesRule[rules.Count];
+        for (var index = 0; index < parsed.Length; index++)
+        {
+            var rule = rules[index];
+            if (rule.Count < 3) throw RespireTimeSeriesSeries.UnexpectedReply();
+            parsed[index] = ParseRule(rule[0], rule, offset: 1);
+        }
+        return parsed;
+    }
+
+    private static RespireTimeSeriesRule ParseRule(RespireResult destination, RespireResult fields, int offset)
+    {
+        if (fields.Count < offset + 2) throw RespireTimeSeriesSeries.UnexpectedReply();
+        var align = fields.Count > offset + 2 ? fields[offset + 2].AsInteger() : 0;
+        return new(new RespireKey(destination.AsBytes()), fields[offset].AsInteger(), fields[offset + 1].AsString(), align);
+    }
 }

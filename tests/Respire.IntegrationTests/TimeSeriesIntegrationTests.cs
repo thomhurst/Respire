@@ -77,8 +77,21 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         var createdSample = await timeSeries.GetAsync(createdByAdd);
         await Assert.That(createdSample?.Value).IsEqualTo(2.5);
 
-        using (var info = await timeSeries.GetInfoAsync(source))
-            await Assert.That(info.Count).IsGreaterThan(0);
+        var info = await timeSeries.GetInfoAsync(source);
+        await Assert.That(info.TotalSamples).IsEqualTo(3);
+        await Assert.That(info.FirstTimestamp).IsEqualTo(1);
+        await Assert.That(info.LastTimestamp).IsEqualTo(12);
+        await Assert.That(info.DuplicatePolicy).IsEqualTo(RespireTimeSeriesDuplicatePolicy.Last);
+        await Assert.That(info.Labels).IsEmpty();
+        await Assert.That(info.Rules.Count).IsEqualTo(1);
+        await Assert.That(info.Rules[0].DestinationKey.ToString()).IsEqualTo(compacted.ToString());
+        await Assert.That(info.Rules[0].BucketDurationMilliseconds).IsEqualTo(10);
+        await Assert.That(info.Rules[0].Aggregation.ToLowerInvariant()).IsEqualTo("sum");
+        var compactedInfo = await timeSeries.GetInfoAsync(compacted);
+        await Assert.That(compactedInfo.SourceKey?.ToString()).IsEqualTo(source.ToString());
+        await Assert.That(compactedInfo.Labels["kind"]).IsEqualTo("compacted");
+        using (var rawInfo = await timeSeries.GetRawInfoAsync(source, debug: true))
+            await Assert.That(rawInfo.Count).IsGreaterThan(0);
         await timeSeries.DeleteRuleAsync(source, compacted);
         await Assert.That(await timeSeries.DeleteRangeAsync(source, new(0, 5))).IsEqualTo(2);
         await Assert.That(await timeSeries.GetAsync(compacted, latestPartialBucket: true)).IsNotNull();
@@ -88,6 +101,32 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         var decremented = await timeSeries.DecrementByAsync(counter, 1.0);
         await Assert.That(decremented).IsGreaterThanOrEqualTo(incremented);
         await Assert.That((await timeSeries.GetAsync(counter))!.Value.Value).IsEqualTo(1.5);
+
+        RespireKey timedCounter = $"{{ts:{id}}}:timed-counter";
+        var incrementOptions = new RespireTimeSeriesIncrementOptions
+        {
+            Timestamp = 100,
+            RetentionMilliseconds = 0,
+            Encoding = RespireTimeSeriesEncoding.Uncompressed,
+            ChunkSizeBytes = 128,
+            DuplicatePolicy = RespireTimeSeriesDuplicatePolicy.Sum,
+            Labels = new Dictionary<string, string> { ["run"] = id, ["kind"] = "counter" },
+        };
+        await Assert.That(await timeSeries.IncrementByAsync(timedCounter, 2, incrementOptions)).IsEqualTo(100);
+        await Assert.That(await timeSeries.DecrementByAsync(timedCounter, 0.5, new RespireTimeSeriesIncrementOptions { Timestamp = 100 }))
+            .IsEqualTo(100);
+        await Assert.That(await timeSeries.GetAsync(timedCounter)).IsEqualTo(new RespireTimeSeriesSample(100, 1.5));
+        var counterInfo = await timeSeries.GetInfoAsync(timedCounter);
+        await Assert.That(counterInfo.ChunkType?.ToLowerInvariant()).IsEqualTo("uncompressed");
+        await Assert.That(counterInfo.Labels["kind"]).IsEqualTo("counter");
+
+        var missing = await Assert.That(async () => await timeSeries.MultiAddAsync([
+                new(source, 20, 1.0), new($"{{ts:{id}}}:missing", 20, 1.0),
+            ]))
+            .Throws<RespireTimeSeriesMultiAddException>();
+        await Assert.That(missing!.Timestamps[0]).IsEqualTo(20);
+        await Assert.That(missing.Timestamps[1]).IsNull();
+        await Assert.That(missing.Errors[1]).IsNotNull();
     }
 
     [Test]

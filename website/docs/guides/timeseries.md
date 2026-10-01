@@ -2,7 +2,7 @@
 title: RedisTimeSeries
 ---
 
-`Respire.TimeSeries` adds typed RedisTimeSeries commands to an existing Respire client. Use Redis 8, or Redis Stack, with the TimeSeries module enabled.
+The `Respire.TimeSeries` package (namespace `Respire.Extensions.TimeSeries`) adds typed RedisTimeSeries commands to an existing Respire client. Use Redis 8, or Redis Stack, with the TimeSeries module enabled.
 
 ```bash
 dotnet add package Respire.TimeSeries
@@ -37,20 +37,24 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 
 ## Writes
 
-`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series. `IncrementByAsync` and `DecrementByAsync` update the latest sample.
+`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
+
+Timestamps are checked before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions, and `Align` take a non-negative millisecond timestamp, `Minimum`, or `Maximum`.
 
 ## Reads
 
 `GetAsync` returns the latest sample, or `null` for an empty series. `RangeAsync` and `ReverseRangeAsync` read one series. Their options support exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP`, and `EMPTY`.
 
-`MultiGetAsync`, `MultiRangeAsync`, and `MultiReverseRangeAsync` select series through label filters such as `sensor=temperature`. They also accept `WITHLABELS` or `SELECTED_LABELS`, and the multi-series ranges accept `GROUPBY`/`REDUCE`. Single-series ranges reject these options locally. `QueryIndexAsync` returns matching keys as `RespireKey` values, preserving arbitrary key bytes. Multi-series results expose a display string in `Key` and the lossless key in `KeyValue`.
+`MultiGetAsync`, `MultiRangeAsync`, and `MultiReverseRangeAsync` select series through label filters such as `sensor=temperature`. They also accept `WITHLABELS` or `SELECTED_LABELS`, and the multi-series ranges accept `GROUPBY`/`REDUCE`. Single-series ranges reject these options locally. `QueryIndexAsync` returns matching keys as `RespireKey` values, preserving arbitrary key bytes. Multi-series results expose the lossless key in `KeyValue`, and `Key` is its display string.
 
 ## Compaction rules and metadata
 
-`CreateRuleAsync` creates a compaction rule from a source series into an existing destination series, with an optional alignment timestamp. `DeleteRuleAsync` removes the rule between a source and a destination. `GetInfoAsync` returns the raw `TS.INFO` response, which the caller must dispose.
+`CreateRuleAsync` creates a compaction rule from a source series into an existing destination series, with an optional alignment timestamp. The bucket duration is given in milliseconds or as a `TimeSpan`. `DeleteRuleAsync` removes the rule between a source and a destination.
+
+`GetInfoAsync` returns a typed `RespireTimeSeriesInfo` with the sample count, first and last timestamps, retention, chunk settings, duplicate policy, labels, source key, and compaction rules. `GetRawInfoAsync` returns the raw `TS.INFO` or `TS.INFO DEBUG` response for fields the typed model does not cover. The caller must dispose that result.
 
 ## Key prefixes and Cluster
 
-The package uses Respire's generated command infrastructure and does not use reflection. On a `WithKeyPrefix` view, every series key is prefixed, including both keys of a compaction rule and every key passed to `MultiAddAsync`. Label-filter queries (`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync`) name no keys and would return series outside the prefix. A prefixed view therefore rejects them with `NotSupportedException`.
+The package uses Respire's generated command infrastructure and does not use reflection. On a `WithKeyPrefix` view, every series key is prefixed, including both keys of a compaction rule and every key passed to `MultiAddAsync`. Label-filter queries (`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync`) name no keys and would return series outside the prefix. A prefixed view therefore rejects them with `NotSupportedException`. Run them through an unprefixed client instead.
 
 In Redis Cluster, `MultiAddAsync` and `CreateRuleAsync` require all their keys to share a hash slot. Label-filter queries are sent to one node, and whether they cover every shard depends on the server's RedisTimeSeries cluster support. The caller owns the underlying client.
