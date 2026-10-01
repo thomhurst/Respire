@@ -54,10 +54,54 @@ public class SemaphoreWireTests
         await using var attempt = await semaphore.TryAcquireAsync();
 
         await Assert.That(async () => await attempt.Permit.ResetExpiryAsync(null)).Throws<RespireServerException>();
-        await Assert.That(attempt.Permit.IsReleased).IsFalse();
+        // The failed renewal surrendered the permit, so it is no longer reliable locally, but its
+        // release was not confirmed and stays retryable.
+        await Assert.That(attempt.Permit.IsReleased).IsTrue();
+        await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(await attempt.Permit.ResetExpiryAsync(TimeSpan.FromSeconds(30))).IsFalse();
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(3);
         await Assert.That(await attempt.Permit.ReleaseAsync()).IsTrue();
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
         await Assert.That(EvalCommands(server).Length).IsEqualTo(4);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RenewalErrorReplyKeepsDisposalCleanupPastOldExpiry()
+    {
+        var evals = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command == "CLIENT ID") return ClientIdReply;
+                if (command.StartsWith("CLIENT KILL", StringComparison.Ordinal)) return ClientKillReply;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                return Interlocked.Increment(ref evals) switch
+                {
+                    1 => ":1\r\n"u8.ToArray(),
+                    // A script error after ZADD leaves the new score in place, because Lua does not roll back.
+                    2 => "-NOPERM PERSIST denied\r\n"u8.ToArray(),
+                    3 => "-ERR cleanup failed\r\n"u8.ToArray(),
+                    4 => "-ERR release failed\r\n"u8.ToArray(),
+                    _ => ":1\r\n"u8.ToArray(),
+                };
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{renew}:error", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromMilliseconds(200))).Permit;
+
+        await Assert.That(async () => await permit.ResetExpiryAsync(null)).Throws<RespireServerException>();
+        await Assert.That(permit.IsReleased).IsTrue();
+
+        // Past the old local expiry, Redis may still hold the permit without expiry.
+        await Task.Delay(300);
+        await permit.DisposeAsync();
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref evals) < 5) await Task.Delay(10, deadline.Token);
+        await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(5);
     }
 
     [Test]
@@ -130,6 +174,12 @@ public class SemaphoreWireTests
         await Assert.That(async () => await attempt.Permit.ResetExpiryAsync(null, cancellation.Token))
             .Throws<OperationCanceledException>();
         var sent = EvalCommands(server).Length;
+
+        // The unanswered renewal may already have shortened the permit, so the old non-expiring
+        // estimate can no longer be relied on.
+        await Assert.That(attempt.Permit.IsReleased).IsTrue();
+        await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(await attempt.Permit.VerifyStillHeldAsync()).IsFalse();
 
         // The unanswered renewal may still run later and overwrite any newer score.
         await Assert.That(await attempt.Permit.ResetExpiryAsync(TimeSpan.FromSeconds(30))).IsFalse();

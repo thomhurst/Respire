@@ -450,9 +450,10 @@ Failures are handled differently by each operation:
   needs write permission for the key.
 - A failed or canceled renewal surrenders the permit. The renewal may still run on Redis, so
   Respire attempts an owner-token release with a separate one-second bound before the exception
-  propagates. After such an uncertain renewal, later renewals return `false` without contacting
-  Redis, because the earlier renewal could still overwrite a newer expiry. Release the permit and
-  acquire a new one. An error reply from Redis is definite and does not have this effect.
+  propagates. After any failed renewal, `IsReleased` is true, `RemainingEstimate` is zero, and later
+  renewals return `false` without contacting Redis. A canceled renewal could still overwrite a newer
+  expiry, and a script error reply does not undo writes made before the error, so the permit's
+  lifetime on Redis is unknown. Release or dispose the permit and acquire a new one.
 - A failed or canceled `ReleaseAsync` also attempts one bounded owner-token release before the
   exception propagates. When that cannot confirm release, keep the permit handle and retry
   `ReleaseAsync`; it remains usable until Redis confirms removal.

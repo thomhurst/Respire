@@ -484,6 +484,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         // A finite renewal may have run on Redis without its reply being observed.
         FiniteOutcomeUncertain = 8,
         OutcomeUncertain = NonExpiringOutcomeUncertain | FiniteOutcomeUncertain,
+        // A renewal failed and surrendered the permit, so its local lease can no longer be relied
+        // on, even when the surrender release has not been confirmed yet.
+        RenewalFailed = 16,
     }
 
     // ExpiryTicks is 0 for an owner-released permit; ValidUntil is long.MaxValue in that case.
@@ -512,13 +515,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <summary>Conservative local estimate; null means permit has no expiry.</summary>
     /// <remarks>
     /// The estimate is conservative because it counts from when the acquire or renewal command was
-    /// sent, before Redis applied the expiry, and subtracts the whole round trip.
+    /// sent, before Redis applied the expiry, and subtracts the whole round trip. It is zero after a
+    /// release, and after a failed or canceled renewal, which surrenders the permit.
     /// </remarks>
     public TimeSpan? RemainingEstimate
     {
         get
         {
-            if (Has(PermitState.Released)) return TimeSpan.Zero;
+            if (Has(PermitState.Released | PermitState.RenewalFailed)) return TimeSpan.Zero;
             var validUntil = Volatile.Read(ref _lease).ValidUntil;
             if (validUntil == long.MaxValue) return null;
             var remaining = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), validUntil);
@@ -528,11 +532,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     /// <summary>Whether this permit can no longer be relied on.</summary>
     /// <remarks>
-    /// True after a release, after Redis reported the permit gone, or once
-    /// <see cref="RemainingEstimate"/> reaches zero. It does not mean <see cref="ReleaseAsync"/> was
-    /// called: a locally expired permit can still be on Redis until its server-side expiry.
+    /// True after a release, after Redis reported the permit gone, after a failed or canceled
+    /// renewal, or once <see cref="RemainingEstimate"/> reaches zero. It does not mean
+    /// <see cref="ReleaseAsync"/> was called or confirmed: a locally expired or surrendered permit can
+    /// still be on Redis until it is released or its server-side expiry passes.
     /// </remarks>
-    public bool IsReleased => Has(PermitState.Released) || RemainingEstimate == TimeSpan.Zero;
+    public bool IsReleased => Has(PermitState.Released | PermitState.RenewalFailed) || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks whether this owner still holds an active permit on Redis.</summary>
     /// <remarks>
@@ -569,11 +574,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// bounded owner-token release before the exception propagates.
     /// </para>
     /// <para>
-    /// After a renewal whose outcome is uncertain (canceled, timed out, or failed without a Redis
-    /// reply), every later call returns false without contacting Redis, even when that cleanup
-    /// failed. The earlier renewal could still execute and overwrite any newer expiry, so no later
-    /// renewal can be confirmed. Release the permit and acquire a new one instead. A Redis error reply
-    /// is definite and does not have this effect.
+    /// After any failed renewal, including a Redis error reply, <see cref="IsReleased"/> is true and
+    /// every later call returns false without contacting Redis, even when that cleanup failed. A
+    /// canceled or timed-out renewal could still execute and overwrite any newer expiry, and a script
+    /// error does not roll back writes made before it, so the permit's lifetime on Redis is unknown.
+    /// Call <see cref="ReleaseAsync"/> or dispose the permit, and acquire a new one instead.
     /// </para>
     /// <para>
     /// Returns false, after attempting release, when Redis confirms the renewal only after the
@@ -627,10 +632,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     renewed = response.AsInteger() == 1;
                 }
             }
-            catch (Exception error)
+            catch (Exception)
             {
-                // A server error is a definite reply: that renewal never ran and cannot overwrite later ones.
-                if (error is RespireServerException) Clear(pending);
+                // Keep the pending flag even for a Redis error reply: Lua does not roll back, so a
+                // script that failed after its ZADD (for example an ACL rejecting PERSIST) may have
+                // changed the permit's lifetime. Disposal cleanup must not stop at the old expiry.
+                Set(PermitState.RenewalFailed);
                 await TryReleaseAndMarkAsync().ConfigureAwait(false);
                 throw;
             }
