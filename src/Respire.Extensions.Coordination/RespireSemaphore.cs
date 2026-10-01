@@ -95,9 +95,10 @@ public sealed class RespireSemaphore
             }
             else
             {
+                var requiresReliableOrdering = concreteClient.RequiresReliableCorrectionOrdering(cancellationToken);
                 trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                     AcquireScript, [Key], args, cancellationToken,
-                    requireReliableCorrectionOrdering: trackedWire is not null,
+                    requireReliableCorrectionOrdering: requiresReliableOrdering,
                     captureSendTimestampOnly: trackedWire is null).ConfigureAwait(false);
                 using var response = await trackedExecution.Response.ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;

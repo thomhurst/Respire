@@ -73,7 +73,7 @@ jobs:
           source = source.replace(correction_marker, correction_shim + correction_marker, 1)
           assert source.count('GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)') == 1
           marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
-          shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)\n'
+          shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')
           assert source.count(marker) == 1
           tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
@@ -86,7 +86,7 @@ jobs:
           source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
           source = source.replace(marker, shim + marker, 1)
           assert source.count('bool captureSendTimestampOnly)') == 1
-          assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken)') == 1
+          assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)') == 1
           path.write_text(source)
 
           # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.

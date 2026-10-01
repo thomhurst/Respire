@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -17,6 +19,48 @@ public class SemaphoreWireTests
 
     internal static string[] EvalCommands(FakeRespServer server)
         => server.ReceivedCommands.Where(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)).ToArray();
+
+    [Test]
+    [NotInParallel]
+    public async Task OptionalClusterCorrectionOrderingAllowsAcquireWithoutClientIdPermission()
+    {
+        await using var target = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                var eval when eval.StartsWith("EVALSHA ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+                var clientId when clientId.StartsWith("CLIENT ID", StringComparison.Ordinal) =>
+                    "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        var slot = ClusterHash.GetSlot("{optional}:semaphore");
+        await using var seed = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                var eval when eval.StartsWith("EVALSHA ", StringComparison.Ordinal) =>
+                    Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            CommandTimeout = null,
+        });
+
+        await using var attempt = await new RespireSemaphore(client, "{optional}:semaphore", capacity: 1)
+            .TryAcquireAsync();
+
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(seed.ReceivedCommands.Concat(target.ReceivedCommands)
+            .Any(command => command.StartsWith("CLIENT ID", StringComparison.Ordinal))).IsTrue();
+    }
 
     [Test]
     [NotInParallel]

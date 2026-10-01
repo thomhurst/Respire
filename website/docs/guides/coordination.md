@@ -456,8 +456,8 @@ Failures are handled differently by each operation:
   expiry, and a script error reply does not undo writes made before the error, so the permit's
   lifetime on Redis is unknown. Release or dispose the permit and acquire a new one.
 - A failed or canceled `ReleaseAsync` also attempts one bounded owner-token release before the
-  exception propagates. When that cannot confirm release, keep the permit handle and retry
-  `ReleaseAsync`; it remains usable until Redis confirms removal.
+  exception propagates. If that cannot confirm release, the handle becomes unusable for protected
+  work because ownership is uncertain. Keep it only to retry `ReleaseAsync` and confirm cleanup.
 - `DisposeAsync` never throws and waits about one second at most. If release is not confirmed by
   then, it retries in the background with capped, jittered backoff for up to one minute.
 
