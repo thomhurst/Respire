@@ -1870,6 +1870,7 @@ public class SentinelRoutingTests
     [Arguments("transaction", true)]
     [Arguments("identity", false)]
     [Arguments("identity", true)]
+    [NotInParallel]
     public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery)
     {
         await using var primary = Primary();
