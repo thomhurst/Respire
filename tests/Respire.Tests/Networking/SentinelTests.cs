@@ -147,9 +147,11 @@ public class SentinelTests
             return 0;
         }, CancellationToken.None).AsTask();
         var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
-            .Throws<RespireTimeoutException>();
-        await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
-        await Assert.That(error.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(200));
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.InnerException is RespireTimeoutException).IsTrue();
+        var timeout = (RespireTimeoutException)error.InnerException!;
+        await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
+        await Assert.That(timeout.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(200));
     }
 
     private static byte[] PeersReply(int port)
