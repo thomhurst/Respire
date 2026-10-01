@@ -79,8 +79,10 @@ public partial interface IStringCommands
     /// Sets a key from exactly <paramref name="length"/> bytes read from <paramref name="value"/>.
     /// The stream remains open. Cancellation or a read failure during transmission closes the
     /// connection to preserve RESP framing, failing other commands pipelined on it; later
-    /// commands on that connection wait for the complete frame. The command timeout covers the whole
-    /// upload. Respire does not retry streamed writes.
+    /// commands on that connection wait for the complete frame, so use a separate client for slow
+    /// sources such as network streams. The command timeout covers the whole upload. Respire does not
+    /// retry streamed writes once their header is sent, and cluster <c>MOVED</c>/<c>ASK</c> redirects
+    /// are returned to the caller rather than followed.
     /// </summary>
     ValueTask<bool> SetAsync(
         RespireKey key,

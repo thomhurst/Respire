@@ -1339,12 +1339,25 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var queuedBatchStarted = false;
         try
         {
-            lock (_writeGate)
+            while (true)
             {
-                ThrowIfRetired();
-                if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
-                _streamingActive = true;
-                streamingStarted = true;
+                effectiveCancellation.ThrowIfCancellationRequested();
+                var renewalCompleted = _capacitySignal.WaitAsync(effectiveCancellation);
+                lock (_writeGate)
+                {
+                    ThrowIfRetired();
+                    if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    // Respect the credential-renewal fence like ordinary commands: AUTH must be
+                    // admitted and acknowledged before a (potentially long) upload takes the wire.
+                    if (!_credentialRenewalPending)
+                    {
+                        _streamingActive = true;
+                        streamingStarted = true;
+                        break;
+                    }
+                }
+
+                await renewalCompleted.ConfigureAwait(false);
             }
 
             await DrainBufferedWritesAsync(effectiveCancellation).ConfigureAwait(false);
