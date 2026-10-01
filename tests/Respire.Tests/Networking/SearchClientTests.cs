@@ -2,6 +2,7 @@ using Respire.Extensions.Search;
 using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -30,7 +31,7 @@ public class SearchClientTests
 
         await Assert.That(server.ReceivedCommands.Contains("FT.AGGREGATE idx * SORTBY 2 @count DESC")).IsTrue();
         var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@count", "DESC"]);
+        await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@count", "DESC"], CollectionOrdering.Matching);
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Rows[0]["name"]).IsEqualTo("foo");
     }
@@ -51,7 +52,7 @@ public class SearchClientTests
         var values = result.StructuredRows[0]["items"];
 
         await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
-        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"]);
+        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -72,7 +73,7 @@ public class SearchClientTests
         var values = result.StructuredRows[0]["items"];
 
         await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
-        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"]);
+        await Assert.That(values.Items.Select(value => value.Scalar).ToArray()).IsEquivalentTo(["foo", "bar"], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -92,7 +93,7 @@ public class SearchClientTests
         await search.AggregateAsync("idx", "*", new() { SortBy = ["@my field DESC"] });
 
         var arguments = server.ReceivedArguments[^1].Select(Encoding.UTF8.GetString).ToArray();
-        await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@my field", "DESC"]);
+        await Assert.That(arguments[^4..]).IsEquivalentTo(["SORTBY", "2", "@my field", "DESC"], CollectionOrdering.Matching);
     }
 
     [Test]
