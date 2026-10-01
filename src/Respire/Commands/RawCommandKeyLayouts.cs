@@ -16,8 +16,8 @@ internal static class RawCommandKeyLayouts
 
     private enum LayoutKind
     {
-        None, First, FirstTwo, All, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
-        AllExceptLast, CountedPairs, Triples, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
+        None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
+        AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
     private readonly record struct Definition(LayoutKind Kind, bool Deferred);
 
@@ -67,6 +67,14 @@ internal static class RawCommandKeyLayouts
             "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
         // Immediate-only additions do not expand the conservative deferred allowlist.
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
+        AddImmediate(LayoutKind.First,
+            "JSON.GET", "JSON.SET", "JSON.DEL", "JSON.FORGET", "JSON.CLEAR", "JSON.ARRAPPEND", "JSON.ARRINDEX",
+            "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",
+            "JSON.ARRINSERT", "JSON.ARRPOP", "JSON.ARRTRIM", "JSON.NUMINCRBY", "JSON.NUMMULTBY", "JSON.OBJKEYS",
+            "JSON.OBJLEN", "JSON.STRAPPEND", "JSON.STRLEN", "JSON.TOGGLE", "JSON.TYPE", "JSON.RESP");
+        // AfterFirst assumes one subcommand token before the key (JSON.DEBUG MEMORY key, JSON.DEBUG FIELDS key).
+        AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
+        AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
@@ -101,6 +109,9 @@ internal static class RawCommandKeyLayouts
             throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
         return Parse(definition.Kind, args);
     }
+
+    /// <summary>Whether <paramref name="operation"/> has an explicit key layout.</summary>
+    internal static bool HasLayout(string operation) => Layouts.ContainsKey(operation);
 
     internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
     {
@@ -170,6 +181,14 @@ internal static class RawCommandKeyLayouts
             case LayoutKind.FirstTwo:
                 Require(args.Length >= 2);
                 return new(0, 2);
+            case LayoutKind.AfterFirst:
+                // HELP is the only keyless subcommand; every other subcommand takes the key next.
+                if (args.Length == 1 && args[0].EqualsAsciiIgnoreCase("HELP"))
+                {
+                    return new(0, 0);
+                }
+                Require(args.Length >= 2);
+                return new(1, 1);
             case LayoutKind.All:
             case LayoutKind.Pairs:
             case LayoutKind.Triples:

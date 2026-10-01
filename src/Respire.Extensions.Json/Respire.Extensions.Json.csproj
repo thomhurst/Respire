@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Module packages use a short package ID (Respire.Json, like Respire.Probabilistic) while the project,
+    folder, and namespace keep the Respire.Extensions.* form. Directory.Build.props matches on the project
+    name, not the package ID, when it marks this project packable.
+  -->
+  <PropertyGroup>
+    <PackageId>Respire.Json</PackageId>
+    <Title>Respire.Json</Title>
+    <Description>Typed RedisJSON commands and source-generated serialization for Respire.</Description>
+    <PackageTags>$(PackageTags);redisjson;json;redis-stack;valkey</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <!-- Build-time only: the Respire package already ships the generator, so packing it again would run it twice. -->
+    <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+</Project>

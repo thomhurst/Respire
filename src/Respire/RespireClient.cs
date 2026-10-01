@@ -335,18 +335,10 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (_keyPrefix is null) return ExecuteRawAsync(operation, rawArguments, flags, cancellationToken);
-        // Report rejections and malformed layouts through the task, as ExecuteCatalogAsync does.
-        RespireValue[] prefixedArguments;
-        try
-        {
-            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
-        }
-        catch (ArgumentException exception)
-        {
-            return ValueTask.FromException<RespireResult>(exception);
-        }
-        return ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken);
+        var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
+        return prefixError is null
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken)
+            : ValueTask.FromException<RespireResult>(prefixError);
     }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
@@ -368,17 +360,28 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken);
-        RespireValue[] prefixedArguments;
+        var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
+        return prefixError is null
+            ? ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken)
+            : ValueTask.FromException(prefixError);
+    }
+
+    /// <summary>
+    /// Shared by the result and fire-and-forget paths. Returns the exception to report through the task,
+    /// as ExecuteCatalogAsync does, instead of throwing synchronously: a rejection for commands without a
+    /// known layout, or the layout's own argument error for malformed arguments.
+    /// </summary>
+    private Exception? PrefixModuleKeysOrError(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    {
         try
         {
-            if (!TryPrefixModuleKeys(operation, rawArguments, out prefixedArguments))
-                return ValueTask.FromException(KeyPrefixNotSupported());
+            return TryPrefixModuleKeys(operation, arguments, out prefixedArguments) ? null : KeyPrefixNotSupported();
         }
         catch (ArgumentException exception)
         {
-            return ValueTask.FromException(exception);
+            prefixedArguments = [];
+            return exception;
         }
-        return ExecuteRawFireAndForgetAsync(operation, prefixedArguments, cancellationToken);
     }
 
     /// <summary>
@@ -395,15 +398,23 @@ public sealed partial class RespireClient : IRespireClient
             return false;
         }
 
+        // Every key is rewritten, so the copy is always needed; it keeps the caller's array untouched.
         prefixedArguments = arguments.ToArray();
         for (var index = 0; index < layout.Count; index++)
         {
             var keyIndex = layout.Start + index * layout.Stride;
-            prefixedArguments[keyIndex] = Key(arguments[keyIndex].AsKey());
+            prefixedArguments[keyIndex] = PrefixModuleKey(arguments[keyIndex]);
         }
         if (layout.Extra >= 0)
-            prefixedArguments[layout.Extra] = Key(arguments[layout.Extra].AsKey());
+            prefixedArguments[layout.Extra] = PrefixModuleKey(arguments[layout.Extra]);
         return true;
+    }
+
+    // A null key would otherwise become the bare prefix and address a real, unintended key.
+    private RespireValue PrefixModuleKey(RespireValue key)
+    {
+        RespireValue.ThrowIfNull(key, "args");
+        return Key(key.AsKey());
     }
 
     /// <summary>
@@ -415,7 +426,8 @@ public sealed partial class RespireClient : IRespireClient
             || operation.StartsWith("CF.", StringComparison.Ordinal)
             || operation.StartsWith("CMS.", StringComparison.Ordinal)
             || operation.StartsWith("TOPK.", StringComparison.Ordinal)
-            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal);
+            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal)
+            || operation.StartsWith("JSON.", StringComparison.Ordinal);
 
     /// <summary>
     /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a
@@ -846,10 +858,19 @@ public sealed partial class RespireClient : IRespireClient
 
     private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
-        var validated = ValidateClusterRawKeys(operation, tokens.AsSpan(firstArgumentIndex));
-        if (!validated.Known)
-            return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
-        return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        var validated = ValidateClusterRawKeys(operation, arguments);
+        if (validated.Known)
+            return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
+        // Registered module commands route by their layout even outside Cluster validation, so commands whose
+        // key is not the first argument (JSON.DEBUG MEMORY, CMS.MERGE) still pick the right key.
+        if (IsPrefixableModuleCommand(operation)
+            && RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+            // Same precedence as RawCommandKeyLayouts.ValidateClusterKeys: a destination key comes first.
+            return layout.Extra >= 0 ? firstArgumentIndex + layout.Extra
+                : layout.Count > 0 ? firstArgumentIndex + layout.Start
+                : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
+        return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
