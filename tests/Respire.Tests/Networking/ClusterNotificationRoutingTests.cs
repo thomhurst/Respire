@@ -914,11 +914,15 @@ public class ClusterNotificationRoutingTests
         {
             if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableSubscribes) == 2)
                 stableReplayed.TrySetResult();
-            if (command == $"PSUBSCRIBE {tenantDescriptor}" && Interlocked.Increment(ref tenantSubscribes) == 3)
-                tenantRetried.TrySetResult();
         });
         var suppress = true;
-        second.SuppressReply = command => Volatile.Read(ref suppress) && command == $"PSUBSCRIBE {tenantDescriptor}";
+        // Suppressed commands never reach the reply override, so count them here.
+        second.SuppressReply = command =>
+        {
+            if (command != $"PSUBSCRIBE {tenantDescriptor}" || !Volatile.Read(ref suppress)) return false;
+            if (Interlocked.Increment(ref tenantSubscribes) == 3) tenantRetried.TrySetResult();
+            return true;
+        };
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
