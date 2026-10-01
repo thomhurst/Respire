@@ -38,6 +38,9 @@ public sealed class RespireOptionsBuilder
         set => _sentinelPrimaryName = value;
     }
 
+    /// <inheritdoc cref="RespireOptions.DisableSentinelEventMonitoring"/>
+    public bool DisableSentinelEventMonitoring { get; set; }
+
     /// <inheritdoc cref="RespireOptions.Username"/>
     public string? Username { get; set; }
 
@@ -156,6 +159,7 @@ public sealed class RespireOptionsBuilder
         Endpoints = Endpoints.ToArray(),
         UseCluster = UseCluster,
         SentinelPrimaryName = SentinelPrimaryName,
+        DisableSentinelEventMonitoring = DisableSentinelEventMonitoring,
         Username = Username,
         Password = Password,
         CredentialProvider = CredentialProvider,
