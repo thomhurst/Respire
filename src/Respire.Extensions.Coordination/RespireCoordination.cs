@@ -435,101 +435,102 @@ public sealed class RespireCoordination
         RespireLockToken owner,
         RespireClient.TrackedConnectionIdentity connectionIdentity)
     {
-        Exception? originalFailure = null;
-        Task? originalCorrection = null;
-        object? correctedSentinelGeneration = null;
-        if (connectionIdentity.Connection is not null)
-        {
-            try
-            {
-                originalCorrection = client.ExecuteOnAllConnectionsAsync(
-                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
-            }
-            catch (Exception error)
-            {
-                originalFailure = error;
-            }
-
-            try
-            {
-                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
-                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
-            }
-            catch (Exception error)
-            {
-                originalFailure ??= error;
-            }
-
-            await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
-
-            if (originalCorrection is not null)
-            {
-                var probeDelay = TimeSpan.FromMilliseconds(100);
-                using var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout);
-                while (!originalCorrection.IsCompleted && !monitoringTimeout.IsCancellationRequested)
-                {
-                    await Task.WhenAny(originalCorrection, Task.Delay(probeDelay, monitoringTimeout.Token)).ConfigureAwait(false);
-                    if (originalCorrection.IsCompleted) break;
-                    if (monitoringTimeout.IsCancellationRequested) break;
-                    try
-                    {
-                        correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
-                            client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
-                    }
-                    catch (Exception error)
-                    {
-                        originalFailure ??= error;
-                    }
-                    await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
-                    probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
-                }
-
-                if (originalCorrection.IsCompleted)
-                {
-                    try { await originalCorrection.ConfigureAwait(false); }
-                    catch (Exception error) { originalFailure ??= error; }
-                    await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
-                }
-                else
-                {
-                    ObserveCorrectionFailure(originalCorrection);
-                }
-            }
-
-            try
-            {
-                correctedSentinelGeneration = await ReleaseOnCurrentSentinelGenerationAsync(
-                    client, hashKey, field, owner, connectionIdentity, correctedSentinelGeneration).ConfigureAwait(false);
-            }
-            catch (Exception error)
-            {
-                originalFailure ??= error;
-            }
-            await ReleaseCurrentClusterOwnerAsync().ConfigureAwait(false);
-        }
-        else
+        if (connectionIdentity.Connection is null)
         {
             await client.ExecuteOnAllConnectionsAsync(
                 ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+            return;
+        }
+
+        Exception? originalFailure = null;
+        Task? originalCorrection = null;
+        SentinelCorrection? sentinelCorrection = null;
+        // Releases sent through the current Sentinel generation or Cluster slot owner. Each one targets
+        // the route known when it starts. A send stuck on a node that stopped replying must not block
+        // later sends that follow a newer route, so they run independently and are only settled, within
+        // the cleanup bound, once monitoring ends.
+        List<Task>? routedReleases = null;
+        try
+        {
+            originalCorrection = client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
+        }
+        catch (Exception error)
+        {
+            originalFailure = error;
+        }
+
+        await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+
+        if (originalCorrection is not null)
+        {
+            var probeDelay = TimeSpan.FromMilliseconds(100);
+            using var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+            while (!originalCorrection.IsCompleted && !monitoringTimeout.IsCancellationRequested)
+            {
+                await Task.WhenAny(originalCorrection, Task.Delay(probeDelay, monitoringTimeout.Token)).ConfigureAwait(false);
+                if (originalCorrection.IsCompleted || monitoringTimeout.IsCancellationRequested) break;
+                await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+                probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
+            }
+
+            if (originalCorrection.IsCompleted)
+            {
+                try { await originalCorrection.ConfigureAwait(false); }
+                catch (Exception error) { originalFailure ??= error; }
+            }
+            else
+            {
+                ObserveCorrectionFailure(originalCorrection);
+            }
+        }
+
+        await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
+
+        if (routedReleases is not null)
+        {
+            var settled = Task.WhenAll(routedReleases);
+            try
+            {
+                await settled.WaitAsync(BestEffortCleanupTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                ObserveCorrectionFailure(settled);
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
+            }
         }
 
         if (originalFailure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
 
-        async Task ReleaseCurrentClusterOwnerAsync()
+        async ValueTask ReleaseOnCurrentRoutesAsync()
         {
-            if (client.Core.Cluster is null) return;
             try
             {
-                using var currentOwnerRelease = await client.Scripts.ExecuteAsync(
-                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None)
-                    .ConfigureAwait(false);
+                sentinelCorrection = await StartSentinelGenerationReleaseAsync(
+                    client, hashKey, field, owner, connectionIdentity, sentinelCorrection).ConfigureAwait(false);
+                if (sentinelCorrection is { IsNew: true } started)
+                    (routedReleases ??= []).Add(started.Release);
             }
             catch (Exception error)
             {
                 originalFailure ??= error;
             }
+
+            if (client.Core.Cluster is not null)
+                (routedReleases ??= []).Add(ReleaseOnCurrentClusterOwnerAsync(client, hashKey, field, owner));
         }
+    }
+
+    private static async Task ReleaseOnCurrentClusterOwnerAsync(
+        RespireClient client, RespireKey hashKey, RespireKey field, RespireLockToken owner)
+    {
+        using var response = await client.Scripts.ExecuteAsync(
+            ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None).ConfigureAwait(false);
     }
 
     private static void ObserveCorrectionFailure(Task correction)
@@ -539,24 +540,40 @@ public sealed class RespireCoordination
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-    private static async ValueTask<object?> ReleaseOnCurrentSentinelGenerationAsync(
+    /// <summary>A release sent through one promoted Sentinel generation.</summary>
+    private sealed record SentinelCorrection(object Generation, Task Release, bool IsNew);
+
+    private static async ValueTask<SentinelCorrection?> StartSentinelGenerationReleaseAsync(
         RespireClient client,
         RespireKey hashKey,
         RespireKey field,
         RespireLockToken owner,
         RespireClient.TrackedConnectionIdentity originalIdentity,
-        object? correctedGeneration)
+        SentinelCorrection? previous)
     {
         var sentinel = client.Core.Sentinel;
-        if (sentinel is null || originalIdentity.Connection is null) return correctedGeneration;
+        if (sentinel is null || originalIdentity.Connection is null) return null;
         var current = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
+        // The original correction already covers the generation that accepted the acquisition.
         if (ReferenceEquals(current.Multiplexer, originalIdentity.Connection.Multiplexer)) return null;
-        if (ReferenceEquals(current, correctedGeneration)) return correctedGeneration;
+        // One release per promoted generation, unless it failed and should be retried.
+        if (previous is not null && ReferenceEquals(current, previous.Generation)
+            && !previous.Release.IsFaulted && !previous.Release.IsCanceled)
+        {
+            return previous with { IsNew = false };
+        }
 
-        await client.ExecuteOnAllConnectionsAsync(
-            ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
-        var afterRelease = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
-        return ReferenceEquals(current, afterRelease) ? current : null;
+        Task release;
+        try
+        {
+            release = client.ExecuteOnAllConnectionsAsync(
+                ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).AsTask();
+        }
+        catch (Exception error)
+        {
+            release = Task.FromException(error);
+        }
+        return new SentinelCorrection(current, release, IsNew: true);
     }
 
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(

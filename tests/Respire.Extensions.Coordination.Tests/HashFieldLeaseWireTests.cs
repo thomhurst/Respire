@@ -444,7 +444,74 @@ public class HashFieldLeaseWireTests
 
     [Test]
     [NotInParallel]
-    public async Task UncertainCleanupRechecksSentinelWhileOldPrimaryCorrectionIsPending()
+    public async Task UncertainCleanupFollowsNewClusterOwnerWhileCurrentOwnerReleaseIsPending()
+    {
+        static bool IsEval(string command) => command.StartsWith("EVAL", StringComparison.Ordinal);
+        await using var replacementOwner = new FakeRespServer(":1
+"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0
+"u8.ToArray() : null,
+        };
+        await using var stalledOwner = new FakeRespServer(":1
+"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? "*0
+"u8.ToArray()
+                : command == "GET registry" ? "$-1
+"u8.ToArray()
+                : null,
+            SuppressReply = IsEval,
+        };
+        var slot = ClusterHash.GetSlot("registry");
+        await using var oldOwner = new FakeRespServer(":1
+"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? "*0
+"u8.ToArray()
+                : command.StartsWith("GET registry", StringComparison.Ordinal)
+                    || command.StartsWith("EVAL ", StringComparison.Ordinal)
+                    ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{stalledOwner.Port}
+")
+                    : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", oldOwner.Port)],
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
+        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        await client.GetStringAsync("registry");
+        oldOwner.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
+
+        var cleanup = new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
+            "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!stalledOwner.ReceivedCommands.Any(IsEval))
+            await Task.Delay(5, timeout.Token);
+
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(slot, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacementOwner.Port)));
+        while (!replacementOwner.ReceivedCommands.Any(IsEval))
+            await Task.Delay(5, timeout.Token);
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(replacementOwner.ReceivedCommands.Any(IsEval)).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UncertainCleanupRechecksSentinelWhileOldPrimaryCorrectionIsPending(bool promotedReleaseStalls)
     {
         await using var oldPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
         {
@@ -476,7 +543,8 @@ public class HashFieldLeaseWireTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             SentinelPrimaryName = "mymaster",
-            CommandTimeout = TimeSpan.FromSeconds(2),
+            // A stalled release to one promoted primary must not hide a later promotion.
+            CommandTimeout = promotedReleaseStalls ? null : TimeSpan.FromSeconds(2),
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
 
@@ -484,6 +552,8 @@ public class HashFieldLeaseWireTests
             RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
         using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
         oldPrimary.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
+        if (promotedReleaseStalls)
+            promotedPrimary.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
 
         var cleanup = new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
             "registry", "worker", RespireLock.NewToken(), client, execution.ConnectionIdentity).AsTask();
