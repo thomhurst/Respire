@@ -114,15 +114,20 @@ internal static class RespireTelemetry
         {
             FailoverSwitches.Add(1,
                 new KeyValuePair<string, object?>("respire.failover.switch.reason", reason),
-                new KeyValuePair<string, object?>("respire.failover.endpoint.previous", previous?.ToString()),
-                new KeyValuePair<string, object?>("respire.failover.endpoint.current", current?.ToString()));
+                new KeyValuePair<string, object?>("respire.failover.endpoint.previous", previous?.ToString() ?? "none"),
+                new KeyValuePair<string, object?>("respire.failover.endpoint.current", current?.ToString() ?? "none"));
         }
         catch { /* Metrics listeners must not change health decisions. */ }
     }
 
-    internal static void RecordFailoverMonitorError()
+    internal static void RecordFailoverMonitorError(string source, Exception error)
     {
-        try { FailoverMonitorErrors.Add(1); }
+        try
+        {
+            FailoverMonitorErrors.Add(1,
+                new KeyValuePair<string, object?>("respire.failover.error.source", source),
+                new KeyValuePair<string, object?>("error.type", error.GetType().FullName));
+        }
         catch { /* Metrics listeners must not stop health monitoring. */ }
     }
 

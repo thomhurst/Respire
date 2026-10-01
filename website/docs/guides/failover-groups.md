@@ -55,13 +55,28 @@ await group.ActiveClient.Strings.SetAsync("service:health", "ready");
 ```
 
 Subscribe to `EndpointSwitched` for application-level resubscription or diagnostics. The
-`Reason` value is one of the `RespireFailoverSwitchReasons` constants. Handlers run synchronously
-on the health monitor, so keep them short. A slow handler delays the next probe round, and a
-handler must never block synchronously on `DisposeAsync`. A client
+`Reason` value is one of the `RespireFailoverSwitchReasons` constants. `FirstHealthy` marks the
+initial selection; `RecoveredFromNoHealthyEndpoint` marks a later recovery after every endpoint
+was unhealthy. Handlers run synchronously on the health monitor, so keep them short. A slow
+handler delays the next probe round, and a handler must never wait for `DisposeAsync`, either
+synchronously or with `await`, because disposal waits for the monitor that runs the handler. A client
 reference obtained before a switch stays attached to its original deployment. The group keeps
 all candidate clients alive until disposal, so in-flight calls are not interrupted or replayed.
 Pub/sub subscriptions also stay on their original deployment and must be recreated after a
 switch.
+
+## Metrics
+
+The group records these instruments on the `Respire` meter:
+
+| Instrument | Tags | Meaning |
+| --- | --- | --- |
+| `respire.failover.probes` | `server.address`, `server.port`, `respire.failover.probe.result` | Health probes by result (`success` or `failure`). |
+| `respire.failover.probe.duration` | Same as above | Probe duration in seconds. |
+| `respire.failover.endpoint.switches` | `respire.failover.switch.reason`, `respire.failover.endpoint.previous`, `respire.failover.endpoint.current` | Selected endpoint changes. The reason is a `RespireFailoverSwitchReasons` value; a missing endpoint is reported as `none`. |
+| `respire.failover.monitor.errors` | `respire.failover.error.source`, `error.type` | Unexpected monitor failures (`monitor`) and exceptions thrown by `EndpointSwitched` handlers (`handler`). The monitor continues after either. |
+
+## Consistency
 
 Failover does not replicate data between deployments or fence writes. An operation can reach one
 deployment while another application instance writes to a different deployment during failure

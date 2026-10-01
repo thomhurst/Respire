@@ -218,7 +218,7 @@ public class FailoverGroupTests
         await Assert.That(reasons.ToArray()).IsEquivalentTo(new[]
         {
             RespireFailoverSwitchReasons.NoHealthyEndpoint,
-            RespireFailoverSwitchReasons.FirstHealthy,
+            RespireFailoverSwitchReasons.RecoveredFromNoHealthyEndpoint,
         });
     }
 
@@ -299,6 +299,36 @@ public class FailoverGroupTests
         // Handlers run after the selection is published, so wait for the event rather than the endpoint.
         await WaitUntilAsync(() => reasons.Count >= 2);
 
+        await Assert.That(reasons.ToArray()).IsEquivalentTo(new[]
+        {
+            RespireFailoverSwitchReasons.ActiveEndpointUnhealthy,
+            RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered,
+        });
+    }
+
+    [Test]
+    public async Task ThrowingSwitchHandlerDoesNotStopOtherHandlersOrMonitoring()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryFailed = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryFailed) != 0
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
+                : null;
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)], FastOptions());
+        var reasons = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        group.EndpointSwitched += _ => throw new InvalidOperationException("handler failure");
+        group.EndpointSwitched += change => reasons.Enqueue(change.Reason);
+
+        Volatile.Write(ref primaryFailed, 1);
+        await WaitUntilAsync(() => reasons.Count >= 1);
+        Volatile.Write(ref primaryFailed, 0);
+        await WaitUntilAsync(() => reasons.Count >= 2);
+
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(primary));
         await Assert.That(reasons.ToArray()).IsEquivalentTo(new[]
         {
             RespireFailoverSwitchReasons.ActiveEndpointUnhealthy,

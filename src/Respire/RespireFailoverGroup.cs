@@ -59,6 +59,9 @@ public static class RespireFailoverSwitchReasons
     /// <summary>The group selected its first healthy endpoint.</summary>
     public const string FirstHealthy = "first-healthy";
 
+    /// <summary>An endpoint became healthy after the group had no healthy endpoint.</summary>
+    public const string RecoveredFromNoHealthyEndpoint = "recovered-from-no-healthy-endpoint";
+
     /// <summary>The active endpoint became unhealthy and another healthy endpoint was selected.</summary>
     public const string ActiveEndpointUnhealthy = "active-endpoint-unhealthy";
 
@@ -106,6 +109,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private Task? _monitor;
     private Task? _disposal;
     private CandidateState? _active;
+    private bool _hasSelected;
     private volatile bool _disposed;
 
     private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock)
@@ -118,7 +122,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     /// <summary>Raised when health policy changes the selected endpoint.</summary>
     /// <remarks>
     /// Handlers run synchronously on the health monitor, so a slow handler delays the next probe round.
-    /// Keep handlers short, and never block synchronously on <see cref="DisposeAsync"/> from a handler.
+    /// Keep handlers short, and never wait for <see cref="DisposeAsync"/> from a handler, synchronously or
+    /// asynchronously: disposal waits for the monitor, which is running the handler. Handler exceptions are
+    /// ignored and counted by <c>respire.failover.monitor.errors</c> with <c>respire.failover.error.source</c> = <c>handler</c>.
     /// </remarks>
     public event Action<RespireFailoverSwitch>? EndpointSwitched;
 
@@ -271,9 +277,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 {
                     throw;
                 }
-                catch
+                catch (Exception error)
                 {
-                    RespireTelemetry.RecordFailoverMonitorError();
+                    RespireTelemetry.RecordFailoverMonitorError("monitor", error);
                 }
             }
         }
@@ -333,7 +339,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             if (active is null)
             {
                 selected = best;
-                reason = best is null ? null : RespireFailoverSwitchReasons.FirstHealthy;
+                reason = best is null ? null
+                    : _hasSelected ? RespireFailoverSwitchReasons.RecoveredFromNoHealthyEndpoint
+                    : RespireFailoverSwitchReasons.FirstHealthy;
             }
             else if (!active.IsHealthy)
             {
@@ -361,6 +369,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
             if (!ReferenceEquals(selected, active))
             {
+                _hasSelected |= selected is not null;
                 Volatile.Write(ref _active, selected);
                 change = new RespireFailoverSwitch(
                     active?.Endpoint,
@@ -383,14 +392,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 foreach (Action<RespireFailoverSwitch> handler in handlers.GetInvocationList())
                 {
                     try { handler(switched); }
-                    catch { RespireTelemetry.RecordFailoverMonitorError(); }
+                    catch (Exception error) { RespireTelemetry.RecordFailoverMonitorError("handler", error); }
                 }
             }
         }
     }
-
-    internal static bool HasElapsed(TimeProvider clock, long started, long now, TimeSpan duration)
-        => clock.GetElapsedTime(started, now) >= duration;
 
     /// <summary>Stops health probes and disposes every candidate client.</summary>
     /// <remarks>Concurrent and repeated calls all complete when the first disposal finishes.</remarks>
@@ -476,6 +482,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 return _healthySince is { } healthySince && HasElapsed(clock, healthySince, now, gracePeriod);
             }
         }
+
+        private static bool HasElapsed(TimeProvider clock, long started, long now, TimeSpan duration)
+            => clock.GetElapsedTime(started, now) >= duration;
 
         public RespireFailoverEndpointStatus Snapshot()
         {
