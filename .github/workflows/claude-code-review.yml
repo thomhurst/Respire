@@ -110,6 +110,10 @@ jobs:
               * Better abstractions or simplifications
             - Skip minor style/formatting issues unless they impact readability significantly.
             - Always explain WHY the suggested approach is better, not just WHAT to change.
+            - End the review with exactly one verdict line on its own:
+              `<!-- REVIEW_VERDICT: CLEAR -->` only when nothing needs action (no bugs,
+              no suggestions, and every earlier finding is addressed), otherwise
+              `<!-- REVIEW_VERDICT: BLOCKING -->`. The merge gate reads this marker.
 
             Use the code review skill to run this review: /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}
           claude_args: |
