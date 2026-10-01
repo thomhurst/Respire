@@ -216,6 +216,34 @@ public class ClusterNodeIdentityTests
     public async Task QueueOverflowDropsOldestAndCountsTheDrops()
     {
         using var logger = new WarningCaptureLogger();
+        var overflowCallerThread = Environment.CurrentManagedThreadId;
+        var metricCallbackThread = 0;
+        var metricReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == RespireTelemetry.SourceName
+                    && instrument.Name == "respire.cluster.slot_migrations.skipped")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            var isSource = false;
+            var isQueueDrop = false;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.address" && Equals(tag.Value, "source")) isSource = true;
+                if (tag.Key == "reason" && Equals(tag.Value, "queue_full")) isQueueDrop = true;
+            }
+            if (isSource && isQueueDrop)
+            {
+                Interlocked.Exchange(ref metricCallbackThread, Environment.CurrentManagedThreadId);
+                metricReported.TrySetResult();
+            }
+        });
+        listener.Start();
         var options = Options(6379) with { LoggerFactory = logger };
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
@@ -243,6 +271,9 @@ public class ClusterNodeIdentityTests
             source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
                 [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
         await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(2);
+        await metricReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => logger.WarningCount == 1);
+        await Assert.That(metricCallbackThread).IsNotEqualTo(overflowCallerThread);
         await Assert.That(logger.WarningCount).IsEqualTo(1);
         await Assert.That(logger.LastWarning).Contains("Cluster SMIGRATED queue is full");
         release.TrySetResult();
@@ -628,7 +659,7 @@ public class ClusterNodeIdentityTests
         source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0")]));
         await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        // The overflow drop runs the counter on this (receive-loop) thread; it must not throw.
+        // Overflow diagnostics run off this receive-loop callback; a throwing listener must not escape.
         for (var slot = 1; slot <= 130; slot++)
             source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
                 [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));

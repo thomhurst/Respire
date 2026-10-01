@@ -58,6 +58,8 @@ internal sealed partial class ClusterRouter
 
     // A migration that just moved Slots (sorted ascending) to Target.
     private readonly record struct AppliedSmigratedMove(RespireConnectionMultiplexer Target, int[] Slots);
+    private readonly record struct SmigratedDropWorkItem(
+        ClusterRouter Router, QueuedSmigratedNotification Notification);
 
     private readonly Channel<QueuedSmigratedNotification> _smigratedNotifications;
     private readonly Dictionary<RespireConnectionMultiplexer, MaintenanceNotificationHandler> _nodeMaintenanceHandlers = [];
@@ -96,12 +98,18 @@ internal sealed partial class ClusterRouter
             AllowSynchronousContinuations = false,
         }, OnSmigratedNotificationDropped);
 
-    // Runs on the receive loop that overflowed the queue: count it and warn at a bounded rate.
-    // A throwing metric listener or logger must not escape: the receive loop would treat it as
-    // a connection fault and abort a healthy connection.
+    // Runs on the receive loop that overflowed the queue. Only update the local count there;
+    // metric and logger callbacks can re-enter client disposal and must run off the receive loop.
     private void OnSmigratedNotificationDropped(QueuedSmigratedNotification dropped)
     {
         Interlocked.Increment(ref _smigratedNotificationsDropped);
+        ThreadPool.UnsafeQueueUserWorkItem(
+            static work => work.Router.ReportSmigratedNotificationDrop(work.Notification),
+            new SmigratedDropWorkItem(this, dropped), preferLocal: false);
+    }
+
+    private void ReportSmigratedNotificationDrop(QueuedSmigratedNotification dropped)
+    {
         RecordSmigratedSkipped("queue_full", dropped.Sender);
         if (_logger is null) return;
         var now = Environment.TickCount64;
