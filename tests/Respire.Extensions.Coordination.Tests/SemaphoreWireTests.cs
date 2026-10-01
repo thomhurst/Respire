@@ -157,13 +157,17 @@ public class SemaphoreWireTests
     [NotInParallel]
     public async Task CancellationWhileWaitingForRenewalGateLeavesPermitUsable()
     {
+        var evalCount = 0;
         await using var server = new FakeRespServer(
             ClientIdReply,
             ClientKillReply,
             ":1\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 300);
+            ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var permit = (await new RespireSemaphore(client, "{renew}:gate-cancel", capacity: 1)
             .TryAcquireAsync(TimeSpan.FromSeconds(30))).Permit;
@@ -174,12 +178,18 @@ public class SemaphoreWireTests
             while (EvalCommands(server).Length < 2) await Task.Delay(10, started.Token);
         }
 
-        using var waitingCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.That(async () => await permit.ResetExpiryAsync(TimeSpan.FromSeconds(90), waitingCancellation.Token))
-            .Throws<OperationCanceledException>();
+        using var waitingCancellation = new CancellationTokenSource();
+        var waitingRenewal = permit.ResetExpiryAsync(TimeSpan.FromSeconds(90), waitingCancellation.Token).AsTask();
+        await Assert.That(waitingRenewal.IsCompleted).IsFalse();
+        waitingCancellation.Cancel();
+        await Assert.That(async () => await waitingRenewal).Throws<OperationCanceledException>();
         await Assert.That(permit.IsReleased).IsFalse();
         await Assert.That(permit.RemainingEstimate.GetValueOrDefault()).IsGreaterThan(TimeSpan.Zero);
 
+        var renewalIndex = server.ReceivedCommands.Select((command, index) => (command, index))
+            .Where(static item => item.command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            .Skip(1).First().index;
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds[renewalIndex]);
         await Assert.That(await firstRenewal).IsTrue();
         await Assert.That(permit.IsReleased).IsFalse();
         await Assert.That(await permit.VerifyStillHeldAsync()).IsTrue();

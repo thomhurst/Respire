@@ -457,6 +457,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private Lease _lease;
     // PermitState flags. Flags are only ever set or cleared through Set and Clear.
     private int _state;
+    private int _disposeRetryRunning;
+    private int _disposeRetryRestartRequested;
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
@@ -647,7 +649,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 // script that failed after its ZADD (for example an ACL rejecting PERSIST) may have
                 // changed the permit's lifetime. Disposal cleanup must not stop at the old expiry.
                 Set(PermitState.RenewalFailed);
-                await TryReleaseAndMarkAsync().ConfigureAwait(false);
+                var failedRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
+                if (failedRenewalCleanupOutcome == SemaphoreCleanupAttempt.Failed
+                    && Has(PermitState.DisposeReleaseScheduled))
+                    ScheduleDisposeReleaseRetry();
                 throw;
             }
 
@@ -674,7 +679,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             if (stillValid && !Has(PermitState.DisposeReleaseScheduled)) return true;
 
             // The renewal was confirmed after its expiry elapsed locally, or disposal started meanwhile.
-            await TryReleaseAndMarkAsync().ConfigureAwait(false);
+            var lateRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
+            if (lateRenewalCleanupOutcome == SemaphoreCleanupAttempt.Failed
+                && Has(PermitState.DisposeReleaseScheduled))
+                ScheduleDisposeReleaseRetry();
             return false;
         }
         finally
@@ -690,7 +698,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// </param>
     /// <returns>
     /// True when this call removed the permit from Redis. False on repeated calls, when the permit
-    /// already expired, or when a failed renewal or a verification that found it gone marked it lost.
+    /// already expired, or when a verification found it gone. After a failed renewal, this can still
+    /// return true if this call removes the permit during cleanup.
     /// </returns>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
@@ -740,10 +749,28 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     private void ScheduleDisposeReleaseRetry()
     {
-        if (Set(PermitState.DisposeReleaseScheduled))
-            _ = RespireSemaphore.RetryCleanupAsync(
+        Set(PermitState.DisposeReleaseScheduled);
+        if (!NeedsDisposeCleanup()) return;
+        if (Interlocked.CompareExchange(ref _disposeRetryRunning, 1, 0) == 0)
+            _ = RunDisposeReleaseRetryAsync();
+        else
+            Interlocked.Exchange(ref _disposeRetryRestartRequested, 1);
+    }
+
+    private async Task RunDisposeReleaseRetryAsync()
+    {
+        try
+        {
+            await RespireSemaphore.RetryCleanupAsync(
                 Stopwatch.GetTimestamp(), TryReleaseAndMarkAsync, NeedsDisposeCleanup,
-                RespireSemaphore.ReportAbandoned(_client, "release"));
+                RespireSemaphore.ReportAbandoned(_client, "release")).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _disposeRetryRunning, 0);
+            if (Interlocked.Exchange(ref _disposeRetryRestartRequested, 0) != 0 && NeedsDisposeCleanup())
+                ScheduleDisposeReleaseRetry();
+        }
     }
 
     // Disposal cleanup continues while Redis may still hold the permit: it has no expiry, a renewal
@@ -752,10 +779,14 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     // stuck behind an unanswered reply cannot block it. The owner-checked release is idempotent,
     // and a renewal that lands afterwards finds no member and cannot recreate the permit.
     private bool NeedsDisposeCleanup()
-        => !Has(PermitState.Released)
-            && (Volatile.Read(ref _lease).ExpiryTicks == 0
-                || Has(PermitState.OutcomeUncertain)
-                || RemainingEstimate != TimeSpan.Zero);
+    {
+        if (Has(PermitState.Released)) return false;
+        var lease = Volatile.Read(ref _lease);
+        return lease.ExpiryTicks == 0
+            || Has(PermitState.OutcomeUncertain)
+            || lease.ValidUntil == long.MaxValue
+            || Stopwatch.GetTimestamp() < lease.ValidUntil;
+    }
 
     private async ValueTask<bool> ReleaseUnderGateAsync(bool cleanupOnFailure, CancellationToken cancellationToken)
     {
