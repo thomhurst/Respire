@@ -603,6 +603,43 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    public async Task ConcurrentReadOnlyRecoveriesDiscoverEachCallersSlot()
+    {
+        await using var sourceServer = new FakeRespServer(ReadOnlyReply);
+        await using var firstReplacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var secondReplacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(TopologyRanges(sourceServer.Port, sourceServer.Port));
+        await using var client = await ConnectAsync(seed.Port);
+        await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+        var firstRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        seed.SuppressReply = command =>
+        {
+            if (command == "CLUSTER SLOTS")
+            {
+                if (seed.CommandsSeen == 2) firstRefresh.TrySetResult();
+                if (seed.CommandsSeen == 3) secondRefresh.TrySetResult();
+                return true;
+            }
+            return false;
+        };
+
+        var rejection = new RespireServerException("READONLY demoted");
+        var router = client.Core.Cluster!;
+        var first = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 100, discovery: null).AsTask();
+        await firstRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 200, discovery: null).AsTask();
+        await seed.SendRawAsync(TopologyRanges(firstReplacement.Port, sourceServer.Port));
+        await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await seed.SendRawAsync(TopologyRanges(firstReplacement.Port, secondReplacement.Port));
+
+        var recovered = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(recovered.Select(static connection => connection.Port)).IsEquivalentTo(
+            [firstReplacement.Port, secondReplacement.Port]);
+        await Assert.That(seed.CommandsSeen).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task NoRedirect_PreservesReadOnlyWithoutRefresh()
     {
         await using var replica = new FakeRespServer(ReadOnlyReply);
@@ -688,6 +725,11 @@ public class ClusterReadOnlyTests
 
     private static byte[] FullTopology(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+
+    private static byte[] TopologyRanges(int lowerPort, int upperPort)
+        => Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:199\r\n*2\r\n$9\r\n127.0.0.1\r\n:{lowerPort}\r\n" +
+            $"*3\r\n:200\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{upperPort}\r\n");
     [Test]
     public async Task UnavailableEndpointRemainsReservedAndRefusesConnections()
     {

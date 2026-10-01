@@ -32,9 +32,10 @@ internal sealed partial class ClusterRouter
     private int _topologyRefreshStarted;
     private int _topologyRefreshForce;
 
-    private sealed class ReadOnlyRefreshFlight(CancellationTokenSource cancellation)
+    private sealed class ReadOnlyRefreshFlight(CancellationTokenSource cancellation, int slot)
     {
         internal CancellationTokenSource Cancellation { get; } = cancellation;
+        internal int Slot { get; } = slot;
         internal int Waiters;
         internal bool Completed;
         internal IDisposable? DiscoveryLease;
@@ -42,7 +43,7 @@ internal sealed partial class ClusterRouter
 
     private Task<bool> RefreshReadOnlySharedAsync(
         RespireServerException rejection, RespireConnection source, int slot, CancellationToken waiterToken,
-        DiscoveryRound? discovery)
+        DiscoveryRound? discovery, out bool joinedOtherSlot)
     {
         TaskCompletionSource<bool>? start = null;
         Task<bool> task;
@@ -52,7 +53,8 @@ internal sealed partial class ClusterRouter
             if (_sharedRefreshTask is null)
             {
                 var discoveryLease = discovery?.Hold();
-                var newFlight = new ReadOnlyRefreshFlight(CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token))
+                var newFlight = new ReadOnlyRefreshFlight(
+                    CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token), slot)
                 {
                     DiscoveryLease = discoveryLease,
                 };
@@ -62,6 +64,7 @@ internal sealed partial class ClusterRouter
             }
             task = _sharedRefreshTask;
             flight = _readOnlyRefreshFlight;
+            joinedOtherSlot = flight is not null && flight.Slot != slot && !ReferenceEquals(start?.Task, task);
             if (flight is not null) flight.Waiters++;
         }
         if (start is not null)

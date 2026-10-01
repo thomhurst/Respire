@@ -697,10 +697,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         try
         {
-            var sharedRefreshSucceeded = await RefreshReadOnlySharedAsync(
-                error, source, slot, cancellationToken, discovery).ConfigureAwait(false);
+            var sharedRefresh = RefreshReadOnlySharedAsync(
+                error, source, slot, cancellationToken, discovery, out var joinedOtherSlot);
+            var sharedRefreshSucceeded = await sharedRefresh.ConfigureAwait(false);
             var owner = Volatile.Read(ref _slots[slot]);
-            if ((owner is null || IsSameEndpoint(owner, source)) && sharedRefreshSucceeded)
+            if ((owner is null || IsSameEndpoint(owner, source)) && sharedRefreshSucceeded && joinedOtherSlot)
             {
                 // A concurrent READONLY on another slot can join this flight. The flight
                 // repairs its initiating slot; discover this slot before failing its write.
