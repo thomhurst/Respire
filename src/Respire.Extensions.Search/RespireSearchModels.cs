@@ -3,10 +3,24 @@ using Respire.Protocol;
 namespace Respire.Extensions.Search;
 
 /// <summary>Search index source type.</summary>
-public enum RespireSearchSource { Hash, Json }
+public enum RespireSearchSource
+{
+    /// <summary>Index Redis hashes.</summary>
+    Hash,
+    /// <summary>Index RedisJSON documents.</summary>
+    Json,
+}
 
 /// <summary>Search field type.</summary>
-public enum RespireSearchFieldType { Text, Tag, Numeric, Geo, GeoShape, Vector }
+public enum RespireSearchFieldType
+{
+    /// <summary>Full text field.</summary> Text,
+    /// <summary>Exact tag field.</summary> Tag,
+    /// <summary>Numeric field.</summary> Numeric,
+    /// <summary>Geospatial field.</summary> Geo,
+    /// <summary>Geoshape field.</summary> GeoShape,
+    /// <summary>Vector field.</summary> Vector,
+}
 
 /// <summary>Index schema field definition.</summary>
 public sealed record RespireSearchField(string Identifier, RespireSearchFieldType Type, string? Alias = null, bool Sortable = false, bool NoIndex = false, IReadOnlyList<string>? Options = null)
@@ -31,14 +45,16 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
             RespireSearchFieldType.Vector => "VECTOR",
             _ => throw new ArgumentOutOfRangeException(nameof(Type)),
         });
-        if (Sortable) args.Add("SORTABLE");
-        if (NoIndex) args.Add("NOINDEX");
         if (Type == RespireSearchFieldType.Vector && (Options is null || Options.Count == 0))
             throw new ArgumentException("Vector fields require algorithm and vector options.", nameof(Options));
+        if (Type == RespireSearchFieldType.Vector && (Sortable || NoIndex))
+            throw new ArgumentException("Vector fields cannot be SORTABLE or NOINDEX.");
         if (Options is not null)
         {
             foreach (var option in Options) args.Add(option);
         }
+        if (Sortable) args.Add("SORTABLE");
+        if (NoIndex) args.Add("NOINDEX");
         return [.. args];
     }
 }
@@ -131,10 +147,13 @@ public static class RespireSearchQueryBuilder
     private static string EscapeTag(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return value.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("{", "\\{", StringComparison.Ordinal)
-            .Replace("}", "\\}", StringComparison.Ordinal)
-            .Replace("|", "\\|", StringComparison.Ordinal);
+        var escaped = new System.Text.StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (!char.IsLetterOrDigit(character) && character != '_') escaped.Append('\\');
+            escaped.Append(character);
+        }
+        return escaped.ToString();
     }
 
     private static string Require(string value) { ArgumentException.ThrowIfNullOrWhiteSpace(value); return value; }
@@ -257,7 +276,17 @@ public sealed record RespireSearchAggregateOptions
                 if (!string.IsNullOrWhiteSpace(reducer.Alias)) { args.Add("AS"); args.Add(reducer.Alias); }
             }
         }
-        if (SortBy.Count > 0) { args.Add("SORTBY"); args.Add(SortBy.Count); foreach (var value in SortBy) args.Add(value); }
+        if (SortBy.Count > 0)
+        {
+            var sortTokens = new List<string>();
+            foreach (var expression in SortBy)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+                sortTokens.AddRange(expression.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            }
+            args.Add("SORTBY"); args.Add(sortTokens.Count);
+            foreach (var token in sortTokens) args.Add(token);
+        }
         if (Limit is { } limit) { if (limit.Offset < 0 || limit.Count < 0) throw new ArgumentOutOfRangeException(nameof(Limit)); args.Add("LIMIT"); args.Add(limit.Offset); args.Add(limit.Count); }
         if (Dialect is { } dialect) { if (dialect <= 0) throw new ArgumentOutOfRangeException(nameof(Dialect)); args.Add("DIALECT"); args.Add(dialect); }
         return [.. args];
@@ -309,7 +338,11 @@ public sealed record RespireHybridSearchQuery(string TextExpression, string Vect
 }
 
 /// <summary>Sort direction for search results.</summary>
-public enum RespireSearchSortDirection { Ascending, Descending }
+public enum RespireSearchSortDirection
+{
+    /// <summary>Sort low to high.</summary> Ascending,
+    /// <summary>Sort high to low.</summary> Descending,
+}
 
 /// <summary>Search response document with identifier and projected fields.</summary>
 public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string, string?> Fields, double? Score = null);
@@ -317,9 +350,9 @@ public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string
 /// <summary>Parsed FT.SEARCH or FT.HYBRID results.</summary>
 public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearchDocument> Documents, IReadOnlyList<string> Warnings)
 {
-    internal static RespireSearchResult Parse(RespireResult result, bool noContent = false, bool withScores = false)
+    internal static RespireSearchResult Parse(RespireResult result, bool noContent = false, bool withScores = false, bool hybrid = false)
     {
-        if (result.Type == RespDataType.Map) return ParseResp3(result);
+        if (result.Type == RespDataType.Map) return ParseResp3(result, hybrid);
         if (result.Count == 0) return new(0, [], []);
         var total = result[0].AsInteger();
         var docs = new List<RespireSearchDocument>();
@@ -336,7 +369,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         return new(total, docs, []);
     }
 
-    private static RespireSearchResult ParseResp3(RespireResult result)
+    private static RespireSearchResult ParseResp3(RespireResult result, bool hybrid)
     {
         long total = 0;
         var docs = new List<RespireSearchDocument>();
@@ -357,6 +390,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                         if (itemKey is "id" or "key" or "keyid") id = itemValue.AsString();
                         else if (itemKey == "extra_attributes") fields = ParseFields(itemValue);
                         else if (itemKey == "score") score = itemValue.AsDouble();
+                        else if (hybrid) fields[itemKey] = itemValue.IsNull ? null : itemValue.AsString();
                     }
                     if (id is not null) docs.Add(new(id, fields, score));
                 }
@@ -380,6 +414,22 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
     internal static RespireSearchAggregateResult Parse(RespireResult result)
     {
         if (result.Count == 0) return new(0, []);
+        if (result.Type == RespDataType.Map)
+        {
+            long total = 0;
+            var mappedRows = new List<IReadOnlyDictionary<string, string?>>();
+            for (var i = 0; i + 1 < result.Count; i += 2)
+            {
+                var key = result[i].AsString();
+                var value = result[i + 1];
+                if (key == "total_results") total = value.AsInteger();
+                else if (key == "results")
+                {
+                    for (var j = 0; j < value.Count; j++) mappedRows.Add(ParseFields(value[j]));
+                }
+            }
+            return new(total, mappedRows);
+        }
         var rows = new List<IReadOnlyDictionary<string, string?>>();
         for (var i = 1; i < result.Count; i++)
         {
@@ -389,5 +439,13 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
             rows.Add(row);
         }
         return new(result[0].AsInteger(), rows);
+    }
+
+    private static IReadOnlyDictionary<string, string?> ParseFields(RespireResult values)
+    {
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+        for (var i = 0; i + 1 < values.Count; i += 2)
+            fields[values[i].AsString()] = values[i + 1].IsNull ? null : values[i + 1].AsString();
+        return fields;
     }
 }

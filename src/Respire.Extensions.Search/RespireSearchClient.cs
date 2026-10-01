@@ -78,7 +78,7 @@ public sealed class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(query);
         using var result = await _commands.HybridAsync(RequireName(index), query.ToArguments(), cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.Parse(result);
+        return RespireSearchResult.Parse(result, hybrid: true);
     }
 
     /// <summary>Returns the server query plan text.</summary>
@@ -88,7 +88,10 @@ public sealed class RespireSearchClient
         using var result = explainCli
             ? await _commands.ExplainCliAsync(RequireName(index), expression, [], cancellationToken).ConfigureAwait(false)
             : await _commands.ExplainAsync(RequireName(index), expression, [], cancellationToken).ConfigureAwait(false);
-        return result.AsString();
+        if (!explainCli) return result.AsString();
+        var lines = new string[result.Count];
+        for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();
+        return string.Join(Environment.NewLine, lines);
     }
 
     private static string RequireName(string name)
