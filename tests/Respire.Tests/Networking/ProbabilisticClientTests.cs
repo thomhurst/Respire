@@ -208,6 +208,32 @@ public class ProbabilisticClientTests
             new() { Compression = 1001 })).Throws<ArgumentOutOfRangeException>();
     }
 
+    [Test]
+    public async Task BloomExpansionRejectsValuesAboveRedisMaximum()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.BloomReserveAsync("filter", 0.01, 100,
+            new() { Expansion = 32769 })).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.BloomInsertAsync("filter", ["item"],
+            new() { Expansion = 32769 })).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task CuckooReserveRejectsValuesAboveRedisMaxima()
+    {
+        await using var client = RespireClient.Create(DisconnectedOptions());
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await Assert.That(async () => await probabilistic.CuckooReserveAsync("filter", 100,
+            new() { BucketSize = 256 })).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.CuckooReserveAsync("filter", 100,
+            new() { MaximumIterations = 65536 })).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.CuckooReserveAsync("filter", 100,
+            new() { Expansion = 32769 })).Throws<ArgumentOutOfRangeException>();
+    }
+
     private static FakeRespServer Server()
         => new(1, FakeRespServer.PongReply)
         {

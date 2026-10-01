@@ -2,6 +2,14 @@ namespace Respire.Extensions.Probabilistic;
 
 internal static class ProbabilisticValueValidation
 {
+    internal const int MaximumExpansion = 32768;
+
+    internal static void ThrowIfOutOfRange(int value, string parameterName, int maximum)
+    {
+        if (value <= 0 || value > maximum)
+            throw new ArgumentOutOfRangeException(parameterName);
+    }
+
     internal static void ThrowIfNull(RespireValue value, string parameterName)
     {
         if (value.IsNull)
@@ -22,7 +30,12 @@ public sealed record RespireBloomReserveOptions
         if (NonScaling && Expansion is not null)
             throw new ArgumentException("Expansion and NonScaling are mutually exclusive.");
         var args = new List<RespireValue>();
-        if (Expansion is { } expansion) { if (expansion <= 0) throw new ArgumentOutOfRangeException(nameof(Expansion)); args.Add("EXPANSION"); args.Add(expansion); }
+        if (Expansion is { } expansion)
+        {
+            ProbabilisticValueValidation.ThrowIfOutOfRange(expansion, nameof(Expansion), ProbabilisticValueValidation.MaximumExpansion);
+            args.Add("EXPANSION");
+            args.Add(expansion);
+        }
         if (NonScaling) args.Add("NONSCALING");
         return [.. args];
     }
@@ -52,7 +65,12 @@ public sealed record RespireBloomInsertOptions
         var args = new List<RespireValue>();
         if (Capacity is { } capacity) { if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(Capacity)); args.Add("CAPACITY"); args.Add(capacity); }
         if (ErrorRate is { } errorRate) { if (!double.IsFinite(errorRate) || errorRate <= 0 || errorRate >= 1) throw new ArgumentOutOfRangeException(nameof(ErrorRate)); args.Add("ERROR"); args.Add(errorRate); }
-        if (Expansion is { } expansion) { if (expansion <= 0) throw new ArgumentOutOfRangeException(nameof(Expansion)); args.Add("EXPANSION"); args.Add(expansion); }
+        if (Expansion is { } expansion)
+        {
+            ProbabilisticValueValidation.ThrowIfOutOfRange(expansion, nameof(Expansion), ProbabilisticValueValidation.MaximumExpansion);
+            args.Add("EXPANSION");
+            args.Add(expansion);
+        }
         if (NonScaling) args.Add("NONSCALING");
         if (NoCreate) args.Add("NOCREATE");
         args.Add("ITEMS"); args.AddRange(items);
@@ -73,15 +91,15 @@ public sealed record RespireCuckooReserveOptions
     internal RespireValue[] ToArguments()
     {
         var args = new List<RespireValue>();
-        Add("BUCKETSIZE", BucketSize);
-        Add("MAXITERATIONS", MaximumIterations);
-        Add("EXPANSION", Expansion);
+        Add("BUCKETSIZE", BucketSize, 255);
+        Add("MAXITERATIONS", MaximumIterations, 65535);
+        Add("EXPANSION", Expansion, ProbabilisticValueValidation.MaximumExpansion);
         return [.. args];
 
-        void Add(string name, int? value)
+        void Add(string name, int? value, int maximum)
         {
             if (value is not { } selected) return;
-            if (selected <= 0) throw new ArgumentOutOfRangeException(name);
+            ProbabilisticValueValidation.ThrowIfOutOfRange(selected, name, maximum);
             args.Add(name); args.Add(selected);
         }
     }
