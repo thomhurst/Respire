@@ -20,6 +20,7 @@ public class RespireCommandGeneratorTests
     [Arguments("ValueTask<int> @event(ReadOnlyMemory<byte> bytes, decimal amount = 3.25M);")]
     [Arguments("Task<bool[]> Get(Guid id, DateTimeOffset time, TimeSpan duration, char letter = '\\n');")]
     [Arguments("ValueTask<double?[]> Get(double[] values, bool enabled = true);")]
+    [Arguments("ValueTask<string> ToString();")]
     public async Task SupportedDeclarationsCompile(string method)
     {
         var (generated, diagnostics) = Generate(Preamble + "namespace Demo { [RespireCommands] public interface IModule { [RespireCommand(\"my.module\")] " + method + " } }");

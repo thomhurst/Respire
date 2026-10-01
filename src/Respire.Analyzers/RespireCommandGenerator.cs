@@ -187,11 +187,14 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var expanded = arguments.Where(parameter => parameter.Type is IArrayTypeSymbol && !IsBytes(parameter.Type)).ToArray();
         var cancellation = method.Parameters.FirstOrDefault(parameter => IsCancellation(parameter.Type));
         var flags = method.Parameters.FirstOrDefault(parameter => IsFlags(parameter.Type));
+        var hidesObjectMember = method.Name is "Equals" or "Finalize" or "GetHashCode" or "GetType"
+            or "MemberwiseClone" or "ReferenceEquals" or "ToString";
 
         source.Append("    private static readonly global::Respire.RespireCommand ").Append(commandField)
             .Append(" = global::Respire.RespireCommand.Create(").Append(SymbolDisplay.FormatLiteral(command, true)).Append(");\n")
             .Append("    /// <inheritdoc/>\n")
-            .Append("    public ").Append(direct ? "" : "async ").Append(TypeName(task)).Append(' ')
+            .Append("    public ").Append(hidesObjectMember ? "new " : "")
+            .Append(direct ? "" : "async ").Append(TypeName(task)).Append(' ')
             .Append(Escape(method.Name)).Append('(');
         source.Append(string.Join(", ", method.Parameters.Select(ParameterDeclaration)));
         source.Append(")\n    {\n");
