@@ -488,6 +488,31 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task RegularSubscriptionsProceedWhileShardedRecoveryIsBlocked(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient();
+        var hub = new SubscriptionHub(client.Core);
+        await using var sharded = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
+        try
+        {
+            await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
+            await WaitAsync(() => cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar") == 2);
+
+            await using var regular = await hub.SubscribeAsync(SubscriptionKind.Channel, ["ordinary"], new(), CancellationToken.None)
+                .AsTask().WaitAsync(Deadline);
+            await Assert.That(cluster.First.ReceivedCommands.Contains("SUBSCRIBE ordinary")).IsTrue();
+        }
+        finally
+        {
+            await hub.DisposeAsync().AsTask().WaitAsync(Deadline);
+        }
+    }
+
+    [Test]
     public async Task HubDisposalDetachesTopologyHandlerWhileRouterRemainsAlive()
     {
         await using var cluster = new Cluster(2);

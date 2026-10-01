@@ -7,7 +7,7 @@ internal sealed partial class SubscriptionHub
 {
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     // All configured recovery state is guarded by _reconnectStateGate. _gate protects
-    // route membership separately; recovery holds _controlGate while restoring routes.
+    // route membership separately; ordinary recovery holds _controlGate while restoring routes.
     // When nested, acquire _reconnectStateGate before _gate, never the reverse.
     private RespireConnection? _configuredConnection;
     private TaskCompletionSource? _configuredRecoveryDrained;

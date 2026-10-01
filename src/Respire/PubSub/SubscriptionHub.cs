@@ -21,6 +21,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     private readonly ByteRouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
     private readonly SemaphoreSlim _controlGate = new(1, 1);
+    private readonly SemaphoreSlim _shardedControlGate = new(1, 1);
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
     private long _reconnectGeneration;
@@ -143,14 +144,15 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     public async ValueTask RemoveAsync(RespireSubscription subscription)
     {
         subscription.Buffer.Complete();
-        await _controlGate.WaitAsync().ConfigureAwait(false);
+        var controlGate = IsClusterSharded(subscription.Kind) ? _shardedControlGate : _controlGate;
+        await controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
         }
         finally
         {
-            _controlGate.Release();
+            controlGate.Release();
         }
     }
 
@@ -725,9 +727,18 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         // connection that appears until the gate is ours.
         List<Task> interruptedDisposals = [];
         InterruptPublishedConnection(interruptedDisposals);
-        while (!await _controlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false))
+        var controlGateAcquired = false;
+        var shardedControlGateAcquired = false;
+        while (!controlGateAcquired || !shardedControlGateAcquired)
         {
-            InterruptPublishedConnection(interruptedDisposals);
+            if (!controlGateAcquired)
+                controlGateAcquired = await _controlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
+            if (!shardedControlGateAcquired)
+                shardedControlGateAcquired = await _shardedControlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
+            if (!controlGateAcquired || !shardedControlGateAcquired)
+            {
+                InterruptPublishedConnection(interruptedDisposals);
+            }
         }
 
         try
@@ -772,6 +783,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         finally
         {
             _controlGate.Release();
+            _shardedControlGate.Release();
         }
 
         Task? recovery;

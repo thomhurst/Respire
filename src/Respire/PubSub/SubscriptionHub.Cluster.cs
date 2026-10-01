@@ -7,7 +7,8 @@ namespace Respire.Internal;
 
 internal sealed partial class SubscriptionHub
 {
-    // Recovery/control paths acquire _controlGate, then _reconnectStateGate, then _gate.
+    // Ordinary recovery acquires _controlGate; sharded recovery acquires _shardedControlGate.
+    // Both then acquire _reconnectStateGate, then _gate.
     // Receive/topology callbacks hold only _gate and schedule work without acquiring the others.
     // Identity is the router's generation, not merely host:port. A replacement at the same
     // endpoint must not inherit the retired primary's subscription transport.
@@ -48,10 +49,10 @@ internal sealed partial class SubscriptionHub
     private async ValueTask ActivateShardedCoreAsync(RespireSubscription subscription, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        // Recovery can hold the control gate across an unanswered SSUBSCRIBE. New callers
+        // Recovery can hold the sharded control gate across an unanswered SSUBSCRIBE. New callers
         // must fail before joining that queue; recheck after acquisition for a racing episode.
         lock (_gate) ThrowIfShardedAdmissionUnavailableLocked();
-        await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _shardedControlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             lock (_gate)
@@ -99,7 +100,7 @@ internal sealed partial class SubscriptionHub
             foreach (var primary in uncertain) await ClosePrimaryAsync(primary).ConfigureAwait(false);
             throw;
         }
-        finally { _controlGate.Release(); }
+        finally { _shardedControlGate.Release(); }
     }
 
     private void ThrowIfShardedAdmissionUnavailableLocked()
@@ -111,7 +112,7 @@ internal sealed partial class SubscriptionHub
             throw new RespireConnectionException("Sharded pub/sub recovery is in progress. Subscribe again after recovery completes.");
     }
 
-    // Caller owns _controlGate. Connections and acknowledgement state are published under
+    // Caller owns _shardedControlGate. Connections and acknowledgement state are published under
     // _gate so pushes, topology callbacks and disposal can safely race control commands.
     private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering)
     {
@@ -478,7 +479,7 @@ internal sealed partial class SubscriptionHub
                 foreach (var endpoint in affected)
                     QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay, clusterSharded: true);
                 await Task.Delay(delay, _recoveryClock, cancellationToken).ConfigureAwait(false);
-                await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await _shardedControlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
                     RespireChannel[] names;
@@ -532,7 +533,7 @@ internal sealed partial class SubscriptionHub
                         catch { /* A user logger must not terminate the detached recovery loop. */ }
                     }
                 }
-                finally { _controlGate.Release(); }
+                finally { _shardedControlGate.Release(); }
                 // Successful passes can be superseded by topology callbacks even when
                 // every await completes synchronously. Yield after releasing the control
                 // gate before starting another immediate pass; retain the retry policy.
