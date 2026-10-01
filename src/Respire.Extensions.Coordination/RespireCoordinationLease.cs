@@ -150,6 +150,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private async Task<LockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
+        var retryAfterGateRelease = false;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
@@ -181,7 +182,9 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                     if (entered) Volatile.Write(ref _state, StateUncertain);
                 }
                 _releaseTask = null;
+                retryAfterGateRelease = !entered && _state == StateReleasing;
             }
+            if (retryAfterGateRelease) ResumeQueuedRelease();
             throw;
         }
         finally

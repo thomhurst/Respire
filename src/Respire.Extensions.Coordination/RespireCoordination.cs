@@ -439,7 +439,7 @@ public sealed class RespireCoordination
             try
             {
                 originalCorrection = client.ExecuteOnAllConnectionsAsync(
-                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity);
+                    ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
             }
             catch (Exception error)
             {
