@@ -845,7 +845,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         try
         {
             await EnsureRouteNodeConnectedAsync(candidate, attemptToken, discovery).ConfigureAwait(false);
-            if (!await TryLoadSlotsAsync(candidate, attemptToken).ConfigureAwait(false))
+            if (!(await TryLoadSlotsAsync(candidate, attemptToken).ConfigureAwait(false)).Loaded)
                 discovery?.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide topology."));
             return true;
         }
@@ -1065,7 +1065,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             await EnsureConnectedAsync(cancellationToken, discovery).ConfigureAwait(false);
             var fallbackSeed = Volatile.Read(ref _seed)!;
             await EnsureRouteNodeConnectedAsync(fallbackSeed, cancellationToken, discovery).ConfigureAwait(false);
-            var loaded = await TryLoadSlotsAsync(fallbackSeed, cancellationToken).ConfigureAwait(false);
+            var loaded = (await TryLoadSlotsAsync(fallbackSeed, cancellationToken).ConfigureAwait(false)).Loaded;
             if (!loaded || !HasCompleteTopology())
             {
                 throw new RespireConnectionException(
@@ -1151,7 +1151,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         try
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
-            var complete = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false) && HasCompleteTopology();
+            var complete = (await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false)).Loaded && HasCompleteTopology();
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
             return complete;
         }
@@ -1736,7 +1736,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     // keepUncoveredOwners is true for background refresh: slots the reply does not cover keep their
     // current owner instead of being cleared (see ApplyTopologyCore).
-    private async ValueTask<bool> TryLoadSlotsAsync(
+    private async ValueTask<(bool Loaded, bool CoversAllSlots)> TryLoadSlotsAsync(
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken,
         bool keepUncoveredOwners = false)
@@ -1759,7 +1759,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 if (reply.IsError)
                 {
-                    return false;
+                    return (false, false);
                 }
 
                 var ranges = reply.AsArray();
@@ -1817,11 +1817,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
                 if (topology.Count == 0)
                 {
-                    return false;
+                    return (false, false);
                 }
 
+                var coversAllSlots = CoversAllSlots(topology);
                 ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners);
-                return true;
+                return (true, coversAllSlots);
             }
             finally
             {
@@ -1833,8 +1834,21 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // ACLs and Redis-compatible servers may hide CLUSTER SLOTS. MOVED/ASK learning
             // remains sufficient for correctness, so topology discovery is opportunistic for
             // connection/server failures. Incompatible configuration must still propagate.
-            return false;
+            return (false, false);
         }
+    }
+
+    private static bool CoversAllSlots(List<ClusterTopologyRange> topology)
+    {
+        var ranges = topology.OrderBy(static range => range.Start).ToArray();
+        var nextUncoveredSlot = 0;
+        foreach (var range in ranges)
+        {
+            if (range.Start > nextUncoveredSlot) return false;
+            if (range.End >= nextUncoveredSlot) nextUncoveredSlot = range.End + 1;
+            if (nextUncoveredSlot >= ClusterHash.SlotCount) return true;
+        }
+        return false;
     }
 
     public async ValueTask DisposeAsync()

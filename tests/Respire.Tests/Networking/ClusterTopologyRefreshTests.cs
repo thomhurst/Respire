@@ -735,12 +735,12 @@ public class ClusterTopologyRefreshTests
         await Assert.That(replica.Endpoint).IsEqualTo(originalReplica.Endpoint);
         await Assert.That(replica.NodeId).IsEqualTo(originalReplica.NodeId);
         await Assert.That(replica.Aliases).IsEquivalentTo(originalReplica.Aliases);
-        // The partial reply answered the refresh: no fallback candidate was needed.
-        await Assert.That(replicaServer.ReceivedCommands).DoesNotContain("CLUSTER SLOTS");
+        // The refresh continues through known replicas even after the seed returns a partial map.
+        await Assert.That(replicaServer.ReceivedCommands).Contains("CLUSTER SLOTS");
     }
 
     [Test]
-    public async Task PartialRefreshUpdatesCoveredSlotsAndKeepsTheRest()
+    public async Task PartialRefreshContinuesToCandidateWithCompleteTopology()
     {
         await using var second = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
@@ -753,7 +753,10 @@ public class ClusterTopologyRefreshTests
             : Interlocked.Increment(ref slotsCalls) == 1
                 ? TwoMasterTopology(seed.Port, 8191, 8192, second.Port)
                 : partial;
-        second.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? partial : null;
+        second.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n")
+            : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -762,17 +765,20 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        var seedEndpoint = new RespireEndpoint("127.0.0.1", seed.Port);
         var secondEndpoint = new RespireEndpoint("127.0.0.1", second.Port);
 
         router.SignalTopologyRefresh(force: true);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (router.GetSlotOwnerEndpoint(0) != secondEndpoint) await Task.Delay(10, timeout.Token);
+        while (!second.ReceivedCommands.Contains("CLUSTER SLOTS")
+            || router.GetSlotOwnerEndpoint(101) != secondEndpoint)
+            await Task.Delay(10, timeout.Token);
 
+        await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(secondEndpoint);
         await Assert.That(router.GetSlotOwnerEndpoint(100)).IsEqualTo(secondEndpoint);
-        await Assert.That(router.GetSlotOwnerEndpoint(101)).IsEqualTo(seedEndpoint);
-        await Assert.That(router.GetSlotOwnerEndpoint(8191)).IsEqualTo(seedEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(101)).IsEqualTo(secondEndpoint);
+        await Assert.That(router.GetSlotOwnerEndpoint(8191)).IsEqualTo(secondEndpoint);
         await Assert.That(router.GetSlotOwnerEndpoint(8192)).IsEqualTo(secondEndpoint);
+        await Assert.That(second.ReceivedCommands).Contains("CLUSTER SLOTS");
         await Assert.That(router.GetSlotOwnerEndpoint(16383)).IsEqualTo(secondEndpoint);
     }
 

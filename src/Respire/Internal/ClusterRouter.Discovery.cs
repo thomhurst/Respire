@@ -264,6 +264,7 @@ internal sealed partial class ClusterRouter
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
             var clock = _topologyRefreshClock;
             var refreshStarted = clock.GetTimestamp();
+            var appliedPartialTopology = false;
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline, clock);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
@@ -288,14 +289,16 @@ internal sealed partial class ClusterRouter
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null).ConfigureAwait(false);
-                    // A partial map updates the slots it covers and keeps the current owners of the
-                    // rest, so a lost shard or an in-progress change cannot make every refresh fail.
-                    if (await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true).ConfigureAwait(false))
+                    // Apply partial maps while continuing through known candidates. A later node
+                    // may provide the complete map needed to replace stale routes during failover.
+                    var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true)
+                        .ConfigureAwait(false);
+                    if (load.Loaded)
                     {
-                        // SetSeed publishes the node's current active identity; a replica or a
-                        // departed address falls back to a published master.
                         SetSeed(node);
-                        return true;
+                        if (load.CoversAllSlots) return true;
+                        appliedPartialTopology = true;
+                        continue;
                     }
                     round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a topology."));
                 }
@@ -308,6 +311,7 @@ internal sealed partial class ClusterRouter
                     round?.FailedNode(node, error);
                 }
             }
+            if (appliedPartialTopology) return true;
             scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no topology."));
             _logger.TryLog(LogLevel.Debug, null,
                 "Redis Cluster topology refresh failed for all {CandidateCount} candidates", candidates.Count);
