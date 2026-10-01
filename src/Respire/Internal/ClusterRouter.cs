@@ -678,6 +678,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (error.Code == RespireErrorCodes.Moved
             && TryParseRedirect(error, source.Host, out var slot, out var endpoint))
         {
+            SignalTopologyRefresh(delayMilliseconds: MovedTopologyRefreshDelayMilliseconds);
             SetSlotOwner(slot, GetOrCreateNode(endpoint, redirect: true));
         }
         else if (error.Code == RespireErrorCodes.ReadOnly && watchedSlot is { } value)
@@ -702,7 +703,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Every command that joins another READONLY flight still needs its own
             // retry round seeded with this rejected source before fallback recovery.
             if (discovery is { HasPendingFailure: false })
-                discovery.Failed(new RespireEndpoint(source.Host, source.Port), error, source.Multiplexer);
+                discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
             var sharedRefresh = RefreshReadOnlySharedAsync(
                 error, source, slot, cancellationToken, discovery,
                 out var joinedDifferentRecovery, out var joinedTopologyRefresh);

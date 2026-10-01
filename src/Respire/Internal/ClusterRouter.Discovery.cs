@@ -154,7 +154,7 @@ internal sealed partial class ClusterRouter
         try
         {
             if (scope.Round is { HasPendingFailure: false } round)
-                round.Failed(new RespireEndpoint(source.Host, source.Port), rejection, source.Multiplexer);
+                round.Failed(new RespireEndpoint(source.Host, source.Port), rejection);
             _ = await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
                 .ConfigureAwait(false);
             return true;
@@ -350,11 +350,12 @@ internal sealed partial class ClusterRouter
 
     private async Task<bool> WaitForTopologyRefreshDelayAsync(int delayMilliseconds)
     {
+        var debounce = TimeSpan.FromMilliseconds(delayMilliseconds);
         var started = TopologyRefreshClock.GetTimestamp();
         while (delayMilliseconds > 0)
         {
             var elapsed = TopologyRefreshClock.GetElapsedTime(started);
-            var remaining = TimeSpan.FromMilliseconds(delayMilliseconds) - elapsed;
+            var remaining = debounce - elapsed;
             if (remaining <= TimeSpan.Zero) return false;
             using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
             var delay = Task.Delay(remaining, TopologyRefreshClock, waitCancellation.Token);
@@ -372,8 +373,6 @@ internal sealed partial class ClusterRouter
             if (nextDelay == 0) return false;
             // Repeated MOVED signals keep the first debounce deadline; they cannot
             // postpone discovery indefinitely while routing remains stale.
-            delayMilliseconds = Math.Max(0, delayMilliseconds - (int)Math.Min(int.MaxValue,
-                Math.Ceiling(elapsed.TotalMilliseconds)));
         }
         return false;
     }

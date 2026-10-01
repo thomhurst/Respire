@@ -166,11 +166,38 @@ public class ClusterTopologyRefreshTests
 
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
-        clock.Advance(TimeSpan.FromSeconds(4));
+        clock.Advance(TimeSpan.FromSeconds(1));
         router.SignalTopologyRefresh(delayMilliseconds: 5000);
-        var finalDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(1)).WaitAsync(TimeSpan.FromSeconds(2));
+        _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(4)).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        router.SignalTopologyRefresh(delayMilliseconds: 5000);
+        var finalDelay = await clock.NextTimerAsync(TimeSpan.FromSeconds(3)).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(3));
         finalDelay.Fire();
         await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task WatchedMovedRouteSchedulesTopologyRefresh()
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
+        });
+        var clock = new ManualTopologyRefreshClock();
+        var router = client.Core.Cluster!;
+        router.TopologyRefreshClock = clock;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        var connection = await router.GetConnectionAsync(0, CancellationToken.None, discovery: null);
+
+        router.LearnWatchedRoute(new RespireServerException(
+            $"MOVED 0 127.0.0.1:{seed.Port}"), connection, watchedSlot: null);
+
+        _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -411,24 +438,20 @@ public class ClusterTopologyRefreshTests
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            var timer = new ManualTimer(this, callback, state, dueTime);
+            var timer = new ManualTimer(callback, state, dueTime);
             Created.TrySetResult(timer);
             _timers.Writer.TryWrite(timer);
             return timer;
         }
     }
 
-    private sealed class ManualTimer(ManualTopologyRefreshClock clock, TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private int _fired;
         internal TimeSpan DueTime { get; } = dueTime;
         internal void Fire()
         {
-            if (Interlocked.Exchange(ref _fired, 1) == 0)
-            {
-                clock.Advance(DueTime);
-                callback(state);
-            }
+            if (Interlocked.Exchange(ref _fired, 1) == 0) callback(state);
         }
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _fired) == 0;
         public void Dispose() => Interlocked.Exchange(ref _fired, 1);
