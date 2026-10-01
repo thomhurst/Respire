@@ -174,8 +174,8 @@ public class GeneratedCommandTests
         await Assert.That(async () => await module.Authenticate("secret")).Throws<NotSupportedException>();
         await Assert.That(async () => { using var result = await module.Raw((RespireCommandFlags)128); }).Throws<ArgumentOutOfRangeException>();
         var prefixed = new IGeneratedModuleImplementation(client.WithKeyPrefix("prefix:"));
-        await Assert.That(async () => await prefixed.JsonGet("key")).Throws<NotSupportedException>();
-        await Assert.That(server.ReceivedCommands).IsEmpty();
+        await prefixed.JsonGet("key");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.GET prefix:key $");
     }
 
     [Test]
