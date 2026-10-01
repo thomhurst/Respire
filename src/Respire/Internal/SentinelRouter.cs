@@ -246,10 +246,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate)
         {
             current = Current;
-            if (current is null || current.IsRetired) return;
-            if (string.Equals(current.Endpoint.Host, newPrimary.Host, StringComparison.OrdinalIgnoreCase)
+            if (current is { IsRetired: false }
+                && string.Equals(current.Endpoint.Host, newPrimary.Host, StringComparison.OrdinalIgnoreCase)
                 && current.Endpoint.Port == newPrimary.Port) return;
-            Invalidate(current);
+            if (current is { IsRetired: false }) Invalidate(current);
         }
         _ = RefreshAfterSentinelEventAsync(sentinel, newPrimary);
     }
