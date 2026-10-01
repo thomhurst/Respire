@@ -6,7 +6,7 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>An independently operated Redis deployment in a failover group.</summary>
-/// <param name="Options">Connection settings for one standalone or Redis Cluster deployment.</param>
+/// <param name="Options">Connection settings for one standalone, Sentinel, or Redis Cluster deployment.</param>
 /// <param name="Priority">Lower values have higher priority. Equal priorities keep input order.</param>
 public sealed record RespireFailoverCandidate(RespireOptions Options, int Priority = 0);
 
@@ -93,7 +93,7 @@ public sealed record RespireFailoverSwitch(
     DateTimeOffset ChangedAt);
 
 /// <summary>
-/// Maintains independent standalone or Redis Cluster clients and selects a healthy deployment for new work.
+/// Maintains independent standalone, Sentinel, or Redis Cluster clients and selects a healthy deployment for new work.
 /// Read <see cref="ActiveClient"/> for each new operation so callers observe endpoint changes.
 /// </summary>
 /// <remarks>
@@ -195,6 +195,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
         var states = new List<CandidateState>();
         var endpoints = new List<RespireEndpoint>();
+        var sentinelDeployments = new List<(string PrimaryName, RespireEndpoint[] Endpoints)>();
         ILogger? logger = null;
         RespireFailoverGroup? group = null;
         try
@@ -209,20 +210,37 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     throw new RespireConfigurationException(
                         "Failover group candidates require an unlimited reconnect policy (MaxAttempts = null) so a candidate can recover after an outage.");
                 }
-                // Options validation already requires one standalone endpoint or one or more Cluster seeds.
-                if (!string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
+                var isSentinel = !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName);
+                if (snapshot.Endpoints.Count == 0 || (isSentinel && snapshot.UseCluster)
+                    || (!isSentinel && !snapshot.UseCluster && snapshot.Endpoints.Count != 1))
                 {
-                    throw new RespireConfigurationException("Sentinel failover candidates are not supported yet.");
+                    throw new RespireConfigurationException(
+                        "Failover candidates require one endpoint in standalone mode, one or more Sentinel endpoints with a primary service name, or one or more Cluster seeds.");
                 }
-                foreach (var endpoint in snapshot.Endpoints)
+                var fallbackEndpoint = snapshot.Endpoints[0];
+                if (isSentinel)
                 {
-                    if (endpoints.Any(existing => existing.Port == endpoint.Port
-                        && string.Equals(existing.Host, endpoint.Host, StringComparison.OrdinalIgnoreCase)))
+                    var sameSentinelDeployment = sentinelDeployments.Any(existing =>
+                        string.Equals(existing.PrimaryName, snapshot.SentinelPrimaryName, StringComparison.Ordinal)
+                        && existing.Endpoints.Length == snapshot.Endpoints.Count
+                        && existing.Endpoints.All(endpoint => snapshot.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint)))
+                        && snapshot.Endpoints.All(endpoint => existing.Endpoints.Any(candidateEndpoint => SameEndpoint(endpoint, candidateEndpoint))));
+                    if (sameSentinelDeployment)
+                        throw new RespireConfigurationException("Failover candidates cannot list the same Sentinel deployment more than once.");
+                    sentinelDeployments.Add((snapshot.SentinelPrimaryName!, snapshot.Endpoints.ToArray()));
+                }
+                else
+                {
+                    // Standalone candidates use one endpoint; Cluster candidates use every seed.
+                    foreach (var endpoint in snapshot.Endpoints)
                     {
-                        throw new RespireConfigurationException(
-                            $"Failover candidates must use distinct configured endpoints; '{endpoint}' is listed more than once.");
+                        if (endpoints.Any(existing => SameEndpoint(existing, endpoint)))
+                        {
+                            throw new RespireConfigurationException(
+                                $"Failover candidates must use distinct configured endpoints; '{endpoint}' is listed more than once.");
+                        }
+                        endpoints.Add(endpoint);
                     }
-                    endpoints.Add(endpoint);
                 }
                 if (snapshot.ClientSideCache is not null)
                 {
@@ -232,7 +250,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
                 logger ??= snapshot.CreateLogger("Respire.FailoverGroup");
                 var client = RespireClient.Create(snapshot);
-                states.Add(new CandidateState(client, candidate.Priority, states.Count));
+                states.Add(new CandidateState(client, candidate.Priority, states.Count, fallbackEndpoint));
             }
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
@@ -271,6 +289,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             throw;
         }
     }
+
+    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
+        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
     private async Task MonitorAsync()
     {
@@ -490,7 +511,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         if (failures is { Count: > 1 }) throw new AggregateException(failures);
     }
 
-    private sealed class CandidateState(RespireClient client, int priority, int order)
+    private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint)
     {
         private readonly object _gate = new();
         private bool _isHealthy;
@@ -504,7 +525,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         public RespireClient Client { get; } = client;
         public int Priority { get; } = priority;
         public int Order { get; } = order;
-        public RespireEndpoint Endpoint => Client.Endpoint;
+        public RespireEndpoint Endpoint
+        {
+            get
+            {
+                try { return Client.Endpoint; }
+                catch (InvalidOperationException) when (Client.Core.Sentinel is not null) { return fallbackEndpoint; }
+            }
+        }
         public bool IsHealthy { get { lock (_gate) return _isHealthy; } }
         public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
         public DateTimeOffset? CircuitOpenUntil { get { lock (_gate) return _circuitOpenUntil; } }

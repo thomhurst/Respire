@@ -2,9 +2,7 @@
 title: Failover groups
 ---
 
-`RespireFailoverGroup` monitors independent standalone Redis or Redis Cluster deployments and selects a healthy
-deployment for new operations. Lower candidate priorities win. The group uses bounded health
-probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
+<<`RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy`r`ndeployment for new operations. Lower candidate priorities win. The group uses bounded health`r`nprobes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
 Health means a standalone endpoint answers `PING` within `ProbeTimeout`. Cluster candidates use the
@@ -82,7 +80,12 @@ reach. The candidate's user needs permission to run `CLUSTER INFO`.
 
 Each Cluster candidate must be a separate Cluster. Duplicate detection compares only the configured
 seed endpoints. Two candidates whose seeds differ but whose nodes belong to the same Cluster pass
-validation and provide no deployment redundancy.
+validation and provide no deployment redundancy.`r`n`r`nFor a Sentinel deployment, set `SentinelPrimaryName` to that deployment's service name and
+provide one or more Sentinel endpoints. Configure data and Sentinel credentials and TLS settings
+on each candidate's `RespireOptions`. The client validates the discovered primary with `ROLE`
+before routing `PING` or application commands. Endpoint status and switch events report the
+validated current primary; when discovery has not produced a primary, failed-probe telemetry uses
+the first configured Sentinel endpoint.
 
 ```csharp
 new RespireFailoverCandidate(new RespireOptions
@@ -90,6 +93,14 @@ new RespireFailoverCandidate(new RespireOptions
     UseCluster = true,
     Endpoints = ["cluster-a-seed-1:6379", "cluster-a-seed-2:6379"],
 }, Priority: 0);
+    Endpoints = ["sentinel-a:26379", "sentinel-b:26379"],
+    SentinelPrimaryName = "orders-primary",
+    Username = "app",
+    Password = "<data-password>",
+    SentinelUsername = "sentinel-app",
+    SentinelPassword = "<sentinel-password>",
+    UseTls = true,
+}, Priority: 0)
 ```
 
 ## Metrics
@@ -117,5 +128,3 @@ detection or failback. Design consistency, replication, and write ownership at t
 layer. Client-side caching is rejected because cache entries cannot be shared safely across
 independent deployments.
 
-Sentinel candidates are not accepted yet. They are tracked as a follow-up under
-[multi-endpoint failover](https://github.com/thomhurst/Respire/issues/426).
