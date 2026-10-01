@@ -14,12 +14,18 @@ public enum RespireSearchSource
 /// <summary>Search field type.</summary>
 public enum RespireSearchFieldType
 {
-    /// <summary>Full text field.</summary> Text,
-    /// <summary>Exact tag field.</summary> Tag,
-    /// <summary>Numeric field.</summary> Numeric,
-    /// <summary>Geospatial field.</summary> Geo,
-    /// <summary>Geoshape field.</summary> GeoShape,
-    /// <summary>Vector field.</summary> Vector,
+    /// <summary>Full text field.</summary>
+    Text,
+    /// <summary>Exact tag field.</summary>
+    Tag,
+    /// <summary>Numeric field.</summary>
+    Numeric,
+    /// <summary>Geospatial field.</summary>
+    Geo,
+    /// <summary>Geoshape field.</summary>
+    GeoShape,
+    /// <summary>Vector field.</summary>
+    Vector,
 }
 
 /// <summary>Index schema field definition.</summary>
@@ -340,8 +346,10 @@ public sealed record RespireHybridSearchQuery(string TextExpression, string Vect
 /// <summary>Sort direction for search results.</summary>
 public enum RespireSearchSortDirection
 {
-    /// <summary>Sort low to high.</summary> Ascending,
-    /// <summary>Sort high to low.</summary> Descending,
+    /// <summary>Sort low to high.</summary>
+    Ascending,
+    /// <summary>Sort high to low.</summary>
+    Descending,
 }
 
 /// <summary>Search response document with identifier and projected fields.</summary>
