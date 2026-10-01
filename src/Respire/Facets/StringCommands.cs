@@ -301,7 +301,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         // A short seekable source is rejected before any bytes are written, so it cannot close
         // the shared connection mid-frame.
-        if (value.CanSeek && value.Length - value.Position < length)
+        if (value.CanSeek && Math.Max(0, value.Length - value.Position) < length)
             throw new ArgumentOutOfRangeException(nameof(length), length,
                 "The declared length exceeds the bytes remaining in the seekable source stream.");
         SetCommand.ValidateExpiry(expiry);

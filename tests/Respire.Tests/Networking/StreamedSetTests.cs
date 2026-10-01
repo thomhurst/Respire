@@ -101,6 +101,26 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task EmptySetCanUseSeekableStreamPositionedAtEnd()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        var source = new MemoryStream([1, 2]) { Position = 2 };
+
+        await Assert.That(await client.Strings.SetAsync("empty", source, 0)).IsTrue();
+
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
+        await Assert.That(server.ValueLength).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task StreamingGateWaitTimeoutReportsCommandTimeout()
     {
         await using var server = new CountingSetServer();
@@ -195,7 +215,7 @@ public sealed class StreamedSetTests
         source.ContinueReading.TrySetResult();
         await Assert.That(await set).IsTrue();
         await ping;
-        await Assert.That(server.Commands.TakeLast(2).ToArray()).IsEquivalentTo(new[] { "SET", "PING" });
+        await Assert.That(server.Commands.TakeLast(2).SequenceEqual(new[] { "SET", "PING" })).IsTrue();
     }
 
     [Test]
@@ -216,6 +236,33 @@ public sealed class StreamedSetTests
         await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
         await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task NonCooperativeSourceReadCannotOutlastCommandTimeout()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(250),
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        var source = new NonCooperativeStream();
+        var set = client.Strings.SetAsync("stalled-source", source, 1).AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(3)))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
+        await Assert.That(client.IsConnected).IsFalse();
+
+        // Finish the ignored read so its rented buffer can be returned safely.
+        source.CompleteRead.TrySetResult();
+        await source.ReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]
@@ -338,6 +385,33 @@ public sealed class StreamedSetTests
             "data"u8.CopyTo(buffer.Span);
             _read = 4;
             return 4;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class NonCooperativeStream : Stream
+    {
+        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource CompleteRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReadCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => 1;
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await CompleteRead.Task; // Deliberately ignores cancellationToken.
+            buffer.Span[0] = 42;
+            ReadCompleted.TrySetResult();
+            return 1;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

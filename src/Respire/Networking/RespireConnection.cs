@@ -1328,9 +1328,22 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var remaining = command.Length;
                 while (remaining > 0)
                 {
-                    var read = await command.Source.ReadAsync(
-                        chunk.AsMemory(0, (int)Math.Min(chunk.Length, remaining)), effectiveCancellation)
-                        .ConfigureAwait(false);
+                    var pendingRead = command.Source.ReadAsync(
+                        chunk.AsMemory(0, (int)Math.Min(chunk.Length, remaining)), effectiveCancellation).AsTask();
+                    int read;
+                    try
+                    {
+                        // WaitAsync also bounds streams that ignore their cancellation token.
+                        read = await pendingRead.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // The read may still be writing into this pooled memory. Retain it until
+                        // that read finishes instead of returning it while the source can mutate it.
+                        _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
+                        chunk = null!;
+                        throw;
+                    }
                     if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
                     remaining -= read;
                     write = AppendStreamingBytes(chunk.AsSpan(0, read));
@@ -1340,7 +1353,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(chunk);
+                if (chunk is not null) ArrayPool<byte>.Shared.Return(chunk);
             }
 
             AppendStreamingEnd(command, source, requestWriteStart, out queuedBatchStarted);
@@ -1387,6 +1400,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return await source.Task.ConfigureAwait(false);
+    }
+
+    private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
+    {
+        try { _ = await pendingRead.ConfigureAwait(false); }
+        catch { /* The original streamed SET owns its failure. */ }
+        finally { ArrayPool<byte>.Shared.Return(chunk); }
     }
 
     private bool IsClosedCancellation(
