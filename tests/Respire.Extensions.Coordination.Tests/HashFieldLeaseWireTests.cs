@@ -447,34 +447,26 @@ public class HashFieldLeaseWireTests
     public async Task UncertainCleanupFollowsNewClusterOwnerWhileCurrentOwnerReleaseIsPending()
     {
         static bool IsEval(string command) => command.StartsWith("EVAL", StringComparison.Ordinal);
-        await using var replacementOwner = new FakeRespServer(":1
-"u8.ToArray())
+        await using var replacementOwner = new FakeRespServer(":1\r\n"u8.ToArray())
         {
-            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0
-"u8.ToArray() : null,
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : null,
         };
-        await using var stalledOwner = new FakeRespServer(":1
-"u8.ToArray())
+        await using var stalledOwner = new FakeRespServer(":1\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
-                ? "*0
-"u8.ToArray()
-                : command == "GET registry" ? "$-1
-"u8.ToArray()
+                ? "*0\r\n"u8.ToArray()
+                : command == "GET registry" ? "$-1\r\n"u8.ToArray()
                 : null,
             SuppressReply = IsEval,
         };
         var slot = ClusterHash.GetSlot("registry");
-        await using var oldOwner = new FakeRespServer(":1
-"u8.ToArray())
+        await using var oldOwner = new FakeRespServer(":1\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
-                ? "*0
-"u8.ToArray()
+                ? "*0\r\n"u8.ToArray()
                 : command.StartsWith("GET registry", StringComparison.Ordinal)
                     || command.StartsWith("EVAL ", StringComparison.Ordinal)
-                    ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{stalledOwner.Port}
-")
+                    ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{stalledOwner.Port}\r\n")
                     : null,
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
