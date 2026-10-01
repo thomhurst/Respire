@@ -123,7 +123,7 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task UntargetedSwitchKeepsTheEarlierTarget()
+    public async Task UntargetedSwitchKeepsTheEarlierTargetAndRequiresFreshDiscovery()
     {
         var pending = new SentinelHint("a", NewPrimary, OldPrimary);
         var later = new SentinelHint("b", OldPrimary: new RespireEndpoint("10.0.0.9", 6379));
@@ -133,6 +133,7 @@ public class SentinelNotificationTests
         await Assert.That(merged.Key).IsEqualTo("b");
         await Assert.That(merged.Target).IsEqualTo(NewPrimary);
         await Assert.That(merged.OldPrimary).IsEqualTo(later.OldPrimary);
+        await Assert.That(merged.MustRediscover).IsTrue();
     }
 
     [Test]

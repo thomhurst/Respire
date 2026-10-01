@@ -68,7 +68,8 @@ internal sealed class SentinelNotificationCoalescer
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
     {
         if (pending is not { } previous) return hint;
-        var mustRediscover = previous.MustRediscover || hint.MustRediscover;
+        var mustRediscover = previous.MustRediscover || hint.MustRediscover
+            || hint.OldPrimary is not null && hint.Target is null;
         return hint.OldPrimary is not null || previous.OldPrimary is null
             ? hint with { Target = hint.Target ?? previous.Target, MustRediscover = mustRediscover }
             : previous with { MustRediscover = mustRediscover };
