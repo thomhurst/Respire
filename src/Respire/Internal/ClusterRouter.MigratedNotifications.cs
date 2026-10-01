@@ -297,17 +297,23 @@ internal sealed partial class ClusterRouter
             if (budget < 0)
             {
                 RecordSmigratedSkipped("malformed", item.Sender, migrations.Length - i);
-                _logger?.LogDebug(
+                TryLogMalformedMigration(
                     "Rejected {Count} Cluster SMIGRATED entries from {Host}:{Port} (sequence {Sequence}): slot ranges exceed {Limit} slots in total.",
                     migrations.Length - i, item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, ClusterHash.SlotCount);
                 break;
             }
             RecordSmigratedSkipped("malformed", item.Sender);
-            _logger?.LogDebug(
+            TryLogMalformedMigration(
                 "Rejected a Cluster SMIGRATED entry from {Host}:{Port} (sequence {Sequence}): invalid slot list {Slots}.",
                 item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, migrations[i].Slots);
         }
         return parsed;
+    }
+
+    private void TryLogMalformedMigration(string message, params object?[] args)
+    {
+        try { _logger?.LogDebug(message, args); }
+        catch { /* Diagnostic providers cannot discard valid entries from this notification. */ }
     }
 
     // Caller holds _nodesGate. Moves the slots that the advertised source owns now and that no

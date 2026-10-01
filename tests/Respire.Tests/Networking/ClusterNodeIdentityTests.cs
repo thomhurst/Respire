@@ -713,9 +713,10 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
-    public async Task MalformedEntryDoesNotDiscardTheOtherEntries()
+    public async Task MalformedEntryLoggerFailureDoesNotDiscardTheOtherEntries()
     {
-        var options = Options(6379);
+        using var logger = new ThrowingDebugLogger();
+        var options = Options(6379) with { LoggerFactory = logger };
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         await using var router = new ClusterRouter(options, primary);
@@ -734,6 +735,7 @@ public class ClusterNodeIdentityTests
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
         await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(targetEndpoint.Port);
+        await Assert.That(logger.DebugCount).IsEqualTo(1);
     }
 
     [Test]
@@ -1758,6 +1760,24 @@ public class ClusterNodeIdentityTests
             if (logLevel < LogLevel.Error) return;
             Interlocked.Increment(ref _errorCount);
             throw new InvalidOperationException("logger failure");
+        }
+    }
+
+    private sealed class ThrowingDebugLogger : ILoggerFactory, ILogger
+    {
+        private int _debugCount;
+        internal int DebugCount => Volatile.Read(ref _debugCount);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel != LogLevel.Debug) return;
+            Interlocked.Increment(ref _debugCount);
+            throw new InvalidOperationException("debug logger failure");
         }
     }
 
