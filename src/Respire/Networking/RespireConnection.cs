@@ -106,6 +106,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
     internal int MultiplexerSlot { get; set; }
     internal long MovingPublicationGeneration;
+    internal long MovingSequenceGeneration;
     internal long LastQueuedMovingSequence = long.MinValue;
 
     public string Host { get; }

@@ -19,6 +19,7 @@ internal sealed partial class RespireConnection
     private int _maintenanceStatus;
     private MaintenanceNotification? _lastMovingNotification;
     private long _lastMovingPublicationGeneration = -1;
+    private long _lastMovingReceivedTimestamp;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
     internal MaintenanceNotification? LastMovingNotification => Volatile.Read(ref _lastMovingNotification);
 
@@ -93,13 +94,15 @@ internal sealed partial class RespireConnection
             state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
             Volatile.Write(ref _maintenanceState, state);
         }
-        state.Apply(notification, Environment.TickCount64);
+        var receivedTimestamp = Environment.TickCount64;
+        state.Apply(notification, receivedTimestamp);
         if (notification.Kind == "MOVING")
         {
             var publicationGeneration = Multiplexer?.GetMovingPublicationGeneration(MultiplexerSlot, this) ?? -1;
             Volatile.Write(ref _lastMovingPublicationGeneration, publicationGeneration);
+            Volatile.Write(ref _lastMovingReceivedTimestamp, receivedTimestamp);
             Volatile.Write(ref _lastMovingNotification, notification);
-            MovingNotification?.Invoke(notification, publicationGeneration);
+            MovingNotification?.Invoke(notification, publicationGeneration, receivedTimestamp);
         }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
@@ -111,7 +114,8 @@ internal sealed partial class RespireConnection
     }
 
     internal long LastMovingPublicationGeneration => Volatile.Read(ref _lastMovingPublicationGeneration);
-    internal event Action<MaintenanceNotification, long>? MovingNotification;
+    internal long LastMovingReceivedTimestamp => Volatile.Read(ref _lastMovingReceivedTimestamp);
+    internal event Action<MaintenanceNotification, long, long>? MovingNotification;
 
     private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
         long deadline = long.MaxValue)

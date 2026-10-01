@@ -361,6 +361,36 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingFromRestartedServerAtSameAddressIsHonouredDespiteLowerSequence()
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var announcingConnection = multiplexer.GetConnection();
+        var peer = (announcingConnection.NetworkPeerAddress ?? announcingConnection.Host,
+            announcingConnection.NetworkPeerPort ?? announcingConnection.Port);
+        var movingSequences = (System.Collections.IDictionary)typeof(RespireConnectionMultiplexer)
+            .GetField("_movingSequences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(multiplexer)!;
+        movingSequences[peer] = (announcingConnection.MovingSequenceGeneration, 7L);
+        var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var notification = new MaintenanceNotification("MOVING", 1, 10,
+            new RespireEndpoint("127.0.0.1", target.Port));
+
+        queueHandoff.Invoke(multiplexer,
+            [announcingConnection, notification, announcingConnection.MovingPublicationGeneration, Environment.TickCount64]);
+        await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
+
+        // A replacement socket from the restarted peer has a newer sequence generation.
+        announcingConnection.MovingSequenceGeneration++;
+        queueHandoff.Invoke(multiplexer,
+            [announcingConnection, notification, announcingConnection.MovingPublicationGeneration, Environment.TickCount64]);
+        await WaitForPort(multiplexer, target.Port);
+    }
+
+    [Test]
     public async Task MovingParsedFromOldSocketIsRejectedAfterMultiplePublications()
     {
         await using var source = Server(maxConnections: 2);
@@ -385,13 +415,43 @@ public class MaintenanceNotificationTests
         var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         queueHandoff.Invoke(multiplexer,
-            [0, announcingConnection, delayedNotification, announcingConnection.MovingPublicationGeneration]);
+            [announcingConnection, delayedNotification,
+                multiplexer.GetMovingPublicationGeneration(0, announcingConnection), Environment.TickCount64]);
         await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(secondTarget.Port);
 
         using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MovingParsedBeforePublicationIsHonouredWhenCallbackRunsAfterPublication()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var firstTarget = Server(maxConnections: 2);
+        await using var delayedTarget = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var announcingConnection = multiplexer.GetConnection();
+        var receiptGeneration = multiplexer.GetMovingPublicationGeneration(0, announcingConnection);
+        var receiptTimestamp = Environment.TickCount64;
+
+        await source.SendRawAsync(Moving(1, firstTarget.Port));
+        await WaitForPort(multiplexer, firstTarget.Port);
+
+        var delayedNotification = new MaintenanceNotification("MOVING", 2, 10,
+            new RespireEndpoint("127.0.0.1", delayedTarget.Port));
+        var queueHandoff = typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        queueHandoff.Invoke(multiplexer,
+            [announcingConnection, delayedNotification, receiptGeneration, receiptTimestamp]);
+        await WaitForPort(multiplexer, delayedTarget.Port);
+
+        using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(delayedTarget.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
     }
 
     [Test]

@@ -20,15 +20,16 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 {
     private readonly RespireConnection?[] _connections;
     private readonly long[] _movingPublicationGenerations;
+    private long _movingSequenceGeneration;
     private readonly int _connectionMask;
     private readonly int[] _reconnecting;
     private readonly int[]? _reconnectAttempts;
     private readonly RespireConnectionOptions _options;
     private ActiveEndpoint _activeEndpoint;
     private readonly object _movingGate = new();
-    // Highest MOVING sequence seen from each physical peer of a published socket. Sequence IDs
-    // belong to the announcing server; forget a peer only after no published socket reaches it.
-    private readonly Dictionary<(string Host, int Port), long> _movingSequences = new();
+    // Highest MOVING sequence seen from each peer and connection-publication generation. A
+    // replacement socket can see a restarted server whose sequence counter has reset.
+    private readonly Dictionary<(string Host, int Port), (long Generation, long Sequence)> _movingSequences = new();
     private MovingRequest? _pendingMoving;
     private MovingRequest? _activeMoving;
     private bool _movingWorker;
@@ -226,6 +227,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     {
                         connections[i].MultiplexerSlot = i;
                         connections[i].MovingPublicationGeneration = Volatile.Read(ref _movingPublicationGenerations[i]);
+                        connections[i].MovingSequenceGeneration = Volatile.Read(ref _movingSequenceGeneration);
                         connections[i].Multiplexer = this;
                         Volatile.Write(ref _connections[i], connections[i]);
                     }
@@ -837,6 +839,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     var generation = Interlocked.Increment(ref _movingPublicationGenerations[slot]);
                     replacement.MultiplexerSlot = slot;
                     replacement.MovingPublicationGeneration = generation;
+                    replacement.MovingSequenceGeneration = Interlocked.Increment(ref _movingSequenceGeneration);
                     replacement.Multiplexer = this;
                     old = Interlocked.Exchange(ref _connections[slot], replacement);
                     publishedReplacement = replacement;
@@ -906,13 +909,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private void ObserveConnectionFailure(int slot, RespireConnection connection)
     {
         // Replay a MOVING received before subscription; duplicate delivery is deduplicated.
-        connection.MovingNotification += (notification, generation) =>
-            QueueMovingHandoff(slot, connection, notification, generation);
+        connection.MovingNotification += (notification, generation, receivedTimestamp) =>
+            QueueMovingHandoff(connection, notification, generation, receivedTimestamp);
         if (connection.LastMovingNotification is { } notification)
         {
             var receivedGeneration = connection.LastMovingPublicationGeneration;
-            QueueMovingHandoff(slot, connection, notification, receivedGeneration >= 0
-                ? receivedGeneration : connection.MovingPublicationGeneration);
+            QueueMovingHandoff(connection, notification, receivedGeneration >= 0
+                ? receivedGeneration : connection.MovingPublicationGeneration,
+                connection.LastMovingReceivedTimestamp);
         }
         if (_options.EnableClientTracking)
         {
@@ -935,35 +939,37 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             ? connection.MovingPublicationGeneration
             : -1;
 
-    private void QueueMovingHandoff(int slot, RespireConnection connection, MaintenanceNotification notification,
-        long notificationGeneration)
+    private void QueueMovingHandoff(RespireConnection connection, MaintenanceNotification notification,
+        long notificationGeneration, long receivedTimestamp)
     {
         bool startWorker;
         lock (_movingGate)
         {
-            startWorker = QueueMovingHandoffUnderLock(slot, connection, notification, notificationGeneration);
+            startWorker = QueueMovingHandoffUnderLock(connection, notification, notificationGeneration,
+                receivedTimestamp);
         }
         if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
     }
 
-    private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection,
-        MaintenanceNotification notification, long notificationGeneration)
+    private bool QueueMovingHandoffUnderLock(RespireConnection connection,
+        MaintenanceNotification notification, long notificationGeneration, long receivedTimestamp)
     {
         // Eligibility is captured when the receive loop parses the push. The source may pass
         // through multiple publications before its callback acquires this gate.
         var receivedFromPublishedSocket = notificationGeneration >= 0
-            && notificationGeneration == connection.MovingPublicationGeneration
-            && notificationGeneration == Volatile.Read(ref _movingPublicationGenerations[slot])
-            && ReferenceEquals(Volatile.Read(ref _connections[slot]), connection);
+            && notificationGeneration == connection.MovingPublicationGeneration;
         var peer = (connection.NetworkPeerAddress ?? connection.Host, connection.NetworkPeerPort ?? connection.Port);
         if (!IsOperational || !receivedFromPublishedSocket
             || notification.SequenceId <= connection.LastQueuedMovingSequence
-            || _movingSequences.TryGetValue(peer, out var seen) && notification.SequenceId <= seen)
+            || _movingSequences.TryGetValue(peer, out var seen)
+                && (connection.MovingSequenceGeneration < seen.Generation
+                    || connection.MovingSequenceGeneration == seen.Generation
+                        && notification.SequenceId <= seen.Sequence))
         {
             return false;
         }
         connection.LastQueuedMovingSequence = notification.SequenceId;
-        _movingSequences[peer] = notification.SequenceId;
+        _movingSequences[peer] = (connection.MovingSequenceGeneration, notification.SequenceId);
         // Honor the advertised grace; the upper bound only keeps tick arithmetic finite.
         var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
         // The grace period starts at receipt, so slow target setup consumes drain time.
@@ -975,7 +981,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
         var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
         _pendingMoving = new MovingRequest(notification.Target ?? new RespireEndpoint(Host, Port),
-            Environment.TickCount64 + (long)grace.TotalMilliseconds, requestCancellation);
+            receivedTimestamp + (long)grace.TotalMilliseconds, requestCancellation);
         if (_movingWorker) return false;
         _movingWorker = true;
         _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1085,17 +1091,19 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                         if (Volatile.Read(ref _connections[i]) is not { } announcing
                             || announcing.LastMovingNotification is not { } pendingNotification
                             || announcing.LastMovingPublicationGeneration < 0) continue;
-                        _ = QueueMovingHandoffUnderLock(i, announcing, pendingNotification,
-                            announcing.LastMovingPublicationGeneration);
+                        _ = QueueMovingHandoffUnderLock(announcing, pendingNotification,
+                            announcing.LastMovingPublicationGeneration, announcing.LastMovingReceivedTimestamp);
                     }
                     if (!IsOperational || _pendingMoving is not null) return;
                     cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
                     Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
+                    var sequenceGeneration = Interlocked.Increment(ref _movingSequenceGeneration);
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         var generation = Interlocked.Increment(ref _movingPublicationGenerations[i]);
                         replacements[i].MultiplexerSlot = i;
                         replacements[i].MovingPublicationGeneration = generation;
+                        replacements[i].MovingSequenceGeneration = sequenceGeneration;
                         replacements[i].Multiplexer = this;
                         old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
                         // Failure history belongs to the previous endpoint's sockets.
