@@ -316,6 +316,7 @@ public class ClusterNodeIdentityTests
         var source = new RespireEndpoint("source", 7000);
         var target = new RespireEndpoint("target", 7001);
         var duplicateCount = 0L;
+        var malformedCount = 0L;
         var metricCallbackReentered = false;
         using var listener = new System.Diagnostics.Metrics.MeterListener
         {
@@ -330,13 +331,17 @@ public class ClusterNodeIdentityTests
         {
             var isTestServer = false;
             var isDuplicate = false;
+            var isMalformed = false;
             foreach (var tag in tags)
             {
                 if (tag.Key == "server.address" && Equals(tag.Value, "smigrated-metric-test"))
                     isTestServer = true;
                 if (tag.Key == "reason" && Equals(tag.Value, "duplicate"))
                     isDuplicate = true;
+                if (tag.Key == "reason" && Equals(tag.Value, "malformed"))
+                    isMalformed = true;
             }
+            if (isTestServer && isMalformed) Interlocked.Increment(ref malformedCount);
             if (isTestServer && isDuplicate)
             {
                 Interlocked.Increment(ref duplicateCount);
@@ -353,6 +358,7 @@ public class ClusterNodeIdentityTests
         router.ApplySmigratedNotification(malformed);
 
         await Assert.That(duplicateCount).IsEqualTo(1L);
+        await Assert.That(malformedCount).IsEqualTo(1L);
         await Assert.That(metricCallbackReentered).IsTrue();
     }
 

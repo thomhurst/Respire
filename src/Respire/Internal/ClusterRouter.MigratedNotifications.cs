@@ -61,8 +61,9 @@ internal sealed partial class ClusterRouter
 
     private readonly Channel<QueuedSmigratedNotification> _smigratedNotifications;
     private readonly Dictionary<RespireConnectionMultiplexer, MaintenanceNotificationHandler> _nodeMaintenanceHandlers = [];
-    // Accessed only by the worker under _nodesGate. A window disappears with its connection.
+    // Accessed under _smigratedSequenceGate. A window disappears with its connection.
     private readonly ConditionalWeakTable<object, SmigratedSequenceWindow> _smigratedSequences = new();
+    private readonly object _smigratedSequenceGate = new();
     // Accessed only under _nodesGate. Oldest first; bounded by entry count and total slots.
     private readonly List<DeferredSmigratedMigration> _deferredSmigratedMigrations = [];
     private int _deferredSmigratedSlots;
@@ -217,56 +218,45 @@ internal sealed partial class ClusterRouter
     internal void ApplySmigratedNotification(QueuedSmigratedNotification item)
     {
         if (item.Notification.Migrations is not { Length: > 0 } migrations) return;
-        var parsed = ParseMigrations(item, migrations);
-
-        List<RespireConnectionMultiplexer>? retiredNodes = null;
-        List<RetiredGeneration>? retirements = null;
-        var skippedMetrics = new List<(string Reason, long Count)>();
-        var topologyChanged = false;
-        var duplicate = false;
-        lock (_nodesGate)
-        {
-            if (Volatile.Read(ref _disposed) != 0) return;
-            // The ID is recorded before the migrations are checked, deliberately. IDs are unique
-            // per connection, so a repeat is a replay of a notification already evaluated: if
-            // its slots were fenced or owned elsewhere then, they still are. Entries waiting on
-            // an earlier migration are kept in the deferral list, not by forgetting the ID.
-            if (!_smigratedSequences.GetOrCreateValue(item.SequenceScope).TryAdd(item.Notification.SequenceId))
-            {
-                duplicate = true;
-            }
-            else
-            {
-                // A notification may list several sources, and the server does not have to send it
-                // from the source itself, so the sender is not checked against each source. Each
-                // slot moves only if its advertised source owns it now.
-                ExpireDeferredMigrationsLocked(skippedMetrics);
-                Queue<AppliedSmigratedMove>? applied = null;
-                foreach (var (migration, slots) in parsed)
-                {
-                    if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
-                            ref retiredNodes, out var waiting) is { } move)
-                    {
-                        topologyChanged = true;
-                        (applied ??= new()).Enqueue(move);
-                    }
-                    if (waiting is not null)
-                        DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
-                            SmigratedClock()), skippedMetrics);
-                }
-                if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
-
-                if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
-            }
-        }
-
-        if (duplicate)
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (!TryRecordSmigratedSequence(item))
         {
             RecordSmigratedSkipped("duplicate", item.Sender);
             _logger?.LogDebug("Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.",
                 item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
             return;
         }
+        var parsed = ParseMigrations(item, migrations);
+
+        List<RespireConnectionMultiplexer>? retiredNodes = null;
+        List<RetiredGeneration>? retirements = null;
+        var skippedMetrics = new List<(string Reason, long Count)>();
+        var topologyChanged = false;
+        lock (_nodesGate)
+        {
+            if (Volatile.Read(ref _disposed) != 0) return;
+            // A notification may list several sources, and the server does not have to send it
+            // from the source itself, so the sender is not checked against each source. Each
+            // slot moves only if its advertised source owns it now.
+            ExpireDeferredMigrationsLocked(skippedMetrics);
+            Queue<AppliedSmigratedMove>? applied = null;
+            foreach (var (migration, slots) in parsed)
+            {
+                if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
+                        ref retiredNodes, out var waiting) is { } move)
+                {
+                    topologyChanged = true;
+                    (applied ??= new()).Enqueue(move);
+                }
+                if (waiting is not null)
+                    DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
+                        SmigratedClock()), skippedMetrics);
+            }
+            if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
+
+            if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
+        }
+
         // Launch retirements before the disposal check and before any listener runs:
         // DisposeAsync awaits their completion, so a metric listener that disposes the client
         // synchronously would otherwise wait for a drain that this thread has not started yet.
@@ -277,6 +267,13 @@ internal sealed partial class ClusterRouter
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
         if (topologyChanged) TopologyChanged?.Invoke();
+    }
+
+    private bool TryRecordSmigratedSequence(QueuedSmigratedNotification item)
+    {
+        lock (_smigratedSequenceGate)
+            return _smigratedSequences.GetOrCreateValue(item.SequenceScope)
+                .TryAdd(item.Notification.SequenceId);
     }
 
     // A malformed entry is skipped on its own; the other entries still apply. One enumeration
