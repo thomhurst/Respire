@@ -21,6 +21,7 @@ public class ClusterNodeIdentityTests
         var sourceEndpoint = new RespireEndpoint("source", 7000);
         var targetEndpoint = new RespireEndpoint("target", 7001);
         var duplicateTargetEndpoint = new RespireEndpoint("other", 7002);
+        var sentinelEndpoint = new RespireEndpoint("sentinel", 7004);
         var source = router.GetMultiplexer(sourceEndpoint);
         var target = router.GetMultiplexer(targetEndpoint);
         var duplicateTarget = router.GetMultiplexer(duplicateTargetEndpoint);
@@ -30,11 +31,13 @@ public class ClusterNodeIdentityTests
             .Invoke(router, [askEndpoint, true, true])!;
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
+        router.SetSlotOwner(2, target);
         typeof(ClusterRouter).GetMethod("SetSeed", flags)!.Invoke(router, [source]);
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += () => topologyChanged.TrySetResult();
+        var connection = new object();
 
-        source.PublishMaintenanceNotification(new("SMIGRATED", 42, Migrations:
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0-1")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitUntilAsync(() => source.IsRetired);
@@ -43,12 +46,93 @@ public class ClusterNodeIdentityTests
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetMultiplexer(askEndpoint), askNode)).IsTrue();
         await Assert.That(ReferenceEquals(typeof(ClusterRouter).GetField("_seed", flags)!.GetValue(router), target)).IsTrue();
-        source.PublishMaintenanceNotification(new("SMIGRATED", 42, Migrations:
-            [new(sourceEndpoint, duplicateTargetEndpoint, "0-1")]));
-        await Task.Delay(50);
+
+        // The duplicate ID is ignored. The worker is FIFO, so once the following notification
+        // has been applied the duplicate has already been processed.
+        topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
+            [new(targetEndpoint, duplicateTargetEndpoint, "0-1")]));
+        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 43, Migrations:
+            [new(targetEndpoint, sentinelEndpoint, "2")]));
+        await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => router.GetKnownSlotOwner(2) is { Port: 7004 });
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
         await Assert.That(ReferenceEquals(source, duplicateTarget)).IsFalse();
+    }
+
+    [Test]
+    public async Task SmigratedSequenceIdsAreScopedToTheReceivingConnection()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var target = router.GetMultiplexer(targetEndpoint);
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+        // A reconnected connection restarts its sequence IDs.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "1")])));
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
+    }
+
+    [Test]
+    public async Task QueuedSmigratedNotificationsApplyInArrivalOrder()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var aEndpoint = new RespireEndpoint("a", 7000);
+        var bEndpoint = new RespireEndpoint("b", 7001);
+        var cEndpoint = new RespireEndpoint("c", 7002);
+        var a = router.GetMultiplexer(aEndpoint);
+        var b = router.GetMultiplexer(bEndpoint);
+        var c = router.GetMultiplexer(cEndpoint);
+        router.SetSlotOwner(0, a);
+        router.SetSlotOwner(1, b);
+        var connection = new object();
+
+        // Both are captured before the worker applies either one.
+        var first = router.CaptureSmigratedNotification(a, connection,
+            new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
+        var second = router.CaptureSmigratedNotification(b, connection,
+            new("SMIGRATED", 2, Migrations: [new(bEndpoint, cEndpoint, "0")]));
+        router.ApplySmigratedNotification(first);
+        router.ApplySmigratedNotification(second);
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), c)).IsTrue();
+    }
+
+    [Test]
+    public async Task FencedSmigratedNotificationDoesNotObserveItsTarget()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var otherEndpoint = new RespireEndpoint("other", 7001);
+        var targetEndpoint = new RespireEndpoint("unused-target", 7002);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        var other = router.GetMultiplexer(otherEndpoint);
+        router.SetSlotOwner(0, other);
+        router.SetSlotOwner(1, source);
+
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), other)).IsTrue();
+        await Assert.That(router.GetActiveEndpoints().Any(endpoint => endpoint.Port == targetEndpoint.Port)).IsFalse();
     }
 
     [Test]
@@ -62,22 +146,14 @@ public class ClusterNodeIdentityTests
         var targetEndpoint = new RespireEndpoint("target", 7001);
         var intermediateEndpoint = new RespireEndpoint("intermediate", 7002);
         var source = router.GetMultiplexer(sourceEndpoint);
-        var target = router.GetMultiplexer(targetEndpoint);
         var intermediate = router.GetMultiplexer(intermediateEndpoint);
         router.SetSlotOwner(0, source);
-        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
-        var mutationVersion = (long)typeof(ClusterRouter).GetField("_slotMutationVersion", flags)!.GetValue(router)!;
-        var notification = new MaintenanceNotification("SMIGRATED", 7, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]);
-        var queuedType = typeof(ClusterRouter).GetNestedType("QueuedSmigratedNotification", flags)!;
-        var queued = Activator.CreateInstance(queuedType,
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-            binder: null, args: [source, notification, version, mutationVersion], culture: null)!;
+        var queued = router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 7, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         router.SetSlotOwner(0, intermediate);
         router.SetSlotOwner(0, source);
-        typeof(ClusterRouter).GetMethod("ApplySmigratedNotification", flags)!.Invoke(router, [queued]);
+        router.ApplySmigratedNotification(queued);
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
     }
@@ -94,21 +170,34 @@ public class ClusterNodeIdentityTests
         var source = router.GetMultiplexer(sourceEndpoint);
         var target = router.GetMultiplexer(targetEndpoint);
         router.SetSlotOwner(0, source);
-        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var notification = new MaintenanceNotification("SMIGRATED", 8, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]);
-        var queuedType = typeof(ClusterRouter).GetNestedType("QueuedSmigratedNotification", flags)!;
-        var queued = Activator.CreateInstance(queuedType,
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-            binder: null, args:
-            [source, notification,
-                typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!,
-                typeof(ClusterRouter).GetField("_slotMutationVersion", flags)!.GetValue(router)!], culture: null)!;
+        var queued = router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 8, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         router.SetSlotOwner(0, source);
-        typeof(ClusterRouter).GetMethod("ApplySmigratedNotification", flags)!.Invoke(router, [queued]);
+        router.ApplySmigratedNotification(queued);
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
+    }
+
+    [Test]
+    public async Task SameOwnerRedirectFencesOlderDiscovery()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var ownerEndpoint = new RespireEndpoint("owner", 7000);
+        var staleEndpoint = new RespireEndpoint("stale", 7001);
+        var owner = router.GetMultiplexer(ownerEndpoint);
+        router.SetSlotOwner(0, owner);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var capturedVersion = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+
+        router.SetSlotOwner(0, owner);
+        List<ClusterTopologyRange> stale = [new(0, 0, staleEndpoint, "stale", [])];
+        typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [stale, capturedVersion, 1L]);
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), owner)).IsTrue();
     }
 
     [Test]
@@ -122,19 +211,11 @@ public class ClusterNodeIdentityTests
         var intermediateEndpoint = new RespireEndpoint("intermediate", 7001);
         var targetEndpoint = new RespireEndpoint("target", 7002);
         var source = router.GetMultiplexer(sourceEndpoint);
-        var intermediate = router.GetMultiplexer(intermediateEndpoint);
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
+        var queued = router.CaptureSmigratedNotification(source, new object(),
+            new("SMIGRATED", 9, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var notification = new MaintenanceNotification("SMIGRATED", 9, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]);
-        var queuedType = typeof(ClusterRouter).GetNestedType("QueuedSmigratedNotification", flags)!;
-        var queued = Activator.CreateInstance(queuedType,
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-            binder: null, args:
-            [source, notification,
-                typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!,
-                typeof(ClusterRouter).GetField("_slotMutationVersion", flags)!.GetValue(router)!], culture: null)!;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
         var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
         List<ClusterTopologyRange> intermediateSnapshot =
@@ -150,7 +231,7 @@ public class ClusterNodeIdentityTests
         ];
         apply.Invoke(router, [sourceSnapshot, version.GetValue(router), 2L]);
 
-        typeof(ClusterRouter).GetMethod("ApplySmigratedNotification", flags)!.Invoke(router, [queued]);
+        router.ApplySmigratedNotification(queued);
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
     }

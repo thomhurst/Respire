@@ -121,8 +121,9 @@ followed after that.
 
 This release implements notifications, diagnostics, timeout relaxation, and proactive Cluster
 slot updates from `SMIGRATED`. The receive loop queues parsed notifications for a bounded topology
-worker. The worker accepts only slots still owned by the advertised source, ignores stale or
-duplicate sequence IDs, and publishes changed ownership through the normal topology event. If a
+worker. The worker moves only slots still owned by the advertised source and not reassigned by a
+`MOVED` redirect or discovery since the notification arrived. It ignores sequence IDs already seen
+on the same connection and publishes changed ownership through the normal topology event. If a
 notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
 and topology discovery remain the fallback.
 

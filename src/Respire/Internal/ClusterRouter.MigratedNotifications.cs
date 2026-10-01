@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
@@ -10,22 +11,25 @@ internal sealed partial class ClusterRouter
 {
     private const int RecentSmigratedSequenceLimit = 256;
 
-    private sealed record QueuedSmigratedNotification(
-        RespireConnectionMultiplexer Sender, MaintenanceNotification Notification,
-        long TopologyVersion, long SlotMutationVersion);
+    // SequenceScope is the physical connection that received the push. Sequence IDs restart
+    // with each connection, so deduplication never spans a reconnect, and items queued by an
+    // old connection cannot mark a new connection's IDs as already seen.
+    internal sealed record QueuedSmigratedNotification(
+        RespireConnectionMultiplexer Sender, object SequenceScope,
+        MaintenanceNotification Notification, long SlotMutationVersion);
 
     private sealed class SmigratedSequenceWindow
     {
         private readonly Queue<long> _order = new();
         private readonly HashSet<long> _seen = [];
 
-        internal bool Contains(long sequence) => _seen.Contains(sequence);
-
-        internal void Add(long sequence)
+        // Returns false when the ID was already seen inside the bounded window.
+        internal bool TryAdd(long sequence)
         {
-            if (!_seen.Add(sequence)) return;
+            if (!_seen.Add(sequence)) return false;
             _order.Enqueue(sequence);
             if (_order.Count > RecentSmigratedSequenceLimit) _seen.Remove(_order.Dequeue());
+            return true;
         }
     }
 
@@ -37,57 +41,53 @@ internal sealed partial class ClusterRouter
             SingleWriter = false,
             AllowSynchronousContinuations = false,
         });
-    private readonly Dictionary<RespireConnectionMultiplexer, Action<RespireConnectionMultiplexer, MaintenanceNotification>> _nodeMaintenanceHandlers = [];
-    private readonly Dictionary<RespireConnectionMultiplexer, SmigratedSequenceWindow> _smigratedSequences = [];
+    private readonly Dictionary<RespireConnectionMultiplexer, Action<RespireConnectionMultiplexer, object, MaintenanceNotification>> _nodeMaintenanceHandlers = [];
+    // Accessed only by the worker under _nodesGate. A window disappears with its connection.
+    private readonly ConditionalWeakTable<object, SmigratedSequenceWindow> _smigratedSequences = new();
     private Task _smigratedWorker = Task.CompletedTask;
 
     private void StartSmigratedWorker()
         => _smigratedWorker = Task.Run(ProcessSmigratedNotificationsAsync);
 
+    // Receive-loop callback: never takes _nodesGate. The worker re-validates under the gate.
     private void QueueSmigratedNotification(
-        RespireConnectionMultiplexer sender, MaintenanceNotification notification)
+        RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
     {
         if (notification.Kind != "SMIGRATED" || Volatile.Read(ref _disposed) != 0
             || notification.Migrations is not { Length: > 0 }) return;
-        if (!Monitor.TryEnter(_nodesGate))
-        {
-            _logger?.LogDebug("Dropped Cluster SMIGRATED notification from {Host}:{Port} during a topology update.", sender.Host, sender.Port);
-            return;
-        }
-        long topologyVersion;
-        long slotMutationVersion;
-        try
-        {
-            topologyVersion = _topologyVersion;
-            slotMutationVersion = _slotMutationVersion;
-        }
-        finally { Monitor.Exit(_nodesGate); }
-        _smigratedNotifications.Writer.TryWrite(new(sender, notification, topologyVersion, slotMutationVersion));
+        _smigratedNotifications.Writer.TryWrite(CaptureSmigratedNotification(sender, sequenceScope, notification));
     }
 
+    internal QueuedSmigratedNotification CaptureSmigratedNotification(
+        RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
+        => new(sender, sequenceScope, notification, Interlocked.Read(ref _slotMutationVersion));
+
+    // MOVED, slot clears and discovery owner changes advance this fence. SMIGRATED moves do
+    // not: the FIFO worker applies them in arrival order, so an earlier queued notification
+    // (A->B) must not fence a later one (B->C) captured before it ran.
+    private void MarkSlotMutatedLocked(int slot)
+        => _slotMutationVersions[slot] = Interlocked.Increment(ref _slotMutationVersion);
+
+    // Ends when DisposeAsync completes the channel. It deliberately takes no cancellation
+    // token: a registration on _stopDiscovery would make disposal's CancelAsync asynchronous.
     private async Task ProcessSmigratedNotificationsAsync()
     {
-        try
+        await foreach (var item in _smigratedNotifications.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            await foreach (var item in _smigratedNotifications.Reader.ReadAllAsync(_stopDiscovery.Token).ConfigureAwait(false))
+            try
             {
-                try
-                {
-                    ApplySmigratedNotification(item);
-                }
-                catch (Exception error) when (!_stopDiscovery.IsCancellationRequested)
-                {
+                ApplySmigratedNotification(item);
+            }
+            catch (Exception error)
+            {
+                if (Volatile.Read(ref _disposed) == 0)
                     _logger?.LogError(error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.",
                         item.Sender.Host, item.Sender.Port);
-                }
             }
-        }
-        catch (OperationCanceledException) when (_stopDiscovery.IsCancellationRequested)
-        {
         }
     }
 
-    private void ApplySmigratedNotification(QueuedSmigratedNotification item)
+    internal void ApplySmigratedNotification(QueuedSmigratedNotification item)
     {
         if (item.Notification.Migrations is not { Length: > 0 } migrations) return;
         var parsed = new List<(MaintenanceSlotMigration Migration, int[] Slots)>(migrations.Length);
@@ -107,40 +107,44 @@ internal sealed partial class ClusterRouter
         {
             if (Volatile.Read(ref _disposed) != 0 || !_identities.IsActive(item.Sender)
                 || !_nodeMaintenanceHandlers.ContainsKey(item.Sender)) return;
-            if (!_smigratedSequences.TryGetValue(item.Sender, out var sequences))
-                _smigratedSequences.Add(item.Sender, sequences = new());
-            if (sequences.Contains(item.Notification.SequenceId)) return;
+            if (!_smigratedSequences.GetOrCreateValue(item.SequenceScope).TryAdd(item.Notification.SequenceId)) return;
 
+            List<int>? movable = null;
             foreach (var (migration, slots) in parsed)
             {
-                if (!_identities.TryGetExisting(migration.Source, out var source)
-                    || !_identities.IsActive(source) || source.IsRetired || !HasCurrentSourceSlot(source, slots, item.TopologyVersion))
-                    continue;
+                if (ClusterNodeIdentityIndex.EndpointsEqual(migration.Source, migration.Target)
+                    || !_identities.TryGetExisting(migration.Source, out var source)
+                    || !_identities.IsActive(source) || source.IsRetired) continue;
 
-                if (ClusterNodeIdentityIndex.EndpointsEqual(migration.Source, migration.Target)) continue;
+                // Select slots before resolving the target, so a fully fenced migration
+                // cannot leave an observed, slotless target transport behind.
+                (movable ??= []).Clear();
+                foreach (var slot in slots)
+                {
+                    if (_slotMutationVersions[slot] <= item.SlotMutationVersion
+                        && ReferenceEquals(Volatile.Read(ref _slots[slot]), source)) movable.Add(slot);
+                }
+                if (movable.Count == 0) continue;
+
                 var target = _identities.GetOrCreate(migration.Target);
                 if (ReferenceEquals(source, target) || target.IsRetired) continue;
                 ObserveNode(target);
 
-                var migrationVersion = 0L;
-                for (var index = 0; index < slots.Length; index++)
+                // One discovery fence per migration: older in-flight CLUSTER SLOTS replies
+                // cannot overwrite these slots.
+                var migrationVersion = ++_topologyVersion;
+                foreach (var slot in movable)
                 {
-                    var slot = slots[index];
-                    if (_slotVersions[slot] > item.TopologyVersion
-                        || _slotMutationVersions[slot] > item.SlotMutationVersion
-                        || !ReferenceEquals(Volatile.Read(ref _slots[slot]), source)) continue;
-                    if (migrationVersion == 0) migrationVersion = ++_topologyVersion;
                     PublishSlotLocked(slot, target, migrationVersion);
-                    _slotMutationVersions[slot] = ++_slotMutationVersion;
                     AddSlot(target);
-                    topologyChanged = true;
                     if (RemoveSlot(source)) (retiredNodes ??= []).Add(source);
                 }
+                topologyChanged = true;
             }
 
-            sequences.Add(item.Notification.SequenceId);
             if (retiredNodes is not null)
             {
+                // Mirror ApplyTopology: keep ASK-protected transports and repoint the seed.
                 var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
                 retained.UnionWith(_redirectVersions.Keys);
                 if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
@@ -149,23 +153,13 @@ internal sealed partial class ClusterRouter
             }
         }
 
+        // Launch retirements before the disposal check: DisposeAsync awaits their completion.
         if (retirements is not null)
             foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
         if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
         if (topologyChanged) TopologyChanged?.Invoke();
-    }
-
-    private bool HasCurrentSourceSlot(
-        RespireConnectionMultiplexer source, int[] slots, long topologyVersion)
-    {
-        foreach (var slot in slots)
-        {
-            if (_slotVersions[slot] <= topologyVersion
-                && ReferenceEquals(Volatile.Read(ref _slots[slot]), source)) return true;
-        }
-        return false;
     }
 
     private static bool TryParseSlots(string value, out int[] slots)

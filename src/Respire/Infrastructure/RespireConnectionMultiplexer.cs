@@ -78,12 +78,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
-    internal event Action<RespireConnectionMultiplexer, MaintenanceNotification>? MaintenanceNotificationReceived;
+    // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
+    internal event Action<RespireConnectionMultiplexer, object, MaintenanceNotification>? MaintenanceNotificationReceived;
 
-    internal void PublishMaintenanceNotification(MaintenanceNotification notification)
+    internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
     {
         if (IsRetired || Volatile.Read(ref _disposed) != 0) return;
-        MaintenanceNotificationReceived?.Invoke(this, notification);
+        MaintenanceNotificationReceived?.Invoke(this, sequenceScope, notification);
     }
 
     internal bool IsReconnecting

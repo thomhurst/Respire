@@ -30,6 +30,8 @@ internal sealed partial class ClusterRouter
             _dedicatedPools.Remove(node, out var pool);
             _redirectVersions.Remove(node);
             if (_nodeStateHandlers.Remove(node, out var handler)) node.SlotStateChanged -= handler;
+            if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+                node.MaintenanceNotificationReceived -= maintenanceHandler;
             var retirement = new RetiredGeneration(node, pool);
             _retiringNodes.Add(node, retirement);
             retirements.Add(retirement);

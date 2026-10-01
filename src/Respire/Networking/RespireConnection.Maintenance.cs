@@ -117,7 +117,7 @@ internal sealed partial class RespireConnection
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))
                 .Publish(notification);
         }
-        Multiplexer?.PublishMaintenanceNotification(notification);
+        Multiplexer?.PublishMaintenanceNotification(this, notification);
         return true;
     }
 

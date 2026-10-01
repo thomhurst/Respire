@@ -41,6 +41,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly object?[] _slotSnapshotBatches = new object?[ClusterHash.SlotCount];
     // Includes discovery publications, so queued SMIGRATED work can detect every newer
     // route mutation without treating completed discovery as a direct-route fence.
+    // Owner-change fence for queued SMIGRATED work, separate from _slotVersions: it covers
+    // discovery publications (which keep their slot version) but not same-owner redirects.
     private readonly long[] _slotMutationVersions = new long[ClusterHash.SlotCount];
     private long _slotMutationVersion;
     private int _disposed;
@@ -1587,7 +1589,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
-        Action<RespireConnectionMultiplexer, MaintenanceNotification> maintenanceHandler = QueueSmigratedNotification;
+        Action<RespireConnectionMultiplexer, object, MaintenanceNotification> maintenanceHandler = QueueSmigratedNotification;
         _nodeMaintenanceHandlers.Add(node, maintenanceHandler);
         node.MaintenanceNotificationReceived += maintenanceHandler;
     }
@@ -1604,9 +1606,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 throw new RespireConnectionRetiredException(node.Host, node.Port);
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
-            if (ReferenceEquals(previous, node)) return;
+            // A same-owner redirect still advances the discovery fence, so an older in-flight
+            // discovery cannot overwrite it. It is not an owner mutation, so it does not fence
+            // queued SMIGRATED notifications.
             PublishSlotLocked(slot, node, ++_topologyVersion);
-            _slotMutationVersions[slot] = ++_slotMutationVersion;
+            if (ReferenceEquals(previous, node))
+            {
+                return;
+            }
+            MarkSlotMutatedLocked(slot);
 
             AddSlot(node);
             if (previous is not null && RemoveSlot(previous))
@@ -1640,7 +1648,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
             PublishSlotLocked(slot, null, ++_topologyVersion);
             topologyVersion = _topologyVersion;
-            _slotMutationVersions[slot] = ++_slotMutationVersion;
+            MarkSlotMutatedLocked(slot);
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {
@@ -1711,7 +1719,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
         {
             node.MaintenanceNotificationReceived -= maintenanceHandler;
-            _smigratedSequences.Remove(node);
         }
 
         return true;
@@ -1756,7 +1763,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
                 {
                     topologyChanged = true;
-                    _slotMutationVersions[slot] = ++_slotMutationVersion;
+                    MarkSlotMutatedLocked(slot);
                 }
                 PublishSlotLocked(slot, node, _slotVersions[slot]);
                 if (snapshotBatch is not null && coveredSlots[slot])
@@ -1803,7 +1810,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 _nodeStateHandlers.Remove(node);
                 if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
                     node.MaintenanceNotificationReceived -= maintenanceHandler;
-                _smigratedSequences.Remove(node);
             }
         }
         return retiredNodes;
@@ -2027,7 +2033,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
-        KeyValuePair<RespireConnectionMultiplexer, Action<RespireConnectionMultiplexer, MaintenanceNotification>>[] maintenanceHandlers;
+        KeyValuePair<RespireConnectionMultiplexer, Action<RespireConnectionMultiplexer, object, MaintenanceNotification>>[] maintenanceHandlers;
         DedicatedConnectionPool[] dedicatedPools;
         Task retirements;
         lock (_nodesGate)
