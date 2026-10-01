@@ -141,22 +141,8 @@ public class ProbabilisticClientTests
         server.ReplyOverride = (_, command) => command switch
         {
             "HELLO 3" => Hello,
-            "TDIGEST.BYRANK digest 100 200" => "*2
-
-$3
-
-inf
-
-$4
-
--inf
-
-"u8.ToArray(),
-            "TDIGEST.MAX digest" => "$4
-
-+inf
-
-"u8.ToArray(),
+            "TDIGEST.BYRANK digest 100 200" => "*2\r\n$3\r\ninf\r\n$4\r\n-inf\r\n"u8.ToArray(),
+            "TDIGEST.MAX digest" => "$4\r\n+inf\r\n"u8.ToArray(),
             _ => null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
