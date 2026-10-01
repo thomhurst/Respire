@@ -434,6 +434,7 @@ public sealed class RespireCoordination
     {
         Exception? originalFailure = null;
         Task? originalCorrection = null;
+        var promotedGenerationCorrected = false;
         if (connectionIdentity.Connection is not null)
         {
             try
@@ -454,6 +455,7 @@ public sealed class RespireCoordination
                     // Release the same owner field on the promoted generation as well.
                     await client.ExecuteOnAllConnectionsAsync(
                         ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+                    promotedGenerationCorrected = true;
                 }
             }
             catch (Exception error)
@@ -465,6 +467,20 @@ public sealed class RespireCoordination
             {
                 try { await originalCorrection.ConfigureAwait(false); }
                 catch (Exception error) { originalFailure ??= error; }
+            }
+
+            try
+            {
+                if (!promotedGenerationCorrected
+                    && await client.HasDifferentSentinelGenerationAsync(connectionIdentity).ConfigureAwait(false))
+                {
+                    await client.ExecuteOnAllConnectionsAsync(
+                        ReleaseHashFieldLease, [hashKey], [field, owner.Bytes]).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error)
+            {
+                originalFailure ??= error;
             }
         }
         else
