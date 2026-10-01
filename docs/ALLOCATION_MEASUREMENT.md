@@ -22,8 +22,8 @@ establish the cause of a particular allocation-counter delta.
 ## Controlled reproduction
 
 On Windows X64, a bounded standalone probe called the actual internal routing
-method from an assembly named `Respire.Tests`. Each runtime ran once, in Release,
-under the shared performance reservation. The probe used a no-inline measurement
+method from an assembly named `Respire.Tests`. Each runtime ran once, in Release.
+The probe used a no-inline measurement
 method with three modes: an empty `Thread.SpinWait(100_000)` interval, 1,000 routing
 validations, and one deliberately escaping `new byte[37]` allocation.
 
@@ -103,8 +103,7 @@ no nonzero tolerance is introduced.
 
 The existing controlled reproduction above justifies excluding concurrent GC; it does
 not establish the exact source of this new CI delta. No new local reproduction or
-mutation experiment has run for #554 because another worker holds the mandatory shared
-performance reservation. Fresh CI on both frameworks, including coverage, must validate
+mutation experiment has run for #554. Fresh CI on both frameworks, including coverage, must validate
 the change. Production ring behavior is unchanged.
 
 If a nonzero sample recurs, retain the failing run and capture generation 0/1/2
