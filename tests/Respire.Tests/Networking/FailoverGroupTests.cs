@@ -519,7 +519,9 @@ public class FailoverGroupTests
     public async Task DisposeAsync_StopsProbesAndRejectsActiveClientAccess()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(replyIndex: 1, milliseconds: 200);
         var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, priority: 0)], FastOptions());
+        await WaitUntilAsync(() => server.CommandsSeen >= 2);
         await group.DisposeAsync();
         var commandCount = server.CommandsSeen;
 
