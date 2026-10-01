@@ -154,7 +154,7 @@ public class LockCommandTests
 
         await mutex.DisposeAsync();
 
-        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
             $"DELEX resource IFEQ {token}",
@@ -234,7 +234,7 @@ public class LockCommandTests
         await mutex.DisposeAsync();
 
         var token = mutex.Token.ToUtf8String();
-        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
             $"DELEX resource IFEQ {token}",
@@ -257,38 +257,38 @@ public class LockCommandTests
         await mutex.DisposeAsync();
 
         // SET plus one compare-and-DEL: the repeat release, the extend, and dispose never reach the wire.
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+        await Assert.That(RecordedLockOperations(server).Count).IsEqualTo(2);
     }
 
     [Test]
     public async Task RespireLock_ConcurrentReleasesShareTheInFlightResult()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 1000);
+        server.DelayReply(3, 1000);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
         var first = mutex.ReleaseAsync().AsTask();
-        await WaitForCommandsAsync(server, 2);
+        await WaitForCommandAsync(server, "DELEX ");
         var second = mutex.ReleaseAsync().AsTask();
 
         await Assert.That(await first).IsEqualTo(LockReleaseOutcome.Released);
         await Assert.That(await second).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+        await Assert.That(RecordedLockOperations(server).Count).IsEqualTo(2);
     }
 
     [Test]
     public async Task RespireLock_CancelledReleaseConservativelyStopsProtectedWork()
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 500);
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 500);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         await using var keepAlive = await mutex.KeepAliveAsync();
         using var cancellation = new CancellationTokenSource();
 
         var release = mutex.ReleaseAsync(cancellation.Token).AsTask();
-        await WaitForCommandsAsync(server, 2);
+        await WaitForCommandAsync(server, "DELEX ");
         var dispose = mutex.DisposeAsync().AsTask();
         await cancellation.CancelAsync();
 
@@ -312,6 +312,8 @@ public class LockCommandTests
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
             "-NOPERM release denied\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
@@ -319,7 +321,7 @@ public class LockCommandTests
         await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
         await Assert.That(mutex.IsReleased).IsFalse();
         await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+        await Assert.That(RecordedLockOperations(server).Count).IsEqualTo(3);
     }
 
     [Test]
@@ -767,7 +769,7 @@ public class LockCommandTests
         var token = mutex.Token.ToUtf8String();
         await mutex.DisposeAsync();
 
-        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
             $"SET tenant:resource {token} NX PX 30000",
             $"DELEX tenant:resource IFEQ {token}",
@@ -889,6 +891,17 @@ public class LockCommandTests
         {
             await Task.Delay(10, timeout.Token);
         }
+    }
+
+    private static IReadOnlyList<string> RecordedLockOperations(FakeRespServer server)
+        => server.ReceivedCommands.Where(command => command.StartsWith("SET ", StringComparison.Ordinal)
+            || command.StartsWith("DELEX ", StringComparison.Ordinal)).ToArray();
+
+    private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Any(command => command.StartsWith(prefix, StringComparison.Ordinal)))
+            await Task.Delay(10, timeout.Token);
     }
 
     private sealed class GatedLockClock : TimeProvider
