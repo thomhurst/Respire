@@ -30,6 +30,7 @@ public sealed class AwsIamCredentialProviderTests
         await Assert.That(credentials.Password).Contains("X-Amz-Algorithm=AWS4-HMAC-SHA256");
 
         var query = credentials.Password[(credentials.Password.IndexOf('?') + 1)..];
+        // These are golden SigV4 vectors; update deliberately if the AWS signer changes canonicalization.
         var expectedSignature = service switch
         {
             "memorydb" => "0ec430b11027787fa361a6fd300bd4910e66af5f388cf5a1abddd183d9f29be5",
@@ -56,6 +57,8 @@ public sealed class AwsIamCredentialProviderTests
 
         await Assert.That(credentials.Password).Contains("X-Amz-Security-Token=session-token");
         await Assert.That(credentials.Password).Contains("X-Amz-Credential=access-key%2F20261001%2Fus-east-1%2Fmemorydb%2Faws4_request");
+        // Fixed signature proves the session token participates in the signed query.
+        await Assert.That(credentials.Password).Contains("X-Amz-Signature=b79ecb133c9b1797ec77e8bc5e99b7a6b1848bc3b53c39eb6d7706d58420eeab");
     }
 
     [Test]
