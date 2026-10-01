@@ -2979,7 +2979,9 @@ public sealed partial class RespireClient : IRespireClient
             catch (Exception ex)
             {
                 var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
-                    && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                    && (RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                        || connection is null && cancellationToken.IsCancellationRequested
+                            && !callerCancellationToken.IsCancellationRequested)
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
@@ -3092,7 +3094,9 @@ public sealed partial class RespireClient : IRespireClient
                 catch (Exception ex)
                 {
                     var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
-                        && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                        && (RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                            || (acquiringRedirectPool || connection is null) && cancellationToken.IsCancellationRequested
+                                && !callerCancellationToken.IsCancellationRequested)
                         ? new RespireTimeoutException(operation, timeout, cancelled,
                             acquiringRedirectPool || connection is null
                                 ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)

@@ -68,11 +68,6 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (expectedPrimary is { } expected && !SameEndpoint(primary, expected))
-                {
-                    throw new RespireConnectionException(
-                        $"Sentinel {endpoint} returned stale primary {primary}; failover event announced {expected}.");
-                }
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
@@ -155,9 +150,6 @@ internal static class SentinelResolver
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
         }
     }
-
-    private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
-        => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
     private static bool ContainsCancellation(Exception error)
     {

@@ -303,7 +303,7 @@ not the notification queue; handlers should hand off expensive work and return p
 ## Remaining recovery paths
 
 The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery, Sentinel
-fallback, and Sentinel event-monitor reconnects. Sentinel event monitoring is enabled by default;
-`DisableSentinelEventMonitoring` turns it off. Periodic Cluster refresh remains #397 and is
+fallback, and Sentinel event-monitor reconnects. Sentinel event monitoring is enabled by default.
+Periodic Cluster refresh remains #397 and is
 configured separately. Future periodic Cluster refresh must reuse this discovery budget instead
 of adding nested retry counters.

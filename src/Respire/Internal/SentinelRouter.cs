@@ -191,7 +191,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 attempts = 0;
                 await foreach (var message in subscription.WithCancellation(_lifetime.Token).ConfigureAwait(false))
                 {
-                    if (message.Kind == RespireMessageKind.Gap) continue;
+                    if (message.Kind == RespireMessageKind.Gap)
+                    {
+                        OnSentinelSubscriptionGap(endpoint);
+                        continue;
+                    }
                     if (message.Channel.ToString() == "+switch-master")
                     {
                         if (TryParseSwitchMasterEvent(message.Text, core.Options.SentinelPrimaryName!, out var newPrimary))
@@ -250,10 +254,20 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         _ = RefreshAfterSentinelEventAsync(sentinel, newPrimary);
     }
 
+    private void OnSentinelSubscriptionGap(RespireEndpoint sentinel)
+    {
+        lock (_gate)
+        {
+            if (Current is not { IsRetired: false } current) return;
+            Invalidate(current);
+        }
+        _ = RefreshAfterSentinelEventAsync(sentinel, expectedPrimary: null);
+    }
+
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
         => left.Port == right.Port && string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase);
 
-    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel, RespireEndpoint expectedPrimary)
+    private async Task RefreshAfterSentinelEventAsync(RespireEndpoint sentinel, RespireEndpoint? expectedPrimary)
     {
         try { await GetGenerationAsync(_lifetime.Token, sentinel, expectedPrimary).ConfigureAwait(false); }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }

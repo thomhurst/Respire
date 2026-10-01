@@ -673,7 +673,7 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task SwitchMasterEventQueriesItsSentinelAndValidatesAnnouncedPrimary()
+    public async Task SwitchMasterEventUsesLatestValidatedPrimaryWhenSuperseded()
     {
         await using var previous = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var replacement = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
@@ -691,7 +691,7 @@ public class SentinelTests
             && reportingSentinel.ReceivedCommands.Count(command => command == "SUBSCRIBE +switch-master") == 1);
         var commandIndex = reportingSentinel.ReceivedCommands.ToList()
             .FindIndex(command => command == "SUBSCRIBE +switch-master");
-        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", replacement.Port),
+        await reportingSentinel.SendRawAsync(SwitchMasterMessage("mymaster", 6390),
             reportingSentinel.ReceivedConnectionIds[commandIndex]);
 
         await WaitUntilAsync(() => replacement.ReceivedCommands.Contains("ROLE"));
