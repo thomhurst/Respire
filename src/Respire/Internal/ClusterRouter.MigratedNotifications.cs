@@ -116,12 +116,14 @@ internal sealed partial class ClusterRouter
                 if (ReferenceEquals(source, target) || target.IsRetired) continue;
                 ObserveNode(target);
 
+                var migrationVersion = 0L;
                 for (var index = 0; index < slots.Length; index++)
                 {
                     var slot = slots[index];
                     if (_slotVersions[slot] > item.TopologyVersion
                         || !ReferenceEquals(Volatile.Read(ref _slots[slot]), source)) continue;
-                    PublishSlotLocked(slot, target, ++_topologyVersion);
+                    if (migrationVersion == 0) migrationVersion = ++_topologyVersion;
+                    PublishSlotLocked(slot, target, migrationVersion);
                     AddSlot(target);
                     topologyChanged = true;
                     if (RemoveSlot(source)) (retiredNodes ??= []).Add(source);
