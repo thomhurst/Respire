@@ -45,9 +45,10 @@ internal sealed partial class ClusterRouter
     // Accessed only by the worker under _nodesGate. A window disappears with its connection.
     private readonly ConditionalWeakTable<object, SmigratedSequenceWindow> _smigratedSequences = new();
     private Task _smigratedWorker = Task.CompletedTask;
-    private static readonly AsyncLocal<ClusterRouter?> SmigratedWorkerContext = new();
+    [ThreadStatic]
+    private static ClusterRouter? _smigratedWorkerContext;
 
-    private bool IsOnSmigratedWorker => ReferenceEquals(SmigratedWorkerContext.Value, this);
+    internal bool IsOnSmigratedWorker => ReferenceEquals(_smigratedWorkerContext, this);
 
     private void StartSmigratedWorker()
         => _smigratedWorker = Task.Run(ProcessSmigratedNotificationsAsync);
@@ -82,8 +83,8 @@ internal sealed partial class ClusterRouter
     {
         await foreach (var item in _smigratedNotifications.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            var previousWorker = SmigratedWorkerContext.Value;
-            SmigratedWorkerContext.Value = this;
+            var previousWorker = _smigratedWorkerContext;
+            _smigratedWorkerContext = this;
             try
             {
                 ApplySmigratedNotification(item);
@@ -96,7 +97,7 @@ internal sealed partial class ClusterRouter
             }
             finally
             {
-                SmigratedWorkerContext.Value = previousWorker;
+                _smigratedWorkerContext = previousWorker;
             }
         }
     }

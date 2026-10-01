@@ -2011,6 +2011,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
+<<<<<<< HEAD
     private static bool CoversAllSlots(List<ClusterTopologyRange> topology)
     {
         var ranges = topology.OrderBy(static range => range.Start).ToArray();
@@ -2024,11 +2025,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return false;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeAsync(IsOnSmigratedWorker);
+
+    internal async ValueTask DisposeAsync(bool isOnSmigratedWorker)
     {
-        // Capture before disposal awaits: a NodeRetired callback can block this worker while
-        // disposing nodes, and this continuation may resume on a different thread.
-        var isOnSmigratedWorker = IsOnSmigratedWorker;
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
