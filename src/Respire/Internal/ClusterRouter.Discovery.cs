@@ -20,6 +20,12 @@ internal sealed partial class ClusterRouter
     private static readonly TimeSpan TopologyRefreshCoalescingWindow = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaximumTopologyRefreshDeadline = TimeSpan.FromSeconds(60);
     private const int MovedTopologyRefreshDelayMilliseconds = 5_000;
+    // Reconnect failures publish Disconnected for every slot on every attempt. Spacing forced
+    // refreshes keeps a dead or flapping primary from driving back-to-back discovery passes.
+    private static readonly TimeSpan PrimaryDisconnectRefreshSpacing = TimeSpan.FromSeconds(1);
+    // Many seeds must not shrink each candidate's share of the deadline below one round trip.
+    private static readonly TimeSpan MinimumTopologyRefreshCandidateTimeout = TimeSpan.FromSeconds(1);
+    private long _lastPrimaryDisconnectRefreshSignal;
     private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
     private readonly object _topologyRefreshSignalGate = new();
     private readonly object _topologyRefreshWorkerGate = new();
@@ -275,7 +281,7 @@ internal sealed partial class ClusterRouter
             var maxTotalTicks = MaximumTopologyRefreshDeadline.Ticks;
             var configuredCandidateTimeout = _options.CommandTimeout ?? _options.ConnectTimeout;
             var candidateTimeout = TimeSpan.FromTicks(Math.Min(configuredCandidateTimeout.Ticks,
-                maxTotalTicks / boundedCandidateCount));
+                Math.Max(maxTotalTicks / boundedCandidateCount, MinimumTopologyRefreshCandidateTimeout.Ticks)));
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
             var refreshStarted = Stopwatch.GetTimestamp();
@@ -393,14 +399,13 @@ internal sealed partial class ClusterRouter
     {
         var debounce = TimeSpan.FromMilliseconds(delayMilliseconds);
         var started = TopologyRefreshClock.GetTimestamp();
-        var periodicStarted = TopologyRefreshClock.GetTimestamp();
         while (delayMilliseconds > 0)
         {
             var elapsed = TopologyRefreshClock.GetElapsedTime(started);
             var remaining = debounce - elapsed;
             if (remaining <= TimeSpan.Zero) return false;
             var periodicDelay = periodicRemaining is { } configuredRemaining
-                ? configuredRemaining - TopologyRefreshClock.GetElapsedTime(periodicStarted)
+                ? configuredRemaining - elapsed
                 : (TimeSpan?)null;
             if (periodicDelay is { } remainingPeriodic && remainingPeriodic <= TimeSpan.Zero) return true;
             using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
@@ -438,6 +443,15 @@ internal sealed partial class ClusterRouter
             try { _topologyRefreshSignal.Release(); }
             catch (SemaphoreFullException) { }
         }
+    }
+
+    internal void SignalPrimaryDisconnectRefresh()
+    {
+        var now = Stopwatch.GetTimestamp();
+        var last = Volatile.Read(ref _lastPrimaryDisconnectRefreshSignal);
+        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < PrimaryDisconnectRefreshSpacing) return;
+        if (Interlocked.CompareExchange(ref _lastPrimaryDisconnectRefreshSignal, now, last) != last) return;
+        SignalTopologyRefresh(force: true);
     }
 
     private void TakeTopologyRefreshSignal(

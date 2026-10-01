@@ -212,7 +212,9 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
-    /// <summary>Interval for background Redis Cluster topology refresh. Null or zero disables periodic refresh.</summary>
+    /// <summary>Interval for background Redis Cluster topology refresh. Null, <see cref="TimeSpan.Zero"/>, or
+    /// <see cref="Timeout.InfiniteTimeSpan"/> disables periodic refresh.</summary>
+    /// <remarks>Primary disconnects and <c>MOVED</c> redirects still trigger refreshes when the periodic timer is disabled.</remarks>
     public TimeSpan? ClusterTopologyRefreshInterval { get; init; } = TimeSpan.FromSeconds(60);
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
@@ -343,8 +345,9 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
-        Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero,
-            nameof(ClusterTopologyRefreshInterval), "must be non-negative or null");
+        Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero
+                || ClusterTopologyRefreshInterval == Timeout.InfiniteTimeSpan,
+            nameof(ClusterTopologyRefreshInterval), "must be non-negative, Timeout.InfiniteTimeSpan, or null");
         Require(
             CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(CommandTimeout),

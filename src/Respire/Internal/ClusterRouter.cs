@@ -1396,7 +1396,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 SlotStateChanged?.Invoke(node, slot, change);
                 if (change.State == RespireConnectionState.Disconnected
-                    && Volatile.Read(ref _masters).Contains(node)) SignalTopologyRefresh(force: true);
+                    && Volatile.Read(ref _masters).Contains(node)) SignalPrimaryDisconnectRefresh();
             };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;

@@ -298,8 +298,9 @@ that explicit value remains authoritative. Configured seed connections are reuse
 topology identifies their aliases.
 
 Cluster topology refresh runs every 60 seconds by default. Set
-`ClusterTopologyRefreshInterval` to `null` or `TimeSpan.Zero` to disable periodic refresh.
-The router also refreshes after primary connection loss and coalesces refresh work triggered by
+`ClusterTopologyRefreshInterval` to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to
+disable periodic refresh. The router still refreshes after primary connection loss (at most once
+per second while a primary keeps failing to reconnect) and coalesces refresh work triggered by
 redirects or concurrent `READONLY` recoveries. Refresh uses one bounded discovery round and keeps
 the last published slot map when discovery fails. Replica endpoints, node IDs, and aliases from
 `CLUSTER SLOTS` stay current in router metadata; command routing still uses primaries.
