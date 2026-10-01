@@ -155,7 +155,7 @@ public sealed class RespireCoordination
         local function refreshExpiry()
             local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')[2]
             if latest then
-                redis.call('PEXPIREAT', KEYS[1], math.ceil(tonumber(latest)))
+                redis.call('PEXPIREAT', KEYS[1], string.format('%.0f', math.ceil(tonumber(latest))))
             else
                 redis.call('DEL', KEYS[1])
             end

@@ -26,12 +26,13 @@ public readonly struct RespireReadWriteLockAttempt : IAsyncDisposable
 /// </remarks>
 public sealed class RespireReadWriteLock : IAsyncDisposable
 {
+    private sealed record LeaseSnapshot(long DurationTicks, long RenewedTimestamp);
+
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
     private readonly bool _isWriter;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private long _renewedTimestamp;
-    private long _durationTicks;
+    private LeaseSnapshot _snapshot;
     private int _released;
 
     internal RespireReadWriteLock(
@@ -42,8 +43,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         Key = key;
         _owner = owner;
         _isWriter = isWriter;
-        _durationTicks = duration.Ticks;
-        _renewedTimestamp = startedTimestamp;
+        _snapshot = new LeaseSnapshot(duration.Ticks, startedTimestamp);
     }
 
     /// <summary>The lock key before the client's configured prefix.</summary>
@@ -53,7 +53,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     public bool IsWriter => _isWriter;
 
     /// <summary>The current lease duration, truncated to whole milliseconds.</summary>
-    public TimeSpan Duration => TimeSpan.FromTicks(Interlocked.Read(ref _durationTicks));
+    public TimeSpan Duration => TimeSpan.FromTicks(Volatile.Read(ref _snapshot).DurationTicks);
 
     /// <summary>A conservative local estimate; it does not prove continued server ownership.</summary>
     public TimeSpan RemainingEstimate
@@ -63,7 +63,8 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
             // Measured from before the acquiring or renewing command was sent. Subtracting elapsed
             // time from the duration cannot overflow, unlike adding a long duration to a timestamp.
-            var remaining = Duration - Stopwatch.GetElapsedTime(Interlocked.Read(ref _renewedTimestamp));
+            var snapshot = Volatile.Read(ref _snapshot);
+            var remaining = TimeSpan.FromTicks(snapshot.DurationTicks) - Stopwatch.GetElapsedTime(snapshot.RenewedTimestamp);
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
@@ -113,8 +114,8 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
                 if (response.AsInteger() == 1 && validity > TimeSpan.Zero)
                 {
-                    Interlocked.Exchange(ref _durationTicks, milliseconds * TimeSpan.TicksPerMillisecond);
-                    Interlocked.Exchange(ref _renewedTimestamp, started);
+                    Volatile.Write(ref _snapshot, new LeaseSnapshot(
+                        milliseconds * TimeSpan.TicksPerMillisecond, started));
                     // A concurrent release does not wait for renewal; it wins if it already started.
                     return Volatile.Read(ref _released) == 0;
                 }
@@ -145,10 +146,20 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
-        if (Interlocked.Exchange(ref _released, 1) != 0) return false;
-        using var response = await _client.Scripts.ExecuteAsync(
-            RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
-        return response.AsInteger() == 1;
+        if (Interlocked.CompareExchange(ref _released, 1, 0) != 0) return false;
+        try
+        {
+            using var response = await _client.Scripts.ExecuteAsync(
+                RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
+            return response.AsInteger() == 1;
+        }
+        catch
+        {
+            // The reply may be lost after Redis removed the member. Keep a retry path; the
+            // owner-checked script safely reports NotOwned if the first request took effect.
+            Volatile.Write(ref _released, 0);
+            throw;
+        }
     }
 
     /// <summary>Releases this lease on a best-effort basis.</summary>

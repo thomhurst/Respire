@@ -55,6 +55,34 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task FailedReadWriteReleaseCanBeRetried()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) == 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client)
+            .TryAcquireWriteLockAsync("{job}:rw", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        using var cancellation = new CancellationTokenSource();
+        var pending = attempt.Lock.ReleaseAsync(cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+        cancellation.Cancel();
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        await Assert.That(await attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(3);
+    }
+
+    [Test]
     public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
