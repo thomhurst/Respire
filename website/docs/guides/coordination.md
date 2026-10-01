@@ -166,3 +166,47 @@ does not replay that command after uncertain acceptance. It can leave a counter 
 an unreturned lease that expires after its server-side duration. A reply arriving after the
 local lease estimate elapses is not returned as acquired. There is no acquisition-owned
 keep-alive loop in this API; explicitly renew within a valid lease when needed.
+
+## Multi-node Redlock
+
+`RespireRedlockGroup` provides a quorum lease across an odd number of at least three independent
+standalone Redis deployments. Each supplied client must connect to a different deployment;
+the group never owns or disposes those clients. Acquisition runs against all nodes in parallel,
+uses one random ownership token, and returns only when a majority succeeds with positive
+validity after elapsed time and drift allowance. Failed attempts release that token on every
+reachable node. Node operations have a bounded timeout, configurable with `NodeTimeout`.
+
+```csharp
+using Respire.Extensions.Coordination;
+
+await using var first = await RespireClient.ConnectAsync("redis://node-a:6379");
+await using var second = await RespireClient.ConnectAsync("redis://node-b:6379");
+await using var third = await RespireClient.ConnectAsync("redis://node-c:6379");
+var group = new RespireRedlockGroup([first, second, third]);
+
+await using var attempt = await group.TryAcquireAsync("invoice:42", TimeSpan.FromSeconds(10));
+if (!attempt.Acquired) return;
+
+Console.WriteLine($"Estimated lease time: {attempt.Lock.RemainingEstimate}");
+// Complete protected work within the estimated validity.
+```
+
+Call `ResetExpiryAsync` before validity expires to renew on a quorum. A renewal that a quorum
+does not confirm, including one ended by node timeouts or caller cancellation, ends the lease:
+the handle reports released and the token is removed best-effort from every node, because a
+partial renewal leaves nodes with different expiries. Acquire again if work must continue.
+
+Call `ReleaseAsync` to remove the token from all nodes. Its cancellation token only bounds the
+wait for a concurrent renewal; once started, release runs on every node within `NodeTimeout`.
+It returns true when a quorum replies, whether each token was removed or was already absent.
+If it returns false, the handle stops reporting ownership and retains its token for a later
+cleanup retry. `DisposeAsync` makes one best-effort attempt; retry `ReleaseAsync` if cleanup
+does not reach a quorum. `RemainingEstimate` is local timing information; it cannot prove
+current ownership. The clients remain owned by the caller.
+
+Redlock does not provide consensus or fencing tokens. Redis asynchronous replication, failover,
+partitions and clock drift can violate mutual exclusion. A node that cannot be reached during
+cleanup retains its lease until server-side expiry. A node that exceeds `NodeTimeout` counts as
+failed, but its command can still arrive after cleanup has run; that node then holds the token
+until expiry, which can make the next attempts on that key fail to reach a quorum. Use a consensus-backed lock or a protected
+resource that enforces fencing tokens when stale owners must be rejected.
