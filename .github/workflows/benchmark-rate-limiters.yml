@@ -1,0 +1,101 @@
+name: Redis rate limiter benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire.Extensions.Coordination/**'
+      - 'Directory.Packages.props'
+      - 'benchmarks/Respire.Benchmarks/RedisRateLimiterBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
+      - '.github/workflows/benchmark-rate-limiters.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  rate-limiters:
+    name: Compare Redis rate limiters (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Add candidate benchmark controls to baseline checkout
+        shell: bash
+        run: cp candidate/benchmarks/Respire.Benchmarks/RedisRateLimiterBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+      - name: Run pinned baseline, candidate, baseline sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          for phase in baseline-a candidate baseline-b; do
+            source=baseline
+            if [ "$phase" = candidate ]; then source=candidate; fi
+            dotnet_args=()
+            if [ "$phase" = candidate ]; then dotnet_args+=('-p:RateLimiterApiBenchmark=true'); fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 "${dotnet_args[@]}" -- \
+                --filter '*RedisRateLimiterBenchmarks*' --job Medium --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Verify and summarize per-algorithm results
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          phases = {}
+          for phase in ('baseline-a', 'candidate', 'baseline-b'):
+              reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+              assert len(reports) == 1, f'Missing report: {phase}'
+              cases = json.loads(reports[0].read_text())['Benchmarks']
+              assert len(cases) == 3, f'Expected three algorithm cases: {phase}'
+              by_name = {case['Method']: case for case in cases}
+              assert set(by_name) == {'FixedWindow', 'SlidingWindow', 'TokenBucket'}, f'Unexpected methods: {phase}'
+              assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases)
+              phases[phase] = by_name
+          lines = ['## Redis rate limiter A/B/A benchmark', '',
+                   'A phases use equivalent direct Redis scripts. B uses the candidate .NET RateLimiter API.', '',
+                   '| Algorithm | Baseline A ns | Candidate ns | Baseline B ns | Candidate alloc B |',
+                   '| --- | ---: | ---: | ---: | ---: |']
+          for method in ('FixedWindow', 'SlidingWindow', 'TokenBucket'):
+              values = [phases[phase][method] for phase in ('baseline-a', 'candidate', 'baseline-b')]
+              mean = [value['Statistics']['Mean'] for value in values]
+              allocated = values[1].get('Memory', {}).get('BytesAllocatedPerOperation', 0)
+              lines.append(f'| {method} | {mean[0]:.1f} | {mean[1]:.1f} | {mean[2]:.1f} | {allocated:.1f} |')
+          report = '\n'.join(lines) + '\n'
+          Path('results/comparison.md').write_text(report)
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(report)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: redis-rate-limiter-comparison
+          path: |
+            results/
+            *.log

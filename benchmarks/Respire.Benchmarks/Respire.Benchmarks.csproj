@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);FENCED_LOCKS</DefineConstants>
+    <DefineConstants Condition="'$(RateLimiterApiBenchmark)' == 'true'">$(DefineConstants);RATE_LIMITER_API</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

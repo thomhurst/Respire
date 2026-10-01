@@ -48,7 +48,10 @@ public sealed class RespireCoordination
 
     /// <summary>Creates coordination operations without taking ownership of <paramref name="client"/>.</summary>
     public RespireCoordination(IRespireClient client)
-        => _client = client ?? throw new ArgumentNullException(nameof(client));
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        RateLimiters = new(this);
+    }
 
     internal static readonly RespireScript CreateCountdownLatch = RespireScript.Create("""
         if redis.call('EXISTS', KEYS[1]) == 1 then return redis.error_reply('ERR latch already exists; use reset') end
@@ -88,6 +91,29 @@ public sealed class RespireCoordination
     internal static readonly RespireScript ReadCountdownLatch = RespireScript.Create(ReadCountdownLatchSource, readOnly: true);
     private static readonly RespireScript ReadCountdownLatchCompatibility =
         RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
+
+    /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
+    public RespireRateLimiters RateLimiters { get; }
+
+    // Shared per connection so every limiter (for example, one per PartitionedRateLimiter partition) skips the
+    // failing INCREX probe after an unknown-command reply from a pre-8.8 server. The result expires so that
+    // upgraded nodes (rolling Cluster upgrades, failover to a newer primary) regain the INCREX fast path.
+    private static readonly long IncrexRecheckInterval = (long)(Stopwatch.Frequency * TimeSpan.FromMinutes(5).TotalSeconds);
+    private long _increxUnsupportedUntil;
+
+    internal bool IncrexUnsupported
+    {
+        get
+        {
+            var until = Volatile.Read(ref _increxUnsupportedUntil);
+            return until != 0 && Stopwatch.GetTimestamp() < until;
+        }
+        set => Volatile.Write(ref _increxUnsupportedUntil, value ? Stopwatch.GetTimestamp() + IncrexRecheckInterval : 0);
+    }
+
+    internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
+        RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
+        => _client.Scripts.ExecuteAsync(script, [key], args, cancellationToken);
 
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>

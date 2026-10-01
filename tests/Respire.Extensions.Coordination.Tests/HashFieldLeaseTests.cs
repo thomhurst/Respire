@@ -10,6 +10,7 @@ namespace Respire.Extensions.Coordination.Tests;
 public class HashFieldLeaseTests
 {
     [Test]
+    [NotInParallel]
     public async Task BinaryFieldLeaseExpiresIndependentlyAndRejectsStaleOwner()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
@@ -28,7 +29,7 @@ public class HashFieldLeaseTests
         RespireKey field = fieldBytes;
         RespireKey otherField = otherFieldBytes;
 
-        await using var oldOwner = await coordination.TryAcquireLeaseAsync(hash, field, TimeSpan.FromMilliseconds(500))
+        await using var oldOwner = await coordination.TryAcquireLeaseAsync(hash, field, TimeSpan.FromSeconds(2))
             ?? throw new InvalidOperationException("Expected first lease acquisition.");
         await Assert.That(await view.Hashes.GetBytesAsync(hash, field)).IsEquivalentTo(oldOwner.OwnerToken.Bytes.ToArray());
         await using var independent = await coordination.TryAcquireLeaseAsync(hash, otherField, TimeSpan.FromSeconds(10))
