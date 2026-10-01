@@ -579,6 +579,26 @@ public class SentinelTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task ConnectAsync_DoesNotLabelPrimaryConnectTimeoutAsDiscoveryTimeout()
+    {
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        primary.DelayReply(0, 4_000);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
+
+        var error = await Assert.That(async () => await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(3),
+        })).ThrowsExactly<RespireTimeoutException>();
+
+        await Assert.That(error!.CommandName).IsNotEqualTo("SENTINEL GET-MASTER-ADDR-BY-NAME");
+    }
+
+    [Test]
     public async Task ConnectAsync_FallsBackWhenSentinelReportsUnreachablePrimary()
     {
         using var unavailablePrimary = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
