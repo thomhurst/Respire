@@ -130,6 +130,16 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    internal bool HasConnection(Func<RespireConnection, bool> predicate)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected) return false;
+        foreach (var connection in _connections)
+        {
+            if (connection is { IsAcceptingCommands: true } && predicate(connection)) return true;
+        }
+        return false;
+    }
+
     private RespireConnectionMultiplexer(string host, int port, int connectionCount, RespireConnectionOptions options, ILogger? logger)
     {
         Host = host;

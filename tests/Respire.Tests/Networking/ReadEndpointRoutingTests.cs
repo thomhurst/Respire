@@ -63,6 +63,7 @@ public class ReadEndpointRoutingTests
 
         await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key"))
             .Throws<RespireConnectionException>();
+        await Assert.That(client.IsConnected).IsFalse();
         await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("key"))
             .IsEqualTo("primary");
         // The failed replica is skipped for one ReplicaRefreshInterval, so the fallback read
@@ -96,10 +97,13 @@ public class ReadEndpointRoutingTests
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-
-        await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica)
-            .GetStringAsync("key", cancellation.Token)).Throws<OperationCanceledException>();
+        using var cancellation = new CancellationTokenSource();
+        var pending = client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key", cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!replica.ReceivedCommands.Contains("ROLE")) await Task.Delay(5, timeout.Token);
+        await Assert.That(client.IsConnected).IsFalse();
+        cancellation.Cancel();
+        await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE"]);
         await Assert.That(primary.ReceivedCommands).IsEmpty();
     }

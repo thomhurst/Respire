@@ -443,7 +443,15 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 
         internal RespireEndpoint Endpoint => endpoint;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;
-        internal bool IsConnected => !_closed && Volatile.Read(ref _multiplexer)?.IsConnected == true;
+        internal bool IsConnected
+        {
+            get
+            {
+                var multiplexer = Volatile.Read(ref _multiplexer);
+                return !_closed && multiplexer?.HasConnection(connection =>
+                    _health.Check(connection, router.RoleRevalidationInterval) != ReplicaValidation.Required) == true;
+            }
+        }
 
         internal bool IsCoolingDown => _health.IsCoolingDown(router.FailedReplicaCooldown);
 
