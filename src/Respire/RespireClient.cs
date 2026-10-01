@@ -3347,9 +3347,37 @@ public sealed partial class RespireClient : IRespireClient
 
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
 
+        /// <summary>
+        /// When the final attempt was serialized into the connection's write path. It is taken
+        /// after any wait for in-flight capacity and before the bytes reach Redis, so it never
+        /// postdates the server's execution of the script.
+        /// </summary>
         internal long StartedTimestamp { get; set; }
 
         internal ValueTask<RespireResult> Response { get; set; }
+    }
+
+    /// <summary>
+    /// Records <see cref="TrackedScriptExecution.StartedTimestamp"/> when the connection serializes
+    /// the command. Serialization happens at enqueue, after any wait for in-flight ring capacity, so
+    /// a lease measured from it does not count time parked behind other commands. A retried enqueue
+    /// serializes again, so the last write wins.
+    /// </summary>
+    private readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+        {
+            execution.StartedTimestamp = Stopwatch.GetTimestamp();
+            command.Write(ref writer);
+        }
+
+        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+
+        public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+            => command.TryGetClientCacheKey(operation, out key);
     }
 
     internal ValueTask<RespireResult> ExecuteScriptAsync(
@@ -3677,7 +3705,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     execution.StartedTimestamp = Stopwatch.GetTimestamp();
                     var reply = await SendOnConnectionAsync(
-                            operation, connection, command,
+                            operation, connection, new SendTimestampCommand<Cmd2N>(command, execution),
                             cancellationToken, storedProcedureName, sendAsking)
                         .ConfigureAwait(false);
                     return new RespireResult(in reply, _core.Options.Serializer);
@@ -3761,20 +3789,33 @@ public sealed partial class RespireClient : IRespireClient
     {
         try
         {
-            var reply = await SendOnConnectionCoreAsync(
-                    script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]), cancellationToken)
+            var reply = await SendScriptCommandAsync(
+                    script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
+                    cancellationToken, execution)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
-            var reply = await SendOnConnectionCoreAsync(
-                    script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]), cancellationToken)
+            var reply = await SendScriptCommandAsync(
+                    script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
+                    cancellationToken, execution)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
     }
+
+    private ValueTask<RespValue> SendScriptCommandAsync(
+        string operation,
+        RespireConnection connection,
+        Cmd2N command,
+        CancellationToken cancellationToken,
+        TrackedScriptExecution? execution)
+        => execution is null
+            ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+            : SendOnConnectionCoreAsync(
+                operation, connection, new SendTimestampCommand<Cmd2N>(command, execution), cancellationToken);
 
     /// <summary>
     /// Kills one multiplexed Redis client through a separate control connection and waits for

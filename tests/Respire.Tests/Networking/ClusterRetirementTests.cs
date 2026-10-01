@@ -1836,6 +1836,35 @@ public class ClusterRetirementTests
         await Assert.That(error!.CommandName).IsEqualTo(operation);
     }
 
+    [Test]
+    public async Task TrackedScriptSendTimestampFollowsTheRedirectedSend()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        using var timeout = new CancellationTokenSource(Limit);
+        Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "owner", 1);
+        var slot = ClusterHash.GetSlot("key");
+        var evals = 0;
+        long redirectedAt = 0;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLIENT ID") return ":42\r\n"u8.ToArray();
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+            if (Interlocked.Increment(ref evals) > 1) return ":1\r\n"u8.ToArray();
+            Volatile.Write(ref redirectedAt, System.Diagnostics.Stopwatch.GetTimestamp());
+            return System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{server.Port}\r\n");
+        };
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["key"], [], timeout.Token, captureSendTimestampOnly: true);
+        using (await execution.Response) { }
+
+        // Lease-based callers measure validity from this timestamp, so it must belong to the
+        // redirected send, not the rejected first attempt.
+        await Assert.That(evals).IsEqualTo(2);
+        await Assert.That(execution.StartedTimestamp).IsGreaterThan(Volatile.Read(ref redirectedAt));
+    }
+
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,
         bool allowAdmin = false, RespireReconnectPolicy? reconnectPolicy = null) => RespireClient.Create(new RespireOptions
     {

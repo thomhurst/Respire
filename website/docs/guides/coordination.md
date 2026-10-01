@@ -476,6 +476,14 @@ an uncertain acquire before cleanup and a delayed acquire cannot recreate a rele
 the fence never succeeds, Respire sends no release. Other `IRespireClient` implementations cannot
 fence, so their cleanup can be overtaken by the delayed acquire.
 
+An error reply to an acquisition other than a capacity mismatch, such as an ACL rejecting a command
+partway through the script, can follow writes that Redis does not roll back. Respire therefore
+sends an owner-token release before the exception propagates.
+
+Background cleanup that gives up, for example because Redis keeps rejecting the `CLIENT KILL` fence
+or the release for a full minute, increments the `respire.coordination.cleanup.abandoned` counter
+(tagged with the stage and reason) and logs a warning through the client's `LoggerFactory`.
+
 Prefer a finite expiry. A permit without expiry has no server-side fallback: if its holder crashes,
 or background cleanup cannot reach Redis within one minute, it consumes capacity, and blocks
 capacity changes, until it is removed. To recover, stop every holder and delete the semaphore key,

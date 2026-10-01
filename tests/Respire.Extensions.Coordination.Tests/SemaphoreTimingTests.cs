@@ -42,25 +42,30 @@ public class SemaphoreTimingTests
     public async Task CleanupRetryStopsOnSuccess()
     {
         var attempts = 0;
+        string? abandoned = null;
         var succeeded = await RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), () =>
-            new(++attempts < 3 ? SemaphoreCleanupAttempt.Failed : SemaphoreCleanupAttempt.Succeeded));
+            new(++attempts < 3 ? SemaphoreCleanupAttempt.Failed : SemaphoreCleanupAttempt.Succeeded),
+            onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsTrue();
         await Assert.That(attempts).IsEqualTo(3);
+        await Assert.That(abandoned).IsNull();
     }
 
     [Test]
     public async Task CleanupRetryStopsWhenTheClientIsDisposed()
     {
         var attempts = 0;
+        string? abandoned = null;
         var succeeded = await RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), () =>
         {
             attempts++;
             return new(SemaphoreCleanupAttempt.Abandoned);
-        });
+        }, onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();
         await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(abandoned).IsEqualTo("client_disposed");
     }
 
     [Test]
@@ -68,15 +73,18 @@ public class SemaphoreTimingTests
     {
         var attempts = 0;
         var needed = true;
+        string? abandoned = null;
         var succeeded = await RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), () =>
         {
             attempts++;
             needed = false;
             return new(SemaphoreCleanupAttempt.Failed);
-        }, () => needed);
+        }, () => needed, reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();
         await Assert.That(attempts).IsEqualTo(1);
+        // Cleanup that is no longer needed did not give up.
+        await Assert.That(abandoned).IsNull();
     }
 
     [Test]
@@ -85,13 +93,15 @@ public class SemaphoreTimingTests
         var attempts = 0;
         var windowStart = Stopwatch.GetTimestamp()
             - (long)(RespireSemaphore.CleanupRetryLimit.TotalSeconds * Stopwatch.Frequency);
+        string? abandoned = null;
         var succeeded = await RespireSemaphore.RetryCleanupAsync(windowStart, () =>
         {
             attempts++;
             return new(SemaphoreCleanupAttempt.Failed);
-        });
+        }, onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();
         await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(abandoned).IsEqualTo("exhausted");
     }
 }

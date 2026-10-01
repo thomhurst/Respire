@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Respire.Internal;
 
 namespace Respire.Extensions.Coordination;
 
@@ -23,8 +24,9 @@ namespace Respire.Extensions.Coordination;
 /// </remarks>
 public sealed class RespireSemaphore
 {
-    // The acquire script returns this text after "ERR ", and TryAcquireCoreAsync maps it to
-    // RespireSemaphoreCapacityMismatchException.
+    // The acquire script replies with this error code, and TryAcquireCoreAsync maps exactly this
+    // code to RespireSemaphoreCapacityMismatchException, so no other error text can match it.
+    internal const string CapacityMismatchCode = "SEMCAPACITY";
     internal const string CapacityMismatchDetail = "semaphore capacity cannot change while permits are active";
     internal static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     // Background cleanup is bounded even for owner-only permits. If Redis keeps rejecting the fence
@@ -70,9 +72,12 @@ public sealed class RespireSemaphore
         long milliseconds, CancellationToken cancellationToken)
     {
         var owner = RespireLock.NewToken();
-        var trackedWire = _client is RespireClient wire
-            ? await wire.GetCorrectionTrackingClientAsync(cancellationToken).ConfigureAwait(false)
-            : null;
+        var concreteClient = _client as RespireClient;
+        // Only a client that can fence gets one; the others still use a tracked execution for its
+        // send timestamp.
+        var trackedWire = concreteClient is null
+            ? null
+            : await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken).ConfigureAwait(false);
         // Sampled after connection preflight: the permit cannot exist before the script is sent,
         // so only the acquisition itself counts against a short expiry.
         var started = Stopwatch.GetTimestamp();
@@ -81,7 +86,7 @@ public sealed class RespireSemaphore
         try
         {
             RespireValue[] args = [Capacity, owner.Bytes, milliseconds];
-            if (trackedWire is null)
+            if (concreteClient is null)
             {
                 using var response = await _client.Scripts.ExecuteAsync(
                     AcquireScript, [Key], args, cancellationToken).ConfigureAwait(false);
@@ -89,19 +94,24 @@ public sealed class RespireSemaphore
             }
             else
             {
-                trackedExecution = await trackedWire.StartTrackedScriptExecutionAsync(
+                trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                     AcquireScript, [Key], args, cancellationToken,
-                    requireReliableCorrectionOrdering: true).ConfigureAwait(false);
+                    requireReliableCorrectionOrdering: trackedWire is not null,
+                    captureSendTimestampOnly: trackedWire is null).ConfigureAwait(false);
                 using var response = await trackedExecution.Response.ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;
             }
         }
         catch (RespireServerException error)
         {
-            // An error reply is definite. The script refuses before it adds a permit, so there is
-            // nothing to clean up.
-            if (error.Message.Contains(CapacityMismatchDetail, StringComparison.Ordinal))
+            // An error reply is definite, so no delayed acquire can follow and no fence is needed.
+            // The capacity check refuses before the script writes anything.
+            if (error.Code == CapacityMismatchCode)
                 throw new RespireSemaphoreCapacityMismatchException(Capacity, error);
+            // Any other error may come from a later command, for example PERSIST rejected by an
+            // ACL after ZADD already added this owner. Lua does not roll back earlier writes, so
+            // release the owner token; a permit without expiry keeps retrying in the background.
+            await ReleaseAcquiredAsync(owner, retryInBackground: milliseconds == 0).ConfigureAwait(false);
             throw;
         }
         catch
@@ -111,8 +121,8 @@ public sealed class RespireSemaphore
         }
         if (!acquired) return default;
 
-        // The tracked send can wait for a routed connection or follow redirects; the permit
-        // cannot exist before the final send, which StartedTimestamp records.
+        // The tracked send can wait for a routed connection, for in-flight capacity, or follow
+        // redirects; the permit cannot exist before the final send, which StartedTimestamp records.
         if (trackedExecution is { StartedTimestamp: > 0 } sent) started = Math.Max(started, sent.StartedTimestamp);
         var completed = Stopwatch.GetTimestamp();
         var expiry = FromMilliseconds(milliseconds);
@@ -137,8 +147,8 @@ public sealed class RespireSemaphore
             new RespireSemaphorePermit(_client, Key, owner, Capacity, expiry, remaining, completed));
     }
 
-    // The acquire reply has arrived, so no delayed acquire can follow this release and no fence
-    // is needed. The caller waits at most BestEffortCleanupTimeout.
+    // The acquire reply (success or error) has arrived, so no delayed acquire can follow this
+    // release and no fence is needed. The caller waits at most BestEffortCleanupTimeout.
     private async ValueTask ReleaseAcquiredAsync(RespireLockToken owner, bool retryInBackground)
     {
         if (!retryInBackground)
@@ -148,7 +158,8 @@ public sealed class RespireSemaphore
         }
 
         await WaitForCleanupAsync(RetryCleanupAsync(
-            Stopwatch.GetTimestamp(), () => TryReleaseOnceAsync(_client, Key, owner))).ConfigureAwait(false);
+            Stopwatch.GetTimestamp(), () => TryReleaseOnceAsync(_client, Key, owner),
+            onAbandoned: ReportAbandoned(_client, "release"))).ConfigureAwait(false);
     }
 
     // A release that overtakes a delayed acquire would let that acquire recreate the permit, so
@@ -164,10 +175,14 @@ public sealed class RespireSemaphore
         var started = Stopwatch.GetTimestamp();
         // If the barrier never succeeds within CleanupRetryLimit, ordering remains uncertain, so
         // no release is sent; finite expiry remains the fallback.
-        if (!await RetryCleanupAsync(started, () => TryFenceAsync(wire, execution)).ConfigureAwait(false))
+        if (!await RetryCleanupAsync(
+                started, () => TryFenceAsync(wire, execution), onAbandoned: ReportAbandoned(_client, "fence"))
+            .ConfigureAwait(false))
             return;
         // A fenced connection is retired, so the first release may wait for a replacement.
-        await RetryCleanupAsync(started, () => TryReleaseOnceAsync(_client, Key, owner)).ConfigureAwait(false);
+        await RetryCleanupAsync(
+                started, () => TryReleaseOnceAsync(_client, Key, owner), onAbandoned: ReportAbandoned(_client, "release"))
+            .ConfigureAwait(false);
     }
 
     private static async ValueTask WaitForCleanupAsync(Task cleanup)
@@ -234,22 +249,43 @@ public sealed class RespireSemaphore
     /// an attempt succeeds, the client is disposed, <paramref name="shouldContinue"/> returns false,
     /// or <see cref="CleanupRetryLimit"/> has elapsed since <paramref name="started"/>.
     /// </summary>
+    /// <param name="started">Timestamp at which the retry window began.</param>
+    /// <param name="attempt">One bounded fence or release attempt.</param>
+    /// <param name="shouldContinue">Returns false once the cleanup is no longer needed.</param>
+    /// <param name="onAbandoned">
+    /// Called with "exhausted" or "client_disposed" when the cleanup stops while still needed.
+    /// </param>
     /// <returns>True when an attempt succeeded.</returns>
     internal static async Task<bool> RetryCleanupAsync(
-        long started, Func<ValueTask<SemaphoreCleanupAttempt>> attempt, Func<bool>? shouldContinue = null)
+        long started, Func<ValueTask<SemaphoreCleanupAttempt>> attempt, Func<bool>? shouldContinue = null,
+        Action<string>? onAbandoned = null)
     {
         var delay = CleanupRetryInitialDelay;
         while (shouldContinue is null || shouldContinue())
         {
             var outcome = await attempt().ConfigureAwait(false);
-            if (outcome != SemaphoreCleanupAttempt.Failed) return outcome == SemaphoreCleanupAttempt.Succeeded;
-            if (Stopwatch.GetElapsedTime(started) >= CleanupRetryLimit) return false;
+            if (outcome == SemaphoreCleanupAttempt.Succeeded) return true;
+            if (outcome == SemaphoreCleanupAttempt.Abandoned)
+            {
+                onAbandoned?.Invoke("client_disposed");
+                return false;
+            }
+            if (Stopwatch.GetElapsedTime(started) >= CleanupRetryLimit)
+            {
+                onAbandoned?.Invoke("exhausted");
+                return false;
+            }
             await Task.Delay(WithJitter(delay)).ConfigureAwait(false);
             delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, CleanupRetryMaxDelay.Ticks));
         }
 
         return false;
     }
+
+    // Reports a cleanup that gave up as a counter and, when the client has a logger, a warning.
+    internal static Action<string> ReportAbandoned(IRespireClient client, string stage)
+        => reason => RespireTelemetry.RecordCoordinationCleanupAbandoned(
+            "semaphore", stage, reason, (client as RespireClient)?.Core.Logger);
 
     // Spreads retries from clients that lost the same connection at the same moment.
     private static TimeSpan WithJitter(TimeSpan delay)
@@ -294,7 +330,7 @@ public sealed class RespireSemaphore
         local storedCapacity = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', '-inf', 'LIMIT', 0, 1)[1]
         if storedCapacity and storedCapacity ~= requestedCapacity then
             if redis.call('ZCARD', KEYS[1]) > 1 then
-                return redis.error_reply('ERR {{CapacityMismatchDetail}}')
+                return redis.error_reply('{{CapacityMismatchCode}} {{CapacityMismatchDetail}}')
             end
             redis.call('ZREM', KEYS[1], storedCapacity)
             storedCapacity = nil
@@ -652,8 +688,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <remarks>
     /// Disposal waits about one second at most and never throws. When release is not confirmed in
     /// that time, for example because a renewal is in flight or Redis is unreachable, owner-token
-    /// release continues in the background with capped backoff for up to one minute, and failures
-    /// are not reported. A permit without expiry that is still on Redis after that window stays
+    /// release continues in the background with capped backoff for up to one minute. Failures are not
+    /// thrown; a cleanup that gives up increments the <c>respire.coordination.cleanup.abandoned</c>
+    /// counter and logs a warning through the client's logger. A permit without expiry that is still on Redis after that window stays
     /// there until it is removed manually, so prefer a finite expiry when clients can lose
     /// connectivity.
     /// </remarks>
@@ -683,7 +720,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private void ScheduleDisposeReleaseRetry()
     {
         if (Set(PermitState.DisposeReleaseScheduled))
-            _ = RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), TryReleaseAndMarkAsync, NeedsDisposeCleanup);
+            _ = RespireSemaphore.RetryCleanupAsync(
+                Stopwatch.GetTimestamp(), TryReleaseAndMarkAsync, NeedsDisposeCleanup,
+                RespireSemaphore.ReportAbandoned(_client, "release"));
     }
 
     // Disposal cleanup continues while Redis may still hold the permit: it has no expiry, a renewal

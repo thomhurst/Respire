@@ -357,7 +357,7 @@ public class SemaphoreWireTests
         await using var server = new FakeRespServer(
             ClientIdReply,
             ClientKillReply,
-            "-ERR semaphore capacity cannot change while permits are active\r\n"u8.ToArray(),
+            "-SEMCAPACITY semaphore capacity cannot change while permits are active\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
@@ -373,20 +373,83 @@ public class SemaphoreWireTests
 
     [Test]
     [NotInParallel]
-    public async Task OtherAcquireErrorRepliesPropagateWithoutCleanup()
+    public async Task CapacityMismatchTextUnderAnotherCodeIsNotTreatedAsMismatch()
     {
         await using var server = new FakeRespServer(
             ClientIdReply,
             ClientKillReply,
-            "-OOM command not allowed when used memory > 'maxmemory'\r\n"u8.ToArray(),
+            "-ERR semaphore capacity cannot change while permits are active\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        // Only the dedicated error code maps to the typed exception, not matching message text.
+        await Assert.That(async () => await new RespireSemaphore(client, "{capacity}:text", capacity: 2)
+                .TryAcquireAsync())
+            .ThrowsExactly<RespireServerException>();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OtherAcquireErrorRepliesReleaseTheOwnerBeforePropagating(bool finiteExpiry)
+    {
+        // An ACL can reject PERSIST after ZADD already added the owner; Lua keeps that write.
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            "-NOPERM this user has no permissions to run the 'persist' command\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var error = await Assert.That(async () => await new RespireSemaphore(client, "{capacity}:oom", capacity: 1)
-                .TryAcquireAsync())
+        var error = await Assert.That(async () => await new RespireSemaphore(client, "{capacity}:noperm", capacity: 1)
+                .TryAcquireAsync(finiteExpiry ? TimeSpan.FromSeconds(30) : null))
             .ThrowsExactly<RespireServerException>();
 
-        await Assert.That(error!.Code).IsEqualTo("OOM");
+        await Assert.That(error!.Code).IsEqualTo("NOPERM");
+        var evals = EvalCommands(server);
+        await Assert.That(evals.Length).IsEqualTo(2);
+        // The release carries the owner token the acquire sent, and needs no fence.
+        var owner = evals[0].Split(' ')[^2];
+        await Assert.That(evals[1].Split(' ')[^1]).IsEqualTo(owner);
+        // The only CLIENT KILL is the permission probe sent before the acquire.
+        var commands = server.ReceivedCommands.ToList();
+        var acquireIndex = commands.FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+        await Assert.That(commands.Skip(acquireIndex).Any(command => command.StartsWith("CLIENT KILL", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task WaitForInflightCapacityDoesNotCountAgainstAcquisitionExpiry()
+    {
+        // The first reply answers a blocker command late. With one in-flight slot, the acquire waits
+        // for that reply before it is even written, so the wait must not shorten its lease.
+        await using var server = new FakeRespServer(
+            FakeRespServer.PongReply,
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(0, 1500);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            MaxInflightCommands = 1,
+            CommandTimeout = null,
+        });
+
+        var blocker = client.PingAsync().AsTask();
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            while (server.CommandsSeen < 1) await Task.Delay(10, sent.Token);
+
+        var started = Stopwatch.GetTimestamp();
+        await using var attempt = await new RespireSemaphore(client, "{inflight}:semaphore", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromMilliseconds(1000));
+        await blocker;
+
+        await Assert.That(Stopwatch.GetElapsedTime(started)).IsGreaterThan(TimeSpan.FromMilliseconds(1000));
+        await Assert.That(attempt.Acquired).IsTrue();
         await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
     }
 
