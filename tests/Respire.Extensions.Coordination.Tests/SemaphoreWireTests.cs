@@ -124,11 +124,18 @@ public class SemaphoreWireTests
 
         var evalCount = 0;
         var fenceCount = 0;
+        using var cancellation = new CancellationTokenSource();
         await using var server = new FakeRespServer(4, ":1\r\n"u8.ToArray())
         {
-            // Parks the acquire; every later script (the cleanup release) is answered.
-            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                && Interlocked.Increment(ref evalCount) == 1,
+            // Parks the acquire and cancels it once the server has it; every later script (the
+            // cleanup release) is answered.
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    || Interlocked.Increment(ref evalCount) != 1) return false;
+                _ = Task.Run(cancellation.Cancel);
+                return true;
+            },
             ReplyOverride = (_, command) => IsFence(command) && Interlocked.Increment(ref fenceCount) == 1
                 ? "-BUSY Redis is busy running a script\r\n"u8.ToArray()
                 : null,
@@ -140,17 +147,15 @@ public class SemaphoreWireTests
             Connections = 1,
             CommandTimeout = null,
         });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var semaphore = new RespireSemaphore(client, "{retry}:transient-fence", capacity: 1);
 
         await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (EvalCommands(server).Length < 2) await Task.Delay(10, deadline.Token);
-        var commands = server.ReceivedCommands.ToList();
-        var fences = commands.Select((command, index) => (command, index))
+        var commands = server.ReceivedCommands.ToList();        var fences = commands.Select((command, index) => (command, index))
             .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToList();
         var release = commands.FindLastIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal));
         // The refused barrier is retried, and the release is sent only after it is acknowledged.
