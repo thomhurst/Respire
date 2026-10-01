@@ -470,18 +470,37 @@ public sealed class RespireLock : IAsyncDisposable
 
     internal void KeepAliveStopped() => Volatile.Write(ref _keepAlive, 0);
 
-    internal bool IsReleasing => Volatile.Read(ref _state) == StateReleasing;
+    /// <summary>The handle as the keep-alive loop sees it.</summary>
+    internal enum KeepAlivePhase
+    {
+        /// <summary>Owned; renew before the remaining lease runs out.</summary>
+        Held,
+        /// <summary>A release is in flight; do not renew, wait for its outcome.</summary>
+        Releasing,
+        /// <summary>Released or ownership lost; stop.</summary>
+        Ended,
+    }
 
     /// <summary>
-    /// Reads the remaining lease and whether a release is in flight from one state snapshot.
-    /// <see cref="RemainingEstimate"/> reports zero while releasing, so reading it separately
-    /// after <see cref="IsReleasing"/> could mistake a just-started release for an elapsed lease.
+    /// Reads the keep-alive phase and the remaining lease from one state snapshot.
+    /// <see cref="RemainingEstimate"/> reports zero while releasing, so reading the lease and the
+    /// release state separately could mistake a just-started release for an elapsed lease.
+    /// <paramref name="remaining"/> is zero unless the phase is <see cref="KeepAlivePhase.Held"/>.
     /// </summary>
-    internal TimeSpan GetKeepAliveRemaining(out bool releasing)
+    internal KeepAlivePhase GetKeepAlivePhase(out TimeSpan remaining)
     {
-        var state = Volatile.Read(ref _state);
-        releasing = state == StateReleasing;
-        return state == StateHeld ? RemainingUntilLeaseExpiry : TimeSpan.Zero;
+        switch (Volatile.Read(ref _state))
+        {
+            case StateHeld:
+                remaining = RemainingUntilLeaseExpiry;
+                return KeepAlivePhase.Held;
+            case StateReleasing:
+                remaining = TimeSpan.Zero;
+                return KeepAlivePhase.Releasing;
+            default:
+                remaining = TimeSpan.Zero;
+                return KeepAlivePhase.Ended;
+        }
     }
 
     internal async ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
@@ -591,26 +610,28 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                 // One state read: a release that starts between two reads must not look like an
                 // elapsed lease, or the keep-alive would mark ownership lost and stop a release
                 // that later proves it never submitted its delete from restoring ownership.
-                var remaining = _lock.GetKeepAliveRemaining(out var releasing);
-                if (releasing)
+                var phase = _lock.GetKeepAlivePhase(out var remaining);
+                switch (phase)
                 {
-                    if (await WaitForReleaseOutcomeAsync(leaseChanged).ConfigureAwait(false))
-                    {
-                        continue;
-                    }
+                    case RespireLock.KeepAlivePhase.Releasing:
+                        if (await WaitForReleaseOutcomeAsync(leaseChanged).ConfigureAwait(false))
+                        {
+                            continue;
+                        }
 
-                    return;
-                }
-
-                if (remaining <= TimeSpan.Zero)
-                {
-                    MarkOwnershipUncertain();
-                    return;
+                        return;
+                    case RespireLock.KeepAlivePhase.Held when remaining > TimeSpan.Zero:
+                        break;
+                    default:
+                        // The lease elapsed, or the handle ended without a lease change this loop saw.
+                        MarkOwnershipUncertain();
+                        return;
                 }
 
                 if (!await RenewBeforeDeadlineAsync(remaining).ConfigureAwait(false))
                 {
-                    if (_lock.IsReleasing || leaseChanged.IsCancellationRequested)
+                    if (_lock.GetKeepAlivePhase(out _) == RespireLock.KeepAlivePhase.Releasing
+                        || leaseChanged.IsCancellationRequested)
                     {
                         // A release started after the snapshot, so the renewal stopped at the
                         // handle. Re-evaluate: wait for that release, or stop if it ended ownership.

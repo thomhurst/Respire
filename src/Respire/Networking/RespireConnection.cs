@@ -1242,8 +1242,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ThrowIfRetired();
                 if (_dead)
                 {
-                    throw Volatile.Read(ref _abortReason)
-                        ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    throw ClosedBeforeEnqueue();
                 }
 
                 if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
@@ -1317,8 +1316,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ThrowIfRetired();
             if (_dead)
             {
-                throw Volatile.Read(ref _abortReason)
-                    ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                throw ClosedBeforeEnqueue();
             }
 
             if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
@@ -2731,6 +2729,26 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             _logger?.LogDebug("Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", failed, Host, Port, exception.Message);
         }
+    }
+
+    /// <summary>
+    /// The failure for a command that found the connection already closed under the write gate,
+    /// before anything was appended or reserved. A generic close becomes
+    /// <see cref="RespireConnectionClosedBeforeSendException"/>, which keeps the close reason's
+    /// message and cause, so callers that must prove a command was not sent (lock release) can
+    /// tell it from a failure of an in-flight command. Specific close reasons are rethrown as is.
+    /// </summary>
+    private Exception ClosedBeforeEnqueue()
+    {
+        var reason = Volatile.Read(ref _abortReason);
+        if (reason is null)
+        {
+            return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
+        }
+
+        return reason.GetType() == typeof(RespireConnectionException)
+            ? new RespireConnectionClosedBeforeSendException(reason.Message, reason.InnerException)
+            : reason;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

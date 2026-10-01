@@ -18,6 +18,80 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task ClosedConnectionRejectsEnqueueAsNotSubmitted()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using (await connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)))
+        {
+        }
+
+        server.CloseConnections();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (connection.IsConnected) await Task.Delay(10, timeout.Token);
+
+        // The connection is already dead when the command reaches the write gate, so nothing was
+        // appended. Lock release relies on this type to keep ownership retryable.
+        var error = await Assert.That(async () =>
+                await connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(error).IsTypeOf<Respire.Networking.RespireConnectionClosedBeforeSendException>();
+        await Assert.That(LockCommands.IsUnsubmitted(error!)).IsTrue();
+        await Assert.That(error!.Message).IsEqualTo(connection.CloseError!.Message);
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ConnectionLossAfterWriteIsNotReportedAsUnsubmitted()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply) { SuppressReply = _ => true };
+        await using var connection = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var pending = connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        server.CloseConnections();
+
+        // The command reached the server, so its failure must stay uncertain.
+        var error = await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        await Assert.That(LockCommands.IsUnsubmitted(error!)).IsFalse();
+    }
+
+    [Test]
+    public async Task RetirementRacingWritesEitherAcceptsOrRejectsBeforeSending()
+    {
+        // Lock release treats RespireConnectionRetiredException as proof that nothing was sent.
+        // Race retirement against many writers: every command must either be accepted and reach
+        // the server, or be rejected with that exception without reaching it.
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sends = Enumerable.Range(0, 256).Select(_ => Task.Run(async () =>
+        {
+            await start.Task;
+            try
+            {
+                using var reply = await connection.SendAsync(
+                    new Respire.Commands.RawCommand(FakeRespServer.PingFrame), timeout.Token);
+                return true;
+            }
+            catch (Respire.Networking.RespireConnectionRetiredException)
+            {
+                return false;
+            }
+        })).ToArray();
+
+        start.SetResult();
+        await Task.Yield();
+        var retirement = connection.RetireAsync();
+        var accepted = (await Task.WhenAll(sends).WaitAsync(timeout.Token)).Count(sent => sent);
+        await retirement.WaitAsync(timeout.Token);
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(accepted);
+    }
+
+    [Test]
     public async Task LockCommands_WriteExpectedFramesAndParseReplies()
     {
         await using var server = new FakeRespServer(
@@ -1049,19 +1123,18 @@ public class LockCommandTests
             TimeSpan.FromSeconds(30),
             Stopwatch.GetTimestamp());
 
-        var held = mutex.GetKeepAliveRemaining(out var releasingWhileHeld);
-        await Assert.That(releasingWhileHeld).IsFalse();
+        var heldPhase = mutex.GetKeepAlivePhase(out var held);
+        await Assert.That(heldPhase).IsEqualTo(RespireLock.KeepAlivePhase.Held);
         await Assert.That(held).IsGreaterThan(TimeSpan.Zero);
 
         var release = mutex.ReleaseAsync().AsTask();
         await commands.ReleaseStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        mutex.GetKeepAliveRemaining(out var releasing);
-        await Assert.That(releasing).IsTrue();
+        await Assert.That(mutex.GetKeepAlivePhase(out _)).IsEqualTo(RespireLock.KeepAlivePhase.Releasing);
 
         commands.CompletePendingRelease();
         await Assert.That(await release).IsEqualTo(LockReleaseOutcome.Released);
-        var afterRelease = mutex.GetKeepAliveRemaining(out var releasingAfter);
-        await Assert.That(releasingAfter).IsFalse();
+        var afterPhase = mutex.GetKeepAlivePhase(out var afterRelease);
+        await Assert.That(afterPhase).IsEqualTo(RespireLock.KeepAlivePhase.Ended);
         await Assert.That(afterRelease).IsEqualTo(TimeSpan.Zero);
     }
 

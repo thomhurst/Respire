@@ -119,6 +119,12 @@ public sealed partial class RespireClient
             }
 
             var execution = new TrackedLockExecution(GetTrackedConnectionIdentity(connection, requireIdentity));
+            // Invariant: nothing above writes the lock command, and the send starts only inside
+            // ExecuteRoutedLockAsync, whose failures surface through Response, never as a throw
+            // from this method. LockCommands.ReleaseManagedAsync treats any exception thrown from
+            // here as "not submitted", so this method must never await the send. Awaiting it would
+            // turn a cancellation after the delete was written into a retryable release;
+            // RespireLock_CancelledReleaseConservativelyStopsProtectedWork fails if that happens.
             var response = ExecuteRoutedLockAsync(
                 execution, connection, wireKey, token.AsValue(), milliseconds, slot, requireIdentity, cancellationToken);
             execution.Response = mutationFence.IsRequired
