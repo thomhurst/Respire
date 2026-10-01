@@ -31,6 +31,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
 
     internal Generation? Current => Volatile.Read(ref _current);
+    internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
 

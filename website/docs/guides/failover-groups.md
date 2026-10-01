@@ -93,6 +93,8 @@ healthy if a validated replacement answers `PING` within `ProbeTimeout`; it fail
 rediscovery or the replacement fails. Endpoint status and switch events report the
 validated current primary; when discovery has not produced a primary, failed-probe telemetry uses
 the first configured Sentinel endpoint.
+Candidates for the same service must use separate Sentinel deployments. The group rejects
+overlapping discovered Sentinel peers or the same validated primary endpoint.
 
 ```csharp
 new RespireFailoverCandidate(new RespireOptions

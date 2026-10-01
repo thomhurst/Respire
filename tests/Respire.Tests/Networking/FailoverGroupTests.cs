@@ -122,6 +122,42 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task SentinelCandidatesRejectDisjointSeedsThatDiscoverSameDeployment()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
+        };
+        FakeRespServer? first = null;
+        FakeRespServer? second = null;
+        await using var firstSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => PeerReply(second!.Port),
+                _ => null,
+            },
+        };
+        first = firstSentinel;
+        await using var secondSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => PrimaryReply(primary.Port),
+                "SENTINEL SENTINELS mymaster" => PeerReply(first!.Port),
+                _ => null,
+            },
+        };
+        second = secondSentinel;
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+            [SentinelCandidate(firstSentinel), SentinelCandidate(secondSentinel, priority: 1)],
+            FastOptions() with { ProbeTimeout = TimeSpan.FromSeconds(2) }))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task UndiscoveredSentinelStatusHasNoDataEndpoint()
     {
         await using var invalidSentinel = new FakeRespServer("-ERR unavailable\r\n"u8.ToArray());
@@ -684,6 +720,9 @@ public class FailoverGroupTests
 
     private static byte[] PrimaryReply(int port)
         => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+
+    private static byte[] PeerReply(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 
     private static RespireFailoverGroupOptions FastOptions(int failureThreshold = 1)
         => new()
