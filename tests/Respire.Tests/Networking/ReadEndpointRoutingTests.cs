@@ -860,6 +860,55 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task ReadWithAStaleTopologySnapshotDoesNotRecreateARemovedReplica()
+    {
+        int[] replicaPorts = [];
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? PrimaryRole : FakeRespServer.OkReply,
+        };
+        await using var first = new FakeRespServer(4, ReplicaRole);
+        await using var second = new FakeRespServer(4, ReplicaRole);
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? SentinelAddressReply(primary.Port)
+                : command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                    ? ReplicasReply(Volatile.Read(ref replicaPorts))
+                    : "*0\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref replicaPorts, [first.Port, second.Port]);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            CommandTimeout = TimeSpan.FromSeconds(10),
+            Protocol = RespProtocol.Resp2,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        await router.RefreshNowAsync(CancellationToken.None);
+        RespireEndpoint[] stale = ReadEndpointRouter.Order(
+            [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)]);
+
+        // Sentinel drops the first replica. A read that captured the old array before the sweep
+        // runs afterwards, which is the sweep-before-insert interleaving.
+        Volatile.Write(ref replicaPorts, [second.Port]);
+        await router.RefreshNowAsync(CancellationToken.None);
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            var selection = await router.GetReplicaFromEndpointsAsync(stale, CancellationToken.None);
+            await Assert.That(selection.Replica!.Endpoint.Port).IsEqualTo(second.Port);
+            await Assert.That(router.IsCurrent(selection.Replica)).IsTrue();
+        }
+
+        await Assert.That(first.ReceivedCommands).DoesNotContain("ROLE");
+        await Assert.That(router.GetOpenEndpoints().Select(static endpoint => endpoint.Port)).DoesNotContain(first.Port);
+    }
+
+    [Test]
     public async Task RemovedReplicaFinishesAStreamedReadBeforeClosing()
     {
         const int payloadLength = 8 * 1024 * 1024;

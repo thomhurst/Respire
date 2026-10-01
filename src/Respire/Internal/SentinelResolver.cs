@@ -84,7 +84,7 @@ internal static class SentinelResolver
                 || flags.Contains("o_down", StringComparison.Ordinal)
                 || flags.Contains("disconnected", StringComparison.Ordinal))) continue;
             if (!TryParseEndpoint(host, port, out var endpoint)) return false;
-            if (!discovered.Contains(endpoint)) discovered.Add(endpoint);
+            if (!discovered.Contains(endpoint, RespireEndpointComparer.Instance)) discovered.Add(endpoint);
         }
         replicas = discovered.ToArray();
         return true;

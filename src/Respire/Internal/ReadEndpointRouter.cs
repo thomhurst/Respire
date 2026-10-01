@@ -91,7 +91,9 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         // that is not a replica. Filtering by a cached primary endpoint could wrongly drop a former
         // primary that rejoined as a replica while the cached generation is stale.
         var endpoints = Order(replicas);
-        Volatile.Write(ref _replicas, endpoints);
+        // Full fence: the sweep below must not read _entries before the new topology is visible.
+        // A reader that inserts an entry the sweep misses then sees this array on its recheck.
+        Interlocked.Exchange(ref _replicas, endpoints);
         var retained = endpoints.ToHashSet(RespireEndpointComparer.Instance);
         foreach (var pair in _entries)
         {
@@ -261,7 +263,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private async ValueTask<Selection> GetReplicaFromEndpointsAsync(
+    internal async ValueTask<Selection> GetReplicaFromEndpointsAsync(
         RespireEndpoint[] endpoints, CancellationToken cancellationToken)
     {
         if (endpoints.Length == 0)
@@ -277,12 +279,18 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
-            var entry = _entries.GetOrAdd(endpoint, static (value, state) => new Entry(value, state.core, state.router),
-                (core, router: this));
+            if (!_entries.TryGetValue(endpoint, out var entry))
+            {
+                entry = _entries.GetOrAdd(endpoint, static (value, state) => new Entry(value, state.core, state.router),
+                    (core, router: this));
+                // Pairs with the exchange in SetEndpoints, so the recheck below cannot read the
+                // topology from before an insertion that the removal sweep missed.
+                Interlocked.MemoryBarrier();
+            }
             if (!ContainsEndpoint(Volatile.Read(ref _replicas), endpoint))
             {
-                // SetEndpoints can finish its removal sweep before this GetOrAdd publishes.
-                // Recheck after insertion so the late stale entry cannot survive indefinitely.
+                // A read holding an older endpoint array can insert an entry after SetEndpoints
+                // finished its removal sweep. Remove and retire it so it cannot survive indefinitely.
                 if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
                 {
                     _retiring.TryAdd(entry, 0);
