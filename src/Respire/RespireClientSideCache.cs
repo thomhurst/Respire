@@ -400,9 +400,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var mutation = operation switch
         {
             "TS.CREATE" or "TS.ALTER" => RespireCacheMutation.Mutation,
-            // A series write can update compaction destinations. Rules and MADD also write more
-            // than one series, so preserve the conservative all-cache fence for these commands.
-            "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD" or "TS.CREATERULE" or "TS.DELETERULE"
+            // A series write can update compaction destinations, so use the conservative
+            // all-cache fence for sample writes and deletes.
+            "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD"
                 => RespireCacheMutation.Unknown,
             _ => command.GetCacheMutation(operation),
         };
