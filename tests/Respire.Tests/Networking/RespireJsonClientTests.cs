@@ -55,6 +55,7 @@ public partial class RespireJsonClientTests
             (RespireCommands.Json.JSON_ARRLEN, ["profile", "."]),
             (RespireCommands.Json.JSON_MERGE, ["profile", ".", "{}"]),
             (RespireCommands.Json.JSON_NUMPOWBY, ["profile", ".", 2]),
+            (RespireCommands.Json.JSON_MSET, ["first", ".", "{}", "second", ".", "{}"]),
             (RespireCommands.Json.JSON_DEBUG_MEMORY, ["profile", "."]),
         ];
 
@@ -66,6 +67,7 @@ public partial class RespireJsonClientTests
         await Assert.That(server.ReceivedCommands).Contains("JSON.ARRLEN tenant:profile .");
         await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:profile . {}");
         await Assert.That(server.ReceivedCommands).Contains("JSON.NUMPOWBY tenant:profile . 2");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.MSET tenant:first . {} tenant:second . {}");
         await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG MEMORY tenant:profile .");
     }
 

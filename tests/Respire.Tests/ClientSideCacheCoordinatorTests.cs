@@ -583,6 +583,51 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    [Arguments("JSON.MERGE")]
+    [Arguments("JSON.NUMPOWBY")]
+    public async Task JsonSingleKeyMutationsInvalidateCachedDocument(string operation)
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "document", "old");
+        Insert(cache, "unrelated", "retained");
+        var descriptor = operation == "JSON.MERGE"
+            ? RespireCommands.Json.JSON_MERGE
+            : RespireCommands.Json.JSON_NUMPOWBY;
+        RespireValue[] arguments = operation == "JSON.MERGE"
+            ? ["document", ".", "{}"]
+            : ["document", ".", 2];
+        var command = new CatalogCommand(descriptor, arguments);
+
+        var fence = cache.BeforeCommand(operation, in command);
+
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        Insert(cache, "document", "racing-read");
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+    }
+
+    [Test]
+    public async Task JsonMSet_FlushesCacheForEveryDocumentKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "first", "old-first");
+        Insert(cache, "second", "old-second");
+        Insert(cache, "unrelated", "retained");
+        var command = new CatalogCommand(
+            RespireCommands.Json.JSON_MSET,
+            ["first", ".", "{}", "second", ".", "{}"]);
+
+        var fence = cache.BeforeCommand("JSON.MSET", in command);
+
+        await Assert.That(fence.FlushAll).IsTrue();
+        await Assert.That(cache.Count).IsEqualTo(0);
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task RawGeoSearchAny_IsNotCacheable()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
