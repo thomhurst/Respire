@@ -255,6 +255,8 @@ internal sealed partial class ClusterRouter
     {
         if (item.Notification.Migrations is not { Length: > 0 } migrations) return;
         if (Volatile.Read(ref _disposed) != 0) return;
+        // Claim the sequence before applying: a replay must not gain authority later if this
+        // notification was malformed, fenced, or waiting for its source to own the slots.
         if (!TryRecordSmigratedSequence(item))
         {
             RecordSmigratedSkipped("duplicate", item.Sender);
