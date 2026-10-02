@@ -17,6 +17,30 @@ public class MaintenanceNotificationTests
     private static readonly byte[] Hello = "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(0)]
+    [Arguments(255)]
+    [Arguments(-1)]
+    public async Task BulkReadByteTracksEverySuccessfulByteButNotEndOfStream(int value)
+    {
+        using var payload = new RespBulkPayloadPipe();
+        if (value >= 0)
+        {
+            payload.GetMemory(1).Span[0] = (byte)value;
+            payload.Advance(1);
+            await payload.FlushAsync();
+        }
+        payload.Complete();
+        var progress = typeof(RespBulkPayloadPipe).GetField("_lastReaderProgress",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var oldProgress = Stopwatch.GetTimestamp() - Stopwatch.Frequency * 60;
+        progress.SetValue(payload, oldProgress);
+
+        await Assert.That(payload.ReadStream.ReadByte()).IsEqualTo(value);
+        var updated = (long)progress.GetValue(payload)!;
+        await Assert.That(updated > oldProgress).IsEqualTo(value >= 0);
+    }
+
+    [Test]
     [Arguments(RespireMaintenanceNotificationMode.Disabled, RespProtocol.Auto, 2)]
     [Arguments(RespireMaintenanceNotificationMode.Auto, RespProtocol.Auto, 3)]
     [Arguments(RespireMaintenanceNotificationMode.Enabled, RespProtocol.Resp3, 3)]

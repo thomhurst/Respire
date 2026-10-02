@@ -332,7 +332,12 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         public override int Read(byte[] buffer, int offset, int count)
             => RecordProgress(inner.Read(buffer, offset, count));
         public override int Read(Span<byte> buffer) => RecordProgress(inner.Read(buffer));
-        public override int ReadByte() => RecordProgress(inner.ReadByte());
+        public override int ReadByte()
+        {
+            var value = inner.ReadByte();
+            if (value >= 0) owner.MarkReaderProgress();
+            return value;
+        }
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             => RecordProgressAsync(inner.ReadAsync(buffer, offset, count, cancellationToken));
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)

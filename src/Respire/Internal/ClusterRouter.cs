@@ -1643,13 +1643,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // A same-owner redirect still advances the discovery fence, so an older in-flight
             // discovery cannot overwrite it. It is not an owner mutation, so it does not fence
             // queued SMIGRATED notifications.
+            // Stamp a changed owner before publication so a push observing it gets a newer token.
+            if (!ReferenceEquals(previous, node)) MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, node, ++_topologyVersion);
             if (ReferenceEquals(previous, node))
             {
                 return;
             }
-            MarkSlotMutatedLocked(slot);
-
             AddSlot(node);
             if (previous is not null && RemoveSlot(previous))
             {
@@ -1680,9 +1680,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 return;
             }
 
+            MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, null, ++_topologyVersion);
             topologyVersion = _topologyVersion;
-            MarkSlotMutatedLocked(slot);
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {

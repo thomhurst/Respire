@@ -119,7 +119,11 @@ internal sealed partial class ClusterRouter
         {
             var count = Interlocked.Exchange(ref _pendingSmigratedDropDiagnostics, 0);
             if (count > 0)
+            {
+                // Lost migrations need discovery, using the same debounce and failure backoff as MOVED.
+                SignalMovedTopologyRefresh();
                 ReportSmigratedNotificationDrop(count);
+            }
 
             Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
             if (Interlocked.Read(ref _pendingSmigratedDropDiagnostics) == 0

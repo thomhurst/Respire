@@ -620,6 +620,9 @@ public class ClusterNodeIdentityTests
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         await using var router = new ClusterRouter(options, primary);
+        var refresh = (ClusterTopologyRefreshScheduler)typeof(ClusterRouter).GetField("_topologyRefresh",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+        await Assert.That(refresh.Next().Wait).IsNull();
         var sourceEndpoint = new RespireEndpoint("source", 7000);
         var secondSourceEndpoint = new RespireEndpoint("second-source", 7002);
         var targetEndpoint = new RespireEndpoint("target", 7001);
@@ -675,6 +678,8 @@ public class ClusterNodeIdentityTests
             {
                 await metricReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Assert.That(router.SmigratedDropDiagnosticsQueued).IsEqualTo(1);
+                var refreshDecision = refresh.Next();
+                await Assert.That(refreshDecision.Run || refreshDecision.Wait is not null).IsTrue();
             }
             finally
             {
@@ -1538,6 +1543,51 @@ public class ClusterNodeIdentityTests
         router.ApplySmigratedNotification(queued);
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OwnerPublicationWaitsForItsMutationStamp(bool clear)
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var source = router.GetMultiplexer(new RespireEndpoint("source", 7000));
+        var target = router.GetMultiplexer(new RespireEndpoint("target", 7001));
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+        router.SetSlotOwner(2, target); // Observe both nodes before blocking the mutation clock.
+        var clockGate = typeof(ClusterSlotMutationClock).GetField("s_gate",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+        Exception? failure = null;
+        var worker = new Thread(() =>
+        {
+            try
+            {
+                if (clear) router.ClearSlotOwner(0, source);
+                else router.SetSlotOwner(0, target);
+            }
+            catch (Exception error) { failure = error; }
+        }) { IsBackground = true };
+        bool blocked;
+        RespireConnectionMultiplexer? observed;
+        lock (clockGate)
+        {
+            worker.Start();
+            blocked = SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0,
+                TimeSpan.FromSeconds(5));
+            observed = router.GetKnownSlotOwner(0);
+        }
+        var finished = worker.Join(TimeSpan.FromSeconds(5));
+
+        await Assert.That(blocked).IsTrue();
+        await Assert.That(finished).IsTrue();
+        await Assert.That(failure).IsNull();
+        await Assert.That(ReferenceEquals(observed, source)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), clear ? null : target)).IsTrue();
     }
 
     [Test]
