@@ -399,6 +399,27 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReconciliationUsesValidatedAliasesWithoutConsumingOtherPorts(bool activeFailed)
+    {
+        var first = new RespireEndpoint("first", 26379);
+        var delayed = new RespireEndpoint("delayed", 26379);
+        var primary = new RespireEndpoint("primary.internal", 6379);
+        var numeric = new RespireEndpoint("192.0.2.1", 6379);
+        var otherPort = new RespireEndpoint("192.0.2.1", 6380);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("switch", [primary],
+            [new(numeric, null), new(otherPort, null)], [first, delayed], true), false);
+
+        var next = coalescer.TakePending(activeFailed, primary, ["::ffff:192.0.2.1"])!.Value;
+
+        await Assert.That(next.Sources.Select(source => source.Endpoint))
+            .IsEquivalentTo(activeFailed ? new[] { numeric, otherPort } : new[] { otherPort });
+        await Assert.That(next.ReportingSentinel).IsEqualTo(delayed);
+    }
+
+    [Test]
     public async Task MergeKeepsReporterForNewTargetWhenItIsAlsoAnEarlierSwitchSource()
     {
         var third = new RespireEndpoint("10.0.0.3", 6381);

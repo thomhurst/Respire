@@ -101,7 +101,8 @@ internal static class SentinelResolver
         RespireEndpoint? previouslyValidatedPrimary = null,
         RespireEndpoint? preferredTarget = null,
         SentinelHint? notificationHint = null,
-        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null,
+        Action<TResult, string[]?>? captureValidatedAddresses = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -197,6 +198,7 @@ internal static class SentinelResolver
                     };
                     var result = await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
                     discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses);
+                    captureValidatedAddresses?.Invoke(result, primaryAddresses);
                     return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -433,20 +435,22 @@ internal static class SentinelResolver
     {
         foreach (var source in hint.Sources)
         {
-            if (MatchesSwitchSource(candidate, source)) return true;
-            if (candidateAddresses is null) continue;
-            foreach (var address in candidateAddresses)
-                if (MatchesSwitchSource(new RespireEndpoint(address, candidate.Port), source)) return true;
+            if (MatchesSwitchSource(candidate, source, candidateAddresses)) return true;
         }
         return false;
     }
 
-    internal static bool MatchesSwitchSource(RespireEndpoint candidate, SentinelSwitchSource source)
+    internal static bool MatchesSwitchSource(RespireEndpoint candidate, SentinelSwitchSource source,
+        string[]? candidateAddresses = null)
     {
+        if (source.Endpoint.Port != candidate.Port) return false;
         var candidateHost = NormalizeHost(candidate.Host);
-        return source.Endpoint.Port == candidate.Port
-            && (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Endpoint.Host))
-                || source.Addresses?.Contains(candidateHost, StringComparer.OrdinalIgnoreCase) == true);
+        if (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Endpoint.Host))
+            || source.Addresses?.Contains(candidateHost, StringComparer.OrdinalIgnoreCase) == true) return true;
+        if (candidateAddresses is not null)
+            foreach (var address in candidateAddresses)
+                if (MatchesSwitchSource(new RespireEndpoint(address, candidate.Port), source)) return true;
+        return false;
     }
 
     internal static string NormalizeHost(string host)

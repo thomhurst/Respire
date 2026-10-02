@@ -644,6 +644,54 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailbackReconciliationConsumesValidatedPrimaryAliases(bool hostname)
+    {
+        await using var current = Primary();
+        await using var stale = Primary();
+        var secondPort = current.Port;
+        await using var first = Sentinel(() => current.Port);
+        await using var second = Sentinel(() => Volatile.Read(ref secondPort));
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        byte[] CurrentReply() => hostname
+            ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(AddressReply(current.Port)).Replace("127.0.0.1", "localhost"))
+            : AddressReply(current.Port);
+        foreach (var sentinel in new[] { first, second })
+        {
+            var previous = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM configuration metadata denied\r\n"u8.ToArray()
+                : ReferenceEquals(sentinel, first) && command == query ? CurrentReply() : previous(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        var router = client.Core.Sentinel!;
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        var queries = first.ReceivedCommands.Count(command => command == query);
+        first.SuppressReply = command => command == query;
+        router.QueueNotificationRediscovery(SentinelHint.FromGap(new("127.0.0.1", first.Port)));
+        await WaitForCommandCountAsync(first, query, queries + 1);
+        var queryIndex = first.ReceivedCommands.ToList().FindLastIndex(command => command == query);
+        Volatile.Write(ref secondPort, stale.Port);
+        router.QueueNotificationRediscovery(new SentinelHint("b-to-a",
+            new("127.0.0.1", current.Port), new("127.0.0.1", stale.Port),
+            ReportingSentinel: new("127.0.0.1", first.Port)));
+        router.QueueNotificationRediscovery(new SentinelHint("a-to-b-delayed",
+            new("127.0.0.1", stale.Port), new("127.0.0.1", current.Port),
+            ReportingSentinel: new("127.0.0.1", second.Port)));
+        var worker = router.NotificationRediscovery!;
+        first.SuppressReply = null;
+        await first.SendRawAsync(CurrentReply(), first.ReceivedConnectionIds[queryIndex]);
+        await worker.WaitAsync(Limit);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(current.Port);
+    }
+
+    [Test]
     public async Task StaleSwitchHintAcceptsIndependentlyPublishedLaterPrimary()
     {
         await using var original = Primary();

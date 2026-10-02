@@ -143,7 +143,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
                 forceDiscovery ? previous?.Endpoint : null,
-                notificationHint?.Target, notificationHint, HostResolver).ConfigureAwait(false);
+                notificationHint?.Target, notificationHint, HostResolver,
+                static (generation, addresses) => Volatile.Write(ref generation.ValidatedAddresses, addresses)).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -454,6 +455,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         private readonly HashSet<RespireConnection> _connections = [];
         private int _retired;
         internal readonly RespireEndpoint Endpoint;
+        // DNS evidence from the successful discovery of this generation, refreshed on ROLE
+        // revalidation. Used only for switch-source reconciliation, never as owner identity.
+        internal string[]? ValidatedAddresses;
         internal readonly RespireConnectionMultiplexer Multiplexer;
         internal DedicatedConnectionPool Pool
         {

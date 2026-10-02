@@ -465,7 +465,8 @@ internal sealed partial class SentinelRouter
                     _notificationRediscovery = null;
                     return;
                 }
-                if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: validated?.Endpoint) is not { } next)
+                if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: validated?.Endpoint,
+                    validatedAddresses: validated is null ? null : Volatile.Read(ref validated.ValidatedAddresses)) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
                     // because a switch may already have retired the current generation. Without a

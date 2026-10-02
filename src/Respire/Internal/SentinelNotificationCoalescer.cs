@@ -191,12 +191,14 @@ internal sealed class SentinelNotificationCoalescer
     /// must-rediscover, so a newer hint of a different kind cannot silently drop the failed one.
     /// </param>
     /// <param name="validatedPrimary">The primary validated by a successful active attempt, if any.</param>
-    internal SentinelHint? TakePending(bool activeFailed = false, RespireEndpoint? validatedPrimary = null)
+    /// <param name="validatedAddresses">DNS evidence captured by that primary's successful discovery.</param>
+    internal SentinelHint? TakePending(bool activeFailed = false, RespireEndpoint? validatedPrimary = null,
+        string[]? validatedAddresses = null)
     {
         if (_pending is not { } next)
         {
             if (Active is not { Reporters.Length: > 1 } active) return null;
-            next = (activeFailed ? active : ForReporterReconciliation(active, validatedPrimary)) with
+            next = (activeFailed ? active : ForReporterReconciliation(active, validatedPrimary, validatedAddresses)) with
             {
                 MustRediscover = true,
                 Reporters = active.Reporters[1..],
@@ -208,7 +210,8 @@ internal sealed class SentinelNotificationCoalescer
         {
             // Reconciliation preserves demoted sources and consumes only the validated primary's
             // source evidence, so an alternate reporter cannot retire that generation again.
-            if (!activeFailed && next.Key == activeHint.Key) next = ForReporterReconciliation(next, validatedPrimary);
+            if (!activeFailed && next.Key == activeHint.Key)
+                next = ForReporterReconciliation(next, validatedPrimary, validatedAddresses);
             if (activeFailed)
             {
                 var unqueriedReporters = next.Reporters
@@ -227,7 +230,7 @@ internal sealed class SentinelNotificationCoalescer
             else if (activeHint.Reporters.Length > 1)
             {
                 var unqueriedReporters = activeHint.Reporters[1..];
-                var unqueried = ForReporterReconciliation(activeHint, validatedPrimary) with
+                var unqueried = ForReporterReconciliation(activeHint, validatedPrimary, validatedAddresses) with
                 {
                     Reporters = unqueriedReporters,
                 };
@@ -240,14 +243,15 @@ internal sealed class SentinelNotificationCoalescer
         return next;
     }
 
-    private static SentinelHint ForReporterReconciliation(SentinelHint hint, RespireEndpoint? validatedPrimary)
+    private static SentinelHint ForReporterReconciliation(SentinelHint hint, RespireEndpoint? validatedPrimary,
+        string[]? validatedAddresses)
         => hint with
         {
             MustRediscover = true,
             // Successful validation consumes only that primary's source evidence. Keep every
             // other demotion fence: metadata-free reporters can still advertise a stale master.
             Sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
-                !SentinelResolver.MatchesSwitchSource(primary, source)).ToArray() : hint.Sources,
+                !SentinelResolver.MatchesSwitchSource(primary, source, validatedAddresses)).ToArray() : hint.Sources,
         };
 
     /// <summary>Discards superseded active evidence while retaining hints offered during its discovery.</summary>
