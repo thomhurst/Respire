@@ -302,6 +302,10 @@ function Get-ActionableReviewBodyReason {
 # GraphQL), not as a pull request review. Those comments never appear in
 # `latestReviews`, so they are evaluated separately here.
 $script:ClaudeReviewCommentMarker = '<!-- claude-code-review -->'
+# Remove markerless legacy detection after PRs open before this rollout have closed.
+$script:ClaudeReviewMarkerIntroducedAt = [DateTimeOffset]::Parse('2026-10-01T17:50:23Z')
+$script:NonReviewAutomationCommentMarker = '<!-- respire-automation-report -->'
+$script:LegacyStructuredReviewPattern = '(?ims)^\s*#{1,4}\s+Summary\s*\r?\n[\s\S]*?^\s*#{1,4}\s+Issues\s*\r?\n[\s\S]*?^\s*#{2,4}\s+\d+\.\s+\S'
 
 function Get-CommentAuthorLogin {
     [CmdletBinding()]
@@ -354,24 +358,43 @@ function Test-IsClaudeReviewComment {
     }
 
     $body = [string]$Comment.body
-    if ($body.Contains($script:ClaudeReviewCommentMarker)) {
+    if ($body -match '(?im)^\s*<!--\s*claude-code-review\s*-->\s*$') {
+        return $true
+    }
+    $automationMarker = [regex]::Escape($script:NonReviewAutomationCommentMarker)
+    if ($body -match "(?is)^\s*$automationMarker\s*\r?\n\s*#{1,4}\s+(?:Coverage report|🧪 Integration Test Results\b)") {
+        return $false
+    }
+
+    $createdAt = Get-CommentCreatedAt $Comment
+    if ($body -match '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*(?:CLEAR|BLOCKING)\s*-->\s*$') {
         return $true
     }
 
-    # Older Claude comments used Markdown or bold headings with Review in the title.
-    # Do not classify other github-actions reports from the word "review" in their body.
+    # A pre-rollout workflow run can finish or be rerun after the marker cutoff.
+    # Preserve unmistakable legacy review shapes across that boundary while keeping
+    # weaker heading heuristics limited to comments posted before rollout.
+    $beforeMarkerRollout = $null -ne $createdAt -and $createdAt -lt $script:ClaudeReviewMarkerIntroducedAt
+    if (-not $beforeMarkerRollout) {
+        $hasStructuredFindings = $body -match $script:LegacyStructuredReviewPattern
+        $hasExplicitReviewHeading = $body -match '(?im)^\s*#{1,4}\s+(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)'
+        if ($hasStructuredFindings -or $hasExplicitReviewHeading) { return $true }
+        return $false
+    }
+
+    # Legacy Claude reviews used a small set of explicit first-line headings.
     $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
     if ($firstLine.Count -eq 0) { return $false }
-
-    $title = $firstLine[0].Trim()
-    $isHeading = $title -match '^#{1,6}\s+'
-    $isBoldLine = $title -match '^(?:\*\*|__).+(?:\*\*|__)'
-    if (-not ($isHeading -or $isBoldLine)) { return $false }
-
-    $title = $title -replace '^#{1,6}\s*', ''
+    $title = $firstLine[0].Trim() -replace '^#{1,4}\s*', '' -replace '^\*\*\s*', ''
     $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
-    $title = $title -replace '^(?:\*\*|__)\s*', ''
-    return $title -match '(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review(?:\*\*|__)?(?:\b|\s|:|$)'
+    $title = $title -replace '\*\*.*$', ''
+    if ($title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)') {
+        return $true
+    }
+
+    # Some legacy reviews used a summary first, then an explicit issues section
+    # with numbered findings. Require all three signals to avoid report false positives.
+    return $body -match $script:LegacyStructuredReviewPattern
 }
 
 # A reply only answers a blocking Claude review when it carries this marker and
