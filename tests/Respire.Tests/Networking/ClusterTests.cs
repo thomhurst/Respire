@@ -497,35 +497,112 @@ public class ClusterTests
     [Test]
     public async Task ReadFrom_RedundantMovedPreservesRefreshCoordination()
     {
+        await using var replica = new FakeRespServer(16, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(16, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLUSTER SLOTS") return false;
+                started.TrySetResult();
+                return true;
+            },
+        };
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new("127.0.0.1", 6379)],
+            Endpoints = [new("127.0.0.1", primary.Port)],
         });
         var router = client.Core.Cluster!;
-        var owner = router.GetOrCreateNode(new("127.0.0.1", 6379));
+        var owner = router.GetOrCreateNode(new("127.0.0.1", primary.Port));
         var slot = ClusterHash.GetSlot("key");
         router.SetSlotOwner(slot, owner);
-        var routes = ReplicaRoutes(client)[slot]!;
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var refresh = routes.JoinOrStartRefresh(() => completion.Task)!;
-        try
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var first = reads.Strings.GetStringAsync("key").AsTask();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        router.SetSlotOwner(slot, owner);
+        var second = reads.Strings.GetStringAsync("key").AsTask();
+        // A redundant MOVED fences the old reply, but must not start a concurrent probe.
+        primary.SuppressReply = null;
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? ClusterTopology(primary.Port, replica.Port) : null;
+        await primary.SendRawAsync(ClusterTopology(primary.Port, replica.Port), primary.ReceivedConnectionIds[^1]);
+        // Both calls share the fenced result; a later request retries after the throttle.
+        await Assert.That(async () => await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5)))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(first.IsFaulted && second.IsFaulted).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReadFrom_ManyMovedSlotsShareDiscoveryAndCallerCancellation()
+    {
+        await using var replica = new FakeRespServer(128, FakeRespServer.OkReply)
         {
-            router.SetSlotOwner(slot, owner);
-            var current = ReplicaRoutes(client)[slot]!;
-            await Assert.That(current).IsSameReferenceAs(routes);
-            await Assert.That(current.JoinOrStartRefresh(() => throw new InvalidOperationException("Duplicate refresh")))
-                .IsSameReferenceAs(refresh);
-            completion.SetResult();
-            await refresh;
-            router.SetSlotOwner(slot, owner);
-            await Assert.That(ReplicaRoutes(client)[slot]).IsSameReferenceAs(routes);
-        }
-        finally
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(128, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? ClusterTopology(primary.Port, replica.Port) : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            completion.TrySetResult();
-            await refresh;
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        var keys = Enumerable.Range(0, 64).Select(index => $"unknown:{index}").ToArray();
+        foreach (var key in keys)
+        {
+            var slot = ClusterHash.GetSlot(key);
+            router.SetSlotOwner(slot, router.GetKnownSlotOwner(slot)!);
         }
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        primary.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            started.TrySetResult();
+            return true;
+        };
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        using var cancellation = new CancellationTokenSource();
+        var canceled = reads.Strings.GetStringAsync(keys[0], cancellation.Token).AsTask();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var pending = keys.Select(key => reads.Strings.GetStringAsync(key).AsTask()).ToArray();
+        cancellation.Cancel();
+        await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
+        primary.SuppressReply = null;
+        await primary.SendRawAsync(ClusterTopology(primary.Port, replica.Port), primary.ReceivedConnectionIds[^1]);
+        var values = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(values.All(value => value == "value")).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReadFrom_DisposalCancelsUnknownSlotDiscovery()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLUSTER SLOTS") return false;
+                started.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromMinutes(1), CommandTimeout = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var pending = reads.Strings.GetStringAsync("unknown").AsTask();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await reads.DisposeAsync();
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireConnectionException>();
     }
 
     [Test]
@@ -611,10 +688,8 @@ public class ClusterTests
         await Assert.That(await lowRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(await highRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
-        var unknown = (System.Collections.Concurrent.ConcurrentDictionary<int, ClusterReplicaSet>)typeof(ClusterRouter)
-            .GetField("_unknownReplicaRoutes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(client.Core.Cluster)!;
-        await Assert.That(unknown.IsEmpty).IsTrue();
+        await Assert.That(ReplicaRoutes(client)[ClusterHash.GetSlot(lowKey)]!.Nodes).IsNotEmpty();
+        await Assert.That(ReplicaRoutes(client)[ClusterHash.GetSlot(highKey)]!.Nodes).IsNotEmpty();
     }
 
     [Test]
@@ -1351,11 +1426,11 @@ public class ClusterTests
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(firstSlot)!;
 
-        // MOVED corrections leave each slot with an independent discovery gate.
+        // MOVED corrections share unknown coverage until discovery publishes actual routes.
         router.SetSlotOwner(firstSlot, owner);
         router.SetSlotOwner(secondSlot, owner);
         var routes = ReplicaRoutes(client);
-        await Assert.That(ReferenceEquals(routes[firstSlot], routes[secondSlot])).IsFalse();
+        await Assert.That(ReferenceEquals(routes[firstSlot], routes[secondSlot])).IsTrue();
         await Assert.That(routes[firstSlot]!.Nodes).IsEmpty();
 
         var strict = client.WithReadFrom(RespireReadFrom.Replica);

@@ -76,6 +76,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         Func<long>? migrationClock = null)
     {
         _options = options;
+        _unknownReplicaDiscovery = new(RefreshReplicaRoutesAsync, HasReplicaCoverage);
         _logger = options.CreateLogger("Respire.Cluster");
         _commandConnectionOptions = commandConnectionOptions;
         _seeds = options.Endpoints.Count == 0
@@ -1538,7 +1539,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 // Unchanged routes keep their set, preserving its cursor and refresh throttle,
                 // and this refresh has just confirmed them.
                 ClusterReplicaSet replicaSet;
-                if (_replicasBySlot[range.Start] is { } current && current.HasSameNodes(replicaNodes))
+                if (_replicasBySlot[range.Start] is { } current
+                    && !ReferenceEquals(current, _unknownReplicaRoutes) && current.HasSameNodes(replicaNodes))
                 {
                     replicaSet = current;
                     replicaSet.MarkValidated(_options.ReplicaRouteRevalidationInterval);
@@ -1764,16 +1766,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Stamp a changed owner before publication so a push observing it gets a newer token.
             if (!ReferenceEquals(previous, node)) MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, node, ++_topologyVersion);
-            // MOVED provides no replica coverage. Keep discovery scoped to this slot until a
-            // topology reply establishes a range; partial replies cannot satisfy other slots.
-            // Redundant corrections must retain this slot's in-flight refresh and throttle.
-            // A changed owner starts fresh discovery; published coverage removes this entry.
-            var replicaRoutes = ReferenceEquals(previous, node)
-                ? _unknownReplicaRoutes.GetOrAdd(slot, static (_, interval) => new ClusterReplicaSet([], interval),
-                    _options.ReplicaRouteRevalidationInterval)
-                : new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval);
-            _unknownReplicaRoutes[slot] = replicaRoutes;
-            Volatile.Write(ref _replicasBySlot[slot], replicaRoutes);
+            // MOVED has no replica coverage. Unknown slots share work, while redundant
+            // corrections preserve their independent throttle and changed owners reset it.
+            if (!ReferenceEquals(previous, node)) _unknownReplicaDiscovery.Invalidate(slot);
+            Volatile.Write(ref _replicasBySlot[slot], _unknownReplicaRoutes);
             if (ReferenceEquals(previous, node))
             {
                 return;
@@ -1958,8 +1954,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 masterSlotCounts[Array.IndexOf(masters, node)]++;
             }
         }
-        foreach (var (slot, _) in _unknownReplicaRoutes)
-            if (GetKnownReplicas(slot) is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
+        _unknownReplicaDiscovery.ForgetCoveredSlots();
         if (!complete)
         {
             // An incomplete slot map cannot prove that an omitted primary has left the
