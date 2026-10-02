@@ -46,8 +46,8 @@ connection exists, the client opens another connection instead of waiting for a 
 The pool retains at most four idle connections in total. Bound concurrent uploads in your application
 when you need to limit Redis connections. Maintenance-enabled upload connections negotiate the
 configured notifications and are kept separate from ordinary blocking leases.
-When maintenance notifications are enabled, each lease kind retains at most two idle connections,
-so uploads cannot consume the blocking connections' reuse capacity (or the reverse).
+Both lease kinds share the four-connection idle limit. Either kind can use all four slots when
+the other kind has no idle connections.
 
 With Sentinel, an upload already assigned to a primary drains through its original connection
 during failover. New uploads use the newly discovered primary. An interrupted upload is not

@@ -3,6 +3,8 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
+internal enum DedicatedLeaseKind { Ordinary, Streaming }
+
 /// <summary>
 /// A small pool of dedicated (non-multiplexed) connections for commands that occupy a
 /// connection for their whole duration: BLPOP-style blocking waits and blocking stream reads.
@@ -55,21 +57,21 @@ internal sealed partial class DedicatedConnectionPool(
 
     private enum State { Idle, Rented, Closing }
 
-    private sealed class Entry(RespireConnection connection, bool streamingMaintenance)
+    private sealed class Entry(RespireConnection connection, DedicatedLeaseKind kind)
     {
         internal readonly RespireConnection Connection = connection;
-        internal readonly bool StreamingMaintenance = streamingMaintenance;
+        internal readonly DedicatedLeaseKind Kind = kind;
         internal State State = State.Rented;
         internal TaskCompletionSource? Closed;
     }
 
     public async ValueTask<RespireConnection> RentAsync(
         CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true,
-        bool streaming = false)
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
     {
         // Maintenance negotiation is connection state. Keep these leases separate from blocking
         // and corrective leases, while retaining one ownership/drain ledger and idle bound.
-        var useStreamingMaintenance = streaming && streamingMaintenance != RespireMaintenanceNotificationMode.Disabled;
+        var useStreamingMaintenance = kind == DedicatedLeaseKind.Streaming && streamingMaintenance != RespireMaintenanceNotificationMode.Disabled;
         var connectionOptions = useStreamingMaintenance ? _streamingOptions : options;
         var idle = useStreamingMaintenance ? _streamingIdle : _idle;
         while (true)
@@ -119,7 +121,7 @@ internal sealed partial class DedicatedConnectionPool(
                 // Unwrap only our own lifetime link, preserving independent retirement cancellation.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
-            var entry = new Entry(connection, useStreamingMaintenance);
+            var entry = new Entry(connection, useStreamingMaintenance ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
             lock (_gate)
             {
                 _connections.Add(connection, entry);
@@ -146,10 +148,9 @@ internal sealed partial class DedicatedConnectionPool(
         lock (_gate)
         {
             if (!_connections.TryGetValue(connection, out entry!) || entry.State != State.Rented) return;
-            var idle = entry.StreamingMaintenance ? _streamingIdle : _idle;
-            // Reserve equal reuse capacity when maintenance requires incompatible lease kinds.
-            var limit = streamingMaintenance == RespireMaintenanceNotificationMode.Disabled ? MaxIdle : MaxIdle / 2;
-            if (!_stopping && connection.IsConnected && idle.Count < limit)
+            var idle = entry.Kind == DedicatedLeaseKind.Streaming ? _streamingIdle : _idle;
+            // Both compatible kinds share the original capacity; neither loses unused slots.
+            if (!_stopping && connection.IsConnected && _idle.Count + _streamingIdle.Count < MaxIdle)
             {
                 entry.State = State.Idle;
                 idle.Push(entry);

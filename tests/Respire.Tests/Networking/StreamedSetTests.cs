@@ -20,6 +20,29 @@ public sealed class StreamedSetTests
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
 
     [Test]
+    public async Task StreamedSetInvalidatesCachedValue()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command == "HELLO 3"
+            ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ClientSideCache = new(),
+            ThreadPoolMonitoring = false,
+        });
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "cached";
+        var read = cache.BeginRead(in key);
+        using var value = RespValue.BulkString("old"u8.ToArray());
+        cache.CompleteRead(in read, in value, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        using var source = new MemoryStream("new"u8.ToArray());
+        await Assert.That(await client.Strings.SetAsync(key, source, source.Length)).IsTrue();
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("standalone", false)]
     [Arguments("standalone", true)]
     [Arguments("cluster-discovery", false)]

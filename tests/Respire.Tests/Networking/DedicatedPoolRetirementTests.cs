@@ -11,6 +11,32 @@ namespace Respire.Tests.Networking;
 public class DedicatedPoolRetirementTests
 {
     [Test]
+    public async Task AcquisitionDeadlineDisposalDoesNotWaitForCancellationCallbacks()
+    {
+        using var source = new DedicatedAcquisitionCancellation(CancellationToken.None);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var registration = source.Token.Register(() =>
+        {
+            entered.TrySetResult();
+            try
+            {
+                if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Cancellation callback was not released.");
+            }
+            finally { completed.TrySetResult(); }
+        });
+        try
+        {
+            source.Arm(CommandDeadline.After(1));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(source.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { release.Set(); }
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task RetirementClosesIdleButPreservesBorrowedReply()
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

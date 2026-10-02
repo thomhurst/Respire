@@ -1215,7 +1215,7 @@ public class MaintenanceNotificationTests
             : await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
         var blocking = await pool.RentAsync(CancellationToken.None);
         pool.Return(blocking);
-        var connection = await pool.RentAsync(CancellationToken.None, streaming: true);
+        var connection = await pool.RentAsync(CancellationToken.None, kind: DedicatedLeaseKind.Streaming);
         await Assert.That(ReferenceEquals(blocking, connection)).IsFalse();
         await server.SendRawAsync(Start("MIGRATING", 1), server.ReceivedConnectionIds[^1]);
         await WaitForMaintenance(connection);
@@ -1241,7 +1241,29 @@ public class MaintenanceNotificationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task MaintenanceLeaseKindsReserveIndependentIdleCapacity(bool streamingFirst)
+    public async Task MaintenanceLeaseKindCanRetainAllFourIdleConnections(bool streaming)
+    {
+        await using var server = Server(maxConnections: 8);
+        await using var client = RespireClient.Create(Options(server));
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var kind = streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
+        var connections = new RespireConnection[4];
+        for (var index = 0; index < connections.Length; index++)
+            connections[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
+        foreach (var connection in connections) pool.Return(connection);
+        var reused = new RespireConnection[4];
+        for (var index = 0; index < reused.Length; index++)
+        {
+            reused[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
+            await Assert.That(ReferenceEquals(reused[index], connections[3 - index])).IsTrue();
+        }
+        foreach (var connection in reused) pool.Return(connection);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MaintenanceLeaseKindsShareIdleCapacity(bool streamingFirst)
     {
         await using var server = Server(maxConnections: 8);
         server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
@@ -1249,15 +1271,15 @@ public class MaintenanceNotificationTests
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
         var first = new RespireConnection[3];
         for (var index = 0; index < first.Length; index++)
-            first[index] = await pool.RentAsync(CancellationToken.None, streaming: streamingFirst);
+            first[index] = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
         foreach (var connection in first) pool.Return(connection);
-        var other = await pool.RentAsync(CancellationToken.None, streaming: !streamingFirst);
+        var other = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
         pool.Return(other);
-        var reused = await pool.RentAsync(CancellationToken.None, streaming: !streamingFirst);
+        var reused = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
         await Assert.That(ReferenceEquals(reused, other)).IsTrue();
         pool.Return(reused);
-        var retained = await pool.RentAsync(CancellationToken.None, streaming: streamingFirst);
-        await Assert.That(ReferenceEquals(retained, first[1])).IsTrue();
+        var retained = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+        await Assert.That(ReferenceEquals(retained, first[2])).IsTrue();
         pool.Return(retained);
     }
 

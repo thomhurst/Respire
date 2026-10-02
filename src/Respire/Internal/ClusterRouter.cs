@@ -751,13 +751,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if (slot is not { } value) return true;
         if (Volatile.Read(ref _slotVersions[value]) != slotVersion) return false;
+        // With no discovered owner, the selected seed is still eligible. Learning an owner
+        // changes the slot version, so that publication invalidates this provisional route.
         return Volatile.Read(ref _slots[value]) is not { } owner || IsSameEndpoint(owner, connection);
     }
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, bool streaming = false)
-        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle, streaming);
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle, kind);
 
     /// <summary>
     /// Where a dedicated rent reselects its pool after topology retirement: the slot's route under
@@ -777,7 +779,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, bool streaming = false)
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
@@ -788,7 +790,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 try
                 {
-                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, streaming: streaming).ConfigureAwait(false);
+                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
                     return (pool, connection);
                 }
                 catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken) && pool.IsStopping
