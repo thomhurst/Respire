@@ -253,10 +253,16 @@ public sealed class StreamedSetTests
         }
         finally
         {
-            source.ContinueThirdRead.TrySetResult();
-            ((IDisposable)reader).Dispose();
-            await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
-            if (probe is not null) ArrayPool<byte>.Shared.Return(probe);
+            try
+            {
+                source.ContinueThirdRead.TrySetResult();
+                ((IDisposable)reader).Dispose();
+                await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                if (probe is not null) ArrayPool<byte>.Shared.Return(probe);
+            }
         }
     }
 
