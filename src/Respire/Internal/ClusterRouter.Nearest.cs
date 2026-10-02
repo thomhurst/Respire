@@ -36,6 +36,7 @@ internal sealed partial class ClusterRouter
         var routes = GetKnownReplicas(slot);
         if (routes is null || ReferenceEquals(routes, _unknownReplicaRoutes))
         {
+            routes = null;
             try { routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false); }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
         }

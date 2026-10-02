@@ -117,7 +117,9 @@ public class NearestReadRoutingTests
     }
 
     [Test]
-    public async Task ClusterNearestChoosesLowestLatencyEligibleRole()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClusterNearestChoosesLowestLatencyEligibleRole(bool movedCoverage)
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
@@ -131,11 +133,19 @@ public class NearestReadRoutingTests
         });
         client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        if (movedCoverage)
+        {
+            var slot = ClusterHash.GetSlot("key");
+            await client.Core.Cluster.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default);
+            client.Core.Cluster.SetSlotOwner(slot, client.Core.Cluster.GetKnownSlotOwner(slot)!);
+        }
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
         await Assert.That(await nearest.SetAsync("key", "write")).IsTrue();
         await Assert.That(primary.ReceivedCommands).Contains("SET key write");
         await Assert.That(replica.ReceivedCommands).Contains("READONLY");
+        if (movedCoverage)
+            await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
     }
 
     [Test]
