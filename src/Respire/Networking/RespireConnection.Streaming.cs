@@ -246,6 +246,8 @@ internal sealed partial class RespireConnection
                 && (translated is RespireConnectionRetiredException
                     || error is RespireConnectionRetiredException && translated is null))
             {
+                // ASKING may be accepted before AppendStreamingStart observes retirement; the
+                // payload prefix is still consumed and must lead the replacement upload.
                 var consumed = !firstChunk.IsEmpty ? firstChunk : payloadReader?.ConsumedPrefix ?? default;
                 if (!consumed.IsEmpty) command.RestoreSourcePrefixForRetry(consumed.Span);
             }
