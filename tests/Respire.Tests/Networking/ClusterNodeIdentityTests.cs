@@ -13,6 +13,34 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityTests
 {
     [Test]
+    public async Task RetirementSendsMaintenanceBarrierBeforeRetiringConnections()
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                "PING" => FakeRespServer.PongReply,
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+
+        await node.RetireAsync();
+
+        await Assert.That(server.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
     public async Task SmigratedUpdatesOwnedSlotsOnceAndRetiresTheLastSourceSlot()
     {
         var options = Options(6379);

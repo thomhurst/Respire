@@ -1233,7 +1233,6 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
         _stopConnecting.Cancel();
-        foreach (var connection in _connections) _ = connection?.RetireAsync();
         _ = RetireCoreAsync(completion);
         if (publish) DrainStateNotifications();
         return completion.Task;
