@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Respire.Infrastructure;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -31,6 +32,12 @@ internal sealed partial class DedicatedConnectionPool(
 {
     private const int MaxIdle = 4;
     internal RespireEndpoint Endpoint => new(host, port);
+
+    // Identity changes on every MOVING publication, including a handoff to the same address.
+    internal RespireConnectionMultiplexer? MovingOwner { get; init; }
+    internal object? MovingPublication { get; init; }
+    internal bool IsMovingPublicationCurrent => MovingOwner is null
+        || ReferenceEquals(MovingPublication, MovingOwner.MovingPublication);
 
     // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
     // back into the router or invoke user callbacks while holding this gate.

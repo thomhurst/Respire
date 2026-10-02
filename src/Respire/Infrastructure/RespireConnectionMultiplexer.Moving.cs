@@ -48,6 +48,14 @@ internal sealed partial class RespireConnectionMultiplexer
         }
     }
 
+    internal object MovingPublication => Volatile.Read(ref _activeEndpoint);
+
+    internal (RespireEndpoint Endpoint, object Publication) CaptureMovingPublication()
+    {
+        var endpoint = Volatile.Read(ref _activeEndpoint);
+        return (new(endpoint.Host, endpoint.Port), endpoint);
+    }
+
     internal event Action? MovingHandoffPublished;
 
     internal MovingAnnouncement CaptureMovingAnnouncement(int slot, RespireConnection connection,

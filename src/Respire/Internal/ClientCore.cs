@@ -47,7 +47,6 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
     private DedicatedConnectionPool _dedicatedPool;
-    private RespireEndpoint _dedicatedEndpoint;
     public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
@@ -75,8 +74,7 @@ internal sealed class ClientCore : IAsyncDisposable
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
-        _dedicatedPool = CreateStandaloneDedicatedPool(endpoint);
-        _dedicatedEndpoint = endpoint;
+        _dedicatedPool = CreateStandaloneDedicatedPool(_multiplexer.CaptureMovingPublication());
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
@@ -148,7 +146,7 @@ internal sealed class ClientCore : IAsyncDisposable
             && error is ObjectDisposedException or OperationCanceledException;
 
     internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
-        => !pool.IsStopping && ReferenceEquals(pool, DedicatedPool)
+        => !pool.IsStopping && pool.IsMovingPublicationCurrent && ReferenceEquals(pool, DedicatedPool)
             && Multiplexer.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port);
 
     internal sealed class CorrectionLease(ClientCore owner, DedicatedConnectionPool pool) : IAsyncDisposable
@@ -179,12 +177,11 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_hubGate)
         {
             if (Disposed || Cluster is not null || Sentinel is not null) return;
-            var endpoint = _multiplexer.ActiveConnectionEndpoint;
-            if (endpoint == _dedicatedEndpoint) return;
+            var publication = _multiplexer.CaptureMovingPublication();
+            if (ReferenceEquals(publication.Publication, _dedicatedPool.MovingPublication)) return;
             previous = _dedicatedPool;
-            var replacement = CreateStandaloneDedicatedPool(endpoint);
+            var replacement = CreateStandaloneDedicatedPool(publication);
             (_serverPools ??= []).Add(previous);
-            _dedicatedEndpoint = endpoint;
             Volatile.Write(ref _dedicatedPool, replacement);
         }
         // Keep borrowed uploads and blocking calls alive, while rejecting new rentals on the
@@ -192,8 +189,9 @@ internal sealed class ClientCore : IAsyncDisposable
         _ = RetireMovedDedicatedPoolAsync(previous);
     }
 
-    private DedicatedConnectionPool CreateStandaloneDedicatedPool(RespireEndpoint endpoint)
+    private DedicatedConnectionPool CreateStandaloneDedicatedPool((RespireEndpoint Endpoint, object Publication) publication)
     {
+        var endpoint = publication.Endpoint;
         DedicatedConnectionPool? pool = null;
         pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
             Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged,
@@ -206,7 +204,7 @@ internal sealed class ClientCore : IAsyncDisposable
                 connection.MovingNotification += OnMoving;
                 // A server may send MOVING alongside the maintenance opt-in acknowledgement.
                 if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
-            });
+            }) { MovingOwner = _multiplexer, MovingPublication = publication.Publication };
         return pool;
     }
 

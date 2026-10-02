@@ -255,6 +255,72 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("cluster", false)]
+    [Arguments("cluster", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    public async Task SameEndpointMovingReplacesIdleUploadPool(string mode, bool omitTarget)
+    {
+        await using var server = Server(maxConnections: 12);
+        ConfigureMaintenanceRouting(server);
+        await using var sentinel = MaintenanceSentinel(server.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pool = await MaintenancePoolAsync(client, "upload");
+        var old = await pool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        pool.Return(old);
+        var multiplexed = mode == "cluster"
+            ? await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot("upload"), timeout.Token, discovery: null)
+            : client.Core.Multiplexer.GetConnection();
+        var wireId = server.ReceivedConnectionIds[0];
+        await server.SendRawAsync(omitTarget ? ">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray() : Moving(1, server.Port), wireId);
+        while (multiplexed.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+        var replacement = await MaintenancePoolAsync(client, "upload");
+        await Assert.That(ReferenceEquals(pool, replacement)).IsFalse();
+        await Assert.That(pool.IsMovingPublicationCurrent).IsFalse();
+        await Assert.That(replacement.IsMovingPublicationCurrent).IsTrue();
+        var lease = await replacement.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        try { await Assert.That(ReferenceEquals(old, lease)).IsFalse(); }
+        finally { replacement.Return(lease); }
+    }
+
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task SameEndpointPublicationRevalidatesUploadBeforePoolRetirement(string mode)
+    {
+        await using var server = Server(maxConnections: 12);
+        ConfigureMaintenanceRouting(server);
+        var reply = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply : reply(id, command);
+        await using var sentinel = MaintenanceSentinel(server.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pool = await MaintenancePoolAsync(client, "upload");
+        await using var payload = new PausedFirstReadStream();
+        var upload = client.Strings.SetAsync("upload", payload, payload.Length, cancellationToken: timeout.Token).AsTask();
+        await payload.Started.Task.WaitAsync(timeout.Token);
+        var oldWireId = server.ReceivedConnectionIds[^1];
+
+        // Hold the interval between publication and the pool-refresh callback. Address and
+        // old pool remain unchanged; only the publication identity can reject this lease.
+        var field = typeof(RespireConnectionMultiplexer).GetField("_activeEndpoint",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        field.SetValue(pool.MovingOwner, Activator.CreateInstance(field.FieldType, "127.0.0.1", server.Port));
+        await Assert.That(pool.IsStopping).IsFalse();
+        payload.Resume.TrySetResult();
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        var commands = server.ReceivedCommands;
+        var ids = server.ReceivedConnectionIds;
+        var setIndex = Array.FindIndex(commands.ToArray(), command => command == "SET upload payload");
+        await Assert.That(setIndex).IsGreaterThanOrEqualTo(0);
+        await Assert.That(ids[setIndex]).IsNotEqualTo(oldWireId);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]

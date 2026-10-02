@@ -388,13 +388,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
             };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
-            _pool = CreatePool(Endpoint);
+            _pool = CreatePool(Multiplexer.CaptureMovingPublication());
             _pools.Add(_pool);
             Multiplexer.MovingHandoffPublished += RefreshPool;
         }
 
-        private DedicatedConnectionPool CreatePool(RespireEndpoint endpoint)
+        private DedicatedConnectionPool CreatePool((RespireEndpoint Endpoint, object Publication) publication)
         {
+            var endpoint = publication.Endpoint;
             DedicatedConnectionPool? pool = null;
             pool = new(endpoint.Host, endpoint.Port, ConnectionOptions, _core.Logger, _core.NotifyRecoveryStateChanged,
                 connection =>
@@ -404,7 +405,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                             () => !IsRetired && ReferenceEquals(pool, Volatile.Read(ref _pool)) && !pool!.IsStopping);
                     connection.MovingNotification += OnMoving;
                     if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
-                });
+                }) { MovingOwner = Multiplexer, MovingPublication = publication.Publication };
             return pool;
         }
 
@@ -414,10 +415,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_poolsGate)
             {
                 if (IsRetired) return;
-                var endpoint = Multiplexer.ActiveConnectionEndpoint;
-                if (_pool.Endpoint == endpoint) return;
+                var publication = Multiplexer.CaptureMovingPublication();
+                if (ReferenceEquals(_pool.MovingPublication, publication.Publication)) return;
                 previous = _pool;
-                var next = CreatePool(endpoint);
+                var next = CreatePool(publication);
                 _pools.Add(next);
                 Volatile.Write(ref _pool, next);
             }

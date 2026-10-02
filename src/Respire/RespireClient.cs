@@ -3613,11 +3613,11 @@ public sealed partial class RespireClient : IRespireClient
                             response = await (sendAsking
                                 ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
                                     operation, commandDeadline, allowStreamingConnectionReroute: false,
-                                    validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
+                                    validateStreamingRoute: () => !pool.IsStopping && pool.IsMovingPublicationCurrent && cluster.IsDedicatedStreamRouteCurrent(
                                         slot, routeVersion, connection, askingPool: pool))
                                 : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
                                     commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                                    validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
+                                    validateStreamingRoute: () => !pool.IsStopping && pool.IsMovingPublicationCurrent && cluster.IsDedicatedStreamRouteCurrent(
                                         slot, routeVersion, connection))).ConfigureAwait(false);
                         }
                         else

@@ -2093,8 +2093,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (node.IsRetired || _retiringNodes.ContainsKey(node))
                 throw new RespireConnectionRetiredException(node.Host, node.Port);
-            var endpoint = node.ActiveConnectionEndpoint;
-            if (_dedicatedPools.TryGetValue(node, out previous) && previous.Endpoint == endpoint) return previous;
+            var publication = node.CaptureMovingPublication();
+            var endpoint = publication.Endpoint;
+            if (_dedicatedPools.TryGetValue(node, out previous)
+                && ReferenceEquals(previous.MovingPublication, publication.Publication)) return previous;
             if (!_dedicatedMovingHandlers.ContainsKey(node))
             {
                 Action handler = () => RefreshDedicatedPool(node, fromNotification: true);
@@ -2118,7 +2120,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                         });
                     connection.MovingNotification += OnMoving;
                     if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
-                });
+                }) { MovingOwner = node, MovingPublication = publication.Publication };
             pool = created;
             _dedicatedPools[node] = pool;
             _ownedPools.Add(pool);
