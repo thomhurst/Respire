@@ -261,12 +261,12 @@ internal static class RespireTelemetry
     internal static long CaptureStartTimestamp() => IsEnabled ? Stopwatch.GetTimestamp() : 0;
 
     internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
-        Func<T, string> operationName, int database, long started, Exception error)
+        Func<T, string> operationName, int database, long started, Exception error, RespireEndpoint? endpoint = null)
     {
         if (started == 0) return;
         var operation = BatchOperationName(prefix, operations, operationName);
         int? batchSize = operations.Count == 1 ? null : operations.Count;
-        RecordUnroutedFailure(operation, database, started, error, batchSize: batchSize);
+        RecordUnroutedFailure(operation, database, started, error, batchSize: batchSize, endpoint: endpoint);
     }
 
     internal static void RecordUnroutedFailure(string operation, int database, long started,

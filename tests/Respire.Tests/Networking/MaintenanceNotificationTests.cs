@@ -297,6 +297,65 @@ public class MaintenanceNotificationTests
 
     [Test]
     [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task DurabilityTelemetryUsesEndpointAfterMoving(bool aof, bool acquisitionFails)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
+            : command.StartsWith("WAIT ") ? ":1\r\n"u8.ToArray()
+            : command.StartsWith("WAITAOF ") ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : targetReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        if (acquisitionFails) target.SuppressReply = command => command == "HELLO 3";
+
+        var name = aof ? "WAITAOF SET" : "WAIT SET";
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == name
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = started.Enqueue,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var batch = client.CreateBatch();
+        _ = batch.Set("first", "value");
+        _ = batch.Set("second", "value");
+        if (acquisitionFails)
+            await Assert.That(Execute).Throws<RespireException>();
+        else
+            await Execute();
+
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(started.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(started.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(stopped.Single().Status == ActivityStatusCode.Error).IsEqualTo(acquisitionFails);
+
+        async Task Execute()
+        {
+            if (aof) _ = await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1), timeout.Token);
+            else _ = await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1), timeout.Token);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DedicatedAcquisitionFailureRecordsOneActivityForIntendedEndpoint()
     {
         await using var server = Server(maxConnections: 4);

@@ -201,7 +201,9 @@ internal sealed partial class DedicatedConnectionPool(
                     if (sameKind < MaxIdle / 2)
                     {
                         var other = 0;
-                        while (_idle[other].Kind == entry.Kind) other++;
+                        while (other < _idle.Count && _idle[other].Kind == entry.Kind) other++;
+                        Debug.Assert(other < _idle.Count,
+                            "A full pool below this kind's reserved share must contain another lease kind.");
                         closing = _idle[other];
                         _idle.RemoveAt(other);
                         BeginCloseLocked(closing);
