@@ -39,6 +39,17 @@ internal sealed partial class RespireConnectionMultiplexer
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
+    internal RespireEndpoint ActiveConnectionEndpoint
+    {
+        get
+        {
+            var endpoint = Volatile.Read(ref _activeEndpoint);
+            return new(endpoint.Host, endpoint.Port);
+        }
+    }
+
+    internal event Action? MovingHandoffPublished;
+
     internal MovingAnnouncement CaptureMovingAnnouncement(int slot, RespireConnection connection,
         MaintenanceNotification notification)
         => new(notification,
@@ -250,7 +261,8 @@ internal sealed partial class RespireConnectionMultiplexer
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
         catch (Exception error) { _logger?.LogDebug(error, "MOVING retirement cache fence observer failed"); }
 
-        // Metrics listeners can run user code, so publish outside the lifecycle locks.
+        // Notify other connection owners and metrics listeners outside the lifecycle locks.
+        MovingHandoffPublished?.Invoke();
         if (cacheEvictions is { } removed)
         {
             try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }

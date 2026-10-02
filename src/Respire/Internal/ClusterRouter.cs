@@ -2063,14 +2063,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 return existing;
             }
 
-            // Dedicated connections never use the command multiplexer's tracking, push, or
-            // maintenance settings. Replica pools add only Cluster READONLY mode.
+            // Dedicated pools disable tracking. Streaming leases enable maintenance notifications;
+            // ordinary leases disable them. Replica pools add Cluster READONLY mode.
             var pool = new DedicatedConnectionPool(
                 node.Host,
                 node.Port,
-                node.Options.ReadOnly ? _options.ToConnectionOptions() with { ReadOnly = true } : _options.ToConnectionOptions(),
+                _options.ToConnectionOptions(enableMaintenanceNotifications: true) with { ReadOnly = node.Options.ReadOnly },
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
-                change => DedicatedStateChanged?.Invoke(change), _options.MaintenanceNotifications);
+                change => DedicatedStateChanged?.Invoke(change));
             _dedicatedPools.Add(node, pool);
             _ownedPools.Add(pool);
             return pool;

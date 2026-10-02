@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Text;
@@ -222,6 +223,38 @@ public class MaintenanceNotificationTests
         using var result = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
         await Assert.That(result.AsString()).IsEqualTo("PONG");
         await Assert.That(connection.HasMaintenanceWindow).IsEqualTo(!completed);
+    }
+
+    [Test]
+    public async Task MovingReplacesUploadPoolAndDrainsAcceptedUpload()
+    {
+        await using var source = Server(maxConnections: 8);
+        await using var target = Server(maxConnections: 8);
+        var targetReply = target.ReplyOverride;
+        target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? FakeRespServer.OkReply : targetReply!(connection, command);
+        source.SuppressReply = command => command.StartsWith("SET ");
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        var selected = client.Core.Multiplexer.GetConnection();
+        var originalPool = client.Core.DedicatedPool;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var upload = client.Strings.SetAsync("old-upload", new ReadOnlySequence<byte>("old"u8.ToArray()),
+            cancellationToken: timeout.Token).AsTask();
+        while (!source.ReceivedCommands.Contains("SET old-upload old")) await Task.Delay(5, timeout.Token);
+        var index = source.ReceivedCommands.ToList().IndexOf("SET old-upload old");
+        var uploadConnection = source.ReceivedConnectionIds[index];
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        await WaitForRetirement(selected);
+        await Assert.That(await client.Strings.SetAsync("new-upload", new ReadOnlySequence<byte>("new"u8.ToArray()),
+            cancellationToken: timeout.Token)).IsTrue();
+        await Assert.That(originalPool.IsStopping).IsTrue();
+        await Assert.That(ReferenceEquals(originalPool, client.Core.DedicatedPool)).IsFalse();
+        await Assert.That(target.ReceivedCommands).Contains("SET new-upload new");
+        await Assert.That(upload.IsCompleted).IsFalse();
+        await source.SendRawAsync(FakeRespServer.OkReply, uploadConnection);
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET new-upload "))).IsFalse();
     }
 
     [Test]
@@ -1263,13 +1296,13 @@ public class MaintenanceNotificationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task MaintenanceLeaseKindsShareIdleCapacity(bool streamingFirst)
+    public async Task MaintenanceLeaseKindsShareIdleCapacityWhenOneKindFillsThePool(bool streamingFirst)
     {
         await using var server = Server(maxConnections: 8);
         server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
         await using var client = RespireClient.Create(Options(server));
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
-        var first = new RespireConnection[3];
+        var first = new RespireConnection[4];
         for (var index = 0; index < first.Length; index++)
             first[index] = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
         foreach (var connection in first) pool.Return(connection);
@@ -1279,7 +1312,7 @@ public class MaintenanceNotificationTests
         await Assert.That(ReferenceEquals(reused, other)).IsTrue();
         pool.Return(reused);
         var retained = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
-        await Assert.That(ReferenceEquals(retained, first[2])).IsTrue();
+        await Assert.That(ReferenceEquals(retained, first[3])).IsTrue();
         pool.Return(retained);
     }
 

@@ -369,7 +369,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             _owner = owner;
             Endpoint = options.PrimaryEndpoint;
-            ConnectionOptions = options.ToConnectionOptions() with { Generation = this };
+            ConnectionOptions = options.ToConnectionOptions(enableMaintenanceNotifications: true) with { Generation = this };
             var clientCache = core.ClientCache;
             RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
             var commandOptions = options.ToConnectionOptions(pushHandler,
@@ -380,7 +380,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
             };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
-            Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged, options.MaintenanceNotifications);
+            Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged);
         }
 
         public bool IsRetired => Volatile.Read(ref _retired) != 0;

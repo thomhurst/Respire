@@ -3394,6 +3394,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (source is null || error is not OperationCanceledException cancelled
             || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested) return null;
+        // A source exists only for a deadline from CreateDedicatedDeadline, which requires
+        // CommandTimeout. The client's options are immutable for this operation.
         return callerToken.IsCancellationRequested
             ? new OperationCanceledException(cancelled.Message, cancelled, callerToken)
             : new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, cancelled,

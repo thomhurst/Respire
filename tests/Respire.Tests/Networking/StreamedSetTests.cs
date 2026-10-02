@@ -20,6 +20,40 @@ public sealed class StreamedSetTests
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
 
     [Test]
+    public async Task AskRouteRetirementBeforeTheHeaderRestoresTheSourcePrefix()
+    {
+        await using var oldTarget = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command == "ASKING",
+        };
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", oldTarget.Port,
+            new() { Protocol = RespProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var source = new MemoryStream("data"u8.ToArray());
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+        var routeCurrent = true;
+        var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
+            CommandDeadline.After(10_000), () => Volatile.Read(ref routeCurrent)).AsTask();
+        while (!oldTarget.ReceivedCommands.Contains("ASKING"))
+        {
+            if (pending.IsCompleted) await pending;
+            await Task.Delay(5, timeout.Token);
+        }
+        Volatile.Write(ref routeCurrent, false);
+        await oldTarget.SendRawAsync(FakeRespServer.OkReply);
+        await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireConnectionRetiredException>();
+        await Assert.That(oldTarget.ReceivedCommands).IsEquivalentTo(["ASKING"]);
+        await Assert.That(connection.IsConnected).IsFalse();
+        await using var next = await RespireConnection.ConnectAsync("127.0.0.1", replacement.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        using var reply = await next.SendCheckedAsync(in command, timeout.Token, commandName: "SET");
+        await Assert.That(reply.IsError).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key data"]);
+    }
+
+    [Test]
     public async Task StreamedSetInvalidatesCachedValue()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);

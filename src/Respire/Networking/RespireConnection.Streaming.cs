@@ -187,6 +187,8 @@ internal sealed partial class RespireConnection
                 // Check again before the SET header is queued so that write cannot start late.
                 timeoutCancellation?.ThrowIfDue();
                 effectiveCancellation.ThrowIfCancellationRequested();
+                if (validateStreamingRoute is not null && !validateStreamingRoute())
+                    throw new RespireConnectionRetiredException(Host, Port);
             }
 
             // Retirement (local or cluster generation) rejects the upload until its header is

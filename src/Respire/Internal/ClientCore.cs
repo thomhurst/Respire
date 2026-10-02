@@ -46,8 +46,9 @@ internal sealed class ClientCore : IAsyncDisposable
                 return Disposed ? null : _coordinationCleanupQueue ??= new();
         }
     }
-    private readonly DedicatedConnectionPool _dedicatedPool;
-    public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
+    private DedicatedConnectionPool _dedicatedPool;
+    private RespireEndpoint _dedicatedEndpoint;
+    public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
     public readonly ClusterRouter? Cluster;
@@ -75,7 +76,8 @@ internal sealed class ClientCore : IAsyncDisposable
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
         _dedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged, options.MaintenanceNotifications);
+            endpoint.Host, endpoint.Port, options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged);
+        _dedicatedEndpoint = endpoint;
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
@@ -92,6 +94,7 @@ internal sealed class ClientCore : IAsyncDisposable
         else if (Sentinel is null)
         {
             Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
+            Multiplexer.MovingHandoffPublished += RefreshStandaloneDedicatedPool;
         }
         if (options.ThreadPoolMonitoring)
             _threadPoolMonitor = ThreadPoolMonitor.Acquire(options.CreateLogger("Respire.ThreadPool"), options.ThreadPoolWarningThreshold);
@@ -108,9 +111,44 @@ internal sealed class ClientCore : IAsyncDisposable
         => await Sentinel!.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
-        => Sentinel is { } sentinel
-            ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool
-            : _dedicatedPool;
+    {
+        if (Sentinel is { } sentinel)
+            return (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool;
+        // Read the published endpoint here too: a new upload can race the handoff callback.
+        RefreshStandaloneDedicatedPool();
+        return Volatile.Read(ref _dedicatedPool);
+    }
+
+    private void RefreshStandaloneDedicatedPool()
+    {
+        DedicatedConnectionPool previous;
+        lock (_hubGate)
+        {
+            if (Disposed || Cluster is not null || Sentinel is not null) return;
+            var endpoint = _multiplexer.ActiveConnectionEndpoint;
+            if (endpoint == _dedicatedEndpoint) return;
+            previous = _dedicatedPool;
+            var replacement = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
+                Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged);
+            (_serverPools ??= []).Add(previous);
+            _dedicatedEndpoint = endpoint;
+            Volatile.Write(ref _dedicatedPool, replacement);
+        }
+        // Keep borrowed uploads and blocking calls alive, while rejecting new rentals on the
+        // old endpoint. Client disposal retains ownership until the final borrower returns.
+        _ = RetireMovedDedicatedPoolAsync(previous);
+    }
+
+    private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)
+    {
+        try { await pool.RetireAsync().ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            try { Logger?.LogWarning(error, "Dedicated connection cleanup after MOVING failed"); }
+            catch { /* Logging cannot fault the background retirement. */ }
+        }
+        finally { lock (_hubGate) _serverPools!.Remove(pool); }
+    }
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
@@ -555,8 +593,8 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger,
-                NotifyRecoveryStateChanged, Options.MaintenanceNotifications);
+            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger,
+                NotifyRecoveryStateChanged);
             (_serverPools ??= []).Add(pool);
             return pool;
         }
@@ -658,6 +696,7 @@ internal sealed class ClientCore : IAsyncDisposable
         else
         {
             Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
+            Multiplexer.MovingHandoffPublished -= RefreshStandaloneDedicatedPool;
         }
 
         await _multiplexer.DisposeAsync().ConfigureAwait(false);
