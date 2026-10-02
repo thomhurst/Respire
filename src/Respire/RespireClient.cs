@@ -3958,7 +3958,7 @@ public sealed partial class RespireClient : IRespireClient
     /// a lease measured from it does not count time parked behind other commands. A retried enqueue
     /// serializes again, so the last write wins.
     /// </summary>
-    private readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommand
+    internal readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommandWrapper
         where TCommand : struct, IRespCommand
     {
         public void Write(ref RespWriter writer)
@@ -3969,7 +3969,22 @@ public sealed partial class RespireClient : IRespireClient
 
         public ReadCommandKind ReadKind => command.ReadKind;
 
-        public void OnAccepted() => execution.RecordAccepted();
+        public void OnAccepted()
+        {
+            command.OnAccepted();
+            execution.RecordAccepted();
+        }
+
+        public void ValidateAdmission() => command.ValidateAdmission();
+
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
+            => command.GetResponseCancellationToken(admissionToken);
+
+        public int CursorArgumentIndex => command.CursorArgumentIndex;
+
+        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+
+        public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
 
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
 

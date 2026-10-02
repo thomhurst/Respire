@@ -68,7 +68,7 @@ public interface IFunctionCommands
 
 internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 {
-    private static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(5);
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
     {
@@ -158,12 +158,15 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     }
 
     private readonly struct FunctionRetryCommand(BatchScriptCommand command, string operation, long started,
-        TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommand
+        TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
     {
         public ReadCommandKind ReadKind => command.ReadKind;
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
         public void Write(ref RespWriter writer) => command.Write(ref writer);
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => callerToken;
+
+        // BatchScriptCommand has no acceptance side effects.
+        public void OnAccepted() { }
 
         public void ValidateAdmission()
         {

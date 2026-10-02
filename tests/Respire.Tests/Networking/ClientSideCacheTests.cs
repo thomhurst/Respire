@@ -1247,13 +1247,21 @@ public class ClientSideCacheTests
     [Test]
     public async Task ClusterFlush_FencesCacheThroughCompletion()
     {
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray(),
-            FakeRespServer.OkReply);
-        target.DelayReply(4, 250);
+            FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "FLUSHDB") return false;
+                arrived.TrySetResult();
+                return true;
+            },
+        };
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(
@@ -1273,10 +1281,11 @@ public class ClientSideCacheTests
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
         var flush = client.Server.FlushDatabaseAsync().AsTask();
-        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
         InsertCachedValue(client.Core.ClientCache!, "key", "value");
 
+        await target.SendRawAsync(FakeRespServer.OkReply);
         await flush;
 
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);

@@ -5,6 +5,11 @@ using Respire.Networking;
 namespace Respire.Commands;
 
 /// <summary>An owned RESP frame used when caller-owned arguments must survive an async send.</summary>
+/// <remarks>
+/// Captures argument bytes and routing metadata, not execution policy. Used by ordinary cached
+/// queries and deferred vector batches; commands with admission or acceptance callbacks must retain
+/// their command value through an <see cref="IRespCommandWrapper"/> instead.
+/// </remarks>
 internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind,
     int cursorArgumentIndex = -1) : IRespCommand
 {
