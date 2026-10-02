@@ -196,6 +196,44 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task PointUpdateDoesNotRestoreZeroSlotPrimaryToAllPrimaryCoverage()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        var firstUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Configure(first, () => topology, resp3: false, command =>
+        {
+            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal)) firstUnsubscribed.TrySetResult();
+        });
+        Configure(second, () => topology, resp3: false);
+        Configure(third, () => topology, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = PartialTopology(second.Port);
+        try
+        {
+            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (RespireConnectionException)
+        {
+            // Partial discovery is published before cluster-wide discovery reports the missing slots.
+        }
+        await firstUnsubscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(0, router.GetMultiplexer(new("127.0.0.1", third.Port)));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!third.ReceivedCommands.Contains($"PSUBSCRIBE {descriptor}")) await Task.Delay(10, deadline.Token);
+
+        await Assert.That(first.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ExactKeyMovesToNewOwnerAfterTopologyRefresh()
     {
         await using var first = new FakeRespServer(20);
@@ -690,6 +728,107 @@ public class ClusterNotificationRoutingTests
 
         suppress = false;
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Test]
+    public async Task DisposingSubscriptionClearsItsPendingReconciliationRetry()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        second.SuppressReply = command => command == $"PSUBSCRIBE {descriptor}";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromHours(1),
+                MaxDelay = TimeSpan.FromHours(1),
+                JitterRatio = 0,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+                recovered.TrySetResult();
+        };
+        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await subscription.DisposeAsync();
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Test]
+    public async Task ServerRejectionClearsEarlierReconciliationOutageState()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var suppress = true;
+        var reject = false;
+        second.SuppressReply = command => suppress && command == $"PSUBSCRIBE {descriptor}";
+        var configuredReply = second.ReplyOverride!;
+        var rejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.ReplyOverride = (connectionId, command) =>
+        {
+            if (reject && command == $"PSUBSCRIBE {descriptor}")
+            {
+                rejected.TrySetResult();
+                return "-NOPERM denied\r\n"u8.ToArray();
+            }
+            return configuredReply(connectionId, command);
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromSeconds(2),
+                MaxDelay = TimeSpan.FromSeconds(2),
+                JitterRatio = 0,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
+            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+        };
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        topology = Topology(first.Port, second.Port);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        suppress = false;
+        reject = true;
+        await rejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var hub = client.Core.Hub!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (hub.IsClusterNotificationEndpointRetrying(new("127.0.0.1", second.Port)))
+            await Task.Delay(10, deadline.Token);
     }
 
     [Test]

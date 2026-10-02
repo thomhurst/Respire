@@ -171,7 +171,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                     if (node is not null)
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
                 }
-                lock (_gate) EndNotificationSubscriptionLocked(subscription);
+                RespireEndpoint? recoveredEndpoint;
+                lock (_gate) recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
+                if (recoveredEndpoint is { } clearedEndpoint) core.ClearClusterSubscriptionState(clearedEndpoint);
                 return;
             }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);

@@ -1600,7 +1600,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 retiredNode = previous;
             }
             topologyVersion = _topologyVersion;
-            topologyEndpoints = _masters.Where(static master => !master.IsRetired)
+            topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
                 .Select(static master => Endpoint(master)).Append(Endpoint(node)).Distinct().ToArray();
             topologyAuthoritative = HasCompleteTopology();
         }
@@ -1633,7 +1633,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             // Clearing one cached owner proves nothing about other primaries. Publish the
             // remaining known set as non-authoritative so healthy routes are kept.
-            topologyEndpoints = _masters.Where(static master => !master.IsRetired)
+            topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
                 .Select(static master => Endpoint(master)).Distinct().ToArray();
         }
 
