@@ -192,7 +192,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             case RespireReadFrom.AzAffinityReplicasAndPrimary:
                 try { return await GetReplicaAsync(cancellationToken, readFrom).ConfigureAwait(false); }
                 catch (Exception error) when (IsUnavailable(error, cancellationToken))
-                { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
+                {
+                    return await GetPrimaryAsync(cancellationToken,
+                        ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
+                }
             default:
                 return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);
         }

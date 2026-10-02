@@ -14,6 +14,7 @@ internal sealed class ReadAffinity
     internal RespireConnectionMultiplexer? Primary;
     internal RespireConnectionMultiplexer? ClusterNode;
     internal int? ClusterSlot;
+    internal RespireReadFrom ReadFrom;
 
     internal bool IsPinned => Replica is not null || Primary is not null || ClusterNode is not null;
 }
@@ -42,6 +43,7 @@ internal sealed class ReadCursorAffinity
             var first = await router.SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
             affinity.Replica = first.Replica;
             affinity.Primary = first.Primary;
+            affinity.ReadFrom = readFrom;
             return first.Connection;
         }
 
@@ -66,7 +68,7 @@ internal sealed class ReadCursorAffinity
             }
 
             var selection = await router.SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
-            _shared[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary };
+            _shared[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary, ReadFrom = readFrom };
             return selection.Connection;
         }
         finally { _sharedGate.Release(); }
@@ -79,17 +81,18 @@ internal sealed class ReadCursorAffinity
         if (affinity is not null)
         {
             if (affinity.ClusterNode is { } pinned)
-                return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken).ConfigureAwait(false);
+                return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken, readFrom: affinity.ReadFrom).ConfigureAwait(false);
             var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
             affinity.ClusterSlot = slot;
             affinity.ClusterNode = first.Multiplexer;
+            affinity.ReadFrom = readFrom;
             return first;
         }
 
         var key = (readFrom, slot);
         if (_clusterShared.TryGetValue(key, out var shared) && shared.ClusterNode is { } sharedNode)
         {
-            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation).ConfigureAwait(false); }
+            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false); }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
@@ -106,24 +109,28 @@ internal sealed class ReadCursorAffinity
         {
             if (_clusterShared.TryGetValue(key, out shared) && shared.ClusterNode is { } currentNode)
             {
-                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true).ConfigureAwait(false); }
+                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false); }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
             var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
-            _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot };
+            _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot, ReadFrom = readFrom };
             return connection;
         }
         finally { _sharedGate.Release(); }
     }
 
     /// <summary>Publishes a shared pin directly. Tests use it to model a pin that went stale.</summary>
-    internal void PinShared(RespireReadFrom readFrom, ReadAffinity affinity) => _shared[readFrom] = affinity;
+    internal void PinShared(RespireReadFrom readFrom, ReadAffinity affinity)
+    {
+        affinity.ReadFrom = readFrom;
+        _shared[readFrom] = affinity;
+    }
 
     internal void PinClusterShared(RespireReadFrom readFrom, int slot, RespireConnectionMultiplexer node)
-        => _clusterShared[(readFrom, slot)] = new ReadAffinity { ClusterSlot = slot, ClusterNode = node };
+        => _clusterShared[(readFrom, slot)] = new ReadAffinity { ClusterSlot = slot, ClusterNode = node, ReadFrom = readFrom };
 
     internal bool TryGetShared(RespireReadFrom readFrom, out ReadAffinity? affinity)
         => _shared.TryGetValue(readFrom, out affinity);
@@ -159,13 +166,15 @@ internal sealed class ReadCursorAffinity
     private static async ValueTask<RespireConnection> GetPinnedConnectionAsync(
         ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken)
     {
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(affinity.ReadFrom)
+            ? router.Core.Options.ClientAvailabilityZone : null;
         if (affinity.Replica is { } replica)
         {
             // Never recreate an entry for a replica removed from the topology.
             if (!router.IsCurrent(replica))
                 throw new RespireConnectionException(
                     $"Read replica {replica.Endpoint} that issued the cursor was removed from the topology.");
-            return await replica.GetConnectionAsync(cancellationToken).ConfigureAwait(false);
+            return await replica.GetConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
         }
 
         var core = router.Core;
@@ -173,6 +182,6 @@ internal sealed class ReadCursorAffinity
         var multiplexer = core.Multiplexer;
         if (!ReferenceEquals(multiplexer, affinity.Primary))
             throw new RespireConnectionException("The primary that issued the cursor was replaced.");
-        return multiplexer.GetConnection();
+        return preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
     }
 }

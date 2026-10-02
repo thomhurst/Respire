@@ -9,6 +9,7 @@ internal static class ReadFallbackPolicy
 {
     // Retain every fallback until selection finishes: an earlier socket can retire while a
     // later candidate is checked. One candidate stays inline; larger sets borrow pooled storage.
+    // This mutable owner must remain a single local: never copy it or pass it by value after Offer.
     internal struct ReplicaCandidates<T>
     {
         private (T Value, int Rank) _first;

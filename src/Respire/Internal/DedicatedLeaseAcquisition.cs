@@ -19,7 +19,7 @@ internal static class DedicatedLeaseAcquisition
     // before any application command is accepted. Struct routes avoid strategy allocations.
     internal static async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync<TRoute>(
         DedicatedConnectionPool pool, TRoute route, CancellationToken cancellationToken,
-        bool reuseIdle, DedicatedLeaseKind kind)
+        bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null)
         where TRoute : struct, IDedicatedLeaseRoute
     {
         try
@@ -30,7 +30,8 @@ internal static class DedicatedLeaseAcquisition
                 route.ThrowIfDisposed();
                 try
                 {
-                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
+                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind,
+                        preferredZone: preferredZone).ConfigureAwait(false);
                     return (pool, connection);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && pool.IsStopping

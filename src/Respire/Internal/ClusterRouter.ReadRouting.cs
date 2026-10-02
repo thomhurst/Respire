@@ -154,8 +154,7 @@ internal sealed partial class ClusterRouter
                     // RefreshReplicaRoutesAsync catches and logs every refresh failure.
                     if (routes.IsDueForRevalidation)
                         _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-                    var connection = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) && _options.ClientAvailabilityZone is { } zone
-                        ? node.GetConnectionForZone(zone, slot) : node.GetConnection(slot);
+                    var connection = GetNodeReadConnection(node, slot, readFrom);
                     if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
                         linked: true, readFrom))
                         return (connection, lastError, attempted);
@@ -184,7 +183,8 @@ internal sealed partial class ClusterRouter
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
-        int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken, bool revalidate = false)
+        int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken, bool revalidate = false,
+        RespireReadFrom readFrom = RespireReadFrom.Primary)
     {
         var needsReplicaRevalidation = revalidate && !ReferenceEquals(GetKnownSlotOwner(slot), node);
         if (needsReplicaRevalidation && !HasReplicaCoverage(slot))
@@ -199,7 +199,7 @@ internal sealed partial class ClusterRouter
         if (ReferenceEquals(GetKnownSlotOwner(slot), node))
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
-            return node.GetConnection(slot);
+            return GetNodeReadConnection(node, slot, readFrom);
         }
         var routes = GetKnownReplicas(slot);
         if (routes is null || !routes.Nodes.Contains(node))
@@ -207,8 +207,12 @@ internal sealed partial class ClusterRouter
         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
         if (!ReferenceEquals(GetKnownReplicas(slot), routes) || !routes.Nodes.Contains(node))
             throw CursorReadTopologyChanged();
-        return node.GetConnection(slot);
+        return GetNodeReadConnection(node, slot, readFrom);
     }
+
+    private RespireConnection GetNodeReadConnection(RespireConnectionMultiplexer node, int slot, RespireReadFrom readFrom)
+        => ReadFallbackPolicy.UsesAvailabilityZone(readFrom) && _options.ClientAvailabilityZone is { } zone
+            ? node.GetConnectionForZone(zone, slot) : node.GetConnection(slot);
 
     private static RespireConnectionException CursorReadTopologyChanged()
         => new("The Redis Cluster node that issued this cursor left the slot's read topology.");

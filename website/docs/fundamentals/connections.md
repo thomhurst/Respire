@@ -611,6 +611,13 @@ Both affinity policies require a nonempty `ClientAvailabilityZone`, including wh
 selected through `WithReadFrom`. Selection respects cancellation and existing timeout,
 cursor-pinning, retirement, and accepted-command ownership rules.
 
+Pinned cursors retain the zone preference on every page while staying on the server that
+issued the cursor. When a dedicated read pool has mixed zone metadata, rental prefers a
+healthy same-zone idle connection compatible with the operation. If none is idle, normal
+rental or connection establishment preserves availability; it does not open extra
+connections merely to search for a matching zone. Cluster role fallback retains this
+physical-connection preference after narrowing the read to its fallback role.
+
 ### Cursor reads
 
 `SCAN`, `HSCAN`, `SSCAN`, `ZSCAN` and `ARSCAN` cursors are only valid on the server that issued

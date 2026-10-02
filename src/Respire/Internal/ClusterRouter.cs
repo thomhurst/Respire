@@ -808,9 +808,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
         => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery),
-            cancellationToken, reuseIdle, kind);
+            cancellationToken, reuseIdle, kind, preferredZone);
 
     private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery) : IDedicatedLeaseRoute
     {

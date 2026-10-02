@@ -410,6 +410,105 @@ public class AvailabilityZoneRoutingTests
         await Assert.That(multiplexer.MayBeInAvailabilityZone("local")).IsTrue();
     }
 
+    [Test]
+    public async Task SentinelWithoutReplicasKeepsLocalPrimarySocket()
+    {
+        await using var primary = Node("primary", "remote", false);
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n")
+            : command.StartsWith("GET ") ? Bulk(id % 2 == 0 ? "local" : "remote") : original(id, command);
+        await using var sentinel = new FakeRespServer(16, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, SentinelPrimaryName = "primary" });
+        for (var index = 0; index < 8; index++)
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("local");
+    }
+
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task PinnedCursorKeepsLocalPhysicalSocket(bool cluster, bool shared, bool primaryPin)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "remote", true);
+        ConfigureTopology(primary, replica);
+        var mixed = primaryPin ? primary : replica;
+        var original = mixed.ReplyOverride!;
+        mixed.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
+        const RespireReadFrom policy = RespireReadFrom.AzAffinityReplicasAndPrimary;
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster, policy)
+            with { Connections = 2 });
+        ReadAffinity? pin = shared ? null : new();
+        var cursors = client.Core.ReadRouter.Cursors;
+        for (var page = 0; page < 8; page++)
+        {
+            var selected = cluster
+                ? await cursors.GetClusterConnectionAsync(client.Core.Cluster!, 1, policy, pin, page > 0, CancellationToken.None)
+                : await cursors.GetConnectionAsync(client.Core.ReadRouter, policy, pin, page > 0, CancellationToken.None);
+            await Assert.That(selected.Port).IsEqualTo(mixed.Port);
+            await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BlockingClusterReadPrefersLocalIdleLease(bool roleFallback)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", roleFallback ? "local" : "remote", true);
+        ConfigureTopology(primary, replica);
+        var primaryReply = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n")
+            : command.StartsWith("XREAD ") ? Bulk(id % 2 == 0 ? "local" : "remote") : primaryReply(id, command);
+        var replicaReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("XREAD ")
+            ? "-LOADING unavailable\r\n"u8.ToArray() : replicaReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("key"),
+            RespireReadFrom.Primary, CancellationToken.None, discovery: null);
+        var first = await pool.RentAsync(CancellationToken.None);
+        var second = await pool.RentAsync(CancellationToken.None);
+        var local = first.AvailabilityZone == "local" ? first : second;
+        var remote = ReferenceEquals(local, first) ? second : first;
+        pool.Return(local);
+        pool.Return(remote); // Ordinary LIFO rental would choose this remote socket.
+        using var response = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
+        await Assert.That(response.AsString()).IsEqualTo("local");
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD ")))
+            .IsEqualTo(roleFallback ? 1 : 0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnknownPrimaryZonesDoNotRepeatMetadataProbes(bool cluster)
+    {
+        await using var primary = Node("primary", null, false);
+        await using var replica = Node("replica", "remote", true);
+        ConfigureTopology(primary, replica);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        for (var index = 0; index < 8; index++)
+            await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("replica");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "INFO SERVER")).IsEqualTo(2);
+    }
+
     private static RespireOptions Options(FakeRespServer primary, FakeRespServer[] replicas, bool cluster, RespireReadFrom policy)
         => new()
         {

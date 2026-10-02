@@ -3413,7 +3413,8 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
+                    preferredZone: ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
                 telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                     core.Options.Database, storedProcedureName: storedProcedureName, started: started);
                 telemetryStarted = true;
@@ -3474,6 +3475,8 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var core = _core;
+        // Role fallback narrows readFrom, but the physical-zone preference belongs to the whole read.
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
         RespireTelemetry.OperationScope telemetry = default;
@@ -3495,7 +3498,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        cancellationToken, discovery).ConfigureAwait(false);
+                        cancellationToken, discovery, preferredZone: preferredZone).ConfigureAwait(false);
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
