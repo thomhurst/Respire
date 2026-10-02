@@ -147,7 +147,8 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
 # best-effort: the PR is already merged, so failures must not be reported as a
 # merge abort or invite a dangerous retry of the merge operation.
 if ($canDeleteRemote) {
-    Remove-MergedRemoteBranch -Repo $mainRepo -Branch $headRef -ExpectedHead $mergedHead -RemoteUrl $remoteUrl[0]
+    Remove-MergedRemoteBranch -Repo $mainRepo -Branch $headRef -ExpectedHead $mergedHead `
+        -RemoteUrlHash (Get-RemoteUrlFingerprint $remoteUrl[0])
 }
 
 # Keep local refs: another worktree may have checked out this same branch and SHA
