@@ -42,6 +42,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
         lock (_sequenceGate) _sequences.Remove(scope);
     }
 
+    /// <remarks>The caller must hold the router's nodes gate.</remarks>
     internal void ClearDeferred()
     {
         _deferred.Clear();
@@ -81,6 +82,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     // A migration that just moved Slots (sorted ascending) to Target.
     internal readonly record struct AppliedMove(TNode Target, int[] Slots);
 
+    /// <remarks>The caller must hold the router's nodes gate.</remarks>
     internal void Defer(DeferredMigration deferred,
         List<(string Reason, TNode Sender)> skippedMetrics)
     {
@@ -99,6 +101,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     // Drops entries whose dependency has not arrived within DeferredLifetimeMilliseconds.
     // Expiry is lazy on the next notification; retained state stays bounded in the meantime.
     // The list is oldest first, so expiry stops at the first entry that is still young.
+    /// <remarks>The caller must hold the router's nodes gate.</remarks>
     internal void Expire(List<(string Reason, TNode Sender)> skippedMetrics)
     {
         if (_deferred.Count == 0) return;
@@ -120,6 +123,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     // slot clears and discovery reset the slot's chain and fence it. Moves made here are queued
     // in turn, so chains resolve in one call. Each retry removes slots from the list, so the
     // work under the router gate is bounded by the list size rather than by repeated full passes.
+    /// <remarks>The caller must hold the router's nodes gate, including during delegate invocation.</remarks>
     internal void RetryDependencies(Queue<AppliedMove> applied,
         Func<RespireEndpoint, TNode?> resolveSource, ApplyMigration apply)
     {
