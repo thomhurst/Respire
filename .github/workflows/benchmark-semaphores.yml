@@ -84,7 +84,7 @@ jobs:
           if fence_api not in source:
               assert source.count(marker) == 1
               source = source.replace(marker, shim + marker, 1)
-          assert source.count(fence_api) >= 1
+          assert source.count(fence_api) == 1
           tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
           tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
                           '        RespireScript script, RespireKey[] keys, RespireValue[] args,\n'
@@ -98,7 +98,7 @@ jobs:
           assert source.count(tracked_marker) == 1
           source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
           assert source.count('bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)') == 1
-          assert source.count(fence_api) >= 1
+          assert source.count(fence_api) == 1
           path.write_text(source)
 
           # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.

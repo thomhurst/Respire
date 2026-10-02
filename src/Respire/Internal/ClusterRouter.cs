@@ -1046,6 +1046,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand)
+            // Streamed SET is a write; CLIENT CACHING only applies to a subsequent read.
             return SendAskingAsync(connection, in command, cancellationToken, commandName);
 
         var caching = new ClientCachingCommand();

@@ -2469,8 +2469,7 @@ public sealed partial class RespireClient : IRespireClient
                             // Preserve the redirect as the command result. A source whose seek
                             // operation stopped working cannot be retried safely. Routing has
                             // already learned the redirect so the next command uses its owner.
-                            ExceptionDispatchInfo.Capture(error).Throw();
-                            throw;
+                            RethrowPreservingStackTrace(error);
                         }
                     }
                     sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -2484,6 +2483,10 @@ public sealed partial class RespireClient : IRespireClient
         }
         finally { discovery?.Finish(); }
     }
+
+    [DoesNotReturn]
+    private static void RethrowPreservingStackTrace(Exception error)
+        => ExceptionDispatchInfo.Capture(error).Throw();
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
