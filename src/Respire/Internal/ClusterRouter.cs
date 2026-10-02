@@ -2366,6 +2366,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         var smigratedWorker = CloseSmigratedWorker();
         _stopRetirement.Cancel();
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
+        if (Volatile.Read(ref NearestLatency) is { } latency) await latency.DisposeAsync().ConfigureAwait(false);
         _smigratedNotifications.Writer.TryComplete();
         Task? refreshWorker;
         lock (_topologyRefreshWorkerGate) refreshWorker = Volatile.Read(ref _topologyRefreshWorker);

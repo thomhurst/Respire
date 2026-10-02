@@ -29,4 +29,10 @@ public enum RespireReadFrom
     /// Reads served by the preferred replica may be stale; primary fallback does not make the policy consistent.
     /// </summary>
     ReplicaPreferred,
+    /// <summary>
+    /// Select the healthy eligible primary or replica with the lowest sampled PING latency.
+    /// Ties and absent measurements rotate. Sampling is bounded and advisory; it includes local
+    /// connection queueing and does not measure replication lag. Replica reads may be stale.
+    /// </summary>
+    Nearest,
 }

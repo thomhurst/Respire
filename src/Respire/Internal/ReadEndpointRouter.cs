@@ -8,7 +8,7 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
-internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
+internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 {
     // Longest wait before a removed replica starts draining. Entry._closed is only set under the
     // entry gate, so a read on the lock-free fast path can take a connection just before removal
@@ -179,6 +179,8 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     {
         switch (readFrom)
         {
+            case RespireReadFrom.Nearest:
+                return await GetNearestAsync(cancellationToken).ConfigureAwait(false);
             case RespireReadFrom.PrimaryPreferred:
                 try { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
                 catch (Exception error) when (IsUnavailable(error, cancellationToken))
@@ -208,20 +210,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 
     private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken)
     {
-        var endpoints = Volatile.Read(ref _replicas);
-        if (core.Sentinel is { } sentinel && IsSentinelRefreshDue())
-        {
-            // Serve known replicas while refreshing in the background; wait only when none are known.
-            if (endpoints.Length == 0)
-            {
-                await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false);
-                endpoints = Volatile.Read(ref _replicas);
-            }
-            else if (Interlocked.CompareExchange(ref _backgroundRefresh, 1, 0) == 0)
-            {
-                _ = RefreshSentinelReplicasInBackgroundAsync(sentinel);
-            }
-        }
+        var endpoints = await GetReplicaEndpointsAsync(cancellationToken).ConfigureAwait(false);
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
 
@@ -260,32 +249,8 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
-            if (!_entries.TryGetValue(endpoint, out var entry))
-            {
-                entry = _entries.GetOrAdd(endpoint, static (value, state) => new Entry(value, state.core, state.router),
-                    (core, router: this));
-                // Pairs with the exchange in SetEndpoints, so the recheck below cannot read the
-                // topology from before an insertion that the removal sweep missed.
-                Interlocked.MemoryBarrier();
-            }
-            if (!ContainsEndpoint(Volatile.Read(ref _replicas), endpoint))
-            {
-                // A read holding an older endpoint array can insert an entry after SetEndpoints
-                // finished its removal sweep. Remove and retire it so it cannot survive indefinitely.
-                if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-                {
-                    _retiring.TryAdd(entry, 0);
-                    _ = RetireAsync(entry);
-                }
-                continue;
-            }
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                // Disposal may already have drained _entries; never leave a late entry open.
-                if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-                    await entry.DisposeAsync().ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(ReadEndpointRouter));
-            }
+            var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
+            if (entry is null) continue;
             // A replica that recently failed is skipped until its cooldown ends, so a dead node does
             // not add a connect timeout to every read.
             if (entry.IsCoolingDown) continue;
@@ -398,6 +363,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _lifetime.CancelAsync().ConfigureAwait(false);
+        if (Volatile.Read(ref NearestLatency) is { } latency) await latency.DisposeAsync().ConfigureAwait(false);
         var entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
         _entries.Clear();
         _retiring.Clear();

@@ -12,6 +12,43 @@ public class ReplicaReadRoutingIntegrationTests
 {
     [Test]
     [NotInParallel]
+    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp3)]
+    public async Task NearestUsesEligibleEndpointsAndKeepsWritesOnPrimary(
+        RespireContainerServer server, bool useSentinel, RespProtocol protocol)
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Server = server,
+            Topology = RespireContainerTopology.Sentinel,
+        });
+        var options = useSentinel ? fixture.CreateOptions() : new RespireOptions
+        {
+            Endpoints = [fixture.DataEndpoints[0]],
+            ReplicaEndpoints = [fixture.DataEndpoints[1]],
+        };
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = protocol, Connections = 1 });
+        var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
+        using var listener = Listen(routes);
+        var reader = client.WithReadFrom(RespireReadFrom.Nearest);
+        await reader.SetAsync("nearest-key", "value");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (await reader.GetStringAsync("nearest-key", deadline.Token) != "value")
+            await Task.Delay(50, deadline.Token);
+        routes["SET"].Last().Should().Be(fixture.DataEndpoints[0]);
+        routes["GET"].Should().OnlyContain(endpoint => fixture.DataEndpoints.Contains(endpoint));
+        await Task.Delay(TimeSpan.FromMilliseconds(1_100), deadline.Token);
+        (await reader.GetStringAsync("nearest-key", deadline.Token)).Should().Be("value");
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments(RespireContainerServer.Redis, true)]
     [Arguments(RespireContainerServer.Valkey, true)]
     [Arguments(RespireContainerServer.Redis, false)]

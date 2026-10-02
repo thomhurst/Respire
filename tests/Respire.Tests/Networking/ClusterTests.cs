@@ -118,6 +118,8 @@ public class ClusterTests
     [Arguments(RespireReadFrom.Replica, false)]
     [Arguments(RespireReadFrom.ReplicaPreferred, false)]
     [Arguments(RespireReadFrom.Replica, true)]
+    [Arguments(RespireReadFrom.Nearest, false)]
+    [Arguments(RespireReadFrom.Nearest, true)]
     public async Task ReadFrom_BatchPreservesPrimaryCacheUnlessItContainsWrite(RespireReadFrom policy, bool includeWrite)
     {
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -136,6 +138,9 @@ public class ClusterTests
         });
         await client.GetStringAsync("cached");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         using var batch = client.WithReadFrom(policy).CreateBatch();
         var read = batch.Strings.GetString("key");
         if (includeWrite) _ = batch.Strings.Set("key", "value");

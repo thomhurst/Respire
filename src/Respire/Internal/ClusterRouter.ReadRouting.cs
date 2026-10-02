@@ -39,6 +39,8 @@ internal sealed partial class ClusterRouter
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(
         int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        if (readFrom == RespireReadFrom.Nearest)
+            return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
         if (readFrom is RespireReadFrom.PrimaryPreferred)
         {
             try
