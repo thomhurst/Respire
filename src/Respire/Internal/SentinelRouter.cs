@@ -311,7 +311,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
-                rearm = CurrentMonitorRearm();
+                Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)));
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
@@ -374,6 +374,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, delay, core.Logger);
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+        }
+    }
+
+    private Task RefreshMonitorRearm(Task reconnectEpoch)
+    {
+        lock (_gate)
+        {
+            // A publication may have completed the reconnect epoch while SubscribeAsync was
+            // returning. Keep that signal so exhaustion cannot park until another publication.
+            return reconnectEpoch.IsCompleted ? reconnectEpoch : _monitorRearm.Task;
         }
     }
 
