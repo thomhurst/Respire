@@ -815,6 +815,7 @@ internal readonly struct SetCommand(
     public void Write(ref RespWriter writer)
     {
         ValidateExpiry(expiry);
+        ValidateWhen(when);
 
         var count = 3
             + expiry.TokenCount
@@ -863,6 +864,16 @@ internal readonly struct SetCommand(
             throw new ArgumentException(
                 "SET does not support RespireExpiry.Persist; use RespireExpiry.None to replace the value without a TTL.",
                 nameof(expiry));
+        }
+    }
+
+    // An undefined value would reserve a condition argument that the writer never emits,
+    // leaving the RESP array short and desynchronizing the connection.
+    internal static void ValidateWhen(SetWhen when)
+    {
+        if (when is not (SetWhen.Always or SetWhen.NotExists or SetWhen.Exists))
+        {
+            throw new ArgumentOutOfRangeException(nameof(when), when, "Unsupported SetWhen value for SET.");
         }
     }
 }

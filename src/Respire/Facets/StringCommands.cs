@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
@@ -70,6 +71,70 @@ public partial interface IStringCommands
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a key from exactly <paramref name="length"/> bytes read from <paramref name="value"/>,
+    /// streaming the payload in bounded chunks. Redis: SET.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The stream remains open and is not seeked. Respire reads no more than
+    /// <paramref name="length"/> bytes; any surplus bytes are left unread in the stream. A seekable
+    /// stream with fewer remaining bytes is rejected before anything is sent. Respire reads the first
+    /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early
+    /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
+    /// without affecting the connection. The source has still been read, so the call is not
+    /// retryable with the same stream. On a cluster client, if the node loses its slots during that
+    /// first read, the held chunk is sent to the new owner only when each completed read reported
+    /// its byte count. A canceled or faulted read with an unknown byte count fails instead of retrying
+    /// a potentially shifted payload. A failure after the
+    /// first chunk closes the connection.
+    /// </para>
+    /// <para>
+    /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
+    /// wait for the complete frame, so a slow source (for example a network stream) delays
+    /// unrelated traffic. Use a separate client for slow sources.
+    /// </para>
+    /// <para>
+    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the header
+    /// is queued, cancellation, a source read failure or a timeout before the complete
+    /// RESP frame has been written to the socket closes the connection to preserve framing, even if
+    /// the frame terminator is already
+    /// queued. That fails every other command pipelined on the connection. After the frame is
+    /// written, cancellation only abandons the reply wait and the command may still execute.
+    /// </para>
+    /// <para>
+    /// The command timeout covers the whole upload, including every source read and socket write.
+    /// Respire does not retry a streamed write once its header is sent, and cluster
+    /// <c>MOVED</c>/<c>ASK</c> redirects are returned to the caller as server errors rather than
+    /// followed, because a stream source cannot be replayed. Each call always takes the streaming path, which costs a few
+    /// small allocations per call; use the <see cref="RespireValue"/> overload for small values.
+    /// </para>
+    /// </remarks>
+    ValueTask<bool> SetAsync(
+        RespireKey key,
+        Stream value,
+        long length,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a key from a sequence, copying its segments straight into the connection's write
+    /// buffer in bounded chunks instead of combining them into one payload buffer. Redis: SET.
+    /// </summary>
+    /// <remarks>
+    /// The sequence's memory must stay unchanged until the returned task completes. Connection
+    /// ownership, cancellation, timeout and redirect behavior match the <see cref="Stream"/>
+    /// overload, except that an in-memory sequence cannot fail mid-read. Every call takes the
+    /// streaming path; use the <see cref="RespireValue"/> overload for small values.
+    /// </remarks>
+    ValueTask<bool> SetAsync(
+        RespireKey key,
+        ReadOnlySequence<byte> value,
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
@@ -260,8 +325,54 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
+    }
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, Stream value, long length, RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (!value.CanRead) throw new ArgumentException("The source stream must be readable.", nameof(value));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        // A short seekable source is rejected before any bytes are written, so it cannot close
+        // the shared connection mid-frame.
+        if (TryGetRemainingLength(value, out var remaining) && remaining < length)
+            throw new ArgumentOutOfRangeException(nameof(length), length,
+                "The declared length exceeds the bytes remaining in the seekable source stream.");
+        SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
+        return client.OkOrNullAsync("SET",
+            new StreamedSetCommand(client.Key(in key), value, length, expiry, when), cancellationToken);
+    }
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, ReadOnlySequence<byte> value, RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+    {
+        SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
+        return client.OkOrNullAsync("SET",
+            new StreamedSetCommand(client.Key(in key), value, expiry, when), cancellationToken);
+    }
+
+    // Some wrapper streams report CanSeek but throw from Length or Position. Such a stream
+    // skips the early check and is treated like any other non-seekable source.
+    private static bool TryGetRemainingLength(Stream stream, out long remaining)
+    {
+        remaining = 0;
+        if (!stream.CanSeek) return false;
+        try
+        {
+            remaining = Math.Max(0, stream.Length - stream.Position);
+            return true;
+        }
+        catch (Exception error) when (error is NotSupportedException or IOException)
+        {
+            return false;
+        }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -271,6 +382,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         CancellationToken cancellationToken = default)
     {
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
             cancellationToken);
@@ -285,6 +397,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return client.StringOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: true),
             cancellationToken);
@@ -300,6 +413,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         CancellationToken cancellationToken = default)
     {
         SetCommand.ValidateExpiry(expiry);
+        SetCommand.ValidateWhen(when);
         return client.DeserializeAsync<T, SetCommand>(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: true),
             cancellationToken);

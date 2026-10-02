@@ -316,6 +316,38 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task StreamedMovingReroutePreservesMaintenanceRelaxedDeadline()
+    {
+        await using var sourceServer = Server(maxConnections: 2);
+        await using var targetServer = Server(maxConnections: 2);
+        var options = Options(sourceServer).ToConnectionOptions(enableMaintenanceNotifications: true) with
+        {
+            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(4),
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", sourceServer.Port, options: options);
+        var staleSelection = multiplexer.GetConnection();
+        await sourceServer.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(staleSelection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var input = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", input, 4, default, SetWhen.Always);
+        var set = staleSelection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+        await Task.Delay(400); // Exceed the normal 300 ms deadline while the source is being read.
+        await sourceServer.SendRawAsync(Moving(1, targetServer.Port));
+        await WaitForPort(multiplexer, targetServer.Port);
+        await pipe.Writer.WriteAsync("ta"u8.ToArray());
+
+        using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.IsError).IsFalse();
+        await Assert.That(targetServer.ReceivedCommands.Contains("SET key data")).IsTrue();
+    }
+
+    [Test]
     public async Task NewerMovingCancelsObsoleteTargetConnect()
     {
         await using var source = Server(maxConnections: 2);
@@ -678,6 +710,34 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingReroutesStreamedSetRejectedBeforeAdmission()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (connectionId, command) => command.StartsWith("SET key ", StringComparison.Ordinal)
+            ? "+OK\r\n"u8.ToArray()
+            : targetReply(connectionId, command);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var staleSelection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForCommands(target, 2);
+        await WaitForRetirement(staleSelection);
+        using var payload = new MemoryStream("data"u8.ToArray());
+        var command = new StreamedSetCommand((RespireValue)"key", payload, 4, default, SetWhen.Always);
+
+        using var result = await staleSelection.SendCheckedAsync(in command, commandName: "SET")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForCommands(target, 3);
+
+        await Assert.That(result.AsString()).IsEqualTo("OK");
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("SET key ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
     public async Task MovingPublishedAfterGracePeriodAbortsOldSocketWork()
     {
         await using var source = Server(maxConnections: 2);
@@ -889,6 +949,58 @@ public class MaintenanceNotificationTests
         dequeued.ReleaseRef();
     }
 
+    // The streamed SET timer and the full-ring capacity wait compute their deadline with
+    // MaintenanceTimeoutState.RemainingUntilDeadline; the in-flight sweep applies the same rule per
+    // entry. Run identical windows through both so streamed and ordinary commands cannot drift.
+    [Test]
+    [Arguments(900L, 1100L, true)]   // Expired before maintenance started: never revived.
+    [Arguments(1000L, 1100L, true)]  // Deadline exactly at the window start: not relaxed.
+    [Arguments(1001L, 1100L, true)]  // Relaxed by the window.
+    [Arguments(1001L, 2100L, true)]  // Relaxed deadline has also passed.
+    [Arguments(1250L, 1100L, false)] // Relaxed timeout shorter than normal: never shortened.
+    [Arguments(1250L, 7000L, true)]  // Window expired: the normal deadline applies again.
+    [Arguments(1250L, 1100L, null)]  // No maintenance at all.
+    public async Task StreamedAndSweptDeadlinesAgreeAcrossMaintenanceWindows(long deadline, long now, bool? longerRelaxation)
+    {
+        var normal = TimeSpan.FromMilliseconds(200);
+        var relaxed = longerRelaxation == false ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromMilliseconds(1200);
+        MaintenanceTimeoutState? state = null;
+        if (longerRelaxation is not null)
+        {
+            state = new MaintenanceTimeoutState(5000);
+            state.Apply(new("MIGRATING", 1), 1000);
+        }
+
+        var streamedRemaining = MaintenanceTimeoutState.RemainingUntilDeadline(state, normal, relaxed, deadline, now,
+            out var streamedTimeout, out _);
+
+        // The sweep path, exactly as SweepCommandDeadlinesAsync feeds the ring.
+        var window = state?.GetWindow(now);
+        var sweepTimeout = window is not null && relaxed > normal ? relaxed : normal;
+        var pool = new PendingResponsePool(1);
+        var ring = new InflightRing(1);
+        var source = pool.Rent(commandName: "PING");
+        source.Deadline = CommandDeadline.At(deadline);
+        ring.TryEnqueue(source);
+        var sweptRemaining = ring.SweepExpired(now, normal, null,
+            (long)(sweepTimeout - normal).TotalMilliseconds, window?.Started ?? long.MaxValue);
+
+        if (streamedRemaining <= 0)
+        {
+            await Assert.That(sweptRemaining).IsEqualTo(-1);
+            var error = await Assert.That(async () => await source.Task).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Timeout).IsEqualTo(streamedTimeout);
+        }
+        else
+        {
+            await Assert.That(sweptRemaining).IsEqualTo(streamedRemaining);
+            source.TrySetResult(RespValue.Integer(1));
+            using var result = await source.Task;
+        }
+        ring.TryDequeue(out var dequeued);
+        dequeued.ReleaseRef();
+    }
+
     [Test]
     public async Task DeadlineSweepHonorsRerouteMarkerWithoutReextending()
     {
@@ -1052,6 +1164,78 @@ public class MaintenanceNotificationTests
         await server.SendRawAsync(Finish("FAILED_OVER", 1));
         await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireConnectionException>();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [Test]
+    public async Task StreamedSetUploadUsesRelaxedDeadlineDuringMaintenance()
+    {
+        await using var server = Server();
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        // Outlast the normal 150 ms command timeout mid-upload; the relaxed 5 s deadline applies.
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+        await Task.Delay(400);
+        await Assert.That(set.IsCompleted).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        await pipe.Writer.WriteAsync("ta"u8.ToArray());
+
+        using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.IsError).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("SET key data")).IsTrue();
+    }
+
+    [Test]
+    public async Task StreamedSetUploadRestoresNormalDeadlineWhenMaintenanceCompletes()
+    {
+        await using var server = Server();
+        // MaintenanceRelaxedTimeout is 5 s and the window lasts 10 s; completion must end both early.
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+        await Task.Delay(400);
+        await Assert.That(set.IsCompleted).IsFalse();
+
+        await server.SendRawAsync(Finish("MIGRATED", 1));
+        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+            .Throws<RespireTimeoutException>();
+        // The deadline fired while the first chunk was still being read, before any header bytes
+        // were queued, so the connection stays usable.
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
+    [Test]
+    public async Task StreamedSetTimeoutReportsRelaxedDeadline()
+    {
+        await using var server = Server();
+        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150),
+            window: TimeSpan.FromSeconds(2), relaxed: TimeSpan.FromMilliseconds(500));
+        await server.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await pipe.Writer.WriteAsync("da"u8.ToArray());
+
+        var error = await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(500));
+        // Only the first chunk was being read, so no partial frame needed the connection closed.
+        await Assert.That(connection.IsConnected).IsTrue();
     }
 
     [Test]
@@ -1379,14 +1563,14 @@ public class MaintenanceNotificationTests
     };
 
     private static Task<RespireConnection> Connect(FakeRespServer server, TimeSpan? timeout,
-        TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16)
+        TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16, TimeSpan? relaxed = null)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = timeout,
             ResponseTimeout = responseTimeout,
-            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+            MaintenanceRelaxedTimeout = relaxed ?? TimeSpan.FromSeconds(5),
             MaintenanceWindowTimeout = window ?? TimeSpan.FromSeconds(10),
             MaxInflightCommands = capacity,
         });

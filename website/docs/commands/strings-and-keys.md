@@ -17,6 +17,48 @@ await redis.SetAsync("visits", 1);
 long visits = await redis.IncrementAsync("visits");
 ```
 
+For large binary values, stream the payload without building a payload-sized command buffer:
+
+```csharp
+await using var file = File.OpenRead("archive.bin");
+await redis.Strings.SetAsync("archive", file, file.Length);
+```
+
+The stream overload requires an exact, non-negative byte length. Respire reads no more than
+that length, leaves the stream open, and does not seek it; any surplus bytes stay unread in the
+stream. A seekable stream with fewer remaining bytes than the declared length is rejected with
+`ArgumentOutOfRangeException` before anything is sent; any other source that ends early throws
+`EndOfStreamException`. Respire reads the first chunk (up to 32 KiB) before it sends anything, so a
+source that fails, ends, is cancelled or times out within that chunk throws without affecting the
+connection. The stream has still been read, so retry with a fresh or rewound source. On a cluster
+client, if the node loses its slots while that first chunk is being read, Respire keeps the chunk
+and sends the upload to the new owner without reading those bytes again when every completed read
+reported its byte count. A canceled or faulted read with an unknown byte count fails instead of
+retrying a potentially shifted payload. The
+`ReadOnlySequence<byte>` overload copies its segments straight into
+the write buffer in 32 KiB chunks without combining them first; keep its memory unchanged until the
+returned task completes. Both overloads always take the streaming path, which costs a few small
+allocations per call, so use the ordinary `SetAsync` overloads for small values.
+
+Respire holds that connection's write path for the complete RESP frame. This causes head-of-line
+blocking: every later command on that physical connection waits for the upload, and may exceed its
+`CommandTimeout`. Use a separate client or connection for bulk uploads and slow sources. Once the
+header is queued, cancellation, a read failure or a timeout before the complete frame has been
+written to the socket closes the connection to prevent later bytes from being parsed as another command.
+That also fails other commands pipelined on it, even when only the frame terminator was still
+waiting to be written. Prefer seekable or in-memory sources. `CommandTimeout` covers the whole
+upload, including every source read and socket write, so raise it (or pass a longer-lived
+cancellation token with a `null` timeout) for payloads that take longer than the timeout to
+transmit. If the connection closes while Respire is reading the source, the call fails with
+`RespireConnectionException` instead of waiting for the source. After the complete frame has been
+written to the socket, cancellation only cancels the wait for its reply, and Redis may still apply
+the write.
+
+A streamed write is not retried once its header is sent. In a cluster, `MOVED` and `ASK` replies
+are returned to the caller as server errors instead of being followed: a stream source cannot be
+replayed, and the redirect path cannot prefix a streamed frame with `ASKING`. Transport failures are returned to the caller too; after a transport
+failure, Redis may or may not have applied the write.
+
 Conditional writes use `SetWhen`:
 
 ```csharp

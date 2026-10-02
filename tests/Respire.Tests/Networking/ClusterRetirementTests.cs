@@ -1800,6 +1800,69 @@ public class ClusterRetirementTests
         await Assert.That(Count(router, "_ownedPools")).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task StreamedSetRetiredDuringFirstChunkResendsWholePayloadOnReplacement()
+    {
+        // Larger than one chunk, so the retry must replay the restored first chunk and then keep
+        // reading the original source for the rest.
+        var payload = new byte[RespireConnection.StreamChunkSize + 7_000];
+        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)('a' + index % 26);
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        var oldEndpoint = new RespireEndpoint("127.0.0.1", oldServer.Port);
+        var replacementEndpoint = new RespireEndpoint("127.0.0.1", replacementServer.Port);
+        Publish(router, oldEndpoint, "old", 1);
+        _ = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+
+        var source = new PausingStream(payload, pauseAt: 16);
+        var set = client.Strings.SetAsync("key", source, payload.Length, cancellationToken: timeout.Token).AsTask();
+        await source.Paused.Task.WaitAsync(timeout.Token);
+        // Retire the generation while the first chunk is still being read, then let the read finish.
+        Publish(router, replacementEndpoint, "new", 2);
+        source.Resume.TrySetResult();
+
+        await Assert.That(await set.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(source.BytesRead).IsEqualTo(payload.Length); // Every source byte was read once.
+        await Assert.That(oldServer.ReceivedCommands.Any(command => command.StartsWith("SET", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(replacementServer.ReceivedConnectionIds.Count).IsEqualTo(1);
+        var arguments = replacementServer.ReceivedArguments.Single();
+        await Assert.That(System.Text.Encoding.ASCII.GetString(arguments[0])).IsEqualTo("SET");
+        await Assert.That(arguments[2].AsSpan().SequenceEqual(payload)).IsTrue();
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    private sealed class PausingStream(byte[] payload, int pauseAt) : Stream
+    {
+        private int _position;
+        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int BytesRead => Volatile.Read(ref _position);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_position == pauseAt && Paused.TrySetResult()) await Resume.Task.WaitAsync(cancellationToken);
+            var count = Math.Min(buffer.Length, payload.Length - _position);
+            if (_position < pauseAt) count = Math.Min(count, pauseAt - _position);
+            payload.AsMemory(_position, count).CopyTo(buffer);
+            Volatile.Write(ref _position, _position + count);
+            return count;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     // Model DNS resolution changes without mutating machine-wide DNS. Every installed
     // connection has a real socket, captured network peer and server-local client identity.
     private static void InstallPhysicalConnection(RespireConnectionMultiplexer node, RespireConnection connection)

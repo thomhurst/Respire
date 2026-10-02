@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -49,6 +50,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Socket? _socket;
     private readonly Stream? _stream;
     private readonly Lock _writeGate = new();
+    private readonly SemaphoreSlim _streamingGate = new(1, 1);
+    // Cancelled by Abort so a streamed SET blocked on its source or on a stalled socket write
+    // observes the closed connection. Never disposed: a racing streamed SET may still link to it.
+    private readonly CancellationTokenSource _closedCancellation = new();
+    private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -79,6 +85,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool _dead;
     private bool _retired;
     private bool _sending;
+    private bool _streamingActive;
     private TaskCompletionSource? _retirementCompletion;
     private TaskCompletionSource? _disposeCompletion;
     private bool _drainedSuccessfully;
@@ -112,6 +119,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
+    internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 
     /// <summary>
@@ -787,10 +795,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string? commandName = null)
+        string? commandName = null,
+        CommandDeadline commandDeadline = default,
+        bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
-            in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName);
+            in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
+            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute);
 
     /// <summary>
     /// Sends a command through a typed in-flight source, avoiding intermediate async state
@@ -1043,11 +1054,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TPrefix prefix,
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string? commandName = null)
+        string? commandName = null,
+        CommandDeadline commandDeadline = default,
+        bool allowStreamingConnectionReroute = true)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendPrefixedAsync(
-            in prefix, in command, throwOnError: true, cancellationToken, commandName);
+            in prefix, in command, throwOnError: true, cancellationToken, commandName,
+            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute);
 
     internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(
         in TPrefix prefix,
@@ -1056,7 +1070,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default,
         string? commandName = null,
         bool armCommandDeadline = true,
-        bool pinToConnection = false)
+        bool pinToConnection = false,
+        CommandDeadline commandDeadline = default,
+        bool allowStreamingConnectionReroute = true)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -1073,7 +1089,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             cancellationToken,
             commandName,
             armCommandDeadline,
-            pinToConnection: pinToConnection);
+            pinToConnection: pinToConnection,
+            commandDeadline: commandDeadline,
+            allowStreamingConnectionReroute: allowStreamingConnectionReroute);
     }
 
     /// <summary>
@@ -1189,10 +1207,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? commandName = null,
         bool armCommandDeadline = true,
         CommandDeadline commandDeadline = default,
-        bool pinToConnection = false)
+        bool pinToConnection = false,
+        bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        // TCommand is always a struct, so the JIT specializes this method per command type and
+        // folds both type tests to constants; they cost nothing on the ordinary command hot path.
+        if (command is IStreamingRespCommand)
+        {
+            return SendStreamingCoreAsync(command, cancellationToken, commandDeadline, pinToConnection,
+                allowStreamingConnectionReroute);
+        }
+
         var source = _sourcePool.Rent(throwOnError, commandName);
         bool enqueued;
         bool startedBatch;
@@ -1224,6 +1251,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
             commandName, armCommandDeadline, commandDeadline, pinToConnection);
+    }
+
+    private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
+        bool allowConnectionReroute)
+        where TCommand : struct, IRespCommand
+    {
+        if (!allowConnectionReroute)
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline).ConfigureAwait(false);
+
+        try
+        {
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline).ConfigureAwait(false);
+        }
+        catch (RespireConnectionRetiredException) when (TryReroute(
+            pinToConnection, commandDeadline, out var target, out var reroutedDeadline))
+        {
+            return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
+                    allowConnectionReroute)
+                .ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -1380,7 +1428,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     throw ClosedBeforeEnqueue();
                 }
 
-                if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                if (_streamingActive
+                    || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
                     || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
                 {
                     return false;
@@ -1454,7 +1503,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw ClosedBeforeEnqueue();
             }
 
-            if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+            if (_streamingActive
+                || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
                 || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
             {
                 return false;
@@ -1954,11 +2004,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                     MarkRepliesSent(sendingReplyCount);
 
+                    // The socket write has completed; publish idle before completing the buffer
+                    // so a streaming producer cannot miss the send-completion signal
+                    // (DrainBufferedWritesAsync re-checks _sending after taking the completion).
+                    // Retirement drain may observe idle before CompleteWrite runs; that is safe
+                    // because the bytes are already on the socket and this thread still completes
+                    // the buffer's waiters.
+                    Volatile.Write(ref _sending, false);
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
-                    // Publish the completed send before waking the drain; receive completion also pulses capacity.
-                    Volatile.Write(ref _sending, false);
                     if (Volatile.Read(ref _retired)) _capacitySignal.Signal();
 
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
@@ -2861,6 +2916,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             _dead = true;
             _abortReason = reason;
+            // The flush loop owns an in-progress send: it completes that buffer when the socket
+            // accepted every byte, or fails it when the closed socket rejects the write.
             _activeBuffer.FailWrite(writeFailure);
         }
 
@@ -2886,6 +2943,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
+        try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>
@@ -2997,6 +3056,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
+        _retiredSignal.TrySetResult();
         // Stop refresh deadlines and provider work while accepted transport frames drain.
         _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
@@ -3020,6 +3080,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // an unexpected exit before _dead is published, without spinning on its task.
                     if (_dead || _receiveTask.IsCompleted) break;
                     if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending)
+                        && !_streamingActive
                         && Volatile.Read(ref _activeBulkStreamSource) is null)
                     {
                         Volatile.Write(ref _drainedSuccessfully, true);

@@ -304,6 +304,47 @@ public class CredentialProviderTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PendingRenewalFencesStreamedSet(bool accept)
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        await using var server = Server();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, Options(server, provider, clock));
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        server.SuppressReply = command => command == "AUTH user second";
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
+
+        var source = new MemoryStream("data"u8.ToArray());
+        var command = new StreamedSetCommand((RespireValue)"key", source, source.Length, default, SetWhen.Always);
+        var pending = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        // The upload must not take the wire (or even read its source) while AUTH is unacknowledged.
+        await Task.Delay(100);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(source.Position).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
+
+        await server.SendRawAsync(accept ? FakeRespServer.OkReply : "-WRONGPASS rejected\r\n"u8.ToArray());
+        if (accept)
+        {
+            using var reply = await pending.WaitAsync(Limit);
+            await Assert.That(reply.AsString()).IsEqualTo("OK");
+            await Assert.That(server.ReceivedCommands)
+                .IsEquivalentTo(new[] { "AUTH user first", "AUTH user second", "SET key data" });
+        }
+        else
+        {
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
+            await connection.Closed.WaitAsync(Limit);
+            await Assert.That(source.Position).IsEqualTo(0);
+            await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
+        }
+    }
+
+    [Test]
     [Arguments("cancel")]
     [Arguments("dispose")]
     [Arguments("expire")]

@@ -12,13 +12,21 @@ internal sealed class AsyncCapacitySignal
 
     public Task WaitAsync(CancellationToken cancellationToken)
     {
-        Task wait;
+        var wait = CaptureGeneration();
+        return cancellationToken.CanBeCanceled ? wait.WaitAsync(cancellationToken) : wait;
+    }
+
+    /// <summary>
+    /// Returns the current generation's shared task without registering a cancellation callback.
+    /// A caller that re-checks its condition after capturing can abandon the task for free, and
+    /// only binds its token (with <see cref="Task.WaitAsync(CancellationToken)"/>) when it parks.
+    /// </summary>
+    public Task CaptureGeneration()
+    {
         lock (_gate)
         {
-            wait = (_waiters ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+            return (_waiters ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
-
-        return cancellationToken.CanBeCanceled ? wait.WaitAsync(cancellationToken) : wait;
     }
 
     public void Signal()
