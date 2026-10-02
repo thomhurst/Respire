@@ -1905,7 +1905,7 @@ public class ClusterRetirementTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
-            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
+            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
         Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "node", 1);

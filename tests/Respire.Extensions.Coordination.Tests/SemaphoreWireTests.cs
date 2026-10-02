@@ -190,7 +190,7 @@ public class SemaphoreWireTests
 
             var outcome = await RespireSemaphore.TryFenceAsync(client, execution);
 
-            await Assert.That(outcome).IsEqualTo(SemaphoreCleanupAttempt.Succeeded);
+            await Assert.That(outcome).IsEqualTo(CleanupAttemptResult.Succeeded);
             await Assert.That(logger.DisconnectFailureThrown).IsTrue();
             await Assert.That(server.ReceivedCommands.Any(command => command == $"CLIENT KILL ID {original.ServerClientId}"))
                 .IsTrue();

@@ -23,6 +23,13 @@ namespace Respire.Extensions.Coordination;
 /// can overtake the delayed acquire. Finite expiry then bounds how long that permit stays held; a
 /// permit without expiry stays held until it is removed manually.
 /// </para>
+/// <para>
+/// Dispose permits before disposing their client when cleanup must reach Redis. Client disposal
+/// cancels pending background cleanup; an owner-only permit may remain held until removed manually.
+/// The bounded cleanup queue also abandons excess work when its admission limit is reached,
+/// reporting <c>overloaded</c>. An owner-only permit can remain held in that case too; use finite
+/// expiry when manual removal is not acceptable.
+/// </para>
 /// </remarks>
 public sealed class RespireSemaphore
 {
@@ -167,9 +174,9 @@ public sealed class RespireSemaphore
             return;
         }
 
-        await WaitForCleanupAsync(RetryCleanupAsync(
-            Stopwatch.GetTimestamp(), () => TryReleaseOnceAsync(_client, Key, owner),
-            onAbandoned: ReportAbandoned(_client, "release"))).ConfigureAwait(false);
+        await WaitForCleanupAsync(EnqueueCleanupAsync(_client,
+            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken), null,
+            ReportAbandoned(_client, "release"))).ConfigureAwait(false);
     }
 
     // A release that overtakes a delayed acquire would let that acquire recreate the permit, so
@@ -177,22 +184,43 @@ public sealed class RespireSemaphore
     // BestEffortCleanupTimeout; the rest of the cleanup continues in the background.
     private ValueTask CleanupUncertainAcquisitionAsync(
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
-        => WaitForCleanupAsync(FenceThenReleaseAsync(wire, execution, owner));
-
-    private async Task FenceThenReleaseAsync(
-        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
     {
-        var started = Stopwatch.GetTimestamp();
-        // If the barrier never succeeds within CleanupRetryLimit, ordering remains uncertain, so
-        // no release is sent; finite expiry remains the fallback.
-        if (!await RetryCleanupAsync(
-                started, () => TryFenceAsync(wire, execution), onAbandoned: ReportAbandoned(_client, "fence"))
-            .ConfigureAwait(false))
-            return;
-        // A fenced connection is retired, so the first release may wait for a replacement.
-        await RetryCleanupAsync(
-                started, () => TryReleaseOnceAsync(_client, Key, owner), onAbandoned: ReportAbandoned(_client, "release"))
-            .ConfigureAwait(false);
+        var fenced = false;
+        var stage = "fence";
+        // A cleanup runs one attempt at a time, so retries safely retain the completed stage.
+        return WaitForCleanupAsync(EnqueueCleanupAsync(_client, async cancellationToken =>
+        {
+            if (!fenced)
+            {
+                var fence = await TryFenceAsync(wire, execution, cancellationToken).ConfigureAwait(false);
+                if (fence != CleanupAttemptResult.Succeeded) return fence;
+                fenced = true;
+                stage = "release";
+            }
+            return await TryReleaseOnceAsync(_client, Key, owner, cancellationToken).ConfigureAwait(false);
+        }, null, reason => ReportAbandoned(_client, stage)(reason)));
+    }
+
+    internal static Task EnqueueCleanupAsync(IRespireClient client,
+        Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt, Func<bool>? shouldContinue,
+        Action<string> onAbandoned)
+    {
+        if (client is RespireClient respireClient)
+        {
+            var queue = respireClient.Core.CoordinationCleanupQueue;
+            if (queue is null)
+            {
+                try { onAbandoned("client_disposed"); }
+                catch { /* Diagnostics must not stop cleanup callers. */ }
+                return Task.CompletedTask;
+            }
+            return queue.EnqueueAsync(attempt, shouldContinue,
+                CleanupRetryLimit, CleanupRetryInitialDelay, CleanupRetryMaxDelay, onAbandoned);
+        }
+
+        // Legacy IRespireClient implementations have no shared core to own a bounded queue.
+        return RetryCleanupAsync(Stopwatch.GetTimestamp(), () => attempt(CancellationToken.None), shouldContinue,
+            onAbandoned);
     }
 
     private static async ValueTask WaitForCleanupAsync(Task cleanup)
@@ -208,51 +236,63 @@ public sealed class RespireSemaphore
 
     // Without a tracked connection identity there is nothing to fence, and the release proceeds
     // unordered; see the type remarks.
-    internal static async ValueTask<SemaphoreCleanupAttempt> TryFenceAsync(
-        RespireClient? wire, RespireClient.TrackedScriptExecution? execution)
+    internal static async ValueTask<CleanupAttemptResult> TryFenceAsync(
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution,
+        CancellationToken cancellationToken = default)
     {
         if (wire is null || execution is not { ConnectionIdentity.ServerClientId: > 0 })
-            return SemaphoreCleanupAttempt.Succeeded;
-        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+            return CleanupAttemptResult.Succeeded;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(BestEffortCleanupTimeout);
         var acknowledged = false;
         try
         {
             await wire.FenceCorrectionConnectionAsync(execution.ConnectionIdentity, timeout.Token,
                 () => acknowledged = true).ConfigureAwait(false);
-            return SemaphoreCleanupAttempt.Succeeded;
+            return CleanupAttemptResult.Succeeded;
         }
         catch (ObjectDisposedException)
         {
             // The client is gone, so no release can be sent either.
-            return acknowledged ? SemaphoreCleanupAttempt.Succeeded : SemaphoreCleanupAttempt.Abandoned;
+            return acknowledged ? CleanupAttemptResult.Succeeded : CleanupAttemptResult.Abandoned;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return acknowledged ? CleanupAttemptResult.Succeeded : CleanupAttemptResult.Abandoned;
         }
         catch (Exception)
         {
             // Includes NOPERM and generic ERR replies: only an acknowledged kill proves ordering.
-            return acknowledged ? SemaphoreCleanupAttempt.Succeeded : SemaphoreCleanupAttempt.Failed;
+            return acknowledged ? CleanupAttemptResult.Succeeded : CleanupAttemptResult.Failed;
         }
     }
 
     /// <summary>Sends one owner-checked release bounded by <see cref="BestEffortCleanupTimeout"/>.</summary>
-    internal static async ValueTask<SemaphoreCleanupAttempt> TryReleaseOnceAsync(
-        IRespireClient client, RespireKey key, RespireLockToken owner)
+    internal static async ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
+        IRespireClient client, RespireKey key, RespireLockToken owner,
+        CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(BestEffortCleanupTimeout);
         try
         {
             using var _ = await client.Scripts.ExecuteAsync(
                 ReleaseScript, [key], [owner.Bytes], timeout.Token).ConfigureAwait(false);
-            return SemaphoreCleanupAttempt.Succeeded;
+            return CleanupAttemptResult.Succeeded;
         }
         catch (ObjectDisposedException)
         {
-            return SemaphoreCleanupAttempt.Abandoned;
+            return CleanupAttemptResult.Abandoned;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return CleanupAttemptResult.Abandoned;
         }
         catch (Exception)
         {
             // Every other failure, including server error replies, is retried within
             // CleanupRetryLimit by callers that retry at all.
-            return SemaphoreCleanupAttempt.Failed;
+            return CleanupAttemptResult.Failed;
         }
     }
 
@@ -269,15 +309,15 @@ public sealed class RespireSemaphore
     /// </param>
     /// <returns>True when an attempt succeeded.</returns>
     internal static async Task<bool> RetryCleanupAsync(
-        long started, Func<ValueTask<SemaphoreCleanupAttempt>> attempt, Func<bool>? shouldContinue = null,
+        long started, Func<ValueTask<CleanupAttemptResult>> attempt, Func<bool>? shouldContinue = null,
         Action<string>? onAbandoned = null)
     {
         var delay = CleanupRetryInitialDelay;
         while (shouldContinue is null || shouldContinue())
         {
             var outcome = await attempt().ConfigureAwait(false);
-            if (outcome == SemaphoreCleanupAttempt.Succeeded) return true;
-            if (outcome == SemaphoreCleanupAttempt.Abandoned)
+            if (outcome == CleanupAttemptResult.Succeeded) return true;
+            if (outcome == CleanupAttemptResult.Abandoned)
             {
                 onAbandoned?.Invoke("client_disposed");
                 return false;
@@ -287,8 +327,8 @@ public sealed class RespireSemaphore
                 onAbandoned?.Invoke("exhausted");
                 return false;
             }
-            await Task.Delay(WithJitter(delay)).ConfigureAwait(false);
-            delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, CleanupRetryMaxDelay.Ticks));
+            await Task.Delay(CoordinationCleanupRetry.WithJitter(delay)).ConfigureAwait(false);
+            delay = CoordinationCleanupRetry.NextDelay(delay, CleanupRetryMaxDelay);
         }
 
         return false;
@@ -298,10 +338,6 @@ public sealed class RespireSemaphore
     internal static Action<string> ReportAbandoned(IRespireClient client, string stage)
         => reason => RespireTelemetry.RecordCoordinationCleanupAbandoned(
             "semaphore", stage, reason, (client as RespireClient)?.Core.Logger);
-
-    // Spreads retries from clients that lost the same connection at the same moment.
-    private static TimeSpan WithJitter(TimeSpan delay)
-        => TimeSpan.FromTicks((long)(delay.Ticks * (0.75 + Random.Shared.NextDouble() * 0.5)));
 
     // Shared by every script: reads Redis server time, prunes expired permits, and defines the key
     // maintenance helpers. The capacity marker is the only member scored -inf and persistent
@@ -403,17 +439,6 @@ public sealed class RespireSemaphore
 
     internal static TimeSpan? FromMilliseconds(long milliseconds)
         => milliseconds == 0 ? null : TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
-}
-
-/// <summary>The outcome of one background cleanup attempt.</summary>
-internal enum SemaphoreCleanupAttempt
-{
-    /// <summary>The attempt completed; stop retrying.</summary>
-    Succeeded,
-    /// <summary>The attempt failed and may succeed later.</summary>
-    Failed,
-    /// <summary>The client was disposed, so no later attempt can succeed.</summary>
-    Abandoned,
 }
 
 /// <summary>
@@ -675,7 +700,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 // changed the permit's lifetime. Disposal cleanup must not stop at the old expiry.
                 Set(PermitState.RenewalFailed);
                 var failedRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
-                if (failedRenewalCleanupOutcome == SemaphoreCleanupAttempt.Failed
+                if (failedRenewalCleanupOutcome == CleanupAttemptResult.Failed
                     && Has(PermitState.DisposeReleaseScheduled))
                     ScheduleDisposeReleaseRetry();
                 throw;
@@ -704,7 +729,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
             // The renewal was confirmed after its expiry elapsed locally, or disposal started meanwhile.
             var lateRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
-            if (lateRenewalCleanupOutcome == SemaphoreCleanupAttempt.Failed
+            if (lateRenewalCleanupOutcome == CleanupAttemptResult.Failed
                 && Has(PermitState.DisposeReleaseScheduled))
                 ScheduleDisposeReleaseRetry();
             return false;
@@ -793,8 +818,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         try
         {
-            await RespireSemaphore.RetryCleanupAsync(
-                Stopwatch.GetTimestamp(), TryReleaseAndMarkAsync, NeedsDisposeCleanup,
+            await RespireSemaphore.EnqueueCleanupAsync(_client,
+                TryReleaseAndMarkAsync, NeedsDisposeCleanup,
                 RespireSemaphore.ReportAbandoned(_client, "release")).ConfigureAwait(false);
         }
         finally
@@ -852,10 +877,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     }
 
     // The single place that turns a completed release command into local released state.
-    private async ValueTask<SemaphoreCleanupAttempt> TryReleaseAndMarkAsync()
+    private async ValueTask<CleanupAttemptResult> TryReleaseAndMarkAsync(CancellationToken cancellationToken = default)
     {
-        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner).ConfigureAwait(false);
-        if (outcome == SemaphoreCleanupAttempt.Succeeded) Set(PermitState.Released);
+        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner, cancellationToken)
+            .ConfigureAwait(false);
+        if (outcome == CleanupAttemptResult.Succeeded) Set(PermitState.Released);
         else Set(PermitState.ReleaseUncertain);
         return outcome;
     }

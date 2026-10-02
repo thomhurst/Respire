@@ -2,7 +2,7 @@ name: Dedicated pool benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire/Internal/DedicatedConnectionPool*.cs'
       - 'benchmarks/Respire.Benchmarks/DedicatedPoolBenchmarks.cs'

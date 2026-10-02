@@ -322,20 +322,34 @@ public class FailoverGroupTests
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
         await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
         var primaryFailed = 0;
+        var failedProbes = 0;
+        var secondProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        primary.SuppressReply = command =>
+        {
+            if (command != "PING" || Volatile.Read(ref primaryFailed) == 0) return false;
+            if (Interlocked.Increment(ref failedProbes) != 2) return false;
+            secondProbe.TrySetResult();
+            return true;
+        };
         primary.ReplyOverride = (_, command) =>
             command == "PING" && Volatile.Read(ref primaryFailed) != 0
                 ? "-ERR primary unavailable\r\n"u8.ToArray()
                 : null;
 
+        var primaryCandidate = Candidate(primary, priority: 0);
+        primaryCandidate = primaryCandidate with { Options = primaryCandidate.Options with { CommandTimeout = TimeSpan.FromSeconds(10) } };
         await using var group = await RespireFailoverGroup.ConnectAsync(
-        [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)],
-            FastOptions(failureThreshold: 2) with { ProbeInterval = TimeSpan.FromMilliseconds(150) });
+            [primaryCandidate, Candidate(secondary, priority: 1)],
+            FastOptions(failureThreshold: 2) with { ProbeTimeout = TimeSpan.FromSeconds(10) });
         var originalClient = group.ActiveClient;
-        var initialProbeCount = primary.CommandsSeen;
         Volatile.Write(ref primaryFailed, 1);
 
-        await WaitUntilAsync(() => primary.CommandsSeen >= initialProbeCount + 1);
+        // Hold the second failure response until the one-failure state has been inspected.
+        await secondProbe.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(primary));
+        await Assert.That(group.GetEndpointStatuses().Single(status => status.Endpoint == Endpoint(primary)).ConsecutiveFailures)
+            .IsEqualTo(1);
+        await primary.SendRawAsync("-ERR primary unavailable\r\n"u8.ToArray(), primary.ReceivedConnectionIds[^1]);
 
         await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
         var primaryStatus = group.GetEndpointStatuses().Single(status => status.Endpoint == Endpoint(primary));

@@ -2,7 +2,7 @@ name: Semaphore benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire.Extensions.Coordination/**'
       - 'src/Respire/RespireClient.cs'
@@ -57,6 +57,7 @@ jobs:
           # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
+          cp candidate/src/Respire/Internal/CoordinationCleanupRetry.cs baseline/src/Respire/Internal/
           python3 - <<'PY'
           from pathlib import Path
 
@@ -107,6 +108,39 @@ jobs:
               assert source.count(tracked_api) == 1
           assert source.count(fence_api) == 1
           path.write_text(source)
+
+          # The copied semaphore uses the candidate cleanup queue, but baseline measurements
+          # only exercise standard leases. Add a compile-only queue stub to the pinned baseline.
+          core = Path('baseline/src/Respire/Internal/ClientCore.cs')
+          core_source = core.read_text()
+          core_marker = '    public readonly ClientSideCacheCoordinator? ClientCache;\n'
+          core_shim = '    internal readonly CoordinationCleanupQueue CoordinationCleanupQueue = new();\n'
+          if 'CoordinationCleanupQueue CoordinationCleanupQueue' not in core_source:
+              assert core_source.count(core_marker) == 1
+              core_source = core_source.replace(core_marker, core_marker + core_shim, 1)
+              core.write_text(core_source)
+
+          queue = Path('baseline/src/Respire/Internal/CoordinationCleanupQueue.BenchmarkShim.cs')
+          if not queue.exists():
+              queue.write_text('''using System;
+          using System.Threading;
+          using System.Threading.Tasks;
+
+          namespace Respire.Internal;
+
+          internal enum CleanupAttemptResult { Succeeded, Failed, Abandoned }
+
+          internal sealed class CoordinationCleanupQueue
+          {
+              internal Task<bool> EnqueueAsync(
+                  Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
+                  Func<bool>? shouldContinue,
+                  TimeSpan retryLimit,
+                  TimeSpan initialDelay,
+                  TimeSpan maximumDelay,
+                  Action<string> onAbandoned) => Task.FromResult(false);
+          }
+          ''')
 
           # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.
           # The baseline never runs semaphore cleanup, so a no-op stub is enough to compile.

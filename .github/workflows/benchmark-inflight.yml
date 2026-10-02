@@ -2,7 +2,7 @@ name: In-flight FIFO benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire/Networking/InflightRing.cs'
       - 'src/Respire/Networking/RespireConnection.cs'

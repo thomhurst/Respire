@@ -2,7 +2,7 @@ name: Vector encoding benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire/Commands/VectorCommand.cs'
       - 'src/Respire/Protocol/RespWriter.cs'
