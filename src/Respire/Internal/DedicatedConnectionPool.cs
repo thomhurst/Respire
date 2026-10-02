@@ -13,7 +13,8 @@ namespace Respire.Internal;
 /// </summary>
 internal sealed partial class DedicatedConnectionPool(
     string host, int port, RespireConnectionOptions options, ILogger? logger,
-    Action<RespireConnectionStateChange>? stateChanged = null) : IAsyncDisposable
+    Action<RespireConnectionStateChange>? stateChanged = null,
+    RespireMaintenanceNotificationMode streamingMaintenance = RespireMaintenanceNotificationMode.Disabled) : IAsyncDisposable
 {
     private const int MaxIdle = 4;
 
@@ -21,6 +22,9 @@ internal sealed partial class DedicatedConnectionPool(
     // back into the router or invoke user callbacks while holding this gate.
     private readonly object _gate = new();
     private readonly Stack<Entry> _idle = new(MaxIdle);
+    private readonly Stack<Entry> _streamingIdle = new(MaxIdle);
+    private readonly RespireConnectionOptions _streamingOptions = streamingMaintenance == RespireMaintenanceNotificationMode.Disabled
+        ? options : options with { MaintenanceNotifications = streamingMaintenance };
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
     private readonly Dictionary<RespireConnection, Entry> _connections = [];
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -51,23 +55,30 @@ internal sealed partial class DedicatedConnectionPool(
 
     private enum State { Idle, Rented, Closing }
 
-    private sealed class Entry(RespireConnection connection)
+    private sealed class Entry(RespireConnection connection, bool streamingMaintenance)
     {
         internal readonly RespireConnection Connection = connection;
+        internal readonly bool StreamingMaintenance = streamingMaintenance;
         internal State State = State.Rented;
         internal TaskCompletionSource? Closed;
     }
 
     public async ValueTask<RespireConnection> RentAsync(
-        CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true)
+        CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true,
+        bool streaming = false)
     {
+        // Maintenance negotiation is connection state. Keep these leases separate from blocking
+        // and corrective leases, while retaining one ownership/drain ledger and idle bound.
+        var useStreamingMaintenance = streaming && streamingMaintenance != RespireMaintenanceNotificationMode.Disabled;
+        var connectionOptions = useStreamingMaintenance ? _streamingOptions : options;
+        var idle = useStreamingMaintenance ? _streamingIdle : _idle;
         while (true)
         {
             Entry stale;
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_stopping, this);
-                if (reuseIdle && _idle.TryPop(out var entry))
+                if (reuseIdle && idle.TryPop(out var entry))
                 {
                     if (entry.Connection.IsConnected)
                     {
@@ -97,10 +108,10 @@ internal sealed partial class DedicatedConnectionPool(
             {
                 // Corrective fences own their retry/deadline rules and must not inherit an
                 // application acquisition limit. Healthy idle rentals never enter this path.
-                connection = options.ReconnectPolicy is { } policy && armHandshakeDeadline
-                    ? await ConnectWithRecoveryAsync(policy, connectCancellation.Token).ConfigureAwait(false)
+                connection = connectionOptions.ReconnectPolicy is { } policy && armHandshakeDeadline
+                    ? await ConnectWithRecoveryAsync(policy, connectionOptions, connectCancellation.Token).ConfigureAwait(false)
                     : await RespireConnection.ConnectAsync(
-                        host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+                        host, port, connectionOptions, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, connectCancellation.Token))
@@ -108,7 +119,7 @@ internal sealed partial class DedicatedConnectionPool(
                 // Unwrap only our own lifetime link, preserving independent retirement cancellation.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
-            var entry = new Entry(connection);
+            var entry = new Entry(connection, useStreamingMaintenance);
             lock (_gate)
             {
                 _connections.Add(connection, entry);
@@ -135,10 +146,10 @@ internal sealed partial class DedicatedConnectionPool(
         lock (_gate)
         {
             if (!_connections.TryGetValue(connection, out entry!) || entry.State != State.Rented) return;
-            if (!_stopping && connection.IsConnected && _idle.Count < MaxIdle)
+            if (!_stopping && connection.IsConnected && _idle.Count + _streamingIdle.Count < MaxIdle)
             {
                 entry.State = State.Idle;
-                _idle.Push(entry);
+                (entry.StreamingMaintenance ? _streamingIdle : _idle).Push(entry);
                 return;
             }
             BeginCloseLocked(entry);
@@ -203,6 +214,7 @@ internal sealed partial class DedicatedConnectionPool(
                 }
             }
             _idle.Clear();
+            _streamingIdle.Clear();
         }
 
         if (cancel)

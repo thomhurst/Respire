@@ -1859,6 +1859,43 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    public async Task StreamedSetSlotChangeFlushesCacheWhileOldOwnerKeepsOtherSlots()
+    {
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        oldServer.ReplyOverride = replacementServer.ReplyOverride = (_, command) => command == "HELLO 3"
+            ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClientSideCache = new(),
+            Endpoints = { new("127.0.0.1", oldServer.Port) },
+        });
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
+        var old = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+        var source = new PausingStream(new byte[32], pauseAt: 16);
+        var upload = client.Strings.SetAsync("key", source, 32, cancellationToken: timeout.Token).AsTask();
+        await source.Paused.Task.WaitAsync(timeout.Token);
+        var cache = client.Core.ClientCache!;
+        RespireKey cachedKey = "cached";
+        var read = cache.BeginRead(in cachedKey);
+        var value = RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in read, in value, allowInsert: true);
+        var flushes = cache.GetStatistics().ContinuityFlushes;
+        var replacement = router.GetOrCreateNode(new("127.0.0.1", replacementServer.Port));
+        router.SetSlotOwner(ClusterHash.GetSlot("key"), replacement);
+        await Assert.That(old.Multiplexer!.IsRetired).IsFalse();
+        await Assert.That(cache.Count).IsEqualTo(1);
+        source.Resume.TrySetResult();
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.GetStatistics().ContinuityFlushes).IsGreaterThan(flushes);
+    }
+
+    [Test]
     public async Task StreamedSetRetirementPreservesTheOriginalUploadDeadline()
     {
         await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);

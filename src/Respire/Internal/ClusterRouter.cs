@@ -756,8 +756,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true)
-        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle);
+        bool reuseIdle = true, bool streaming = false)
+        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle, streaming);
 
     /// <summary>
     /// Where a dedicated rent reselects its pool after topology retirement: the slot's route under
@@ -777,7 +777,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true)
+        bool reuseIdle = true, bool streaming = false)
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
@@ -788,7 +788,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 try
                 {
-                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle).ConfigureAwait(false);
+                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, streaming: streaming).ConfigureAwait(false);
                     return (pool, connection);
                 }
                 catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken) && pool.IsStopping
@@ -2068,7 +2068,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 node.Port,
                 node.Options.ReadOnly ? _options.ToConnectionOptions() with { ReadOnly = true } : _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
-                change => DedicatedStateChanged?.Invoke(change));
+                change => DedicatedStateChanged?.Invoke(change), _options.MaintenanceNotifications);
             _dedicatedPools.Add(node, pool);
             _ownedPools.Add(pool);
             return pool;

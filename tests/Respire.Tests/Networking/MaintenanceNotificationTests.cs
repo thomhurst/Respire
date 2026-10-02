@@ -1191,6 +1191,54 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClientUploadLeaseUsesMaintenanceAndKeepsBlockingLeasesSeparate(bool cluster)
+    {
+        await using var server = Server(maxConnections: 5);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            _ => FakeRespServer.OkReply,
+        };
+        await using var client = RespireClient.Create(Options(server) with
+        {
+            UseCluster = cluster,
+            CommandTimeout = TimeSpan.FromMilliseconds(150),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+        });
+        var pool = cluster
+            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, CancellationToken.None, discovery: null)
+            : await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var blocking = await pool.RentAsync(CancellationToken.None);
+        pool.Return(blocking);
+        var connection = await pool.RentAsync(CancellationToken.None, streaming: true);
+        await Assert.That(ReferenceEquals(blocking, connection)).IsFalse();
+        await server.SendRawAsync(Start("MIGRATING", 1), server.ReceivedConnectionIds[^1]);
+        await WaitForMaintenance(connection);
+        pool.Return(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        try
+        {
+            var upload = client.Strings.SetAsync("key", source, 4).AsTask();
+            await pipe.Writer.WriteAsync("da"u8.ToArray());
+            await Task.Delay(400);
+            await Assert.That(upload.IsCompleted).IsFalse();
+            await pipe.Writer.WriteAsync("ta"u8.ToArray());
+            await Assert.That(await upload.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+            var nextBlocking = await pool.RentAsync(CancellationToken.None);
+            await Assert.That(ReferenceEquals(blocking, nextBlocking)).IsTrue();
+            pool.Return(nextBlocking);
+        }
+        finally { await pipe.Writer.CompleteAsync(); }
+    }
+
+    [Test]
     public async Task StreamedSetUploadUsesRelaxedDeadlineDuringMaintenance()
     {
         await using var server = Server();

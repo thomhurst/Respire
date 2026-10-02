@@ -54,14 +54,8 @@ public sealed class StreamedSetTests
         var first = client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
             cancellationToken: cancellation.Token).AsTask();
         await firstReceived.Task.WaitAsync(timeout.Token);
-        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var writeGate = typeof(RespireConnection).GetField("_writeGate", flags)!.GetValue(connection)!;
-        var streaming = typeof(RespireConnection).GetField("_streamingActive", flags)!;
-        while (true)
-        {
-            lock (writeGate) if (!(bool)streaming.GetValue(connection)!) break;
+        while (connection.IsStreamingWriteActive)
             await Task.Delay(1, timeout.Token);
-        }
         cancellation.Cancel();
         await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
 
@@ -126,7 +120,7 @@ public sealed class StreamedSetTests
     {
         var pong = "+PONG\r\n"u8.ToArray();
         FakeRespServer? server = null;
-        server = new FakeRespServer(2, FakeRespServer.OkReply)
+        await using var ownedServer = server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command switch
             {

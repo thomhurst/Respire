@@ -380,7 +380,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
             };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
-            Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged);
+            Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged, options.MaintenanceNotifications);
         }
 
         public bool IsRetired => Volatile.Read(ref _retired) != 0;

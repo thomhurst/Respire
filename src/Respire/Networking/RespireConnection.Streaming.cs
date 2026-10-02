@@ -12,6 +12,11 @@ namespace Respire.Networking;
 // frame reaches the socket aborts the connection, so no other bytes can follow a partial frame.
 internal sealed partial class RespireConnection
 {
+    internal bool IsStreamingWriteActive
+    {
+        get { lock (_writeGate) return _streamingActive; }
+    }
+
     /// <summary>
     /// Payload bytes copied into the write buffer per flush. Bounds write-buffer growth for any
     /// payload size; the docs describe uploads as being sent in chunks of this size.

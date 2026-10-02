@@ -3376,6 +3376,11 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Controls command deadlines and connection reuse after a failed dedicated send.</summary>
     internal enum DedicatedSendPolicy { Blocking, Streaming }
 
+    private CommandDeadline CreateDedicatedDeadline(DedicatedSendPolicy policy)
+        => policy == DedicatedSendPolicy.Streaming && _core.Options.CommandTimeout is { } timeout
+            ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds))
+            : CommandDeadline.None;
+
     private static async ValueTask ReleaseFailedDedicatedConnectionAsync(
         DedicatedConnectionPool pool, RespireConnection connection, DedicatedSendPolicy policy)
     {
@@ -3426,13 +3431,15 @@ public sealed partial class RespireClient : IRespireClient
             var returned = false;
             try
             {
+                var commandDeadline = CreateDedicatedDeadline(policy);
                 pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                connection = await pool.RentAsync(cancellationToken, streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                         core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
                 var response = policy == DedicatedSendPolicy.Streaming
-                    ? await connection.SendAsync(in command, cancellationToken, commandName: operation).ConfigureAwait(false)
+                    ? await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                        commandDeadline: commandDeadline).ConfigureAwait(false)
                     : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
                 pool.Return(connection);
                 returned = true;
@@ -3490,9 +3497,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var commandDeadline = policy == DedicatedSendPolicy.Streaming && core.Options.CommandTimeout is { } streamTimeout
-            ? CommandDeadline.After(Math.Max(1L, (long)streamTimeout.TotalMilliseconds))
-            : CommandDeadline.None;
+        var commandDeadline = CreateDedicatedDeadline(policy);
         DedicatedConnectionPool pool;
         long routeVersion;
         if (command is IStreamingRespCommand)
@@ -3522,7 +3527,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        cancellationToken, discovery).ConfigureAwait(false);
+                        cancellationToken, discovery, streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -3636,6 +3641,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireConnectionRetiredException error)
                     when (command is IStreamingRespCommand && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
+                    core.ClientCache?.FlushForContinuityLoss();
                     if (connection is not null)
                     {
                         commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);

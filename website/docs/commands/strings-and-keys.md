@@ -40,7 +40,14 @@ the write buffer in 32 KiB chunks without combining them first; keep its memory 
 returned task completes. Both overloads always take the streaming path, which costs a few small
 allocations per call, so use the ordinary `SetAsync` overloads for small values.
 
-Respire sends each upload through a dedicated pooled connection. A slow source does not block
+Respire sends each upload through a dedicated pooled connection. Uploads and blocking commands
+share a pool owner, but active rentals have no fixed connection limit: when no compatible idle
+connection exists, the client opens another connection instead of waiting for a free lease.
+The pool retains at most four idle connections in total. Bound concurrent uploads in your application
+when you need to limit Redis connections. Maintenance-enabled upload connections negotiate the
+configured notifications and are kept separate from ordinary blocking leases.
+
+A slow source does not block
 commands sent through the client's multiplexed connections. Once the header is queued, cancellation,
 a read failure or a timeout before the complete frame has been written closes only the upload
 connection to preserve RESP framing. Prefer seekable or in-memory sources. `CommandTimeout` covers

@@ -75,7 +75,7 @@ internal sealed class ClientCore : IAsyncDisposable
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
         _dedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
+            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged, options.MaintenanceNotifications);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
@@ -556,7 +556,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger,
-                NotifyRecoveryStateChanged);
+                NotifyRecoveryStateChanged, Options.MaintenanceNotifications);
             (_serverPools ??= []).Add(pool);
             return pool;
         }
