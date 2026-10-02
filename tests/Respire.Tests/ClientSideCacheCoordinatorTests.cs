@@ -352,6 +352,9 @@ public class ClientSideCacheCoordinatorTests
                 await Assert.That(mutation).IsEqualTo(RawCommandKeyLayouts.MutationKind.ReadOnly).Because(operation);
         }
         // These layouts do not establish a bounded cache mutation. Any new unknown entry requires review.
+        // MIGRATE has optional KEYS and COPY forms; its mutation shape is not projected here.
+        // PFCOUNT may rewrite its HLL representation despite returning a count.
+        // XREADGROUP changes group state and uses a STREAMS-delimited key list not parsed by mutation layouts.
         await Assert.That(classifications.Where(entry => entry.Mutation == RawCommandKeyLayouts.MutationKind.Unknown)
             .Select(entry => entry.Operation).Order()).IsEquivalentTo(new[] { "MIGRATE", "PFCOUNT", "XREADGROUP" });
         await Assert.That(classifications.Where(entry => entry.Mutation == RawCommandKeyLayouts.MutationKind.IndirectKeys)
@@ -456,6 +459,26 @@ public class ClientSideCacheCoordinatorTests
             cache.CompleteMutation(in fence);
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         }
+    }
+
+    [Test]
+    [Arguments("TS.CREATE")]
+    [Arguments("TS.ALTER")]
+    public async Task ExplicitUnknownTimeSeriesMutationKeepsFullCacheFence(string operation)
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "series", "old");
+        Insert(cache, "unrelated", "old");
+        var command = new DynamicCommand([operation, "series"], routingKeyIndex: 1,
+            cacheMutation: RespireCacheMutation.Unknown, hasExplicitCacheMutation: true);
+
+        var fence = cache.BeforeCommand(operation, in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        Insert(cache, "racing", "old");
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.Count).IsEqualTo(0);
     }
 
     [Test]
