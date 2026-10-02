@@ -13,5 +13,6 @@
     <PackageReference Include="Respire" Version="$(RespirePackageVersion)" />
     <!-- Also proves Respire.Json publishes and runs under Native AOT, and does not ship a second generator. -->
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
   </ItemGroup>
 </Project>

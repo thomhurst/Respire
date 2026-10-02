@@ -22,6 +22,7 @@
     <Project Path="src/Respire.Extensions.Caching/Respire.Extensions.Caching.csproj" />
     <Project Path="src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj" />
     <Project Path="src/Respire.Extensions.Json/Respire.Extensions.Json.csproj" />
+    <Project Path="src/Respire.Extensions.Search/Respire.Extensions.Search.csproj" />
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <Project Path="src/Respire.Extensions.Coordination/Respire.Extensions.Coordination.csproj" />
     <Project Path="src/Respire.Extensions.Aws/Respire.Extensions.Aws.csproj" />
