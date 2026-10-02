@@ -419,6 +419,8 @@ internal readonly struct BitOpCommand(
 
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = key;

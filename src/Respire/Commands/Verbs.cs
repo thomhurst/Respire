@@ -12,21 +12,32 @@ internal readonly struct Verb
     public readonly byte[] Bulk;
     public readonly int Tokens;
     public readonly int RoutingKeyIndex;
+    public readonly ReadCommandKind ReadKind;
 
-    public Verb(string command) : this(0, command)
+    public Verb(string command) : this(0, command, ReadCommandKind.None)
+    {
+    }
+
+    public Verb(string command, ReadCommandKind readKind) : this(0, command, readKind)
     {
     }
 
     public Verb(int routingKeyIndex, params string[] words)
-        : this(routingKeyIndex, string.Join(' ', words))
+        : this(routingKeyIndex, string.Join(' ', words), ReadCommandKind.None)
     {
     }
 
-    private Verb(int routingKeyIndex, string command)
+    public Verb(int routingKeyIndex, ReadCommandKind readKind, params string[] words)
+        : this(routingKeyIndex, string.Join(' ', words), readKind)
+    {
+    }
+
+    private Verb(int routingKeyIndex, string command, ReadCommandKind readKind)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
         RoutingKeyIndex = routingKeyIndex;
+        ReadKind = readKind;
         Tokens = 0;
         var encodedLength = 0;
         var start = 0;
@@ -109,11 +120,11 @@ internal static class Verbs
     public static readonly Verb ClusterSlots = new(-1, "CLUSTER", "SLOTS");
 
     // Strings
-    public static readonly Verb Get = new("GET");
+    public static readonly Verb Get = new("GET", ReadCommandKind.Read);
     public static readonly Verb Set = new("SET");
     public static readonly Verb Append = new("APPEND");
-    public static readonly Verb StrLen = new("STRLEN");
-    public static readonly Verb GetRange = new("GETRANGE");
+    public static readonly Verb StrLen = new("STRLEN", ReadCommandKind.Read);
+    public static readonly Verb GetRange = new("GETRANGE", ReadCommandKind.Read);
     public static readonly Verb SetRange = new("SETRANGE");
     public static readonly Verb GetDel = new("GETDEL");
     public static readonly Verb Incr = new("INCR");
@@ -121,41 +132,41 @@ internal static class Verbs
     public static readonly Verb IncrBy = new("INCRBY");
     public static readonly Verb DecrBy = new("DECRBY");
     public static readonly Verb IncrByFloat = new("INCRBYFLOAT");
-    public static readonly Verb MGet = new("MGET");
+    public static readonly Verb MGet = new("MGET", ReadCommandKind.Read);
     public static readonly Verb MSet = new("MSET");
 
     // Keys
     public static readonly Verb Del = new("DEL");
     public static readonly Verb Unlink = new("UNLINK");
-    public static readonly Verb Exists = new("EXISTS");
+    public static readonly Verb Exists = new("EXISTS", ReadCommandKind.Read);
     public static readonly Verb PExpire = new("PEXPIRE");
     public static readonly Verb PExpireAt = new("PEXPIREAT");
     public static readonly Verb Persist = new("PERSIST");
-    public static readonly Verb Pttl = new("PTTL");
-    public static readonly Verb Type = new("TYPE");
+    public static readonly Verb Pttl = new("PTTL", ReadCommandKind.Read);
+    public static readonly Verb Type = new("TYPE", ReadCommandKind.Read);
     public static readonly Verb Rename = new("RENAME");
     public static readonly Verb RenameNx = new("RENAMENX");
     public static readonly Verb Copy = new("COPY");
-    public static readonly Verb Touch = new("TOUCH");
-    public static readonly Verb Scan = new("SCAN");
+    public static readonly Verb Touch = new("TOUCH", ReadCommandKind.Read);
+    public static readonly Verb Scan = new("SCAN", ReadCommandKind.CursorRead);
     public static readonly Verb Sort = new("SORT");
-    public static readonly Verb SortRo = new("SORT_RO");
-    public static readonly Verb RandomKey = new("RANDOMKEY");
+    public static readonly Verb SortRo = new("SORT_RO", ReadCommandKind.Read);
+    public static readonly Verb RandomKey = new("RANDOMKEY", ReadCommandKind.Read);
     public static readonly Verb Move = new("MOVE");
 
     // Hashes
     public static readonly Verb HSet = new("HSET");
     public static readonly Verb HSetNx = new("HSETNX");
-    public static readonly Verb HGet = new("HGET");
-    public static readonly Verb HGetAll = new("HGETALL");
+    public static readonly Verb HGet = new("HGET", ReadCommandKind.Read);
+    public static readonly Verb HGetAll = new("HGETALL", ReadCommandKind.Read);
     public static readonly Verb HDel = new("HDEL");
-    public static readonly Verb HExists = new("HEXISTS");
-    public static readonly Verb HLen = new("HLEN");
+    public static readonly Verb HExists = new("HEXISTS", ReadCommandKind.Read);
+    public static readonly Verb HLen = new("HLEN", ReadCommandKind.Read);
     public static readonly Verb HIncrBy = new("HINCRBY");
     public static readonly Verb HIncrByFloat = new("HINCRBYFLOAT");
-    public static readonly Verb HKeys = new("HKEYS");
-    public static readonly Verb HVals = new("HVALS");
-    public static readonly Verb HMGet = new("HMGET");
+    public static readonly Verb HKeys = new("HKEYS", ReadCommandKind.Read);
+    public static readonly Verb HVals = new("HVALS", ReadCommandKind.Read);
+    public static readonly Verb HMGet = new("HMGET", ReadCommandKind.Read);
 
     // Lists
     public static readonly Verb LPush = new("LPUSH");
@@ -166,9 +177,9 @@ internal static class Verbs
     public static readonly Verb BLMPop = new(2, "BLMPOP");
     public static readonly Verb BLPop = new("BLPOP");
     public static readonly Verb BRPop = new("BRPOP");
-    public static readonly Verb LLen = new("LLEN");
-    public static readonly Verb LRange = new("LRANGE");
-    public static readonly Verb LIndex = new("LINDEX");
+    public static readonly Verb LLen = new("LLEN", ReadCommandKind.Read);
+    public static readonly Verb LRange = new("LRANGE", ReadCommandKind.Read);
+    public static readonly Verb LIndex = new("LINDEX", ReadCommandKind.Read);
     public static readonly Verb LRem = new("LREM");
     public static readonly Verb LTrim = new("LTRIM");
     public static readonly Verb LMove = new("LMOVE");
@@ -177,49 +188,49 @@ internal static class Verbs
     // Sets
     public static readonly Verb SAdd = new("SADD");
     public static readonly Verb SRem = new("SREM");
-    public static readonly Verb SIsMember = new("SISMEMBER");
-    public static readonly Verb SCard = new("SCARD");
-    public static readonly Verb SMembers = new("SMEMBERS");
+    public static readonly Verb SIsMember = new("SISMEMBER", ReadCommandKind.Read);
+    public static readonly Verb SCard = new("SCARD", ReadCommandKind.Read);
+    public static readonly Verb SMembers = new("SMEMBERS", ReadCommandKind.Read);
     public static readonly Verb SPop = new("SPOP");
-    public static readonly Verb SRandMember = new("SRANDMEMBER");
-    public static readonly Verb SMisMember = new("SMISMEMBER");
+    public static readonly Verb SRandMember = new("SRANDMEMBER", ReadCommandKind.Read);
+    public static readonly Verb SMisMember = new("SMISMEMBER", ReadCommandKind.Read);
     public static readonly Verb SMove = new("SMOVE");
-    public static readonly Verb SInterCard = new(1, "SINTERCARD");
-    public static readonly Verb SInter = new("SINTER");
-    public static readonly Verb SUnion = new("SUNION");
-    public static readonly Verb SDiff = new("SDIFF");
+    public static readonly Verb SInterCard = new(1, ReadCommandKind.Read, "SINTERCARD");
+    public static readonly Verb SInter = new("SINTER", ReadCommandKind.Read);
+    public static readonly Verb SUnion = new("SUNION", ReadCommandKind.Read);
+    public static readonly Verb SDiff = new("SDIFF", ReadCommandKind.Read);
     public static readonly Verb SInterStore = new("SINTERSTORE");
     public static readonly Verb SUnionStore = new("SUNIONSTORE");
     public static readonly Verb SDiffStore = new("SDIFFSTORE");
 
     // Sorted sets
     public static readonly Verb ZAdd = new("ZADD");
-    public static readonly Verb ZScore = new("ZSCORE");
-    public static readonly Verb ZMScore = new("ZMSCORE");
+    public static readonly Verb ZScore = new("ZSCORE", ReadCommandKind.Read);
+    public static readonly Verb ZMScore = new("ZMSCORE", ReadCommandKind.Read);
     public static readonly Verb ZIncrBy = new("ZINCRBY");
     public static readonly Verb ZRem = new("ZREM");
-    public static readonly Verb ZCard = new("ZCARD");
-    public static readonly Verb ZCount = new("ZCOUNT");
-    public static readonly Verb ZRank = new("ZRANK");
-    public static readonly Verb ZRevRank = new("ZREVRANK");
+    public static readonly Verb ZCard = new("ZCARD", ReadCommandKind.Read);
+    public static readonly Verb ZCount = new("ZCOUNT", ReadCommandKind.Read);
+    public static readonly Verb ZRank = new("ZRANK", ReadCommandKind.Read);
+    public static readonly Verb ZRevRank = new("ZREVRANK", ReadCommandKind.Read);
     public static readonly Verb ZMPop = new(1, "ZMPOP");
     public static readonly Verb BZMPop = new(2, "BZMPOP");
     public static readonly Verb BZPopMin = new("BZPOPMIN");
     public static readonly Verb BZPopMax = new("BZPOPMAX");
-    public static readonly Verb ZRange = new("ZRANGE");
-    public static readonly Verb ZInterCard = new(1, "ZINTERCARD");
-    public static readonly Verb ZInter = new(1, "ZINTER");
-    public static readonly Verb ZUnion = new(1, "ZUNION");
-    public static readonly Verb ZDiff = new(1, "ZDIFF");
+    public static readonly Verb ZRange = new("ZRANGE", ReadCommandKind.Read);
+    public static readonly Verb ZInterCard = new(1, ReadCommandKind.Read, "ZINTERCARD");
+    public static readonly Verb ZInter = new(1, ReadCommandKind.Read, "ZINTER");
+    public static readonly Verb ZUnion = new(1, ReadCommandKind.Read, "ZUNION");
+    public static readonly Verb ZDiff = new(1, ReadCommandKind.Read, "ZDIFF");
     public static readonly Verb ZInterStore = new("ZINTERSTORE");
     public static readonly Verb ZUnionStore = new("ZUNIONSTORE");
     public static readonly Verb ZDiffStore = new("ZDIFFSTORE");
 
     // Streams
     public static readonly Verb XAdd = new("XADD");
-    public static readonly Verb XLen = new("XLEN");
-    public static readonly Verb XRange = new("XRANGE");
-    public static readonly Verb XRevRange = new("XREVRANGE");
+    public static readonly Verb XLen = new("XLEN", ReadCommandKind.Read);
+    public static readonly Verb XRange = new("XRANGE", ReadCommandKind.Read);
+    public static readonly Verb XRevRange = new("XREVRANGE", ReadCommandKind.Read);
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP CREATE");
     public static readonly Verb XReadGroup = new(8, "XREADGROUP");
@@ -228,8 +239,8 @@ internal static class Verbs
     public static readonly Verb Eval = new(2, "EVAL");
     public static readonly Verb EvalSha = new(2, "EVALSHA");
     public static readonly Verb ScriptLoad = new(-1, "SCRIPT", "LOAD");
-    public static readonly Verb EvalRo = new(2, "EVAL_RO");
-    public static readonly Verb EvalShaRo = new(2, "EVALSHA_RO");
+    public static readonly Verb EvalRo = new(2, ReadCommandKind.Read, "EVAL_RO");
+    public static readonly Verb EvalShaRo = new(2, ReadCommandKind.Read, "EVALSHA_RO");
     public static readonly Verb ScriptExists = new(-1, "SCRIPT", "EXISTS");
     public static readonly Verb ScriptFlush = new(-1, "SCRIPT", "FLUSH");
     public static readonly Verb ScriptFlushSync = new(-1, "SCRIPT", "FLUSH", "SYNC");
@@ -248,7 +259,7 @@ internal static class Verbs
     public static readonly Verb LatencyLatest = new(-1, "LATENCY", "LATEST");
     public static readonly Verb LatencyReset = new(-1, "LATENCY", "RESET");
     public static readonly Verb MemoryStats = new(-1, "MEMORY", "STATS");
-    public static readonly Verb MemoryUsage = new(0, "MEMORY", "USAGE");
+    public static readonly Verb MemoryUsage = new(0, ReadCommandKind.Read, "MEMORY", "USAGE");
     public static readonly Verb Role = new(-1, "ROLE");
     public static readonly Verb SlowLogGet = new(-1, "SLOWLOG", "GET");
     public static readonly Verb SlowLogReset = new(-1, "SLOWLOG", "RESET");

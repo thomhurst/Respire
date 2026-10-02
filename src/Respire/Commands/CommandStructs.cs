@@ -5,7 +5,7 @@ using Respire.Networking;
 namespace Respire.Commands;
 
 /// <summary>An owned RESP frame used when caller-owned arguments must survive an async send.</summary>
-internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot) : IRespCommand
+internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind) : IRespCommand
 {
     public static SnapshotCommand Create<TCommand>(in TCommand command)
         where TCommand : struct, IRespCommand
@@ -16,7 +16,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot) : IResp
         {
             var writer = new RespWriter(buffer);
             command.Write(ref writer);
-            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot);
+            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind);
         }
         finally
         {
@@ -30,6 +30,8 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot) : IResp
         return clusterSlot.HasValue;
     }
 
+    public ReadCommandKind ReadKind => readKind;
+
     public void Write(ref RespWriter writer) => writer.WriteRaw(frame);
 }
 
@@ -38,6 +40,8 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot) : IResp
 
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation);
@@ -58,6 +62,8 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1);
@@ -79,6 +85,8 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, a2);
@@ -103,6 +111,8 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, a2, a3);
@@ -130,6 +140,8 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, a2, a3, a4);
@@ -160,6 +172,8 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, a2, a3, a4, a5);
@@ -194,6 +208,8 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetArgument(int index, out RespireValue value)
     {
         if ((uint)index < (uint)args.Length)
@@ -248,6 +264,8 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, rest);
@@ -336,6 +354,8 @@ internal static class CommandRouting
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, a2, rest);
@@ -406,8 +426,11 @@ internal readonly struct DynamicCommand(
     RespireValue[] tokens,
     int routingKeyIndex,
     int argumentOffset = 1,
-    RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown) : IRespCommand
+    RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+    ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {
+    public ReadCommandKind ReadKind => readKind;
+
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown
             ? RespireCommands.GetCacheMutation(operation)
@@ -616,6 +639,8 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
+    public ReadCommandKind ReadKind => command.ReadKind;
+
     public RespireCacheMutation GetCacheMutation(string operation)
         => command.CacheMutation == RespireCacheMutation.Unknown
             ? RespireCommands.GetCacheMutation(operation)
@@ -679,6 +704,8 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 /// <summary>MSETEX numkeys key value... options — routes by the first key after numkeys.</summary>
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, args);

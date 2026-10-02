@@ -2688,6 +2688,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _prefix.Write(ref writer);
             _command.Write(ref writer);
         }
+
+        public ReadCommandKind ReadKind => _command.ReadKind;
     }
 
     private static Exception TranslateReceiveFault(Exception ex)
