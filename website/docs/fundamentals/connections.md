@@ -569,6 +569,45 @@ while it makes progress. A streamed reply that receives no data for 30 seconds (
 read or disposed: the replica then closes and the stream fails. Disposing the client closes any
 replica that is still draining.
 
+### Availability-zone affinity
+
+Set `ClientAvailabilityZone` before connecting, then choose an affinity policy as the
+default or through `WithReadFrom`:
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new RespireEndpoint("primary.example", 6379)],
+    ReplicaEndpoints = [new RespireEndpoint("replica.example", 6379)],
+    ClientAvailabilityZone = "eu-west-2a",
+    ReadFrom = RespireReadFrom.AzAffinity
+});
+```
+
+Affinity works with standalone replica endpoints, Sentinel discovery, and Redis Cluster.
+Zone names use ordinal, case-sensitive comparison. The selection order is:
+
+| Policy | Selection order |
+| --- | --- |
+| `AzAffinity` | Same-zone replicas, other replicas, primary |
+| `AzAffinityReplicasAndPrimary` | Same-zone replicas, same-zone primary, other replicas, primary |
+
+The existing replica health checks still apply: a linked replica takes precedence over
+an unlinked replica. Writes and operations that already require the primary keep their
+existing routing. Replica reads can return stale data regardless of zone.
+
+Valkey servers configured with `availability-zone` advertise `availability_zone` in
+`HELLO` or `INFO SERVER`. Respire captures that metadata for each physical connection.
+RESP2 clients with `ClientAvailabilityZone` configured request `INFO SERVER` during
+the handshake. Missing metadata or an ACL denial leaves the zone unknown; such replicas
+remain eligible in the other-replica tier. Redis deployments without this metadata
+therefore retain replica-first fallback behavior. Reconnecting refreshes the metadata;
+changing the server setting does not change an already established connection's zone.
+
+Both affinity policies require a nonempty `ClientAvailabilityZone`, including when
+selected through `WithReadFrom`. Selection respects cancellation and existing timeout,
+cursor-pinning, retirement, and accepted-command ownership rules.
+
 ### Cursor reads
 
 `SCAN`, `HSCAN`, `SSCAN`, `ZSCAN` and `ARSCAN` cursors are only valid on the server that issued

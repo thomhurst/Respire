@@ -92,6 +92,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private TaskCompletionSource? _disposeCompletion;
     private bool _drainedSuccessfully;
     private long _serverClientId;
+    private AvailabilityZoneTelemetry.Counter? _zoneReads;
     private static long _nextDiagnosticId;
     private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
     private long _enqueuedBytes;
@@ -119,6 +120,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     public string Host { get; }
     public int Port { get; }
+    internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
@@ -322,6 +324,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.DiscoverAvailabilityZone)
+                connection._zoneReads = AvailabilityZoneTelemetry.ForZone(connection.AvailabilityZone);
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
@@ -365,6 +369,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.DiscoverAvailabilityZone)
+                connection._zoneReads = AvailabilityZoneTelemetry.ForZone(connection.AvailabilityZone);
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
@@ -494,6 +500,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return RespProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
+        CaptureHelloAvailabilityZone(in hello);
         _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
         return RespProtocol.Resp3;
     }
@@ -532,14 +539,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
-        if (options.RequireClusterDatabaseSupport)
+        if (options.RequireClusterDatabaseSupport || options.DiscoverAvailabilityZone && negotiatedProtocol == RespProtocol.Resp2)
         {
             // HELLO reports a Redis compatibility version on Valkey. INFO identifies the
             // actual implementation/version, independently for every new physical socket.
             (pending ??= new(3)).Add(("INFO SERVER", SendAsync(
                 new Commands.Cmd1(Commands.Verbs.Info, "SERVER"), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
-        else if (options.Database != 0)
+        if (!options.RequireClusterDatabaseSupport && options.Database != 0)
         {
             (pending ??= new(3)).Add(("SELECT", SendAsync(
                 new Commands.SelectCommand(options.Database), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -576,6 +583,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     if (failure is null && reply.IsError)
                     {
+                        // Zone discovery is optional. Redis and ACL-restricted servers can
+                        // omit it without making an otherwise usable connection fail.
+                        if (step == "INFO SERVER" && !options.RequireClusterDatabaseSupport) continue;
                         // Provider credentials may be echoed by arbitrary proxy/server error codes.
                         failure = options.CredentialProvider is not null && step is ("AUTH" or "HELLO")
                             ? new RespireAuthenticationException($"Credential authentication failed for {Host}:{Port}.")
@@ -584,10 +594,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     else if (failure is null && step == "HELLO")
                     {
                         ValidateHelloProtocol(in reply);
+                        CaptureHelloAvailabilityZone(in reply);
                     }
                     else if (failure is null && step == "INFO SERVER")
                     {
-                        ValidateClusterDatabaseSupport(in reply);
+                        if (options.RequireClusterDatabaseSupport) ValidateClusterDatabaseSupport(in reply);
+                        CaptureInfoAvailabilityZone(in reply);
                     }
                 }
                 finally
@@ -713,6 +725,33 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Preserve the connection exception contract while exposing the permanent protocol
         // failure to acquisition retry classification.
         throw new RespireConnectionException(message, new RespireProtocolException(message));
+    }
+
+    private void CaptureHelloAvailabilityZone(in RespValue reply)
+    {
+        if (reply.Type != RespDataType.Map) return;
+        var fields = reply.AsArray();
+        for (var index = 0; index + 1 < fields.Length; index += 2)
+            if (fields[index].Type is (RespDataType.BulkString or RespDataType.SimpleString)
+                && fields[index].AsSpan().SequenceEqual("availability_zone"u8)
+                && fields[index + 1].Type is RespDataType.BulkString or RespDataType.SimpleString)
+            {
+                var zone = fields[index + 1].AsString();
+                AvailabilityZone = string.IsNullOrWhiteSpace(zone) ? null : zone;
+                return;
+            }
+    }
+
+    private void CaptureInfoAvailabilityZone(in RespValue reply)
+    {
+        if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return;
+        foreach (var line in reply.AsString()!.Split('\n'))
+            if (line.StartsWith("availability_zone:", StringComparison.Ordinal))
+            {
+                var zone = line["availability_zone:".Length..].TrimEnd('\r');
+                AvailabilityZone = string.IsNullOrWhiteSpace(zone) ? null : zone;
+                return;
+            }
     }
 
     /// <summary>
@@ -1502,6 +1541,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
                 else _inflight.TryEnqueue(source, _enqueuedBytes);
                 command.OnAccepted();
+                if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1591,6 +1631,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
             else _inflight.TryEnqueue(source, _enqueuedBytes);
             command.OnAccepted();
+            if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -3314,6 +3355,7 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Verify Valkey 9+ Cluster support before selecting a non-zero database.</summary>
     internal bool RequireClusterDatabaseSupport { get; init; }
+    internal bool DiscoverAvailabilityZone { get; init; }
     internal bool ReadOnly { get; init; }
 
     /// <summary>Requested wire protocol. Auto permits only explicit unsupported-HELLO fallback.</summary>

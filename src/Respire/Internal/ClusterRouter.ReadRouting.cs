@@ -55,9 +55,9 @@ internal sealed partial class ClusterRouter
 
         try
         {
-            return await GetReplicaConnectionAsync(slot, cancellationToken, lastError: null, discovery: discovery).ConfigureAwait(false);
+            return await GetReplicaConnectionAsync(slot, cancellationToken, lastError: null, discovery: discovery, readFrom).ConfigureAwait(false);
         }
-        catch (Exception error) when (readFrom == RespireReadFrom.ReplicaPreferred
+        catch (Exception error) when (ReadFallbackPolicy.AllowsPrimaryFallback(readFrom)
             && IsReadCandidateFailure(error, cancellationToken))
         {
             return await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
@@ -82,7 +82,8 @@ internal sealed partial class ClusterRouter
     }
 
     private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
-        int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery)
+        int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery,
+        RespireReadFrom readFrom = RespireReadFrom.Replica)
     {
         var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
@@ -95,7 +96,7 @@ internal sealed partial class ClusterRouter
             if (!ReferenceEquals(routes, tried) && routes.Nodes.Length > 0)
             {
                 tried = routes;
-                var selection = await TrySelectReplicaAsync(routes, slot, cancellationToken, discovery).ConfigureAwait(false);
+                var selection = await TrySelectReplicaAsync(routes, slot, cancellationToken, discovery, readFrom).ConfigureAwait(false);
                 attempted += selection.Attempted;
                 lastError = selection.LastError ?? lastError;
                 if (selection.Connection is { } connection) return connection;
@@ -122,11 +123,14 @@ internal sealed partial class ClusterRouter
     }
 
     private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
-        ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireReadFrom readFrom)
     {
         var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
         Exception? lastError = null;
+        RespireConnection? remote = null;
+        var preferZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom);
         cancellationToken.ThrowIfCancellationRequested();
         while (candidates.TryNext(out var node))
         {
@@ -140,14 +144,28 @@ internal sealed partial class ClusterRouter
                 // RefreshReplicaRoutesAsync catches and logs every refresh failure.
                 if (routes.IsDueForRevalidation)
                     _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-                return (node.GetConnection(slot), lastError, attempted);
+                var connection = node.GetConnection(slot);
+                if (!preferZone || ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone))
+                    return (connection, lastError, attempted);
+                remote ??= connection;
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 lastError = error;
             }
         }
-        return (null, lastError, attempted);
+        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary)
+        {
+            try
+            {
+                var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+                if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)) return (primary, lastError, attempted);
+            }
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
+        }
+        if (remote is not null && (!remote.IsAcceptingCommands || remote.Multiplexer is not { IsRetired: false } owner
+            || GetKnownReplicas(slot) is not { } current || !current.Nodes.Contains(owner))) remote = null;
+        return (remote, lastError, attempted);
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
@@ -304,7 +322,7 @@ internal sealed partial class ClusterRouter
     /// surfaced unchanged.
     /// </summary>
     internal async ValueTask<RespireConnection> GetOtherRoleReadConnectionAsync(
-        int slot, RespireReadFrom readFrom, RespireServerException error,
+        int slot, RespireReadFrom readFrom, bool onReplica, RespireServerException error,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         _logger?.LogDebug(
@@ -312,7 +330,7 @@ internal sealed partial class ClusterRouter
             slot, error.Code, readFrom);
         try
         {
-            return readFrom == RespireReadFrom.ReplicaPreferred
+            return onReplica
                 ? await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false)
                 : await GetReplicaConnectionAsync(slot, cancellationToken, lastError: error, discovery).ConfigureAwait(false);
         }
@@ -325,10 +343,10 @@ internal sealed partial class ClusterRouter
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetOtherRoleDedicatedPoolAsync(
-        int slot, RespireReadFrom readFrom, RespireServerException error,
+        int slot, RespireReadFrom readFrom, bool onReplica, RespireServerException error,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        var connection = await GetOtherRoleReadConnectionAsync(slot, readFrom, error, cancellationToken, discovery)
+        var connection = await GetOtherRoleReadConnectionAsync(slot, readFrom, onReplica, error, cancellationToken, discovery)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)

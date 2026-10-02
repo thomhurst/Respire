@@ -7,17 +7,20 @@ using Respire.Testing.Containers;
 
 namespace Respire.IntegrationTests;
 
-internal sealed class RedisReadReplicaClusterTestContainer(IContainer container, int[] ports) : IAsyncDisposable
+internal sealed class RedisReadReplicaClusterTestContainer(IContainer container, int[] ports, string cli) : IAsyncDisposable
 {
     internal string Host => container.Hostname;
     internal int Port(int node) => container.GetMappedPublicPort(ports[node]);
     internal Task<string> ClusterSlotsAsync() => CommandAsync(0, "CLUSTER", "SLOTS");
     internal Task<string> ClusterNodesAsync() => CommandAsync(0, "CLUSTER", "NODES");
+    internal Task<string> SetAvailabilityZoneAsync(int node, string zone)
+        => CommandAsync(node, "CONFIG", "SET", "availability-zone", zone);
 
-    internal static async Task<RedisReadReplicaClusterTestContainer> StartAsync()
+    internal static async Task<RedisReadReplicaClusterTestContainer> StartAsync(RespireContainerServer server = RespireContainerServer.Redis)
     {
-        var (container, ports) = await StartContainerAsync();
-        var cluster = new RedisReadReplicaClusterTestContainer(container, ports);
+        var (container, ports) = await StartContainerAsync(server);
+        var cluster = new RedisReadReplicaClusterTestContainer(container, ports,
+            server == RespireContainerServer.Valkey ? "valkey-cli" : "redis-cli");
         try
         {
             var ids = new string[6];
@@ -138,7 +141,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
         }
     }
 
-    private static async Task<(IContainer Container, int[] Ports)> StartContainerAsync()
+    private static async Task<(IContainer Container, int[] Ports)> StartContainerAsync(RespireContainerServer server)
     {
         const int maximumAttempts = 3;
         var excludedPorts = new HashSet<int>();
@@ -152,7 +155,9 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
                 excludedPorts.Add(ports[i] + 10_000);
             }
             var commandPorts = string.Join(' ', ports);
-            var builder = new ContainerBuilder("redis:7.0.15");
+            var valkey = server == RespireContainerServer.Valkey;
+            var executable = valkey ? "valkey-server" : "redis-server";
+            var builder = new ContainerBuilder(valkey ? "valkey/valkey:8.1-alpine" : "redis:7.0.15");
             foreach (var port in ports) builder = builder.WithPortBinding(port, port);
             var container = builder
                 .WithCreateParameterModifier(parameters =>
@@ -163,7 +168,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
                         binding.HostIP = IPAddress.Loopback.ToString();
                 })
                 .WithEntrypoint("sh", "-c")
-                .WithCommand($"for port in {commandPorts}; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no & done; wait")
+                .WithCommand($"for port in {commandPorts}; do mkdir -p /data/$port; {executable} --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no & done; wait")
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(ports[0])
                     .UntilInternalTcpPortIsAvailable(ports[1]).UntilInternalTcpPortIsAvailable(ports[2])
                     .UntilInternalTcpPortIsAvailable(ports[3]).UntilInternalTcpPortIsAvailable(ports[4])
@@ -189,7 +194,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
 
     private async Task<string> CommandAsync(int node, params string[] arguments)
     {
-        var result = await container.ExecAsync(["redis-cli", "-e", "--raw", "-p", ports[node].ToString(), .. arguments]);
+        var result = await container.ExecAsync([cli, "-e", "--raw", "-p", ports[node].ToString(), .. arguments]);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Replica cluster setup failed: {result.Stdout} {result.Stderr}");
         return result.Stdout;

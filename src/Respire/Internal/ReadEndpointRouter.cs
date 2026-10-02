@@ -188,7 +188,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             case RespireReadFrom.Replica:
                 return await GetReplicaAsync(cancellationToken).ConfigureAwait(false);
             case RespireReadFrom.ReplicaPreferred:
-                try { return await GetReplicaAsync(cancellationToken).ConfigureAwait(false); }
+            case RespireReadFrom.AzAffinity:
+            case RespireReadFrom.AzAffinityReplicasAndPrimary:
+                try { return await GetReplicaAsync(cancellationToken, readFrom).ConfigureAwait(false); }
                 catch (Exception error) when (IsUnavailable(error, cancellationToken))
                 { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
             default:
@@ -208,7 +210,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         return new Selection(multiplexer.GetConnection(), null, multiplexer);
     }
 
-    private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken)
+    private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken,
+        RespireReadFrom readFrom = RespireReadFrom.Replica)
     {
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken).ConfigureAwait(false);
         if (endpoints.Length == 0)
@@ -216,7 +219,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         try
         {
-            return await GetReplicaFromEndpointsAsync(endpoints, cancellationToken).ConfigureAwait(false);
+            return await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom).ConfigureAwait(false);
         }
         catch (RespireConnectionException) when (core.Sentinel is { } refreshSentinel)
         {
@@ -229,12 +232,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 refreshed = Volatile.Read(ref _replicas);
             }
             if (SameEndpoints(refreshed, endpoints)) throw;
-            return await GetReplicaFromEndpointsAsync(refreshed, cancellationToken).ConfigureAwait(false);
+            return await GetReplicaFromEndpointsAsync(refreshed, cancellationToken, readFrom).ConfigureAwait(false);
         }
     }
 
     internal async ValueTask<Selection> GetReplicaFromEndpointsAsync(
-        RespireEndpoint[] endpoints, CancellationToken cancellationToken)
+        RespireEndpoint[] endpoints, CancellationToken cancellationToken, RespireReadFrom readFrom = RespireReadFrom.Replica)
     {
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
@@ -245,6 +248,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         // A replica whose replication link is down still serves reads when nothing better exists
         // (the server's replica-serve-stale-data setting decides), but a linked replica wins.
         Selection? unlinked = null;
+        Selection? remote = null;
+        var preferZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom);
         for (var offset = 0; offset < endpoints.Length; offset++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -258,8 +263,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             try
             {
                 var selection = new Selection(await entry.GetConnectionAsync(cancellationToken).ConfigureAwait(false), entry, null);
-                if (!entry.IsReplicationLinkDown) return selection;
-                unlinked ??= selection;
+                var local = ReadFallbackPolicy.IsSameZone(selection.Connection, core.Options.ClientAvailabilityZone);
+                if (!entry.IsReplicationLinkDown)
+                {
+                    if (!preferZone || local) return selection;
+                    remote ??= selection;
+                }
+                else if (unlinked is null || preferZone && local) unlinked = selection;
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
             {
@@ -270,7 +280,19 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
         }
 
-        if (unlinked is { } stale) return stale;
+        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary)
+        {
+            try
+            {
+                var primary = await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);
+                if (ReadFallbackPolicy.IsSameZone(primary.Connection, core.Options.ClientAvailabilityZone)) return primary;
+            }
+            catch (Exception error) when (IsUnavailable(error, cancellationToken)) { lastError = error; }
+        }
+        if (remote is { } fallback && fallback.Connection.IsAcceptingCommands
+            && fallback.Replica is { } fallbackEntry && IsCurrent(fallbackEntry)) return fallback;
+        if (unlinked is { } stale && stale.Connection.IsAcceptingCommands
+            && stale.Replica is { } staleEntry && IsCurrent(staleEntry)) return stale;
         throw attempted
             ? new RespireConnectionException("No healthy, role-validated read replicas are available.",
                 lastError ?? new InvalidOperationException("No replica connection attempt was completed."))

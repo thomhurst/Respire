@@ -4,14 +4,18 @@ namespace Respire.Internal;
 
 internal static class ReadFallbackPolicy
 {
+    internal static bool UsesAvailabilityZone(RespireReadFrom policy)
+        => policy is RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary;
+
+    internal static bool AllowsPrimaryFallback(RespireReadFrom policy)
+        => policy == RespireReadFrom.ReplicaPreferred || UsesAvailabilityZone(policy);
+
+    internal static bool IsSameZone(RespireConnection connection, string? clientZone)
+        => clientZone is not null && string.Equals(connection.AvailabilityZone, clientZone, StringComparison.Ordinal);
+
     // Once a preferred read switches roles, redirects and retirement keep that fallback role.
-    internal static RespireReadFrom AfterRoleSwitch(RespireReadFrom policy)
-        => policy switch
-        {
-            RespireReadFrom.ReplicaPreferred => RespireReadFrom.Primary,
-            RespireReadFrom.PrimaryPreferred => RespireReadFrom.Replica,
-            _ => policy,
-        };
+    internal static RespireReadFrom AfterRoleSwitch(bool selectedReplica)
+        => selectedReplica ? RespireReadFrom.Replica : RespireReadFrom.Primary;
 
     /// <summary>
     /// True when a preferred policy should retry a read on the other server role after
@@ -35,6 +39,7 @@ internal static class ReadFallbackPolicy
         {
             RespireReadFrom.ReplicaPreferred => onReplica,
             RespireReadFrom.PrimaryPreferred => !onReplica,
+            RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary => true,
             _ => false,
         };
     }

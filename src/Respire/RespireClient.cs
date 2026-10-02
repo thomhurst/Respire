@@ -266,6 +266,9 @@ public sealed partial class RespireClient : IRespireClient
     public IRespireClient WithReadFrom(RespireReadFrom readFrom)
     {
         if (!Enum.IsDefined(readFrom)) throw new ArgumentOutOfRangeException(nameof(readFrom));
+        if (readFrom is RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary
+            && _core.Options.ClientAvailabilityZone is null)
+            throw new InvalidOperationException("AZ-affinity reads require ClientAvailabilityZone before connecting.");
         if (readFrom != RespireReadFrom.Primary && !_core.Options.UseCluster
             && _core.Options.ReplicaEndpoints.Count == 0
             && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
@@ -2526,8 +2529,9 @@ public sealed partial class RespireClient : IRespireClient
                     ReadFallbackPolicy.IsReplicaConnection(connection)))
             {
                 connection = await cluster.GetOtherRoleReadConnectionAsync(
-                    slot!.Value, readFrom, initialRejection, cancellationToken, discovery).ConfigureAwait(false);
-                readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                    slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
+                    initialRejection, cancellationToken, discovery).ConfigureAwait(false);
+                readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
                 switchedRole = true;
             }
             else if (initialRejection is not null)
@@ -2631,8 +2635,9 @@ public sealed partial class RespireClient : IRespireClient
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
                     switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                        slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
+                        error, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
                 }
             }
         }
@@ -3182,8 +3187,9 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                        slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
+                        error, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
                 }
             }
         }
@@ -3558,9 +3564,9 @@ public sealed partial class RespireClient : IRespireClient
                             switchedRole = true;
                             acquiringRedirectPool = true;
                             var otherRolePool = await cluster.GetOtherRoleDedicatedPoolAsync(
-                                    slot!.Value, readFrom, error, cancellationToken, discovery)
+                                    slot!.Value, readFrom, pool.IsReadOnly, error, cancellationToken, discovery)
                                 .ConfigureAwait(false);
-                            readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                            readFrom = ReadFallbackPolicy.AfterRoleSwitch(otherRolePool.IsReadOnly);
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;

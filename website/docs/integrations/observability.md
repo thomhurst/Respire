@@ -23,6 +23,22 @@ Raw command values are not attached to spans because arbitrary Redis payloads ca
 
 Operation latency uses the stable `db.client.operation.duration` histogram and records seconds, as required by the semantic convention.
 
+## Reads by availability zone
+
+When `ClientAvailabilityZone` is configured, the `Respire` meter exposes the observable
+counter `respire.read.availability_zone` (unit `{read}`). It counts read commands accepted
+by physical connections, tagged with `server.availability_zone` and
+`respire.availability_zone.status=known`. These are attempts, not successful operations:
+a redirected or retried command can count more than once. Local cache hits do not count.
+Individually submitted batch reads count; composite transactions do not.
+
+Missing zone metadata uses `respire.availability_zone.status=unknown` without a zone tag.
+The process retains counters for at most 64 distinct zone names. Additional names share
+`respire.availability_zone.status=overflow`, also without a zone tag. Totals survive
+connection disposal. The status tag distinguishes real zone names such as `unknown`
+from missing metadata. Observation happens outside transport locks; accepting a read
+only increments its connection's cached counter.
+
 ## Logging
 
 Pass an `ILoggerFactory` through `RespireOptions` or use the dependency-injection integration. Logs cover connection lifecycle and recovery without logging command payloads.
