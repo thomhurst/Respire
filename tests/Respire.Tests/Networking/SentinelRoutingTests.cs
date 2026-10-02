@@ -696,6 +696,60 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task RetiredArrivalGenerationStillResolvesLaterSwitchSource()
+    {
+        await using var original = Primary();
+        await using var middle = Primary();
+        await using var final = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+
+        var router = client.Core.Sentinel!;
+        var originalGeneration = router.Current!;
+        var resolving = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseResolution = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.HostResolver = (host, _) =>
+        {
+            if (host == "middle-primary.invalid") resolving.TrySetResult();
+            return releaseResolution.Task;
+        };
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
+        var queued = router.QueuedNotificationCount;
+        sentinel.SuppressReply = command => command == discovery;
+
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {middle.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 1);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
+        using var originalRetirement = new CancellationTokenSource(Limit);
+        while (!originalGeneration.IsRetired) await Task.Delay(10, originalRetirement.Token);
+
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster middle-primary.invalid {middle.Port} 127.0.0.1 {final.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
+        await resolving.Task.WaitAsync(Limit);
+
+        port = middle.Port;
+        var firstQuery = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command == discovery);
+        await sentinel.SendRawAsync(AddressReply(middle.Port), sentinel.ReceivedConnectionIds[firstQuery]);
+        await WaitForEndpointAsync(client, middle.Port);
+        var middleGeneration = router.Current!;
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+
+        releaseResolution.TrySetResult([IPAddress.Loopback]);
+        using var middleRetirement = new CancellationTokenSource(Limit);
+        while (!middleGeneration.IsRetired) await Task.Delay(10, middleRetirement.Token);
+        await Assert.That(middleGeneration.IsRetired).IsTrue();
+    }
+
+    [Test]
     public async Task SubscriptionGapTriggersRediscovery()
     {
         await using var original = Primary();

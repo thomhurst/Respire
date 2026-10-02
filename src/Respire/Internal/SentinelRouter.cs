@@ -478,7 +478,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // failover back to the same endpoint publishes a new generation that must survive.
                 var arrivedDuring = Current;
                 QueueNotificationRediscovery(in hint);
-                if (sentinelEvent.OldPrimary is { } source && arrivedDuring is { IsRetired: false }
+                if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
                     && !SameEndpoint(arrivedDuring.Endpoint, source))
                     StartSwitchSourceResolution(hint, arrivedDuring, cancellationToken);
                 return ValueTask.CompletedTask;
