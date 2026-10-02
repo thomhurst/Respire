@@ -227,6 +227,52 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    [Arguments("LOADING")]
+    [Arguments("MASTERDOWN")]
+    [Arguments("CLUSTERDOWN")]
+    public async Task ClusterReplicaRejectionPreservesLocalPrimarySocket(string error)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "local", true);
+        ConfigureTopology(primary, replica);
+        var originalPrimary = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n")
+            : command.StartsWith("GET ") ? Bulk(id % 2 == 0 ? "local-socket" : "remote-socket")
+            : originalPrimary(id, command);
+        var originalReplica = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("GET ")
+            ? Encoding.UTF8.GetBytes($"-{error} unavailable\r\n") : originalReplica(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        for (var index = 0; index < 8; index++)
+            await Assert.That(await client.GetStringAsync($"{{zone-{index}}}:key")).IsEqualTo("local-socket");
+    }
+
+    [Test]
+    public async Task ClusterPrimaryRejectionPreservesReplicaZoneWithoutRetryingPrimary()
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var replica = Node("replica", "remote", true);
+        ConfigureTopology(primary, replica);
+        var original = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        var router = client.Core.Cluster!;
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        for (var slot = 0; slot < 8; slot++)
+        {
+            var selected = await router.GetOtherRoleReadConnectionAsync(slot,
+                RespireReadFrom.AzAffinityReplicasAndPrimary, onReplica: false,
+                new RespireServerException("LOADING unavailable"), CancellationToken.None, discovery: null);
+            await Assert.That(selected.Port).IsEqualTo(replica.Port);
+            await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
+        }
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.Primary)]
     [Arguments(RespireReadFrom.Replica)]
     [Arguments(RespireReadFrom.AzAffinity)]

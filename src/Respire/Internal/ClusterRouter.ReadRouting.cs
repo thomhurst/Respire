@@ -60,7 +60,7 @@ internal sealed partial class ClusterRouter
         catch (Exception error) when (ReadFallbackPolicy.AllowsPrimaryFallback(readFrom)
             && IsReadCandidateFailure(error, cancellationToken))
         {
-            return await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+            return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
         }
     }
 
@@ -79,6 +79,15 @@ internal sealed partial class ClusterRouter
             // uncovered attempt may fail this read; otherwise obtain fresh coverage.
             if (_unknownReplicaDiscovery.IsCurrent(slot, attempt)) return null;
         }
+    }
+
+    private async ValueTask<RespireConnection> GetPrimaryReadConnectionAsync(
+        int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    {
+        var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+        return ReadFallbackPolicy.UsesAvailabilityZone(readFrom)
+            && primary.Multiplexer is { } owner && _options.ClientAvailabilityZone is { } zone
+            ? owner.GetConnectionForZone(zone, slot) : primary;
     }
 
     private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
@@ -160,9 +169,7 @@ internal sealed partial class ClusterRouter
             {
                 try
                 {
-                    var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
-                    if (primary.Multiplexer is { } owner && _options.ClientAvailabilityZone is { } zone)
-                        primary = owner.GetConnectionForZone(zone, slot);
+                    var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
                     if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)) return (primary, lastError, attempted);
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
@@ -338,9 +345,13 @@ internal sealed partial class ClusterRouter
             slot, error.Code, readFrom);
         try
         {
-            return onReplica
-                ? await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false)
-                : await GetReplicaConnectionAsync(slot, cancellationToken, lastError: error, discovery).ConfigureAwait(false);
+            if (onReplica)
+                return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+
+            // Preserve replica zone ranking without probing the primary that just rejected the read.
+            var replicaPolicy = ReadFallbackPolicy.UsesAvailabilityZone(readFrom)
+                ? RespireReadFrom.AzAffinity : RespireReadFrom.Replica;
+            return await GetReplicaConnectionAsync(slot, cancellationToken, lastError: error, discovery, replicaPolicy).ConfigureAwait(false);
         }
         catch (Exception candidateError) when (IsReadCandidateFailure(candidateError, cancellationToken))
         {
