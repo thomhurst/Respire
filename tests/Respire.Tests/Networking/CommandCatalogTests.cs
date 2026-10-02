@@ -20,19 +20,76 @@ public class CommandCatalogTests
         {
             if (field.FieldType != typeof(Verb)) continue;
             var verb = (Verb)field.GetValue(null)!;
-            if (verb.ReadKind == ReadCommandKind.None) continue;
             var words = System.Text.Encoding.ASCII.GetString(verb.Bulk).Split("\r\n")
                 .Where((_, index) => (index & 1) != 0);
             var name = string.Join(' ', words);
-            await Assert.That(catalog.ContainsKey(name)).IsTrue();
-            await Assert.That(catalog[name].IsReadOnly).IsTrue();
-            await Assert.That(catalog[name].ReadKind).IsEqualTo(verb.ReadKind);
+            if (!catalog.TryGetValue(name, out var descriptor))
+            {
+                // Some pre-encoded verbs include options, such as SCRIPT FLUSH SYNC.
+                await Assert.That(verb.ReadKind).IsEqualTo(ReadCommandKind.None);
+                continue;
+            }
+            await Assert.That(descriptor.ReadKind).IsEqualTo(verb.ReadKind);
+            if (verb.ReadKind != ReadCommandKind.None)
+                await Assert.That(descriptor.IsReadOnly).IsTrue();
         }
         await Assert.That(Verbs.Touch.ReadKind).IsEqualTo(ReadCommandKind.None);
         await Assert.That(catalog["TOUCH"].ReadKind).IsEqualTo(ReadCommandKind.None);
         await Assert.That(Verbs.MemoryUsage.ReadKind).IsEqualTo(ReadCommandKind.Read);
         await Assert.That(Verbs.EvalRo.ReadKind).IsEqualTo(ReadCommandKind.Read);
         await Assert.That(Verbs.EvalShaRo.ReadKind).IsEqualTo(ReadCommandKind.Read);
+    }
+
+    [Test]
+    public async Task EveryAuditedCommandUsesTheSameTypedAndRawReadClassification()
+    {
+        foreach (var descriptor in RespireCommands.All.ToArray())
+        {
+            var typed = new Verb(descriptor.Name);
+            await Assert.That(typed.ReadKind).IsEqualTo(descriptor.ReadKind);
+            await Assert.That(typed.CursorArgumentIndex).IsEqualTo(descriptor.CursorArgumentIndex);
+            await Assert.That(Internal.RawCommandDescriptorLookup.GetReadKind(descriptor.Name.ToLowerInvariant()))
+                .IsEqualTo(descriptor.ReadKind);
+            await Assert.That(RespireCommand.Create(descriptor.Name.Split(' ')[0]).ReadKind)
+                .IsEqualTo(ReadCommandKind.None);
+        }
+        await Assert.That(new Verb("CUSTOM.READ").ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(new Verb(2, "EVAL_RO").RoutingKeyIndex).IsEqualTo(2);
+        await Assert.That(new Verb(1, "SINTERCARD").RoutingKeyIndex).IsEqualTo(1);
+        await Assert.That(new Verb(0, "MEMORY", "USAGE").RoutingKeyIndex).IsEqualTo(0);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task SharedReadClassificationAllocatesNothingAfterInitialization()
+    {
+        var command = new Cmd1(Verbs.Get, "key");
+        _ = MeasureReadClassification(in command, false);
+        _ = MeasureReadClassification(in command, true);
+        var measurements = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (Normal: MeasureReadClassification(in command, false),
+                Control: MeasureReadClassification(in command, true)));
+        await Assert.That(measurements.Normal.Bytes).IsEqualTo(0);
+        await Assert.That(measurements.Control.Bytes).IsGreaterThanOrEqualTo(37_000);
+        await Assert.That(measurements.Normal.Total).IsEqualTo(5_000);
+        await Assert.That(measurements.Control.Total).IsEqualTo(5_000);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (long Bytes, int Total) MeasureReadClassification(in Cmd1 command, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var total = 0;
+        for (var index = 0; index < 1_000; index++)
+        {
+            total += (int)command.ReadKind;
+            total += (int)Internal.RawCommandDescriptorLookup.GetReadKind("get");
+            total += (int)CommandReadMetadata.Get("HSCAN").Kind;
+            total += CommandReadMetadata.Get("HSCAN").CursorArgumentIndex;
+            total += (int)Internal.RawCommandDescriptorLookup.GetReadKind("CUSTOM.READ");
+            if (allocate) GC.KeepAlive(new byte[37]);
+        }
+        return (GC.GetAllocatedBytesForCurrentThread() - before, total);
     }
 
     [Test]

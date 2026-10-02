@@ -37,6 +37,19 @@ Read-only scripts and functions use their explicit official variants (`EVAL_RO`,
 `FCALL_RO`); the ordinary variants remain false. This property describes command metadata only:
 it does not change routing, establish a key layout, or override blocking and connection scope.
 
+Replica-read eligibility for typed verbs and raw/catalog commands comes from the generated
+`CommandReadMetadata` table. It uses the same audited provider flags, excludes `TOUCH`
+because that command updates primary access metadata, and records cursor classification and
+argument positions. `ARSCAN` remains a cursor read without a supported affinity layout.
+`MEMORY USAGE` remains eligible and reports node-local memory; `EVAL_RO` and `EVALSHA_RO`
+retain their read eligibility and script key positions. Unknown and unaudited module names
+remain primary-only. Caller descriptors cannot assert read eligibility; known raw names
+are classified through the audited table under the existing raw-command contract.
+
+The table contains no descriptor references, so initializing typed verbs cannot recursively
+initialize the catalog. Each verb caches its classification without adding fields; healthy
+typed dispatch performs no table lookup. Raw lookup reuses the table directly.
+
 The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
 [Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),

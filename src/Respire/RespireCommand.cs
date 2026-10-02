@@ -25,8 +25,7 @@ public readonly struct RespireCommand
         _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
             | (isReadOnly ? ReadOnlyMetadataFlag : 0)
             | (hasExplicitCacheMutation ? ExplicitCacheMutationFlag : 0);
-        var readKind = Verb.GetReadKind(name, isReadOnly);
-        _verb = new Verb(name, readKind);
+        _verb = new Verb(name, allowReadRouting: isReadOnly && sources != RespireCommandSource.None);
         Behavior = Classify(name);
     }
 
