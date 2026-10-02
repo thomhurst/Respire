@@ -136,7 +136,7 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            let comment = `## 🧪 Integration Test Results (${{ matrix.framework }}, RESP${{ matrix.protocol }})\n\n`;
+            let comment = `<!-- respire-automation-report -->\n## 🧪 Integration Test Results (${{ matrix.framework }}, RESP${{ matrix.protocol }})\n\n`;
             
             // Add test execution info
             comment += `### ℹ️ Execution Details\n`;
