@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -220,29 +219,24 @@ public sealed class StreamedSetTests
     {
         var source = new ShortReadThenBlockedStream();
         var pool = new TrackingArrayPool();
-        var readerType = typeof(RespireConnection).GetNestedType("StreamPayloadReader", BindingFlags.NonPublic)!;
-        var reader = Activator.CreateInstance(readerType,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
-            [source, (long)RespireConnection.StreamChunkSize * 2, pool], null)!;
-        var readChunk = readerType.GetMethod("ReadChunkAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        _ = await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!;
+        using var reader = new RespireConnection.StreamPayloadReader(source, (long)RespireConnection.StreamChunkSize * 2, pool);
+        _ = await reader.ReadChunkAsync(CancellationToken.None);
 
         var fillingChunk = Task.Run(async () =>
-            await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!);
+            await reader.ReadChunkAsync(CancellationToken.None));
         byte[]? pendingBuffer = null;
         try
         {
             await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            pendingBuffer = (byte[])readerType.GetField("_alternateChunk", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(reader)!;
-            ((IDisposable)reader).Dispose();
+            pendingBuffer = source.CapturedBuffer!;
+            reader.Dispose();
             await Assert.That(pool.Returned.Contains(pendingBuffer)).IsFalse();
             await Assert.That(pendingBuffer[0]).IsEqualTo((byte)'b');
         }
         finally
         {
             source.ContinueThirdRead.TrySetResult();
-            ((IDisposable)reader).Dispose();
+            reader.Dispose();
             await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
         }
         await Assert.That(pool.Returned.Contains(pendingBuffer!)).IsTrue();
@@ -1303,6 +1297,7 @@ public sealed class StreamedSetTests
     private sealed class ShortReadThenBlockedStream : Stream
     {
         private int _readCount;
+        internal byte[]? CapturedBuffer { get; private set; }
         internal TaskCompletionSource ThirdReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueThirdRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1314,6 +1309,7 @@ public sealed class StreamedSetTests
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
             switch (Interlocked.Increment(ref _readCount))
             {
                 case 1:

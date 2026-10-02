@@ -8,7 +8,7 @@ internal sealed partial class RespireConnection
     /// Reads a stream source in filled chunks of at most <see cref="StreamChunkSize"/> bytes into
     /// two pooled buffers so the alternate chunk can fill while the caller writes the current one.
     /// </summary>
-    private sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
+    internal sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
     {
         private readonly ArrayPool<byte> _pool = pool ?? ArrayPool<byte>.Shared;
         private readonly object _bufferOwnershipGate = new();
