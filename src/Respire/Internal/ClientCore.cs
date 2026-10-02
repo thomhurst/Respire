@@ -116,34 +116,21 @@ internal sealed class ClientCore : IAsyncDisposable
         return Volatile.Read(ref _dedicatedPool);
     }
 
-    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+    internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, CancellationToken cancellationToken, bool reuseIdle = true,
         DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
-    {
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ObjectDisposedException.ThrowIf(Disposed, this);
-            try
-            {
-                var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
-                return (pool, connection);
-            }
-            catch (Exception error) when (IsRetirementRace(pool, error, cancellationToken))
-            {
-                // Publication can retire the selected pool before rental or during its handshake.
-                // No application command has been sent. Keep the caller's acquisition deadline
-                // and return the replacement owner together with its lease.
-                var replacement = await GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                if (ReferenceEquals(replacement, pool)) throw;
-                pool = replacement;
-            }
-        }
-    }
+        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this), cancellationToken, reuseIdle, kind);
 
-    private bool IsRetirementRace(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken)
-        => !Disposed && !cancellationToken.IsCancellationRequested && pool.IsStopping
-            && error is ObjectDisposedException or OperationCanceledException;
+    private readonly struct DedicatedLeaseRoute(ClientCore owner) : IDedicatedLeaseRoute
+    {
+        public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(owner.Disposed, owner);
+        public bool CanRetry(int attempt, CancellationToken cancellationToken) => !owner.Disposed;
+        public void RecordRetirement(Exception error, int attempt) { }
+        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+            => owner.GetDedicatedPoolAsync(cancellationToken);
+        public void SetTerminalError(Exception error) { }
+        public void Dispose() { }
+    }
 
     internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
         => !pool.IsStopping && pool.IsMovingPublicationCurrent && ReferenceEquals(pool, DedicatedPool)

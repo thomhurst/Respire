@@ -661,15 +661,28 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task MovingRetriesDedicatedHandshakeRetiredBeforeDispatch(bool streaming)
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("cluster", false)]
+    [Arguments("cluster", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    public async Task MovingRetriesDedicatedHandshakeRetiredBeforeDispatch(string mode, bool streaming)
     {
-        await using var source = Server(maxConnections: 4);
-        await using var target = Server(maxConnections: 4);
-        await using var client = await RespireClient.ConnectAsync(Options(source));
+        await using var source = Server(maxConnections: 8);
+        await using var target = Server(maxConnections: 8);
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var originalPool = client.Core.DedicatedPool;
+        var originalPool = await MaintenancePoolAsync(client, "lease");
+        ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> Rent(CancellationToken token)
+            => client.Core.Cluster is { } cluster
+                ? cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("lease"), token,
+                    discovery: null, kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary)
+                : client.Core.RentDedicatedConnectionAsync(originalPool, token,
+                    kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command =>
         {
@@ -677,19 +690,18 @@ public class MaintenanceNotificationTests
             handshake.TrySetResult();
             return true;
         };
-        var rental = client.Core.RentDedicatedConnectionAsync(originalPool, timeout.Token,
-            kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).AsTask();
+        var rental = Rent(timeout.Token).AsTask();
         await handshake.Task.WaitAsync(timeout.Token);
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
         var (owner, lease) = await rental.WaitAsync(timeout.Token);
-        await Assert.That(ReferenceEquals(owner, client.Core.DedicatedPool)).IsTrue();
+        await Assert.That(ReferenceEquals(owner, await MaintenancePoolAsync(client, "lease"))).IsTrue();
         await Assert.That(lease.Port).IsEqualTo(target.Port);
         owner.Return(lease);
         await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
 
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        var error = await Assert.That(async () => await client.Core.RentDedicatedConnectionAsync(originalPool, cancelled.Token))
+        var error = await Assert.That(async () => await Rent(cancelled.Token))
             .Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancelled.Token);
     }

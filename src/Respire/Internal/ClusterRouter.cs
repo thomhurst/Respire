@@ -805,38 +805,32 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery)
             : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery);
 
-    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+    internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
         bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery),
+            cancellationToken, reuseIdle, kind);
+
+    private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery) : IDedicatedLeaseRoute
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
-        DiscoveryScope scope = default;
-        try
+        private DiscoveryScope _scope;
+        public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
+        public bool CanRetry(int attempt, CancellationToken cancellationToken) => owner.CanRetryRetirement(attempt, cancellationToken);
+        public void RecordRetirement(Exception error, int attempt)
         {
-            for (var attempt = 0; ; attempt++)
+            if (attempt == 0)
             {
-                try
-                {
-                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
-                    return (pool, connection);
-                }
-                catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken) && pool.IsStopping
-                    && error is ObjectDisposedException or OperationCanceledException)
-                {
-                    if (attempt == 0)
-                    {
-                        scope = BeginDiscovery(discovery);
-                        discovery = scope.Round;
-                    }
-                    discovery?.Failed(error);
-                    // Retirement can cancel a pending handshake; no application command was sent.
-                    pool = await ReselectDedicatedPoolAsync(route, cancellationToken, discovery).ConfigureAwait(false);
-                }
+                _scope = owner.BeginDiscovery(discovery);
+                discovery = _scope.Round;
             }
+            discovery?.Failed(error);
         }
-        catch (Exception error) { scope.SetTerminalError(error); throw; }
-        finally { scope.Dispose(); }
+        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+            => owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery);
+        public void SetTerminalError(Exception error) => _scope.SetTerminalError(error);
+        public void Dispose() => _scope.Dispose();
     }
 
     internal ValueTask RetireConnectionAsync(RespireEndpoint endpoint, long serverClientId)
