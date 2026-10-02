@@ -1205,7 +1205,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // folds both type tests to constants; they cost nothing on the ordinary command hot path.
         if (command is IStreamingRespCommand)
         {
-            return SendStreamingAsync(in command, cancellationToken, armCommandDeadline);
+            return SendStreamingCoreAsync(command, cancellationToken, commandDeadline, pinToConnection);
         }
 
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -1239,6 +1239,22 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
             commandName, armCommandDeadline, commandDeadline, pinToConnection);
+    }
+
+    private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection)
+        where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline).ConfigureAwait(false);
+        }
+        catch (RespireConnectionRetiredException) when (TryReroute(
+            pinToConnection, commandDeadline, out var target, out var reroutedDeadline))
+        {
+            return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection)
+                .ConfigureAwait(false);
+        }
     }
 
     /// <summary>

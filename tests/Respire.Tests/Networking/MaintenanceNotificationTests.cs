@@ -678,6 +678,34 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingReroutesStreamedSetRejectedBeforeAdmission()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (connectionId, command) => command.StartsWith("SET key ", StringComparison.Ordinal)
+            ? "+OK\r\n"u8.ToArray()
+            : targetReply(connectionId, command);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var staleSelection = multiplexer.GetConnection();
+
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForCommands(target, 2);
+        await WaitForRetirement(staleSelection);
+        using var payload = new MemoryStream("data"u8.ToArray());
+        var command = new StreamedSetCommand((RespireValue)"key", payload, 4, default, SetWhen.Always);
+
+        using var result = await staleSelection.SendCheckedAsync(in command, commandName: "SET")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForCommands(target, 3);
+
+        await Assert.That(result.AsString()).IsEqualTo("OK");
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("SET key ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
     public async Task MovingPublishedAfterGracePeriodAbortsOldSocketWork()
     {
         await using var source = Server(maxConnections: 2);

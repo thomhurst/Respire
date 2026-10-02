@@ -53,19 +53,16 @@ internal sealed partial class RespireConnection
     }
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
-        in TCommand command, CancellationToken cancellationToken, bool armCommandDeadline)
+        in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
-            ? SendStreamedSetAsync(streamedSet, cancellationToken, armCommandDeadline)
+            ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
-        StreamedSetCommand command, CancellationToken cancellationToken, bool armCommandDeadline)
+        StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
     {
-        var deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
-            ? CommandDeadline.After(_commandTimeoutMilliseconds)
-            : CommandDeadline.None;
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline.Ticks)
             : null;
@@ -163,14 +160,15 @@ internal sealed partial class RespireConnection
         }
         catch (Exception error)
         {
-            if (phase == StreamedSetPhase.ReadingFirstChunk && error is RespireConnectionRetiredException
+            var translated = error is OperationCanceledException canceled
+                ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
+                : null;
+            if (phase == StreamedSetPhase.ReadingFirstChunk
+                && (error is RespireConnectionRetiredException || translated is RespireConnectionRetiredException)
                 && !firstChunk.IsEmpty)
                 command.RestoreSourcePrefixForRetry(firstChunk.Span);
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
-            var translated = error is OperationCanceledException canceled
-                ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
-                : null;
             await FailStreamedSetAsync(source, phase, error, translated is RespireTimeoutException)
                 .ConfigureAwait(false);
             if (translated is null) throw;
@@ -211,8 +209,6 @@ internal sealed partial class RespireConnection
     {
         if (callerToken.IsCancellationRequested)
             return new OperationCanceledException(error.Message, error, callerToken);
-        if (_closedCancellation.IsCancellationRequested)
-            return ClosedDuringStreamedSet(error);
         if (timeoutCancellation is { IsCancellationRequested: true })
         {
             return new RespireTimeoutException("SET", timeoutCancellation.EffectiveTimeout, error,
@@ -220,6 +216,10 @@ internal sealed partial class RespireConnection
                     ? RespireCommandStage.WaitingForCapacity
                     : RespireCommandStage.Writing));
         }
+        if (phase < StreamedSetPhase.HeaderQueued && Volatile.Read(ref _retired))
+            return new RespireConnectionRetiredException(Host, Port);
+        if (_closedCancellation.IsCancellationRequested)
+            return ClosedDuringStreamedSet(error);
 
         return null;
     }
