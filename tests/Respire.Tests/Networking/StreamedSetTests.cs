@@ -169,6 +169,39 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task FailedSocketWriteKeepsPendingSourceBufferUntilReadCompletes()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        var source = new PartialThenIgnoringCancellationStream(new byte[length],
+            maxRead: RespireConnection.StreamChunkSize, pauseAfter: RespireConnection.StreamChunkSize);
+        transport!.GateSecondWrite();
+        using var cancellation = new CancellationTokenSource();
+        var command = new StreamedSetCommand((RespireValue)"overlap-cancel", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
+
+        await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+
+        source.ContinueReading.TrySetResult();
+        await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task SurplusSourceBytesAreLeftUnread()
     {
         await using var server = new CountingSetServer();
@@ -1169,6 +1202,7 @@ public sealed class StreamedSetTests
             if (disposing)
             {
                 OpenGate();
+                OpenSecondWrite();
                 _inner.Dispose();
                 client.Dispose();
             }
@@ -1310,6 +1344,7 @@ public sealed class StreamedSetTests
         private int _blocked;
         internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -1327,6 +1362,7 @@ public sealed class StreamedSetTests
             var count = Math.Min(Math.Min(buffer.Length, maxRead), payload.Length - _position);
             payload.AsMemory(_position, count).CopyTo(buffer);
             _position += count;
+            if (_position == payload.Length) Completed.TrySetResult();
             return count;
         }
 

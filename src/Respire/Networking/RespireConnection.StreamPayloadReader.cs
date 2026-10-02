@@ -41,8 +41,18 @@ internal sealed partial class RespireConnection
                 try
                 {
                     pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
+                    // Publish buffer ownership before yielding. Dispose can run as soon as the
+                    // concurrent socket write fails, before WaitAsync resumes with cancellation.
+                    _pendingRead = pendingRead;
+                    _pendingBuffer = chunk;
+                    _filledBeforePendingRead = filled;
                     // WaitAsync also bounds streams that ignore their cancellation token.
                     var read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (ReferenceEquals(_pendingRead, pendingRead))
+                    {
+                        _pendingRead = null;
+                        _pendingBuffer = null;
+                    }
                     if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
                     filled += read;
                 }
