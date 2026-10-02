@@ -76,16 +76,16 @@ public sealed class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(query);
         var options = query.Options ?? RespireSearchQueryOptions.Default;
-        using var result = await _commands.SearchAsync(RequireName(index), query.Expression, options.ToArguments(), cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.SearchAsync(RequireName(index), query.Expression.Value, options.ToArguments(), cancellationToken).ConfigureAwait(false);
         return RespireSearchResult.Parse(result, options.NoContent, options.WithScores);
     }
 
     /// <summary>Runs an ordered aggregation pipeline. Each row contains named values.</summary>
-    public async ValueTask<RespireSearchAggregateResult> AggregateAsync(string index, string expression, RespireSearchAggregateOptions? options = null, CancellationToken cancellationToken = default)
+    public async ValueTask<RespireSearchAggregateResult> AggregateAsync(string index, RespireSearchExpression expression, RespireSearchAggregateOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        expression.RequireValid(nameof(expression));
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments();
-        using var result = await _commands.AggregateAsync(RequireName(index), expression, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.AggregateAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false);
         return RespireSearchAggregateResult.Parse(result);
     }
 
@@ -96,12 +96,12 @@ public sealed class RespireSearchClient
     /// <see cref="DeleteCursorAsync(RespireSearchAggregateCursorPage, CancellationToken)"/>.
     /// <see cref="AggregatePagesAsync"/> does both for you.
     /// </summary>
-    public async ValueTask<RespireSearchAggregateCursorPage> AggregateWithCursorAsync(string index, string expression, RespireSearchAggregateOptions? options = null, RespireSearchCursorOptions? cursor = null, CancellationToken cancellationToken = default)
+    public async ValueTask<RespireSearchAggregateCursorPage> AggregateWithCursorAsync(string index, RespireSearchExpression expression, RespireSearchAggregateOptions? options = null, RespireSearchCursorOptions? cursor = null, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        expression.RequireValid(nameof(expression));
         var name = RequireName(index);
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments(cursor ?? new RespireSearchCursorOptions());
-        using var result = await _commands.AggregateAsync(name, expression, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.AggregateAsync(name, expression.Value, arguments, cancellationToken).ConfigureAwait(false);
         try
         {
             return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE", name);
@@ -124,7 +124,7 @@ public sealed class RespireSearchClient
     /// </summary>
     public async IAsyncEnumerable<RespireSearchAggregateResult> AggregatePagesAsync(
         string index,
-        string expression,
+        RespireSearchExpression expression,
         RespireSearchAggregateOptions? options = null,
         RespireSearchCursorOptions? cursor = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -277,7 +277,7 @@ public sealed class RespireSearchClient
         };
         var arguments = selected.ToArguments(
             new KeyValuePair<string, RespireValue>(RespireVectorSearchRequest.VectorParameterName, vector.Vector));
-        using var result = await _commands.SearchAsync(RequireName(index), vector.Expression, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.SearchAsync(RequireName(index), vector.Expression.Value, arguments, cancellationToken).ConfigureAwait(false);
         return RespireSearchResult.Parse(result, selected.NoContent, selected.WithScores);
     }
 
@@ -312,17 +312,17 @@ public sealed class RespireSearchClient
     }
 
     /// <summary>Returns the server query plan text.</summary>
-    public async ValueTask<string> ExplainAsync(string index, string expression, RespireSearchExplainOptions? options = null, CancellationToken cancellationToken = default)
+    public async ValueTask<string> ExplainAsync(string index, RespireSearchExpression expression, RespireSearchExplainOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        expression.RequireValid(nameof(expression));
         var selected = options ?? RespireSearchExplainOptions.Default;
         RespireSearchDialect.Validate(selected.Dialect, requiresParameters: false);
         string[] arguments = selected.Dialect is { } dialect
             ? ["DIALECT", dialect.ToString(System.Globalization.CultureInfo.InvariantCulture)]
             : NoOptions;
         using var result = selected.Cli
-            ? await _commands.ExplainCliAsync(RequireName(index), expression, arguments, cancellationToken).ConfigureAwait(false)
-            : await _commands.ExplainAsync(RequireName(index), expression, arguments, cancellationToken).ConfigureAwait(false);
+            ? await _commands.ExplainCliAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false)
+            : await _commands.ExplainAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false);
         if (!selected.Cli) return result.AsString();
         var lines = new string[result.Count];
         for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();

@@ -46,10 +46,10 @@ public abstract record RespireSearchAggregateStage
     /// <summary>Creates a LOAD stage.</summary>
     public static RespireSearchAggregateLoad Load(params string[] fields) => new(fields);
 
-    /// <summary>Creates a FILTER stage.</summary>
+    /// <summary>Creates a FILTER stage using raw FT.AGGREGATE expression syntax.</summary>
     public static RespireSearchAggregateFilter Filter(string expression) => new(expression);
 
-    /// <summary>Creates an APPLY stage.</summary>
+    /// <summary>Creates an APPLY stage using raw FT.AGGREGATE expression syntax.</summary>
     public static RespireSearchAggregateApply Apply(string expression, string alias) => new(expression, alias);
 
     /// <summary>Creates a GROUPBY stage. An empty property list groups every row together.</summary>
@@ -81,7 +81,7 @@ public sealed record RespireSearchAggregateLoad(IReadOnlyList<string> Fields) : 
     }
 }
 
-/// <summary>Filters rows at this point in the pipeline.</summary>
+/// <summary>Filters rows at this point in the pipeline using raw FT.AGGREGATE expression syntax.</summary>
 public sealed record RespireSearchAggregateFilter(string Expression) : RespireSearchAggregateStage
 {
     internal override void AddArguments(List<RespireValue> args)
@@ -92,7 +92,7 @@ public sealed record RespireSearchAggregateFilter(string Expression) : RespireSe
     }
 }
 
-/// <summary>Adds an expression result at this point in the pipeline.</summary>
+/// <summary>Adds an expression result at this point in the pipeline using raw FT.AGGREGATE expression syntax.</summary>
 public sealed record RespireSearchAggregateApply(string Expression, string Alias) : RespireSearchAggregateStage
 {
     internal override void AddArguments(List<RespireValue> args)

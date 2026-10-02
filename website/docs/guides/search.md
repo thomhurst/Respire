@@ -38,7 +38,7 @@ var expression = RespireSearchQueryBuilder.And(
 var found = await search.SearchAsync("books", new RespireSearchQuery(expression,
     new RespireSearchQueryOptions { Limit = (0, 20), ReturnFields = ["title", "year"] }));
 
-var groups = await search.AggregateAsync("books", "*", new RespireSearchAggregateOptions
+var groups = await search.AggregateAsync("books", RespireSearchExpression.FromRaw("*"), new RespireSearchAggregateOptions
 {
     Stages =
     [
@@ -55,7 +55,7 @@ var nearest = await search.VectorSearchAsync("books",
     });
 
 var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuery(
-    "@title:$term", "embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
+    RespireSearchExpression.FromRaw("@title:$term"), "embedding", new byte[] { 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0 }, 10)
 {
     Parameters = new Dictionary<string, RespireValue> { ["term"] = "redis" },
     RrfWindow = 50,
@@ -74,11 +74,11 @@ Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.IN
 
 `RespireSearchQueryOptions` supports projections, scores, sorting, limits, named parameters, timeout, and dialect. Named parameters need an explicit dialect of 2 or later. `RespireSearchResult` contains the total count, document IDs, fields, scores, and any warnings the server returns.
 
-Query helpers escape field names, tag values, and quoted text, so values passed to them cannot change the query. They build exact text, tag, numeric range (inclusive or exclusive, with infinite bounds), AND, and OR expressions. For prefix, fuzzy, wildcard, and other advanced syntax, pass native query text to `RespireSearchQuery`.
+Query helpers escape field names, tag values, and quoted text, so values passed to them cannot change the query. They build exact text, tag, numeric range (inclusive or exclusive, with infinite bounds), AND, and OR expressions. For prefix, fuzzy, wildcard, and other advanced syntax, wrap trusted native query text with `RespireSearchExpression.FromRaw`.
 
 ### Untrusted input
 
-Query expressions are strings that Redis parses. `RespireSearchQuery.Expression`, `RespireVectorSearchRequest.Filter`, `RespireHybridSearchQuery.TextExpression`, and aggregation `FILTER` and `APPLY` expressions are sent exactly as written. `And` and `Or` wrap their inputs in parentheses but do not validate them. If you concatenate user input into any of these, the input can change the query. For example, a value of `) | (@secret:*` widens a filter to every document. Pass untrusted values through a helper such as `Tag`, `TextField`, or `NumericRange`, or reference them as `$name` parameters in `Parameters` (dialect 2 or later), and keep raw query text to strings you control.
+Query syntax is represented by `RespireSearchExpression`. Builder helpers escape values and return this type. `And` and `Or` accept typed expressions. `FromRaw` explicitly marks trusted native syntax, such as `@title:$term`. Query, vector filter, hybrid text, explain, and aggregate query entry points require this type, so plain strings cannot enter those calls implicitly. Pass untrusted values through a helper such as `Tag`, `TextField`, or `NumericRange`, or reference them as `$name` parameters in `Parameters` (dialect 2 or later). Aggregation `FILTER` and `APPLY` use a separate expression language and remain raw strings.
 
 ## Aggregation
 
