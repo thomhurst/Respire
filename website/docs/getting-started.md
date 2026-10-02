@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: Getting started
-description: Build Respire and send your first commands.
+description: Install Respire and send your first commands.
 ---
 
 # Getting started
@@ -13,11 +13,12 @@ Connect to a local RESP server and send typed commands in a few lines.
 - .NET 10 SDK or later (Respire targets both `net8.0` and `net10.0`)
 - Redis, Valkey, KeyDB, or another RESP2-compatible server
 
-Respire is pre-release and is not currently published to NuGet. Clone the repository and add a project reference while evaluating it:
+## Install Respire
+
+Respire is available on [NuGet](https://www.nuget.org/packages/Respire). It is still pre-release, so its public APIs may change. Install the package with prerelease versions included:
 
 ```bash
-git clone https://github.com/thomhurst/Respire.git
-dotnet add reference path/to/Respire/src/Respire/Respire.csproj
+dotnet add package Respire --prerelease
 ```
 
 ## Start a server
