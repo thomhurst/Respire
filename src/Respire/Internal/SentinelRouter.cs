@@ -587,7 +587,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
         QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true,
-            ReportingSentinel: sentinel));
+            ReportingSentinel: initialSubscription ? (RespireEndpoint?)null : sentinel));
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)

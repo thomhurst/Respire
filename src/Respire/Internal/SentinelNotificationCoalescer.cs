@@ -101,6 +101,16 @@ internal sealed class SentinelNotificationCoalescer
             .Select(static group => (Endpoint: group.Key, Addresses: group.Select(static source => source.Addresses)
                 .FirstOrDefault(static addresses => addresses is not null)))
             .ToArray();
+        // A switch away from the pending target establishes a new transition. If it fails back
+        // to an older source, that endpoint is a valid target again. A delayed older switch does
+        // not meet this condition, so its target remains suppressed by the newer source record.
+        if (hint.OldPrimary is { } transitionSource && previous.Target is { } priorPendingTarget
+            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(transitionSource, priorPendingTarget)
+            && hint.Target is { } transitionTarget)
+        {
+            sources = sources.Where(source =>
+                !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, transitionTarget)).ToArray();
+        }
         var selectedAddresses = merged.OldPrimary is { } selected
             ? sources.FirstOrDefault(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, selected)).Addresses
             : null;
