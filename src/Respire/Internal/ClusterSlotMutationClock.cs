@@ -17,6 +17,7 @@ internal static class ClusterSlotMutationClock
 {
     private static readonly object s_gate = new();
     private static readonly SortedSet<long> s_activeCaptures = [];
+    private static readonly List<WeakReference<RespireConnectionMultiplexer>> s_multiplexers = [];
     private static long s_value;
 
     internal static long Next()
@@ -24,13 +25,28 @@ internal static class ClusterSlotMutationClock
         lock (s_gate) return ++s_value;
     }
 
-    internal static CaptureScope BeginCapture(RespireConnectionMultiplexer? multiplexer)
+    internal static void Track(RespireConnectionMultiplexer multiplexer)
+    {
+        lock (s_gate)
+        {
+            for (var i = s_multiplexers.Count - 1; i >= 0; i--)
+            {
+                if (!s_multiplexers[i].TryGetTarget(out var existing))
+                    s_multiplexers.RemoveAt(i);
+                else if (ReferenceEquals(existing, multiplexer))
+                    return;
+            }
+            s_multiplexers.Add(new(multiplexer));
+        }
+    }
+
+    internal static CaptureScope BeginCapture()
     {
         lock (s_gate)
         {
             var token = ++s_value;
             s_activeCaptures.Add(token);
-            return new CaptureScope(token, multiplexer);
+            return new CaptureScope(token);
         }
     }
 
@@ -42,18 +58,28 @@ internal static class ClusterSlotMutationClock
         }
     }
 
-    private static bool EndCapture(long token)
+    private static RespireConnectionMultiplexer[] EndCapture(long token)
     {
-        lock (s_gate) return s_activeCaptures.Remove(token);
+        lock (s_gate)
+        {
+            if (!s_activeCaptures.Remove(token)) return [];
+            var active = new List<RespireConnectionMultiplexer>(s_multiplexers.Count);
+            for (var i = s_multiplexers.Count - 1; i >= 0; i--)
+            {
+                if (s_multiplexers[i].TryGetTarget(out var multiplexer)) active.Add(multiplexer);
+                else s_multiplexers.RemoveAt(i);
+            }
+            return [.. active];
+        }
     }
 
-    internal readonly struct CaptureScope(long token, RespireConnectionMultiplexer? multiplexer) : IDisposable
+    internal readonly struct CaptureScope(long token) : IDisposable
     {
         internal long Token => token;
 
         public void Dispose()
         {
-            if (EndCapture(token)) multiplexer?.PruneMaintenanceHandlerEpochs();
+            foreach (var current in EndCapture(token)) current.PruneMaintenanceHandlerEpochs();
         }
     }
 }

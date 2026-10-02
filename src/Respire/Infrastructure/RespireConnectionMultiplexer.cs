@@ -98,7 +98,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 CloseMaintenanceHandlerEpoch(boundary);
                 _maintenanceNotificationReceived += value;
                 if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                {
+                    ClusterSlotMutationClock.Track(this);
                     _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+                }
             }
         }
         remove
@@ -109,7 +112,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 CloseMaintenanceHandlerEpoch(boundary);
                 _maintenanceNotificationReceived -= value;
                 if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                {
+                    ClusterSlotMutationClock.Track(this);
                     _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+                }
             }
         }
     }
@@ -142,7 +148,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
     {
-        using var capture = ClusterSlotMutationClock.BeginCapture(this);
+        using var capture = ClusterSlotMutationClock.BeginCapture();
         return CaptureMaintenanceHandlers(capture.Token);
     }
 
@@ -167,6 +173,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         var earliestCapture = ClusterSlotMutationClock.EarliestActiveCapture;
         var removable = 0;
         while (removable < _maintenanceHandlerEpochs.Count
+               && _maintenanceHandlerEpochs[removable].End != long.MaxValue
                && _maintenanceHandlerEpochs[removable].End <= earliestCapture)
             removable++;
         if (removable > 0) _maintenanceHandlerEpochs.RemoveRange(0, removable);

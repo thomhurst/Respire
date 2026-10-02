@@ -95,7 +95,7 @@ internal sealed partial class RespireConnection
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
-            using var capture = ClusterSlotMutationClock.BeginCapture(Multiplexer);
+            using var capture = ClusterSlotMutationClock.BeginCapture();
             slotMutationToken = capture.Token;
             migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
         }

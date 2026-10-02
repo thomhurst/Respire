@@ -720,7 +720,7 @@ public class ClusterNodeIdentityTests
         };
 
         // One receive loop stamps a B->C push, then pauses while another connection retires A.
-        using var bcCapture = ClusterSlotMutationClock.BeginCapture(a);
+        using var bcCapture = ClusterSlotMutationClock.BeginCapture();
         var bcToken = bcCapture.Token;
 
         // Meanwhile A->B, received on another connection, retires A and detaches its handlers.
