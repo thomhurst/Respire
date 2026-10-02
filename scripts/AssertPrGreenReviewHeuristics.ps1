@@ -388,6 +388,12 @@ function Test-IsClaudeReviewComment {
             $title = $title -replace '^[^\p{L}\p{N}_#-]+', ''
             $reviewTitleTail = '(?:$|[.!?](?=$|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)|:\s*(?:$|PR\b|#|\d|(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)'
             $isLegacyReviewTitle = $title -match "(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review$reviewTitleTail"
+            $hasDescriptiveColonReviewTitle = $title -match '(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review:\s+\S'
+            # This known deployment status heading is not a legacy review title.
+            $isKnownDeploymentStatusTitle = $title -match '(?i)^Review:\s+apps deployed$'
+            if (-not $isLegacyReviewTitle -and $hasDescriptiveColonReviewTitle -and -not $isKnownDeploymentStatusTitle) {
+                $isLegacyReviewTitle = $true
+            }
             if ($isLegacyReviewTitle) { return $true }
         }
     }

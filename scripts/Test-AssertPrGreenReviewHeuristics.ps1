@@ -1277,6 +1277,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks late descriptive colon review title with finding'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: cache routing`n`nThe new replay path can send a duplicate mutation after an ambiguous timeout.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks late bold Code Review title and preserves suffix'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## **Code Review:** findings`n`n1. A concrete finding.")
