@@ -1,3 +1,4 @@
+using Respire.Internal;
 using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -44,7 +45,7 @@ public class SemaphoreTimingTests
         var attempts = 0;
         string? abandoned = null;
         var succeeded = await RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), () =>
-            new(++attempts < 3 ? SemaphoreCleanupAttempt.Failed : SemaphoreCleanupAttempt.Succeeded),
+            new(++attempts < 3 ? CleanupAttemptResult.Failed : CleanupAttemptResult.Succeeded),
             onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsTrue();
@@ -60,7 +61,7 @@ public class SemaphoreTimingTests
         var succeeded = await RespireSemaphore.RetryCleanupAsync(Stopwatch.GetTimestamp(), () =>
         {
             attempts++;
-            return new(SemaphoreCleanupAttempt.Abandoned);
+            return new(CleanupAttemptResult.Abandoned);
         }, onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();
@@ -78,7 +79,7 @@ public class SemaphoreTimingTests
         {
             attempts++;
             needed = false;
-            return new(SemaphoreCleanupAttempt.Failed);
+            return new(CleanupAttemptResult.Failed);
         }, () => needed, reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();
@@ -97,7 +98,7 @@ public class SemaphoreTimingTests
         var succeeded = await RespireSemaphore.RetryCleanupAsync(windowStart, () =>
         {
             attempts++;
-            return new(SemaphoreCleanupAttempt.Failed);
+            return new(CleanupAttemptResult.Failed);
         }, onAbandoned: reason => abandoned = reason);
 
         await Assert.That(succeeded).IsFalse();

@@ -24,7 +24,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     private readonly SemaphoreSlim _outstanding = new(Capacity + WorkerCount);
     private readonly object _workerGate = new();
     private readonly object _scheduledGate = new();
-    private readonly List<Task> _scheduledRetries = [];
+    private readonly HashSet<Task> _scheduledRetries = [];
     private Task[]? _workers;
     private int _disposed;
     private int _admissionWaiters;
@@ -99,6 +99,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         catch (OperationCanceledException) { }
 
         Task[] retries;
+        // Only workers schedule retries. Awaiting them first closes additions before this snapshot.
         lock (_scheduledGate) retries = [.. _scheduledRetries];
         try { await Task.WhenAll(retries).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
@@ -143,7 +144,11 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
                 return;
             }
             if (cleanup.ShouldContinue is not null && !cleanup.ShouldContinue())
-            { cleanup.Complete(false); return; }
+            {
+                // The caller no longer needs cleanup, so this is not abandonment.
+                cleanup.Complete(false);
+                return;
+            }
             if (cleanup.HasAttempted && Stopwatch.GetElapsedTime(cleanup.EnqueuedAt) >= cleanup.RetryLimit)
             { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
             cleanup.HasAttempted = true;
@@ -152,16 +157,12 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
             { cleanup.Complete(true); return; }
             if (outcome == CleanupAttemptResult.Abandoned)
             { cleanup.Report("client_disposed"); cleanup.Complete(false); return; }
-            if (Stopwatch.GetElapsedTime(cleanup.EnqueuedAt) >= cleanup.RetryLimit)
-            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
-
             var remaining = cleanup.RetryLimit - Stopwatch.GetElapsedTime(cleanup.EnqueuedAt);
             if (remaining <= TimeSpan.Zero)
             { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
-            var delay = WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
+            var delay = CoordinationCleanupRetry.WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
             if (delay > remaining) delay = remaining;
-            cleanup.NextDelay = TimeSpan.FromTicks(Math.Min(
-                cleanup.NextDelay.Ticks * 2, cleanup.MaximumDelay.Ticks));
+            cleanup.NextDelay = CoordinationCleanupRetry.NextDelay(cleanup.NextDelay, cleanup.MaximumDelay);
             ScheduleRetry(cleanup, delay);
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
@@ -205,9 +206,6 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         }
     }
 
-    private static TimeSpan WithJitter(TimeSpan delay)
-        => TimeSpan.FromTicks((long)(delay.Ticks * (0.75 + Random.Shared.NextDouble() * 0.5)));
-
     private sealed class Cleanup(
         Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
         Func<bool>? shouldContinue,
@@ -221,7 +219,6 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         internal Func<CancellationToken, ValueTask<CleanupAttemptResult>> Attempt { get; } = attempt;
         internal Func<bool>? ShouldContinue { get; } = shouldContinue;
         internal TimeSpan RetryLimit { get; } = retryLimit;
-        internal TimeSpan InitialDelay { get; } = initialDelay;
         internal TimeSpan MaximumDelay { get; } = maximumDelay;
         internal long EnqueuedAt { get; } = enqueuedAt;
         internal TimeSpan NextDelay { get; set; } = initialDelay;

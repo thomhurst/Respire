@@ -57,6 +57,7 @@ jobs:
           # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
+          cp candidate/src/Respire/Internal/CoordinationCleanupRetry.cs baseline/src/Respire/Internal/
           python3 - <<'PY'
           from pathlib import Path
 

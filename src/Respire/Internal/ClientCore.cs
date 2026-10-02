@@ -37,7 +37,15 @@ internal sealed class ClientCore : IAsyncDisposable
     }
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
-    internal readonly CoordinationCleanupQueue CoordinationCleanupQueue = new();
+    private CoordinationCleanupQueue? _coordinationCleanupQueue;
+    internal CoordinationCleanupQueue? CoordinationCleanupQueue
+    {
+        get
+        {
+            lock (_hubGate)
+                return Disposed ? null : _coordinationCleanupQueue ??= new();
+        }
+    }
     private readonly DedicatedConnectionPool _dedicatedPool;
     public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
     internal readonly SentinelRouter? Sentinel;
@@ -544,10 +552,16 @@ internal sealed class ClientCore : IAsyncDisposable
             return;
         }
 
-        Disposed = true;
+        CoordinationCleanupQueue? cleanupQueue;
+        lock (_hubGate)
+        {
+            Disposed = true;
+            cleanupQueue = _coordinationCleanupQueue;
+        }
         // A closed client cannot send queued releases, so cancel its background cleanup before
         // tearing down the transports. Dispose semaphore permits before the client when possible.
-        await CoordinationCleanupQueue.DisposeAsync().ConfigureAwait(false);
+        if (cleanupQueue is not null)
+            await cleanupQueue.DisposeAsync().ConfigureAwait(false);
         Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();

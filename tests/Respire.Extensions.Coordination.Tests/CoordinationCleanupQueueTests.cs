@@ -8,6 +8,93 @@ namespace Respire.Extensions.Coordination.Tests;
 public class CoordinationCleanupQueueTests
 {
     [Test]
+    public async Task DisposedClientRejectsCleanupWithoutStartingAttempt()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });
+        await client.DisposeAsync();
+        var attempts = 0;
+        string? abandoned = null;
+        await RespireSemaphore.EnqueueCleanupAsync(client, _ =>
+        {
+            attempts++;
+            return new(CleanupAttemptResult.Succeeded);
+        }, null, reason => abandoned = reason);
+
+        await Assert.That(client.Core.CoordinationCleanupQueue).IsNull();
+        await Assert.That(attempts).IsEqualTo(0);
+        await Assert.That(abandoned).IsEqualTo("client_disposed");
+    }
+
+    [Test]
+    public async Task CancelledReleaseIsAbandonedWithoutRetry()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });
+        var outcome = await RespireSemaphore.TryReleaseOnceAsync(
+            client, "semaphore", RespireLock.NewToken(), new CancellationToken(canceled: true));
+
+        await Assert.That(outcome).IsEqualTo(CleanupAttemptResult.Abandoned);
+    }
+
+    [Test]
+    public async Task DisposeCancelsDelayedRetryAndCompletesCleanup()
+    {
+        await using var queue = new CoordinationCleanupQueue();
+        var attempts = 0;
+        string? abandoned = null;
+        // The synchronous first attempt schedules its delay before EnqueueAsync returns.
+        var completion = queue.EnqueueAsync(_ =>
+        {
+            attempts++;
+            return new(CleanupAttemptResult.Failed);
+        }, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1),
+            reason => abandoned = reason);
+
+        await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(completion.IsCompleted).IsFalse();
+        await queue.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(await completion.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(abandoned).IsEqualTo("client_disposed");
+        await Assert.That(attempts).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AbandonedAttemptStopsWithoutRetrying()
+    {
+        await using var queue = new CoordinationCleanupQueue();
+        var attempts = 0;
+        string? abandoned = null;
+        var completion = queue.EnqueueAsync(_ =>
+        {
+            attempts++;
+            return new(CleanupAttemptResult.Abandoned);
+        }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2),
+            reason => abandoned = reason);
+
+        await Assert.That(await completion.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(abandoned).IsEqualTo("client_disposed");
+    }
+
+    [Test]
+    public async Task UnneededCleanupSkipsAttemptAndAbandonmentReport()
+    {
+        await using var queue = new CoordinationCleanupQueue();
+        var attempts = 0;
+        string? abandoned = null;
+        var completion = queue.EnqueueAsync(_ =>
+        {
+            attempts++;
+            return new(CleanupAttemptResult.Failed);
+        }, () => false, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2),
+            reason => abandoned = reason);
+
+        await Assert.That(await completion.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(attempts).IsEqualTo(0);
+        await Assert.That(abandoned).IsNull();
+    }
+
+    [Test]
     public async Task DisposeCancelsRunningCleanupAndReportsClientDisposed()
     {
         await using var queue = new CoordinationCleanupQueue();
