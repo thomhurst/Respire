@@ -551,8 +551,11 @@ Read views bypass client-side cache reads to avoid mixing primary-tracked cache 
 replica disconnect does not flush the client-side cache. A read-only function that reports
 `Function not found` on a replica causes the registered library to be checked or reloaded on the
 primary, then retried under the original read policy until replication makes it available.
-`CommandTimeout` bounds this propagation wait; `null` disables that cap, leaving caller
-cancellation available to stop the wait.
+This propagation wait has a five-second ceiling. A shorter `CommandTimeout` reduces that
+budget; `null` does not disable the propagation ceiling. Exhausting the budget throws
+`RespireTimeoutException` for the function call. Caller cancellation stops the wait with
+`OperationCanceledException`. Retries preserve the original read policy, so `Replica` never
+falls back to the primary.
 Replica connection health is reported through `ConnectionStateChanged` with the replica's
 endpoint.
 

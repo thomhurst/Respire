@@ -199,7 +199,7 @@ public static class RespireErrorCodes
 }
 
 /// <summary>
-/// A command did not complete within <see cref="RespireOptions.CommandTimeout"/>. Commands
+/// A command exceeded its response or function propagation timeout budget. Commands
 /// already enqueued may still execute on the server. Inspect <see cref="Diagnostics"/> for
 /// timeouts during connection acquisition or while waiting for queue capacity.
 /// </summary>

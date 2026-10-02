@@ -274,6 +274,7 @@ public sealed record RespireOptions
     /// Client-side cap on how long a command waits for its response. Defaults to ten seconds;
     /// null disables the cap. Expiry throws <see cref="RespireTimeoutException"/>; the command may still
     /// execute server-side. Does not apply to intentionally blocking calls (BLPOP-style waits).
+    /// Replica function propagation recovery has its own five-second ceiling, even when this cap is disabled.
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 

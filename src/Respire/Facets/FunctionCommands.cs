@@ -116,7 +116,11 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         where TCommand : struct, IRespCommand
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (timeout is { } configuredTimeout) deadline.CancelAfter(configuredTimeout);
+        // Propagation recovery is finite even when ordinary command timeouts are disabled.
+        var propagationLimit = TimeSpan.FromSeconds(5);
+        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < propagationLimit
+            ? configuredTimeout : propagationLimit;
+        deadline.CancelAfter(propagationTimeout);
         var delay = TimeSpan.FromMilliseconds(25);
         try
         {
@@ -126,18 +130,18 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 {
                     return await client.SendAsync(operation, command, deadline.Token).ConfigureAwait(false);
                 }
-                catch (RespireServerException error) when (IsFunctionNotFound(error)
-                    && !deadline.IsCancellationRequested)
+                catch (RespireServerException error) when (IsFunctionNotFound(error))
                 {
+                    deadline.Token.ThrowIfCancellationRequested();
                     await Task.Delay(delay, deadline.Token).ConfigureAwait(false);
                     delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
                 }
             }
         }
-        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
-            && deadline.IsCancellationRequested && timeout.HasValue)
+        catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
         {
-            throw new RespireTimeoutException(operation, timeout.Value, error);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new RespireTimeoutException(operation, propagationTimeout, error);
         }
     }
 

@@ -951,7 +951,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole)
         {
             ReplyOverride = (_, command) => command.StartsWith("FCALL_RO", StringComparison.Ordinal)
-                ? Interlocked.Increment(ref replicaCalls) == 1
+                ? Interlocked.Increment(ref replicaCalls) <= 3
                     ? "-ERR Function not found\r\n"u8.ToArray()
                     : ":1\r\n"u8.ToArray()
                 : null,
@@ -960,6 +960,7 @@ public class ReadEndpointRoutingTests
         {
             Protocol = RespProtocol.Resp2,
             Connections = 1,
+            CommandTimeout = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
@@ -968,9 +969,71 @@ public class ReadEndpointRoutingTests
         using var result = await client.WithReadFrom(RespireReadFrom.Replica).Functions.ExecuteAsync(function);
 
         // Retry stays on replica policy until asynchronous function replication completes.
-        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsEqualTo(4);
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LIST", StringComparison.Ordinal))).IsEqualTo(1);
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false, null)]
+    [Arguments(false, 1000)]
+    [Arguments(false, 30000)]
+    [Arguments(true, null)]
+    public async Task FunctionPropagationHonorsBudgetAndCallerCancellation(bool cancel, int? timeoutMilliseconds)
+    {
+        const string source = "#!lua name=readlib\nredis.register_function{function_name='readfn', callback=function() return 1 end, flags={'no-writes'}}";
+        var retryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FUNCTION LIST", StringComparison.Ordinal)
+                ? FunctionLibraryList("readlib", "readfn", source) : null,
+        };
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (!command.StartsWith("FCALL_RO", StringComparison.Ordinal)) return null;
+                if (Interlocked.Increment(ref calls) >= 2) retryStarted.TrySetResult();
+                return "-ERR Function not found\r\n"u8.ToArray();
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        using var cancellation = new CancellationTokenSource();
+        var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
+        var execution = client.WithReadFrom(RespireReadFrom.Replica).Functions
+            .ExecuteAsync(function, cancellationToken: cancellation.Token).AsTask();
+        try
+        {
+            await retryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (cancel) cancellation.Cancel();
+            if (cancel)
+            {
+                var error = await Assert.That(async () => { using var result = await execution.WaitAsync(TimeSpan.FromSeconds(10)); })
+                    .Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            else
+            {
+                var error = await Assert.That(async () => { using var result = await execution.WaitAsync(TimeSpan.FromSeconds(10)); })
+                    .Throws<RespireTimeoutException>();
+                var expectedMilliseconds = Math.Min(timeoutMilliseconds ?? 5000, 5000);
+                await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(expectedMilliseconds));
+            }
+            await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsFalse();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { using var result = await execution; } catch (OperationCanceledException) { } catch (RespireTimeoutException) { }
+        }
     }
 
     [Test]
