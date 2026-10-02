@@ -41,4 +41,12 @@ internal interface IRespireSearchCommands
     /// <summary>Explains a search query with command-style output.</summary>
     [RespireCommand("FT.EXPLAINCLI", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> ExplainCliAsync(string index, string query, string[] options, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads a page from an aggregation cursor.</summary>
+    [RespireCommand("FT.CURSOR READ")]
+    ValueTask<RespireResult> CursorReadAsync(string index, long cursorId, RespireValue[] options, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes an aggregation cursor.</summary>
+    [RespireCommand("FT.CURSOR DEL")]
+    ValueTask<RespireResult> CursorDeleteAsync(string index, long cursorId, CancellationToken cancellationToken = default);
 }

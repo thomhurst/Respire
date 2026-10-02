@@ -392,6 +392,43 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task GeneratedCursorSubcommandsRouteByIndexOnCluster()
+    {
+        const string index = "books";
+        var slot = ClusterHash.GetSlot(index);
+        await using var target = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "FT.CURSOR READ books 42 COUNT 5" => "*2\r\n*1\r\n:0\r\n:43\r\n"u8.ToArray(),
+                "FT.CURSOR DEL books 43" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n")
+            : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var search = new RespireSearchClient(client);
+
+        var page = await search.ReadCursorAsync(index, 42, count: 5);
+        await search.DeleteCursorAsync(index, page.CursorId);
+
+        await Assert.That(page.CursorId).IsEqualTo(43);
+        await Assert.That(seed.ReceivedCommands).DoesNotContain("FT.CURSOR READ books 42 COUNT 5");
+        await Assert.That(seed.ReceivedCommands).DoesNotContain("FT.CURSOR DEL books 43");
+        await Assert.That(target.ReceivedCommands).Contains("FT.CURSOR READ books 42 COUNT 5");
+        await Assert.That(target.ReceivedCommands).Contains("FT.CURSOR DEL books 43");
+    }
+
+    [Test]
     [Arguments("-ERR unknown command 'FT.HYBRID', with args beginning with: 'idx' ")]
     [Arguments("-ERR proxy: command not available")]
     public async Task HybridSearchReportsUnsupportedServerAsNotSupported(string error)
