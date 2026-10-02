@@ -9,6 +9,45 @@ namespace Respire.Tests.Networking;
 public class ReadLatencySamplerTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TimedOutWireProbeRetainsItsSlotUntilReplyEvenWithCommandDeadlines(bool commandDeadline)
+    {
+        var suppress = true;
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
+        {
+            SuppressReply = command => command == "PING" && Volatile.Read(ref suppress),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = commandDeadline ? TimeSpan.FromMilliseconds(250) : null,
+            ConnectionIdleReadTimeout = null,
+        });
+        await using var sampler = ReadLatencySampler.Create();
+        var connection = client.Core.Multiplexer.GetConnection();
+        await Assert.That(await sampler.GetLatencyAsync(connection, default))
+            .IsEqualTo(ReadLatencySampler<Respire.Networking.RespireConnection>.Unknown);
+        await Task.Delay(TimeSpan.FromMilliseconds(1_100));
+        for (var index = 0; index < 20; index++) await sampler.GetLatencyAsync(connection, default);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+
+        Volatile.Write(ref suppress, false);
+        await server.SendRawAsync(FakeRespServer.PongReply);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (sampler.SamplesStarted == 1)
+        {
+            await sampler.GetLatencyAsync(connection, deadline.Token);
+            await Task.Delay(1, deadline.Token);
+        }
+        await Assert.That(await sampler.GetLatencyAsync(connection, deadline.Token))
+            .IsLessThan(ReadLatencySampler<Respire.Networking.RespireConnection>.Unknown);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task ConnectionFailuresHaveBoundedCooldownAndRecoverIndependently()
     {
         long now = 100;
@@ -145,7 +184,7 @@ public class ReadLatencySamplerTests
     }
 
     [Test]
-    public async Task ProbeDeadlineReturnsUnknownAndReleasesCapacity()
+    public async Task ProbeDeadlineReturnsUnknownWithoutReleasingOutstandingCommandCapacity()
     {
         await using var sampler = new ReadLatencySampler<object>(async (_, token) =>
         {
@@ -156,8 +195,8 @@ public class ReadLatencySamplerTests
         var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(results.All(result => result == ReadLatencySampler<object>.Unknown)).IsTrue();
         var next = sampler.GetLatencyAsync(new object(), default).AsTask();
-        await Assert.That(sampler.SamplesStarted).IsEqualTo(5);
-        await sampler.DisposeAsync();
         await Assert.That(await next).IsEqualTo(ReadLatencySampler<object>.Unknown);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+        await sampler.DisposeAsync();
     }
 }

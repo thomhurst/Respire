@@ -18,7 +18,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     private readonly ConditionalWeakTable<TConnection, Sample> _samples = new();
     private readonly ConditionalWeakTable<object, StrongBox<long>> _connectionFailures = new();
     private readonly object _gate = new();
-    private readonly List<Task<long>> _running = [];
+    private readonly List<Task> _running = [];
     private readonly CancellationTokenSource _stop = new();
     private int _disposed;
     private long _started;
@@ -44,7 +44,7 @@ internal sealed class ReadLatencySampler<TConnection>(
         var sample = _samples.GetValue(connection, static _ => new Sample());
         var now = Now;
         var pending = Volatile.Read(ref sample.Pending);
-        TaskCompletionSource<long>? start = null;
+        Probe? start = null;
         if (now >= Volatile.Read(ref sample.NextAttempt))
         {
             lock (_gate)
@@ -56,9 +56,9 @@ internal sealed class ReadLatencySampler<TConnection>(
                 if (pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
                 {
                     Volatile.Write(ref sample.NextAttempt, now + IntervalMilliseconds);
-                    start = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    pending = sample.Pending = start.Task;
-                    _running.Add(pending);
+                    start = new();
+                    pending = sample.Pending = start.Result.Task;
+                    _running.Add(start.Finished.Task);
                     Interlocked.Increment(ref _started);
                 }
             }
@@ -74,14 +74,20 @@ internal sealed class ReadLatencySampler<TConnection>(
             : ValueTask.FromResult(Unknown);
     }
 
-    private async Task MeasureAsync(TConnection connection, Sample sample, TaskCompletionSource<long> completion)
+    private async Task MeasureAsync(TConnection connection, Sample sample, Probe probe)
     {
         var latency = Unknown;
+        Task<long>? operation = null;
         try
         {
+            // The deadline bounds selection's wait, not the lifetime of an accepted PING.
+            // Canceling SendAsync would detach its waiter while its reply still owns a FIFO
+            // position. Retain the probe slot until that command completes, so a stalled peer
+            // cannot accumulate one abandoned PING per second when CommandTimeout is disabled.
+            operation = measure(connection, _stop.Token).AsTask();
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(1));
-            var elapsed = await measure(connection, deadline.Token).ConfigureAwait(false);
+            var elapsed = await operation.WaitAsync(deadline.Token).ConfigureAwait(false);
             if (elapsed >= 0 && elapsed != Unknown)
             {
                 var previous = Volatile.Read(ref sample.Measurement);
@@ -96,15 +102,26 @@ internal sealed class ReadLatencySampler<TConnection>(
         lock (_gate)
         {
             Volatile.Write(ref sample.Measurement, latency == Unknown ? null : new Measurement(latency, Now));
+            probe.Result.TrySetResult(latency);
+        }
+        // A late reply is observed but not used as a latency estimate. Disposal cancels the
+        // underlying wait and then closes the client's connections through its normal lifecycle.
+        if (operation is not null)
+        {
+            try { await operation.ConfigureAwait(false); }
+            catch (Exception) { }
+        }
+        lock (_gate)
+        {
             sample.Pending = null;
-            _running.Remove(completion.Task);
-            completion.TrySetResult(latency);
+            _running.Remove(probe.Finished.Task);
+            probe.Finished.TrySetResult();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        Task<long>[] running;
+        Task[] running;
         lock (_gate)
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -125,6 +142,12 @@ internal sealed class ReadLatencySampler<TConnection>(
     }
 
     private sealed record Measurement(long Latency, long MeasuredAt);
+
+    private sealed class Probe
+    {
+        internal readonly TaskCompletionSource<long> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource Finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 }
 
 internal static class ReadLatencySampler
@@ -136,7 +159,11 @@ internal static class ReadLatencySampler
     private static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
-        using var reply = await connection.SendAsync(s_ping, cancellationToken).ConfigureAwait(false);
+        // Keep observing the physical reply after selection's budget expires. Per-command
+        // deadlines detach waiters, so this advisory command uses the sampler's wait budget
+        // instead; the connection's receive watchdog remains active.
+        using var reply = await connection.SendAsync(s_ping, cancellationToken,
+            armCommandDeadline: false, pinToConnection: true).ConfigureAwait(false);
         return reply.AsSpan().SequenceEqual("PONG"u8)
             ? Stopwatch.GetElapsedTime(started).Ticks
             : ReadLatencySampler<RespireConnection>.Unknown;

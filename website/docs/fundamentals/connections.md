@@ -493,7 +493,10 @@ bypass the primary tracking cache, and cursor reads keep their original endpoint
 
 Measurements use advisory `PING` commands on the physical connections that can serve the read.
 Each router starts at most four probes concurrently, with no waiting probe queue. Each connection
-starts at most one probe per second, and a probe has a one-second deadline. Sampling happens only
+starts at most one probe per second, and selection waits at most one second for a probe. A probe
+that exceeds this budget still occupies its probe slot until its reply or connection failure:
+Respire does not queue repeated PINGs behind a stalled one, even with `CommandTimeout = null`.
+Sampling happens only
 when Nearest reads request it; ordinary Primary reads create no sampler and send no sampling PINGs.
 The first successful sample establishes the estimate. Later samples use one quarter of the new
 measurement and three quarters of the previous estimate to reduce jitter.
