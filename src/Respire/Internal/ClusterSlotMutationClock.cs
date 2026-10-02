@@ -1,3 +1,5 @@
+using Respire.Infrastructure;
+
 namespace Respire.Internal;
 
 /// <summary>
@@ -13,7 +15,45 @@ namespace Respire.Internal;
 /// </remarks>
 internal static class ClusterSlotMutationClock
 {
+    private static readonly object s_gate = new();
+    private static readonly SortedSet<long> s_activeCaptures = [];
     private static long s_value;
 
-    internal static long Next() => Interlocked.Increment(ref s_value);
+    internal static long Next()
+    {
+        lock (s_gate) return ++s_value;
+    }
+
+    internal static CaptureScope BeginCapture(RespireConnectionMultiplexer? multiplexer)
+    {
+        lock (s_gate)
+        {
+            var token = ++s_value;
+            s_activeCaptures.Add(token);
+            return new CaptureScope(token, multiplexer);
+        }
+    }
+
+    internal static long EarliestActiveCapture
+    {
+        get
+        {
+            lock (s_gate) return s_activeCaptures.Count == 0 ? long.MaxValue : s_activeCaptures.Min;
+        }
+    }
+
+    private static bool EndCapture(long token)
+    {
+        lock (s_gate) return s_activeCaptures.Remove(token);
+    }
+
+    internal readonly struct CaptureScope(long token, RespireConnectionMultiplexer? multiplexer) : IDisposable
+    {
+        internal long Token => token;
+
+        public void Dispose()
+        {
+            if (EndCapture(token)) multiplexer?.PruneMaintenanceHandlerEpochs();
+        }
+    }
 }

@@ -116,9 +116,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     private readonly object _maintenanceHandlersGate = new();
     private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
-    // A receive loop stamps its fence before waiting for this gate. Keep each subscription
-    // epoch so a frame received before detachment can still capture its eligible handler.
+    // A receive loop stamps and registers its fence before waiting for this gate. Keep only
+    // epochs that an in-flight receive can still select; older closed epochs are pruned.
     private readonly List<(long Start, long End, MaintenanceNotificationHandler Handlers)> _maintenanceHandlerEpochs = [];
+    internal int MaintenanceHandlerEpochCount
+    {
+        get { lock (_maintenanceHandlersGate) return _maintenanceHandlerEpochs.Count; }
+    }
 
     // Receive loop: the fence is stamped as soon as the push is identified. Select its matching
     // subscription epoch under the same gate used to publish epoch boundaries.
@@ -137,14 +141,35 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
-        => CaptureMaintenanceHandlers(ClusterSlotMutationClock.Next());
+    {
+        using var capture = ClusterSlotMutationClock.BeginCapture(this);
+        return CaptureMaintenanceHandlers(capture.Token);
+    }
+
+    internal void PruneMaintenanceHandlerEpochs()
+    {
+        lock (_maintenanceHandlersGate) PruneMaintenanceHandlerEpochsLocked();
+    }
 
     private void CloseMaintenanceHandlerEpoch(long boundary)
     {
-        if (_maintenanceHandlerEpochs.Count is 0) return;
-        var current = _maintenanceHandlerEpochs[^1];
-        if (current.End == long.MaxValue)
-            _maintenanceHandlerEpochs[^1] = (current.Start, boundary, current.Handlers);
+        if (_maintenanceHandlerEpochs.Count is > 0)
+        {
+            var current = _maintenanceHandlerEpochs[^1];
+            if (current.End == long.MaxValue)
+                _maintenanceHandlerEpochs[^1] = (current.Start, boundary, current.Handlers);
+        }
+        PruneMaintenanceHandlerEpochsLocked();
+    }
+
+    private void PruneMaintenanceHandlerEpochsLocked()
+    {
+        var earliestCapture = ClusterSlotMutationClock.EarliestActiveCapture;
+        var removable = 0;
+        while (removable < _maintenanceHandlerEpochs.Count
+               && _maintenanceHandlerEpochs[removable].End <= earliestCapture)
+            removable++;
+        if (removable > 0) _maintenanceHandlerEpochs.RemoveRange(0, removable);
     }
 
     // The caller captures handlers for the token recorded by the receive loop.

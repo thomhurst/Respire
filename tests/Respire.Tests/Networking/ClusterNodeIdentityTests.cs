@@ -626,6 +626,37 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task ResentSequenceIdIsIgnoredAfterMoreThanTheRecentSequenceWindow()
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        var source = router.GetMultiplexer(sourceEndpoint);
+        router.SetSlotOwner(0, source);
+        router.SetSlotOwner(1, source);
+        var connection = new object();
+
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 6, Migrations: [new(targetEndpoint, sourceEndpoint, "0")])));
+        for (var sequence = 7; sequence <= 300; sequence++)
+        {
+            router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+                new("SMIGRATED", sequence, Migrations: [new(sourceEndpoint, sourceEndpoint, "0")])));
+        }
+
+        // The old copy would move the slot to target if the deduplication fence forgot sequence 5.
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
+
+        await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OlderMigrationCannotMoveASlotThatLeftAndReturnedToItsSource(bool sourceRetiresInBetween)
@@ -689,7 +720,8 @@ public class ClusterNodeIdentityTests
         };
 
         // One receive loop stamps a B->C push, then pauses while another connection retires A.
-        var bcToken = ClusterSlotMutationClock.Next();
+        using var bcCapture = ClusterSlotMutationClock.BeginCapture(a);
+        var bcToken = bcCapture.Token;
 
         // Meanwhile A->B, received on another connection, retires A and detaches its handlers.
         router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
@@ -698,6 +730,9 @@ public class ClusterNodeIdentityTests
         await Assert.That(a.CaptureMaintenanceHandlers()).IsNull();
         var handlers = a.CaptureMaintenanceHandlers(bcToken);
         await Assert.That(handlers).IsNotNull();
+        await Assert.That(a.MaintenanceHandlerEpochCount).IsGreaterThan(0);
+        bcCapture.Dispose();
+        await Assert.That(a.MaintenanceHandlerEpochCount).IsEqualTo(0);
 
         // The paused loop resumes. Its earlier token selects the handler epoch active at receipt.
         a.PublishMaintenanceNotification(handlers, new object(),
@@ -854,6 +889,15 @@ public class ClusterNodeIdentityTests
         node.MaintenanceNotificationReceived += handler;
         _ = node.RetireAsync();
         await Assert.That(node.CaptureMaintenanceHandlers()).IsNull();
+
+        await using var cyclingNode = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: Options(6379).ToConnectionOptions(enableMaintenanceNotifications: true));
+        for (var i = 0; i < 512; i++)
+        {
+            cyclingNode.MaintenanceNotificationReceived += handler;
+            cyclingNode.MaintenanceNotificationReceived -= handler;
+        }
+        await Assert.That(cyclingNode.MaintenanceHandlerEpochCount).IsEqualTo(0);
     }
 
     [Test]

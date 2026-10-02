@@ -10,7 +10,6 @@ namespace Respire.Internal;
 
 internal sealed partial class ClusterRouter
 {
-    private const int RecentSmigratedSequenceLimit = 256;
     private const int SmigratedQueueCapacity = 128;
     private const int DeferredSmigratedMigrationLimit = 64;
     private const long SmigratedDropWarningIntervalMilliseconds = 30_000;
@@ -28,15 +27,14 @@ internal sealed partial class ClusterRouter
 
     private sealed class SmigratedSequenceWindow
     {
-        private readonly Queue<long> _order = new();
-        private readonly HashSet<long> _seen = [];
+        private long _highestSeen = -1;
 
-        // Returns false when the ID was already seen inside the bounded window.
+        // Sequence IDs increase within one physical connection. A high-water mark rejects
+        // delayed replays without retaining an unbounded set or forgetting old IDs.
         internal bool TryAdd(long sequence)
         {
-            if (!_seen.Add(sequence)) return false;
-            _order.Enqueue(sequence);
-            if (_order.Count > RecentSmigratedSequenceLimit) _seen.Remove(_order.Dequeue());
+            if (sequence <= _highestSeen) return false;
+            _highestSeen = sequence;
             return true;
         }
     }
