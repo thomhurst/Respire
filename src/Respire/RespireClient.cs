@@ -2451,26 +2451,28 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
-                    if (command is IReplayableStreamingRespCommand replayable)
-                    {
-                        try
-                        {
-                            replayable.ResetSourceForReplay();
-                        }
-                        catch (Exception)
-                        {
-                            // Preserve the redirect as the command result. A source whose seek
-                            // operation stopped working cannot be retried safely.
-                            ExceptionDispatchInfo.Capture(error).Throw();
-                            throw;
-                        }
-                    }
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
                     discoveryPending = false;
+
+                    if (command is IReplayableStreamingRespCommand replayable)
+                    {
+                        try
+                        {
+                            replayable.ResetSourceForReplay();
+                        }
+                        catch (Exception resetError) when (resetError is NotSupportedException or IOException or ObjectDisposedException)
+                        {
+                            // Preserve the redirect as the command result. A source whose seek
+                            // operation stopped working cannot be retried safely. Routing has
+                            // already learned the redirect so the next command uses its owner.
+                            ExceptionDispatchInfo.Capture(error).Throw();
+                            throw;
+                        }
+                    }
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
             }

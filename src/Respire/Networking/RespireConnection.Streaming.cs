@@ -246,7 +246,7 @@ internal sealed partial class RespireConnection
                     translated = TranslateStreamedSetCancellation(retryCancellation, cancellationToken, timeoutCancellation, phase);
                 }
             }
-            if (phase == StreamedSetPhase.ReadingFirstChunk
+            if ((phase is StreamedSetPhase.ReadingFirstChunk or StreamedSetPhase.AskingQueued)
                 && (translated is RespireConnectionRetiredException
                     || error is RespireConnectionRetiredException && translated is null))
             {
@@ -286,6 +286,8 @@ internal sealed partial class RespireConnection
             lock (_writeGate)
             {
                 ThrowIfStreamingUnavailable(rejectRetired: true);
+                Debug.Assert(_inflight.Capacity - _inflight.Count > 0,
+                    "The streaming command reserved an in-flight slot before queuing its ASKING prelude.");
                 if (_inflight.Capacity - _inflight.Count <= 0)
                     throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
 
@@ -307,6 +309,7 @@ internal sealed partial class RespireConnection
                 ClampDeadline(source, deadline);
                 if (!_inflight.TryEnqueue(source, _enqueuedBytes))
                 {
+                    Debug.Assert(false, "The streaming command reserved an in-flight slot before queuing its ASKING prelude.");
                     _activeBuffer.TruncateTo(start);
                     Volatile.Write(ref _enqueuedBytes, writeStart);
                     throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
