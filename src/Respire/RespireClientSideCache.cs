@@ -397,26 +397,15 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 "the connection protocol, database, or Redis tracking state.");
         }
 
-        var mutation = operation switch
-        {
-            "TS.CREATE" or "TS.ALTER" => RespireCacheMutation.Mutation,
-            // A series write can update compaction destinations, so use the conservative
-            // all-cache fence for sample writes and deletes.
-            "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD"
-                => RespireCacheMutation.Unknown,
-            _ => command.GetCacheMutation(operation),
-        };
-        if (mutation == RespireCacheMutation.ReadOnly)
-        {
-            return default;
-        }
-
-        // A time series sample write or delete can also update destinations of any
-        // configured compaction rules. The ordinary key layout names only the source series.
-        if (operation is "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD")
-        {
+        // Indirect writes (for example TimeSeries compaction) cannot be bounded by argument keys,
+        // even when a caller supplies a narrower command declaration.
+        var mutationKind = RawCommandKeyLayouts.GetMutationKind(operation);
+        if (mutationKind == RawCommandKeyLayouts.MutationKind.IndirectKeys)
             return BeginUnknownMutation();
-        }
+
+        var mutation = operation is "TS.CREATE" or "TS.ALTER"
+            ? RespireCacheMutation.Mutation : command.GetCacheMutation(operation);
+        if (mutation == RespireCacheMutation.ReadOnly) return default;
 
         if (mutation == RespireCacheMutation.SingleKey
             && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
@@ -456,7 +445,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         if (mutation is RespireCacheMutation.MultiKey or RespireCacheMutation.Mutation
             && command.TryGetClientCacheKey(operation, out var arguments)
-            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout))
+            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout,
+                includeReadKeys: mutation == RespireCacheMutation.MultiKey))
         {
             if (mutation == RespireCacheMutation.MultiKey || layout.Count != 1 || layout.Extra >= 0)
                 return BeginMultiKeyMutation(in arguments, layout);
@@ -634,46 +624,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         Interlocked.Increment(ref _evictions);
         RespireTelemetry.ClientCacheEvictions.Add(1);
     }
-
-    // Read-only here means preserving cached keyspace values. Diagnostic and script state may change.
-    internal static bool IsReadOnly(string operation)
-        => IsCacheableRead(operation)
-           || operation is
-            "DUMP" or "TTL" or "PTTL" or "HTTL" or "HPTTL" or
-            "SCAN" or "KEYS" or "RANDOMKEY" or "HSCAN" or
-            "HRANDFIELD" or "SRANDMEMBER" or "SSCAN" or "ZRANDMEMBER" or "ZSCAN" or
-            "VRANDMEMBER" or "XREAD" or "XINFO CONSUMERS" or
-            "OBJECT FREQ" or "OBJECT IDLETIME" or "OBJECT REFCOUNT" or "TOUCH" or
-            "EVAL_RO" or "EVALSHA_RO" or "FCALL_RO" or
-            "FUNCTION LOAD" or "FUNCTION LIST" or "FUNCTION DELETE" or "FUNCTION FLUSH" or
-            "FUNCTION DUMP" or "FUNCTION RESTORE" or "FUNCTION STATS" or
-            "SCRIPT EXISTS" or "SCRIPT LOAD" or "SCRIPT FLUSH" or
-            "BF.CARD" or "BF.DEBUG" or "BF.EXISTS" or "BF.INFO" or "BF.MEXISTS" or "BF.SCANDUMP" or
-            "CF.COUNT" or "CF.DEBUG" or "CF.EXISTS" or "CF.INFO" or
-            "CF.MEXISTS" or "CF.SCANDUMP" or "CMS.INFO" or "CMS.QUERY" or
-            "TDIGEST.BYRANK" or "TDIGEST.BYREVRANK" or "TDIGEST.CDF" or "TDIGEST.INFO" or
-            "TDIGEST.MAX" or "TDIGEST.MIN" or "TDIGEST.QUANTILE" or "TDIGEST.RANK" or
-            "TDIGEST.REVRANK" or "TDIGEST.TRIMMED_MEAN" or
-            "TOPK.COUNT" or "TOPK.INFO" or "TOPK.LIST" or "TOPK.QUERY" or
-            "TS.GET" or "TS.INFO" or "TS.MGET" or "TS.MRANGE" or "TS.MREVRANGE" or
-            "TS.NRANGE" or "TS.NREVRANGE" or "TS.QUERYINDEX" or "TS.QUERYLABELS" or
-            "TS.RANGE" or "TS.READ" or "TS.REVRANGE" or "TIMESERIES.REFRESHCLUSTER" or
-            "FT.AGGREGATE" or "FT.ALIASLIST" or "FT.CURSOR" or "FT.CURSOR DEL" or
-            "FT.CURSOR GC" or "FT.CURSOR READ" or "FT.DICTDUMP" or "FT.EXPLAIN" or
-            "FT.EXPLAINCLI" or "FT.INFO" or "FT.PROFILE" or "FT.SEARCH" or
-            "FT.SPELLCHECK" or "FT.SUGGET" or "FT.SUGLEN" or "FT.SYNDUMP" or "FT.TAGVALS" or
-            "JSON.DEBUG" or "JSON.DEBUG MEMORY" or "JSON.DEBUG FIELDS" or "JSON.DEBUG HELP" or "LOLWUT" or
-            "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
-            "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY STATS" or
-            "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
-            "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "SLOWLOG LEN" or "LATENCY LATEST" or "CONFIG GET" or
-            "LATENCY DOCTOR" or "LATENCY HISTORY" or "LATENCY HISTOGRAM" or "MEMORY DOCTOR" or "MEMORY PURGE" or
-            "ACL WHOAMI" or "ACL LIST" or "ACL GETUSER" or "ACL CAT" or "ACL LOG" or "ACL DRYRUN" or
-            "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST" or
-            "CLUSTER INFO" or "CLUSTER NODES" or "CLUSTER SHARDS" or "CLUSTER LINKS" or "CLUSTER MYID" or
-            "CLUSTER MYSHARDID" or "CLUSTER KEYSLOT" or "CLUSTER COUNTKEYSINSLOT" or "CLUSTER SLOT-STATS" or
-            "COMMANDLOG GET" or "COMMANDLOG LEN" or
-            "HOTKEYS GET" or "HOTKEYS START" or "HOTKEYS STOP" or "HOTKEYS RESET";
 
     private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
@@ -864,35 +814,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         count = 0;
         return false;
     }
-
-    // RedisJSON writes must appear here or in IsMultiKeyMutation (JSON.MSET);
-    // RespireJsonClientTests.EveryJsonCommandHasAKeyLayoutAndACacheClassification fails when a JSON command is not classified.
-    internal static bool IsSingleKeyMutation(string operation)
-        => operation is
-            "SET" or "DELEX" or "DELIFEQ" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
-            "JSON.SET" or "JSON.DEL" or "JSON.FORGET" or "JSON.CLEAR" or "JSON.ARRAPPEND" or "JSON.ARRINSERT" or
-            "JSON.ARRPOP" or "JSON.ARRTRIM" or "JSON.MERGE" or "JSON.NUMINCRBY" or "JSON.NUMMULTBY" or "JSON.NUMPOWBY" or "JSON.STRAPPEND" or "JSON.TOGGLE" or
-            // TS.ADD, TS.INCRBY, TS.DECRBY and TS.DEL are deliberately absent: a compaction rule on
-            // the source series makes Redis update the destination series too, so they must flush.
-            "TS.CREATE" or "TS.ALTER" or
-            "BF.RESERVE" or "BF.ADD" or "BF.MADD" or "BF.INSERT" or "BF.LOADCHUNK" or
-            "CF.RESERVE" or "CF.ADD" or "CF.ADDNX" or "CF.INSERT" or "CF.INSERTNX" or "CF.DEL" or "CF.LOADCHUNK" or
-            "CMS.INITBYDIM" or "CMS.INITBYPROB" or "CMS.INCRBY" or "CMS.MERGE" or
-            "TOPK.RESERVE" or "TOPK.ADD" or "TOPK.INCRBY" or
-            "TDIGEST.CREATE" or "TDIGEST.RESET" or "TDIGEST.ADD" or "TDIGEST.MERGE" or
-            "INCR" or "INCRBY" or "INCRBYFLOAT" or "DECR" or "DECRBY" or
-            "PEXPIRE" or "PEXPIREAT" or "PERSIST" or
-            "HSET" or "HSETNX" or "HDEL" or "HINCRBY" or "HINCRBYFLOAT" or
-            "HEXPIRE" or "HEXPIREAT" or "HPERSIST" or
-            "LPUSH" or "RPUSH" or "LPUSHX" or "RPUSHX" or "LPOP" or "RPOP" or "LREM" or "LTRIM" or "LSET" or "LINSERT" or
-            "SADD" or "SREM" or "SPOP" or
-            "ZADD" or "ZINCRBY" or "ZREM" or "ZREMRANGEBYRANK" or "ZREMRANGEBYSCORE" or "ZREMRANGEBYLEX" or
-            "XADD" or "XACK" or "XDEL" or "XTRIM" or "XSETID" or
-            "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
-            "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD" or "VADD" or "VREM" or "VSETATTR";
-
-    internal static bool IsMultiKeyMutation(string operation)
-        => operation is "MSET" or "MSETNX" or "MSETEX" or "DEL" or "UNLINK" or "JSON.MSET";
 
     internal readonly record struct ReadToken(
         InflightRead State,

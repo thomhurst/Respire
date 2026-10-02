@@ -180,11 +180,19 @@ Thus an invalidation that races a response can never be undone by stale insertio
 timeout, protocol failure, redirect, and conversion failure release the in-flight token without
 publishing a value.
 
-Local single-key mutations invalidate their resolved primary key and its projections before sending and after reply
-completion. Commands whose dependencies cannot be proven, raw commands, scripts, blocking
-commands, cluster-wide mutations, batches, and transactions conservatively swap out the entire
+Local mutations invalidate their written keys and projections before sending and after reply
+completion. The generated command catalog classifies keyspace effects; `RawCommandKeyLayouts`
+combines that metadata with argument layouts and destination-only overrides. Known raw writes
+use those same layouts. Set-store and merge commands retain cached source values, while an
+explicit `MultiKey` declaration still fences every declared key. Unknown effects, unproven
+dependencies, blocking commands, cluster-wide mutations, batches, and transactions swap out the entire
 store before dispatch and again when their awaited execution finishes. Completion fences also run
 on error and cancellation. Redis pushes remain authoritative for mutations from other clients.
+
+TimeSeries sample writes and deletes, including `TS.MADD`, can change compaction destinations
+absent from their arguments, so they retain full-cache fences. `TS.CREATERULE` and
+`TS.DELETERULE` fence both named series. The layout classification test audits unknown and
+indirect cases explicitly; cacheable-read eligibility remains separate from mutation effects.
 
 ## Continuity and failure behavior
 

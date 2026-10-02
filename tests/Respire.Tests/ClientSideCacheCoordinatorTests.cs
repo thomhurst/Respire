@@ -291,6 +291,14 @@ public class ClientSideCacheCoordinatorTests
         {
             ("COPY", RespireCommands.Key.COPY, ["copy-source", "copy-destination"],
                 "copy-destination", ["copy-source"]),
+            ("SDIFFSTORE", RespireCommands.Set.SDIFFSTORE, ["set-destination", "set-source-a", "set-source-b"],
+                "set-destination", ["set-source-a", "set-source-b"]),
+            ("SINTERSTORE", RespireCommands.Set.SINTERSTORE, ["set-destination", "set-source-a", "set-source-b"],
+                "set-destination", ["set-source-a", "set-source-b"]),
+            ("SUNIONSTORE", RespireCommands.Set.SUNIONSTORE, ["set-destination", "set-source-a", "set-source-b"],
+                "set-destination", ["set-source-a", "set-source-b"]),
+            ("PFMERGE", RespireCommands.HyperLogLog.PFMERGE, ["hll-destination", "hll-source-a", "hll-source-b"],
+                "hll-destination", ["hll-source-a", "hll-source-b"]),
             ("BITOP", RespireCommands.Bitmap.BITOP, ["OR", "bit-destination", "bit-source-a", "bit-source-b"],
                 "bit-destination", ["bit-source-a", "bit-source-b"]),
             ("ZDIFFSTORE", RespireCommands.SortedSet.ZDIFFSTORE,
@@ -330,6 +338,24 @@ public class ClientSideCacheCoordinatorTests
                 await Assert.That(Read(cache, source)).IsEqualTo("cached-source");
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         }
+    }
+
+    [Test]
+    public async Task EveryKeyLayoutHasAnAuditedMutationClassification()
+    {
+        var classifications = RawCommandKeyLayouts.MutationClassifications.ToArray();
+        await Assert.That(classifications.Length).IsGreaterThan(200);
+        foreach (var (operation, mutation) in classifications)
+        {
+            await Assert.That(Enum.IsDefined(mutation)).IsTrue().Because(operation);
+            if (RespireCommands.GetCacheMutation(operation) == RespireCacheMutation.ReadOnly)
+                await Assert.That(mutation).IsEqualTo(RawCommandKeyLayouts.MutationKind.ReadOnly).Because(operation);
+        }
+        // These layouts do not establish a bounded cache mutation. Any new unknown entry requires review.
+        await Assert.That(classifications.Where(entry => entry.Mutation == RawCommandKeyLayouts.MutationKind.Unknown)
+            .Select(entry => entry.Operation).Order()).IsEquivalentTo(new[] { "MIGRATE", "PFCOUNT", "XREADGROUP" });
+        await Assert.That(classifications.Where(entry => entry.Mutation == RawCommandKeyLayouts.MutationKind.IndirectKeys)
+            .Select(entry => entry.Operation).Order()).IsEquivalentTo(new[] { "TS.ADD", "TS.DECRBY", "TS.DEL", "TS.INCRBY", "TS.MADD" });
     }
 
     [Test]
