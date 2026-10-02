@@ -260,12 +260,28 @@ internal sealed partial class ClusterRouter
     {
         try
         {
+            if (Volatile.Read(ref NearestLatency) is not null)
+            {
+                // Nearest can serve a healthy primary while this advisory discovery is pending.
+                // Do not put CLUSTER SLOTS ahead of its reads in the data connection's FIFO.
+                await using var connection = await RespireConnection.ConnectAsync(node.Host, node.Port,
+                    _options.ToConnectionOptions(), _logger, cancellationToken).ConfigureAwait(false);
+                var load = await TryLoadSlotsAsync(node, cancellationToken,
+                    expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: refreshRound.SnapshotBatch,
+                    keepUncoveredOwners: true, requiredSlot: slot, replicaRefresh: refreshRound,
+                    queryConnection: connection).ConfigureAwait(false);
+                return load.Loaded && load.CoversRequiredSlot;
+            }
             return await TryRefreshTopologyAsync(node, cancellationToken, discovery: null,
                 expectedTopologyVersion, refreshRound.SnapshotBatch, keepUncoveredOwners: true, requiredSlot: slot,
                 replicaRefresh: refreshRound).ConfigureAwait(false);
         }
         catch (Exception error) when (cancellationToken.IsCancellationRequested
             && (error is OperationCanceledException || IsDiscoveryFailure(error)))
+        {
+            return false;
+        }
+        catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery: null))
         {
             return false;
         }

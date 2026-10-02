@@ -7,10 +7,13 @@ internal sealed partial class ClusterRouter
     internal ReadLatencySampler<RespireConnection>? NearestLatency;
     private object? _nearestGate;
     private int _nearestCursor;
+    private int _nearestReplicaDiscovery;
 
     private async ValueTask<RespireConnection> GetNearestReadConnectionAsync(
-        int slot, CancellationToken cancellationToken, DiscoveryRound? discovery, bool retry = true)
+        int slot, CancellationToken cancellationToken, DiscoveryRound? discovery, bool retry = true,
+        long? samplingDeadline = null)
     {
+        var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
         if (Volatile.Read(ref _disposed) != 0)
         {
@@ -37,17 +40,24 @@ internal sealed partial class ClusterRouter
         if (routes is null || ReferenceEquals(routes, _unknownReplicaRoutes))
         {
             routes = null;
-            try { routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false); }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
+            if (primary is not null)
+            {
+                if (Interlocked.CompareExchange(ref _nearestReplicaDiscovery, 1, 0) == 0)
+                    _ = DiscoverNearestReplicasAsync(slot);
+            }
+            else
+            {
+                try { routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false); }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
+            }
         }
 
         var nodes = routes?.Nodes ?? [];
-        var best = new NearestReadSelection<RespireConnection>();
         var start = (uint)Interlocked.Increment(ref _nearestCursor);
-        for (var offset = 0; offset <= nodes.Length; offset++)
+        var best = new NearestReadSelection<RespireConnection>(start, nodes.Length + 1);
+        while (best.TryNext(out var index))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var index = (int)((start + (uint)offset) % (uint)(nodes.Length + 1));
             RespireConnection connection;
             if (index == 0)
             {
@@ -73,8 +83,13 @@ internal sealed partial class ClusterRouter
                 }
             }
             if (!connection.IsAcceptingCommands) continue;
-            var latency = await sampler.GetLatencyAsync(connection, cancellationToken).ConfigureAwait(false);
-            if (connection.IsAcceptingCommands) best.Consider(connection, latency);
+            var latency = sampler.GetLatencyAsync(connection, default);
+            if (connection.IsAcceptingCommands) best.QueueSample(connection, latency);
+        }
+        while (best.TryNextSample(out var pending))
+        {
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, deadline, cancellationToken).ConfigureAwait(false);
+            if (pending.Candidate.IsAcceptingCommands) best.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
         }
         if (best.TryGet(out var selected))
         {
@@ -86,9 +101,18 @@ internal sealed partial class ClusterRouter
                     _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
                 return selected;
             }
-            if (retry) return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false).ConfigureAwait(false);
+            if (retry) return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
+                samplingDeadline: deadline).ConfigureAwait(false);
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
+    }
+
+    private async Task DiscoverNearestReplicasAsync(int slot)
+    {
+        try { await GetReplicaRoutesAsync(slot, _stopDiscovery.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_stopDiscovery.IsCancellationRequested) { }
+        catch (Exception error) { LogReplicaRefreshFailure(slot, error); }
+        finally { Volatile.Write(ref _nearestReplicaDiscovery, 0); }
     }
 }

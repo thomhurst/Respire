@@ -12,6 +12,88 @@ public class NearestReadRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ColdCandidatesShareOneSamplingWaitBudget(bool cluster)
+    {
+        await using var primary = Server("primary");
+        await using var first = Server("first");
+        await using var second = Server("second");
+        await using var third = Server("third");
+        foreach (var replica in new[] { first, second, third }) replica.SuppressReply = command => command == "PING";
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*6\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{third.Port}\r\n")
+            : Reply(command, "primary");
+        var options = Options(primary, first, second, third);
+        if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+        await using var client = RespireClient.Create(options);
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        // Three stalled samples previously consumed three independent one-second waits.
+        await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2.5)))
+            .IsEqualTo("primary");
+        var sampler = cluster ? client.Core.Cluster!.NearestLatency! : client.Core.ReadRouter.NearestLatency!;
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+        foreach (var replica in new[] { first, second, third })
+            await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
+    }
+
+    [Test]
+    public async Task UnknownClusterReplicasRefreshWithoutDelayingHealthyPrimary()
+    {
+        await using var primary = Server("primary");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n")
+            : Reply(command, "primary");
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        var slot = ClusterHash.GetSlot("key");
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(slot, router.GetKnownSlotOwner(slot)!);
+        primary.SuppressReply = command => command == "CLUSTER SLOTS";
+        // A separate topology connection can stall without holding up this primary's data socket.
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2)))
+            .IsEqualTo("primary");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
+            await Task.Delay(1, timeout.Token);
+        await Assert.That(await nearest.GetStringAsync("again").AsTask().WaitAsync(TimeSpan.FromSeconds(2)))
+            .IsEqualTo("primary");
+        var commands = primary.ReceivedCommands.ToList();
+        await Assert.That(primary.ReceivedConnectionIds[commands.FindLastIndex(command => command == "CLUSTER SLOTS")])
+            .IsNotEqualTo(primary.ReceivedConnectionIds[commands.FindIndex(command => command == "GET key")]);
+    }
+
+    [Test]
+    public async Task UnknownSentinelReplicasDoNotDelayHealthyPrimary()
+    {
+        await using var primary = Server("primary");
+        await using var sentinel = new FakeRespServer(16, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? System.Text.Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+            SuppressReply = command => command.StartsWith("SENTINEL REPLICAS "),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)], CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2)))
+            .IsEqualTo("primary");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!sentinel.ReceivedCommands.Any(command => command.StartsWith("SENTINEL REPLICAS ")))
+            await Task.Delay(1, timeout.Token);
+        await Assert.That(await nearest.GetStringAsync("again").AsTask().WaitAsync(TimeSpan.FromSeconds(2)))
+            .IsEqualTo("primary");
+    }
+
+    [Test]
     public async Task CanceledColdSamplingWaitPreservesConnectionReplyOrder()
     {
         await using var primary = Server("primary");
@@ -140,6 +222,11 @@ public class NearestReadRoutingTests
             client.Core.Cluster.SetSlotOwner(slot, client.Core.Cluster.GetKnownSlotOwner(slot)!);
         }
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        if (movedCoverage)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (await nearest.GetStringAsync("key", timeout.Token) != "replica") await Task.Delay(1, timeout.Token);
+        }
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
         await Assert.That(await nearest.SetAsync("key", "write")).IsTrue();
         await Assert.That(primary.ReceivedCommands).Contains("SET key write");
@@ -169,6 +256,8 @@ public class NearestReadRoutingTests
         });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        await client.PingAsync();
+        await client.Core.ReadRouter.RefreshNowAsync(default);
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
         Volatile.Write(ref removed, true);
@@ -255,12 +344,20 @@ public class NearestReadRoutingTests
     }
 
     [Test]
-    public async Task EqualLatenciesRotateBetweenEligibleRoles()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EqualLatenciesRotateBetweenEligibleRoles(bool pendingReplica)
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
         await using var client = RespireClient.Create(Options(primary, replica));
-        client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        var reply = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, token) =>
+        {
+            if (pendingReplica && connection.Port == replica.Port) return new(reply.Task.WaitAsync(token));
+            reply.TrySetResult(10L);
+            return ValueTask.FromResult(10L);
+        });
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         var first = await nearest.GetStringAsync("key");
         var second = await nearest.GetStringAsync("key");

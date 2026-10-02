@@ -493,7 +493,8 @@ bypass the primary tracking cache, and cursor reads keep their original endpoint
 
 Measurements use advisory `PING` commands on the physical connections that can serve the read.
 Each router starts at most four probes concurrently, with no waiting probe queue. Each connection
-starts at most one probe per second, and selection waits at most one second for a probe. A probe
+starts at most one probe per second. All candidates and any topology retry share one second of
+sampling wait time per selection. Connection establishment retains its configured timeout. A probe
 that exceeds this budget still occupies its probe slot until its reply or connection failure:
 Respire does not queue repeated PINGs behind a stalled one, even with `CommandTimeout = null`.
 Sampling happens only
@@ -502,7 +503,8 @@ The first successful sample establishes the estimate. Later samples use one quar
 measurement and three quarters of the previous estimate to reduce jitter.
 
 A sample younger than ten seconds can serve selection immediately while a refresh runs in the
-background. A cold or expired sample waits for an available shared probe. Caller cancellation
+background. A cold or expired sample waits for an available shared probe within the selection's
+remaining sampling budget. Caller cancellation
 stops that caller's wait without canceling the shared probe. When all probe slots are busy,
 unsampled candidates remain eligible with unknown latency. Measured candidates take precedence
 over unknown candidates; equal estimates, or entirely unknown estimates, rotate selection order.
@@ -511,6 +513,12 @@ role-validated connection. Connection failures use a cooldown before retrying; c
 Sentinel replica cooldowns follow `ReplicaRefreshInterval`, while primary and Cluster candidate
 cooldowns last one second. Replaced physical connections start with fresh estimates, and removed
 candidates cannot win a new selection. Existing connection draining and command replay rules apply.
+
+When a healthy primary is available, initial Sentinel or Cluster replica discovery runs in the
+background. Reads can use that primary until replicas are known. Cluster replica refresh uses
+temporary topology connections once Nearest sampling is active, so a stalled `CLUSTER SLOTS`
+reply does not block the primary's data connection. Shared discovery still coalesces requests and
+applies the existing refresh throttles and topology version checks.
 
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular
