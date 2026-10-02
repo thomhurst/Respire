@@ -80,8 +80,12 @@ jobs:
           tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
                           '        RespireScript script, RespireKey[] keys, RespireValue[] args,\n'
                           '        CancellationToken cancellationToken, bool requireReliableCorrectionOrdering,\n'
-                          '        bool captureSendTimestampOnly)\n'
-                          '        => StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n\n')
+                          '        bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)\n'
+                          '    {\n'
+                          '        // The pinned baseline API has no serialization callback; invoke it immediately before its legacy send path.\n'
+                          '        onSerialized?.Invoke(Stopwatch.GetTimestamp());\n'
+                          '        return StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n'
+                          '    }\n\n')
           assert source.count(tracked_marker) == 1
           source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
           source = source.replace(marker, shim + marker, 1)
