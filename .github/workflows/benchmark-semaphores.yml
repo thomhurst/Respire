@@ -99,7 +99,10 @@ jobs:
           if tracked_api not in source:
               assert source.count(tracked_marker) == 1
               source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
-          assert source.count(tracked_api) == 1
+              tracked_shim_api = 'bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)'
+              assert source.count(tracked_shim_api) == 1
+          else:
+              assert source.count(tracked_api) == 1
           assert source.count(fence_api) == 1
           path.write_text(source)
 

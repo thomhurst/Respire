@@ -84,7 +84,9 @@ public partial interface IStringCommands
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The stream remains open and is not seeked. Respire reads no more than
+    /// The stream remains open. Normal streaming does not seek it; when a seekable stream is replayed
+    /// after a cluster redirect, Respire seeks to the position captured when this method is called.
+    /// Respire reads no more than
     /// <paramref name="length"/> bytes; any surplus bytes are left unread in the stream. A seekable
     /// stream with fewer remaining bytes is rejected before anything is sent. Respire reads the first
     /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early

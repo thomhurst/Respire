@@ -240,7 +240,9 @@ internal sealed partial class RespireConnection
                     translated = TranslateStreamedSetCancellation(retryCancellation, cancellationToken, timeoutCancellation, phase);
                 }
             }
-            if ((phase is StreamedSetPhase.ReadingFirstChunk or StreamedSetPhase.AskingQueued)
+            if ((phase is StreamedSetPhase.ReadingFirstChunk
+                    or StreamedSetPhase.AskingQueued
+                    or StreamedSetPhase.AskingAccepted)
                 && (translated is RespireConnectionRetiredException
                     || error is RespireConnectionRetiredException && translated is null))
             {
