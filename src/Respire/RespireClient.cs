@@ -3634,6 +3634,10 @@ public sealed partial class RespireClient : IRespireClient
                             acquiringRedirectPool = true;
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
+                            // ASK does not publish a slot owner: preserve the topology observed before
+                            // target acquisition so a concurrent refresh invalidates this redirect.
+                            if (error.Code == RespireErrorCodes.Ask)
+                                routeVersion = cluster.CaptureSlotVersion(slot);
                             var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
                                     error, connection, acquisitionToken, slot, discovery)
                                 .ConfigureAwait(false);
@@ -3647,7 +3651,9 @@ public sealed partial class RespireClient : IRespireClient
                             pool.Return(connection);
                             returned = true;
                             pool = redirectedPool;
-                            routeVersion = cluster.CaptureSlotVersion(slot);
+                            // MOVED and READONLY recovery can publish a new owner during acquisition.
+                            if (error.Code != RespireErrorCodes.Ask)
+                                routeVersion = cluster.CaptureSlotVersion(slot);
                             if (command is IReplayableStreamingRespCommand replayable)
                             {
                                 try { replayable.ResetSourceForReplay(); }

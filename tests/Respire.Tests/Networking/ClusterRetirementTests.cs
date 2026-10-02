@@ -1926,6 +1926,71 @@ public class ClusterRetirementTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task AskUploadRevalidatesSlotChangedDuringTargetAcquisition(bool discovery)
+    {
+        var slot = ClusterHash.GetSlot("key");
+        var hello = "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdHandshake = 1;
+        await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
+            SuppressReply = command =>
+            {
+                if (command != "HELLO 3" || Volatile.Read(ref holdHandshake) == 0) return false;
+                connecting.TrySetResult();
+                return true;
+            },
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello
+                : command.StartsWith("SET ", StringComparison.Ordinal)
+                    ? System.Text.Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{oldTarget.Port}\r\n")
+                    : FakeRespServer.OkReply,
+        };
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
+        // Keep the obsolete ASK target alive so retirement alone cannot reject it.
+        router.SetSlotOwner((slot + 1) % 16384, oldNode);
+        using var timeout = new CancellationTokenSource(Limit);
+        using var source = new MemoryStream("payload"u8.ToArray());
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+        await connecting.Task.WaitAsync(timeout.Token);
+        if (discovery)
+        {
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
+            router.ApplyTopology([
+                new(slot, slot, new("127.0.0.1", replacement.Port), "replacement", []),
+                new((slot + 1) % 16384, (slot + 1) % 16384, new("127.0.0.1", oldTarget.Port), "ask", []),
+            ], version, 2L);
+        }
+        else
+            router.SetSlotOwner(slot, router.GetOrCreateNode(new("127.0.0.1", replacement.Port)));
+        Volatile.Write(ref holdHandshake, 0);
+        await oldTarget.SendRawAsync(hello, oldTarget.ReceivedConnectionIds[^1]);
+
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(oldNode.IsRetired).IsFalse();
+        await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task AskUploadRevalidatesMovingPoolBeforeOldPoolStartsStopping(bool changeDuringRead)
     {
         var slot = ClusterHash.GetSlot("key");
