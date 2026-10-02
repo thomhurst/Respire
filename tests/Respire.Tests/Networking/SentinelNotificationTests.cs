@@ -24,6 +24,18 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments("0:0:0:0:0:0:0:1", "::1")]
+    [Arguments("::ffff:192.0.2.1", "192.0.2.1")]
+    public async Task CoalescedSourceAliasesUseCanonicalAddresses(string candidate, string resolved)
+    {
+        var hint = new SentinelHint("switch", NewPrimary, OldPrimary,
+            AdditionalSources: [new(new("other.internal", 6379), [resolved])]);
+        await Assert.That(SentinelResolver.MatchesSwitchSource(new(candidate, 6379), in hint)).IsTrue();
+        await Assert.That(SentinelResolver.MatchesSwitchSource(new(candidate, 6380), in hint)).IsFalse();
+        await Assert.That(SentinelResolver.MatchesSwitchSource(new("192.0.2.2", 6379), in hint)).IsFalse();
+    }
+
+    [Test]
     public async Task ConfigurationEpochNeverMovesBackwardOrChangesOwnerAtTheSameEpoch()
     {
         var state = new SentinelDiscoveryState([]);

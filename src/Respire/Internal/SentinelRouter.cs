@@ -554,13 +554,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     // failover discovery or prevent this monitor from reading later events.
     private async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
-        if (IPAddress.TryParse(host, out var literal)) return [NormalizeAddress(literal)];
+        if (IPAddress.TryParse(host, out var literal)) return [SentinelResolver.NormalizeAddress(literal)];
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(core.Options.ConnectTimeout);
             var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
-            return Array.ConvertAll(addresses, NormalizeAddress);
+            return Array.ConvertAll(addresses, SentinelResolver.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -569,9 +569,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             return null;
         }
     }
-
-    private static string NormalizeAddress(IPAddress address)
-        => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     // Logging is diagnostic only: a failing user logger must never stop monitoring, rediscovery or disposal.
     private void SafeLog<TState>(TState state, Action<ILogger, TState> log)

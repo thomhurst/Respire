@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Networking;
@@ -413,6 +414,7 @@ internal static class SentinelResolver
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)
     {
+        var candidateHost = NormalizeHost(candidate.Host);
         if (hint.OldPrimary is { } first && Matches(first, hint.OldPrimaryAddresses)) return true;
         if (hint.AdditionalSources is { } additional)
             foreach (var source in additional)
@@ -420,9 +422,15 @@ internal static class SentinelResolver
         return false;
 
         bool Matches(RespireEndpoint source, string[]? addresses)
-            => source.Port == candidate.Port && (RespireEndpointComparer.Instance.Equals(candidate, source)
-                || addresses is not null && addresses.Contains(candidate.Host, StringComparer.OrdinalIgnoreCase));
+            => source.Port == candidate.Port && (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Host))
+                || addresses is not null && addresses.Contains(candidateHost, StringComparer.OrdinalIgnoreCase));
     }
+
+    private static string NormalizeHost(string host)
+        => IPAddress.TryParse(host, out var address) ? NormalizeAddress(address) : host;
+
+    internal static string NormalizeAddress(IPAddress address)
+        => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch)
     {
