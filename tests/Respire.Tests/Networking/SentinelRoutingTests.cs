@@ -2052,6 +2052,7 @@ public class SentinelRoutingTests
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
         var started = new ConcurrentQueue<Activity>();
         var stopped = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
@@ -2059,9 +2060,11 @@ public class SentinelRoutingTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = started.Enqueue,
-            ActivityStopped = stopped.Enqueue,
+            ActivityStarted = activity => { if (IsUploadActivity(activity)) started.Enqueue(activity); },
+            ActivityStopped = activity => { if (IsUploadActivity(activity)) stopped.Enqueue(activity); },
         };
+        bool IsUploadActivity(Activity activity) => activity.OperationName == "SET"
+            && activity.GetTagItem("server.port") is int port && (port == oldPrimary.Port || port == promoted.Port);
         ActivitySource.AddActivityListener(listener);
         await using var source = new PausedTelemetryStream();
         var pending = client.Strings.SetAsync("upload", source, source.Length).AsTask();
@@ -2103,6 +2106,7 @@ public class SentinelRoutingTests
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
         var originalPool = client.Core.DedicatedPool;
         await using var source = new MemoryStream("payload"u8.ToArray());
         var pending = client.Strings.SetAsync("upload", source, source.Length).AsTask();
