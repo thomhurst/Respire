@@ -538,6 +538,9 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Preserve worker ownership through client cleanup awaits without flowing it into
+        // unrelated tasks created by callbacks.
+        var disposeStartedOnSmigratedWorker = Cluster?.IsOnSmigratedWorker == true;
         if (Disposed)
         {
             return;
@@ -601,7 +604,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
             cluster.NodeRetired -= NotifyCommandNodeRetired;
             cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
-            await cluster.DisposeAsync().ConfigureAwait(false);
+            await cluster.DisposeAsync(disposeStartedOnSmigratedWorker).ConfigureAwait(false);
         }
         else
         {

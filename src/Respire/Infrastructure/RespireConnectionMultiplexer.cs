@@ -10,6 +10,12 @@ using Respire.Protocol;
 
 namespace Respire.Infrastructure;
 
+// The scope is the receiving physical connection. The token orders the push against slot
+// owner mutations (see ClusterSlotMutationClock).
+internal delegate void MaintenanceNotificationHandler(
+    RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification,
+    long slotMutationToken);
+
 /// <summary>
 /// Round-robins commands across a fixed set of fully multiplexed <see cref="RespireConnection"/>s.
 /// Every connection pipelines concurrent commands, so there is no per-command checkout — a dead
@@ -78,6 +84,116 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
+    // Raised for SMIGRATED pushes only; other maintenance kinds have no topology consumer.
+    // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
+    // Subscription changes record handler epochs using ClusterSlotMutationClock, so a receive
+    // token selects the handlers that were eligible before attach, detach, retirement or disposal.
+    internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived
+    {
+        add
+        {
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                CloseMaintenanceHandlerEpoch(boundary);
+                _maintenanceNotificationReceived += value;
+                if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                {
+                    ClusterSlotMutationClock.Track(this);
+                    _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+                }
+            }
+        }
+        remove
+        {
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                CloseMaintenanceHandlerEpoch(boundary);
+                _maintenanceNotificationReceived -= value;
+                if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                {
+                    ClusterSlotMutationClock.Track(this);
+                    _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+                }
+            }
+        }
+    }
+
+    private readonly object _maintenanceHandlersGate = new();
+    private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
+    // A receive loop stamps and registers its fence before waiting for this gate. Keep only
+    // epochs that an in-flight receive can still select; older closed epochs are pruned.
+    private readonly List<(long Start, long End, MaintenanceNotificationHandler Handlers)> _maintenanceHandlerEpochs = [];
+    internal int MaintenanceHandlerEpochCount
+    {
+        get { lock (_maintenanceHandlersGate) return _maintenanceHandlerEpochs.Count; }
+    }
+
+    // Receive loop: the fence is stamped as soon as the push is identified. Select its matching
+    // subscription epoch under the same gate used to publish epoch boundaries.
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers(long slotMutationToken)
+    {
+        lock (_maintenanceHandlersGate)
+        {
+            for (var i = _maintenanceHandlerEpochs.Count - 1; i >= 0; i--)
+            {
+                var epoch = _maintenanceHandlerEpochs[i];
+                if (slotMutationToken >= epoch.Start && slotMutationToken < epoch.End)
+                    return epoch.Handlers;
+            }
+            return null;
+        }
+    }
+
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
+    {
+        using var capture = ClusterSlotMutationClock.BeginCapture(this);
+        return CaptureMaintenanceHandlers(capture.Token);
+    }
+
+    internal void PruneMaintenanceHandlerEpochs()
+    {
+        lock (_maintenanceHandlersGate) PruneMaintenanceHandlerEpochsLocked();
+    }
+
+    private void CloseMaintenanceHandlerEpoch(long boundary)
+    {
+        if (_maintenanceHandlerEpochs.Count is > 0)
+        {
+            var current = _maintenanceHandlerEpochs[^1];
+            if (current.End == long.MaxValue)
+                _maintenanceHandlerEpochs[^1] = (current.Start, boundary, current.Handlers);
+        }
+        PruneMaintenanceHandlerEpochsLocked();
+    }
+
+    private void PruneMaintenanceHandlerEpochsLocked()
+    {
+        var removable = 0;
+        while (removable < _maintenanceHandlerEpochs.Count)
+        {
+            var epoch = _maintenanceHandlerEpochs[removable];
+            if (epoch.End == long.MaxValue
+                || ClusterSlotMutationClock.HasActiveCapture(this, epoch.Start, epoch.End)) break;
+            removable++;
+        }
+        if (removable > 0) _maintenanceHandlerEpochs.RemoveRange(0, removable);
+    }
+
+    // The caller captures handlers for the token recorded by the receive loop.
+    internal void PublishMaintenanceNotification(MaintenanceNotificationHandler? handlers,
+        object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
+        => handlers?.Invoke(this, sequenceScope, notification, slotMutationToken);
+
+    // Test convenience: delivers the notification as if it was received with this token now.
+    internal void PublishMaintenanceNotification(
+        object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
+        => PublishMaintenanceNotification(CaptureMaintenanceHandlers(slotMutationToken), sequenceScope, notification, slotMutationToken);
+
+    // Test convenience: stamps the notification as received now.
+    internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
+        => PublishMaintenanceNotification(sequenceScope, notification, ClusterSlotMutationClock.Next());
 
     internal bool IsReconnecting
     {
@@ -919,6 +1035,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     private void ObservePublishedConnection(int slot, RespireConnection connection)
     {
+        connection.ReplayUnpublishedMigrations();
         connection.MovingNotification += announcement => QueueMovingHandoff(slot, connection, announcement);
         // Replay a MOVING parsed before this handler existed (for example during the handshake).
         // The handler is attached first, so a MOVING parsed between these two lines is delivered
@@ -1112,11 +1229,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (_retirementCompletion is not null) return _retirementCompletion.Task;
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _retired, 1);
+            lock (_maintenanceHandlersGate)
+            {
+                Volatile.Write(ref _retired, 1);
+            }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
         _stopConnecting.Cancel();
-        foreach (var connection in _connections) _ = connection?.RetireAsync();
         _ = RetireCoreAsync(completion);
         if (publish) DrainStateNotifications();
         return completion.Task;
@@ -1169,8 +1288,15 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             await WaitForPublicationAsync().ConfigureAwait(false);
-            await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
+            var connections = _connections.OfType<RespireConnection>().ToArray();
+            foreach (var connection in connections) connection.StopAcceptingCommands();
+            // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
+            // loop before the connection retirement drain closes sockets with empty command rings.
+            await Task.WhenAll(connections.Select(DrainMaintenanceNotificationsBeforeRetirementAsync))
                 .ConfigureAwait(false);
+            lock (_maintenanceHandlersGate)
+                CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
+            await Task.WhenAll(connections.Select(connection => connection.RetireAsync())).ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
             Volatile.Write(ref _retirementDrained, true);
@@ -1187,6 +1313,57 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    private async Task DrainMaintenanceNotificationsBeforeRetirementAsync(RespireConnection connection)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
+        timeout.CancelAfter(_options.ConnectTimeout);
+        try
+        {
+            await connection.DrainPendingMaintenanceNotificationsAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            // The barrier may time out behind accepted commands. Let callers finish through
+            // CommandTimeout or maintenance relaxation; use the explicit fallback when disabled.
+            // Then abort the connection to release the unanswered barrier.
+            using var drainTimeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
+            var commandDrainTimeout = _options.CommandTimeout ?? _options.RetirementDrainFallbackTimeout;
+            if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+                && _options.MaintenanceRelaxedTimeout > commandDrainTimeout)
+                commandDrainTimeout = _options.MaintenanceRelaxedTimeout;
+            drainTimeout.CancelAfter(commandDrainTimeout);
+            try
+            {
+                await connection.WaitForOtherCommandsToCompleteAsync(drainTimeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (drainTimeout.IsCancellationRequested)
+            {
+                // Preserve accepted commands through their deadline, including maintenance relaxation.
+            }
+
+            // A streamed reply has left the in-flight ring. Preserve it while the reader makes
+            // progress, then abort only after its idle grace expires.
+            var streamIdleTimeout = _options.RetirementDrainFallbackTimeout;
+            if (_options.CommandTimeout is { } streamCommandTimeout && streamCommandTimeout > streamIdleTimeout)
+                streamIdleTimeout = streamCommandTimeout;
+            if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+                && _options.MaintenanceRelaxedTimeout > streamIdleTimeout)
+                streamIdleTimeout = _options.MaintenanceRelaxedTimeout;
+            _ = await connection.WaitForActiveBulkStreamToCompleteAsync(streamIdleTimeout, _abortCancellation.Token)
+                .ConfigureAwait(false);
+
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception disposeError)
+            {
+                try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
+                catch { /* Logging must not stop retirement. */ }
+            }
+
+            try { _logger?.LogDebug(error, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", Host, Port); }
+            catch { /* Logging must not stop retirement. */ }
+        }
+    }
+
     public ValueTask DisposeAsync()
     {
         TaskCompletionSource completion;
@@ -1195,8 +1372,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
             completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _disposed, 1);
-            Volatile.Write(ref _retired, 1);
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                Volatile.Write(ref _disposed, 1);
+                Volatile.Write(ref _retired, 1);
+                CloseMaintenanceHandlerEpoch(boundary);
+            }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
         _stopConnecting.Cancel();

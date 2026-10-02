@@ -39,7 +39,23 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
     private readonly object?[] _slotSnapshotBatches = new object?[ClusterHash.SlotCount];
-    private int _disposed;
+    // Includes discovery publications, so queued SMIGRATED work can detect every newer
+    // route mutation without treating completed discovery as a direct-route fence.
+    // Owner-change fence for queued SMIGRATED work, separate from _slotVersions: it covers
+    // discovery publications (which keep their slot version) but not same-owner redirects.
+    // Owner-change fence for queued SMIGRATED work, separate from _slotVersions. Values come
+    // from ClusterSlotMutationClock. Which paths write which fence:
+    // - MOVED with a new owner: _slotVersions (++_topologyVersion) and a fresh mutation token.
+    // - MOVED to the current owner: _slotVersions only. It is not an owner change, so queued
+    //   SMIGRATED work for that slot must still apply.
+    // - Slot clear: _slotVersions and a fresh mutation token.
+    // - Discovery owner change: a fresh mutation token; the slot version is kept.
+    // - SMIGRATED move: _slotVersions (one ++_topologyVersion per migration) and the
+    //   notification's own receive-time token, so FIFO chains (A->B then B->C) both apply while
+    //   a callback overtaken by a later owner change is rejected.
+    // ClusterSlotFences documents when a dependent migration may cross its fence.
+    private readonly long[] _slotMutationVersions = new long[ClusterHash.SlotCount];
+    private readonly ClusterSlotFences _slotFences = new();    private int _disposed;
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
@@ -60,6 +76,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ? [new RespireEndpoint("localhost")]
             : options.Endpoints.ToArray();
         _primary = primary;
+        _smigratedNotifications = CreateSmigratedChannel();
         _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         _topologyRefreshClock = options.ClusterTopologyRefreshClock;
         _topologyRefresh = new ClusterTopologyRefreshScheduler(options.ClusterTopologyRefreshInterval, _topologyRefreshClock);
@@ -1352,7 +1369,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return null;
     }
 
-    private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint, bool observe = true, bool redirect = false)
+    internal RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint, bool observe = true, bool redirect = false)
     {
         lock (_nodesGate)
         {
@@ -1372,7 +1389,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
+    internal void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
         => ApplyTopologyCore(ranges, expectedVersion, discoveryGeneration, keepUncoveredOwners: false,
             snapshotBatch: null);
 
@@ -1481,12 +1498,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             publishedEndpoints = Enumerable.Range(0, _masters.Length)
                 .Where(index => _masterSlotCounts[index] != 0 && !_masters[index].IsRetired)
                 .Select(index => Endpoint(_masters[index])).Distinct().ToArray();
-            // Resolve stable node identity before pruning the old reverse mapping.
-            if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
-            var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
-            if (protectedNodes is not null) retained.UnionWith(protectedNodes);
-            retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
-            if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
+            retirements = RetireInactiveLocked(protectedNodes);
             _publishedDiscoveryGeneration = discoveryGeneration;
             // Older discoveries can no longer publish; later requests capture these versions.
             foreach (var (node, version) in _redirectVersions)
@@ -1541,11 +1553,37 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return result;
     }
 
+    // Caller holds _nodesGate. Shared by discovery and SMIGRATED so their cleanup cannot drift:
+    // detach every transport that no longer owns slots, except protected ones (ASK targets and
+    // routes newer than the discovery), then keep the seed on a live transport.
+    // The seed is resolved to its current identity before detaching, because detaching prunes
+    // the old reverse mapping that resolution needs. If detaching retired the seed itself, the
+    // second call moves it to a remaining master (or the first configured seed).
+    private List<RetiredGeneration> RetireInactiveLocked(IEnumerable<RespireConnectionMultiplexer>? protectedNodes)
+    {
+        if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
+        var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
+        if (protectedNodes is not null) retained.UnionWith(protectedNodes);
+        var retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
+        if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
+        return retirements;
+    }
+
+    internal RespireConnectionMultiplexer? Seed => Volatile.Read(ref _seed);
+
+    internal long TopologyVersion
+    {
+        get
+        {
+            lock (_nodesGate) return _topologyVersion;
+        }
+    }
+
     // Publish the current identity, even when discovery completed on a superseded transport.
     // Every caller has just connected to, or loaded a topology from, a cluster node. The first call
     // is the router's "connected" transition, so the background refresh worker starts here and
     // nowhere else.
-    private void SetSeed(RespireConnectionMultiplexer node)
+    internal void SetSeed(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
         {
@@ -1576,18 +1614,27 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return;
         }
 
-        Action<int, RespireConnectionStateChange> handler =
-            (slot, change) =>
+        Action<int, RespireConnectionStateChange> handler = (slot, change) =>
+        {
+            if (change.State == RespireConnectionState.Reconnecting)
             {
-                SlotStateChanged?.Invoke(node, slot, change);
-                // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
-                // Once a forced refresh is queued, skip the master scan for the rest of the burst.
-                if (change.State == RespireConnectionState.Disconnected
-                    && !_topologyRefresh.HasPendingForcedRequest
-                    && Array.IndexOf(Volatile.Read(ref _masters), node) >= 0) SignalPrimaryDisconnectRefresh();
-            };
+                lock (_nodesGate) _smigratedSequences.Remove(node);
+            }
+            SlotStateChanged?.Invoke(node, slot, change);
+            // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
+            // Once a forced refresh is queued, skip the master scan for the rest of the burst.
+            if (change.State == RespireConnectionState.Disconnected
+                && !_topologyRefresh.HasPendingForcedRequest
+                && Array.IndexOf(Volatile.Read(ref _masters), node) >= 0) SignalPrimaryDisconnectRefresh();
+        };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
+        if (!_nodeMaintenanceHandlers.ContainsKey(node))
+        {
+            MaintenanceNotificationHandler maintenanceHandler = QueueSmigratedNotification;
+            _nodeMaintenanceHandlers.Add(node, maintenanceHandler);
+            node.MaintenanceNotificationReceived += maintenanceHandler;
+        }
     }
 
     internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
@@ -1602,12 +1649,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 throw new RespireConnectionRetiredException(node.Host, node.Port);
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
+            // A same-owner redirect still advances the discovery fence, so an older in-flight
+            // discovery cannot overwrite it. It is not an owner mutation, so it does not fence
+            // queued SMIGRATED notifications.
+            // Stamp a changed owner before publication so a push observing it gets a newer token.
+            if (!ReferenceEquals(previous, node)) MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, node, ++_topologyVersion);
             if (ReferenceEquals(previous, node))
             {
                 return;
             }
-
             AddSlot(node);
             if (previous is not null && RemoveSlot(previous))
             {
@@ -1638,6 +1689,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 return;
             }
 
+            MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, null, ++_topologyVersion);
             topologyVersion = _topologyVersion;
             Volatile.Write(ref _hasCompleteTopology, 0);
@@ -1661,17 +1713,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Every slot publication carries its discovery-order fence under _nodesGate.
     private void PublishSlotLocked(int slot, RespireConnectionMultiplexer? node, long version)
     {
-        _slotVersions[slot] = version;
+        Volatile.Write(ref _slotVersions[slot], version);
         Volatile.Write(ref _slots[slot], node);
     }
 
-    private void AddSlot(RespireConnectionMultiplexer node)
+    private void AddSlot(RespireConnectionMultiplexer node, int count = 1)
     {
         var masters = Volatile.Read(ref _masters);
         var index = Array.IndexOf(masters, node);
         if (index >= 0)
         {
-            _masterSlotCounts[index]++;
+            _masterSlotCounts[index] += count;
             return;
         }
 
@@ -1680,16 +1732,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         masters.CopyTo(expanded, 0);
         _masterSlotCounts.CopyTo(expandedCounts, 0);
         expanded[^1] = node;
-        expandedCounts[^1] = 1;
+        expandedCounts[^1] = count;
         _masterSlotCounts = expandedCounts;
         Volatile.Write(ref _masters, expanded);
     }
 
-    private bool RemoveSlot(RespireConnectionMultiplexer node)
+    private bool RemoveSlot(RespireConnectionMultiplexer node, int count = 1,
+        bool preserveMaintenanceHandlerForRetirement = false)
     {
         var masters = Volatile.Read(ref _masters);
         var index = Array.IndexOf(masters, node);
-        if (index < 0 || --_masterSlotCounts[index] > 0)
+        if (index < 0 || (_masterSlotCounts[index] -= count) > 0)
         {
             return false;
         }
@@ -1703,10 +1756,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _masterSlotCounts = contractedCounts;
         Volatile.Write(ref _masters, contracted);
 
+        // Zero-slot nodes no longer affect command health or routed slot state, so stale state
+        // callbacks must not invalidate the client cache. Keep maintenance handlers on redirect-
+        // protected nodes and configured seeds, which may still send useful SMIGRATED pushes.
+        // SMIGRATED retirement also keeps its handler until the PING barrier drains unread pushes.
         if (_nodeStateHandlers.Remove(node, out var handler))
-        {
             node.SlotStateChanged -= handler;
-        }
+        if (!preserveMaintenanceHandlerForRetirement
+            && !_redirectVersions.ContainsKey(node)
+            && !_seeds.Any(seed => ClusterNodeIdentityIndex.EndpointsEqual(seed, Endpoint(node)))
+            && _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+            node.MaintenanceNotificationReceived -= maintenanceHandler;
 
         return true;
     }
@@ -1747,6 +1807,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 topologyChanged |= !ReferenceEquals(Volatile.Read(ref _slots[slot]), node);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.
+                if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
+                {
+                    topologyChanged = true;
+                    MarkSlotMutatedLocked(slot);
+                }
                 PublishSlotLocked(slot, node, _slotVersions[slot]);
                 if (snapshotBatch is not null && coveredSlots[slot])
                     _slotSnapshotBatches[slot] = snapshotBatch;
@@ -1790,6 +1855,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 node.SlotStateChanged -= _nodeStateHandlers[node];
                 _nodeStateHandlers.Remove(node);
+                // RetireInactiveLocked decides whether this is a retained seed/ASK node.
+                // Actual retirement detaches maintenance handlers after its receive barrier.
             }
         }
         return retiredNodes;
@@ -2004,7 +2071,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return false;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeAsync(IsOnSmigratedWorker);
+
+    internal async ValueTask DisposeAsync(bool isOnSmigratedWorker)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
@@ -2013,22 +2082,30 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
+        KeyValuePair<RespireConnectionMultiplexer, MaintenanceNotificationHandler>[] maintenanceHandlers;
         DedicatedConnectionPool[] dedicatedPools;
         Task retirements;
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
             stateHandlers = [.. _nodeStateHandlers, .. _correctionStateHandlers];
+            maintenanceHandlers = [.. _nodeMaintenanceHandlers];
             dedicatedPools = _ownedPools.ToArray();
             retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
             _nodeStateHandlers.Clear();
+            _nodeMaintenanceHandlers.Clear();
             _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
             _correctionPools.Clear();
+            _deferredSmigratedMigrations.Clear();
         }
 
+        _smigratedNotifications.Writer.TryComplete();
+        // Claims the lazily started worker slot, so no worker starts after this point.
+        var smigratedWorker = CloseSmigratedWorker();
         _stopRetirement.Cancel();
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
+        _smigratedNotifications.Writer.TryComplete();
         Task? refreshWorker;
         lock (_topologyRefreshWorkerGate) refreshWorker = Volatile.Read(ref _topologyRefreshWorker);
         if (refreshWorker is not null)
@@ -2040,10 +2117,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             catch (OperationCanceledException) { }
         }
         foreach (var (node, handler) in stateHandlers) node.SlotStateChanged -= handler;
+        foreach (var (node, handler) in maintenanceHandlers) node.MaintenanceNotificationReceived -= handler;
         // Abort all owned work before awaiting either drain. The primary may itself be a
         // superseded generation; ClientCore's later disposal of it is idempotent.
         await Task.WhenAll(dedicatedPools.Select(pool => pool.DisposeAsync().AsTask())
             .Concat(nodes.Select(node => node.DisposeAsync().AsTask()))).ConfigureAwait(false);
+        // A NodeRetired handler on the worker can dispose the client; joining the worker from
+        // inside it would deadlock. The completed channel ends the worker after that handler.
+        // Otherwise this waits for any in-flight NodeRetired/TopologyChanged callback, so a
+        // handler that blocks also delays disposal.
+        if (!isOnSmigratedWorker) await smigratedWorker.ConfigureAwait(false);
         await retirements.ConfigureAwait(false);
     }
 }
+

@@ -7,7 +7,11 @@ namespace Respire.Networking;
 internal sealed record MaintenanceNotification(string Kind, long SequenceId, long? Seconds = null,
     RespireEndpoint? Target = null, MaintenanceSlotMigration[]? Migrations = null)
 {
-    internal bool IsCompletion => Kind is "MIGRATED" or "FAILED_OVER" or "SMIGRATED";
+    internal const string SlotMigratedKind = "SMIGRATED";
+
+    internal bool IsCompletion => Kind is "MIGRATED" or "FAILED_OVER" or SlotMigratedKind;
+    // A completed Cluster slot migration that carries source/target/slot triplets.
+    internal bool IsSlotMigration => Kind == SlotMigratedKind;
     internal string Family => Kind switch
     {
         "MIGRATED" => "MIGRATING",
@@ -15,6 +19,15 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
         "SMIGRATED" => "SMIGRATING",
         _ => Kind,
     };
+
+    // A cheap check of the kind alone, so the receive loop can read the slot fence before
+    // Parse scans and copies a large triplet list.
+    internal static bool IsSlotMigrationPush(in RespValue value)
+    {
+        if (value.Type != RespDataType.Push) return false;
+        var items = value.AsArray();
+        return items.Length > 0 && IsString(items[0]) && items[0].AsSpan().SequenceEqual("SMIGRATED"u8);
+    }
 
     internal static MaintenanceNotification? Parse(in RespValue value)
     {

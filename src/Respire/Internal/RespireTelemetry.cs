@@ -76,6 +76,8 @@ internal static class RespireTelemetry
         "respire.maintenance.notifications", unit: "{notification}", description: "Valid maintenance notifications delivered to diagnostics.");
     public static readonly Counter<long> MaintenanceNotificationsDropped = Meter.CreateCounter<long>(
         "respire.maintenance.notifications.dropped", unit: "{notification}", description: "Maintenance diagnostics dropped while listeners lag; protocol handling is unaffected.");
+    public static readonly Counter<long> ClusterSlotMigrationsSkipped = Meter.CreateCounter<long>(
+        "respire.cluster.slot_migrations.skipped", unit: "{notification}", description: "SMIGRATED notifications or entries that did not update Cluster slot ownership proactively; MOVED handling and discovery remain the fallback.");
 
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");

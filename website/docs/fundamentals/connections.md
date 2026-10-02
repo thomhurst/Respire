@@ -119,11 +119,26 @@ Sequence IDs are tracked per announcing server, so the replacement server can an
 announced ends, so a server that restarts at the same address and numbers from 1 again is
 followed after that.
 
-Blocking, pub/sub, Sentinel discovery, and correction-control connections do not negotiate
-maintenance notifications. Their existing wait/recovery behavior stays unchanged. Connection establishment,
-topology recovery budgets, and explicit operation-level cancellation deadlines also retain
-their limits. Cluster ownership updates from `SMIGRATED` remain unsupported
-([#635](https://github.com/thomhurst/Respire/issues/635)).
+This release implements notifications, diagnostics, timeout relaxation, and proactive Cluster
+slot updates from `SMIGRATED`. The receive loop queues parsed notifications for a bounded topology
+worker. The worker moves only slots still owned by the advertised source and not reassigned by a
+`MOVED` redirect or discovery since the notification arrived. It ignores sequence IDs already seen
+on the same connection and publishes changed ownership through the normal topology event. When
+notifications from different connections arrive out of order (for example `B→C` before `A→B`),
+the later move waits in a small bounded list and applies once the earlier one has, whichever
+notification arrived first. A waiting move is dropped after 30 seconds, or when a `MOVED` redirect
+or discovery reassigns its slots after it arrived. An older move is also rejected when its source
+moved the slot away and got it back after that move arrived (`A→B` then `B→A` overtaking an
+older `A→C`). A sequence ID is recorded when the worker first sees it, before its slots are
+checked, so a server resend of the same ID on the same connection is ignored even when its first
+copy was rejected, fenced or later dropped from the waiting list. If a
+notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
+and topology discovery remain the fallback. Until one of them runs, commands for the affected
+slots go to the previous owner and are redirected. Triggering a topology refresh when a
+notification is lost is tracked by [#397](https://github.com/thomhurst/Respire/issues/397). Drops and other skipped notifications are counted
+in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).
+Client disposal waits for a topology callback that is already running, such as a
+`ConnectionStateChanged` handler raised by a migration, so keep those handlers short.
 
 Server support and deployment restrictions are described in the
 [Redis smart client handoff documentation](https://redis.io/docs/latest/develop/clients/sch/).
@@ -414,6 +429,13 @@ New commands cannot enter a retired generation. Already accepted commands and bl
 operations drain on their original sockets; ambiguous writes and existing WATCH state are
 never replayed. Start a new watched transaction after a failover. Client disposal aborts
 outstanding work and joins owned connection cleanup.
+
+On RESP3 connections with maintenance notifications enabled, retirement freezes command
+admission before sending a PING barrier. If that barrier fails, accepted commands get their
+`CommandTimeout` allowance, extended through an active maintenance relaxation. When
+`CommandTimeout` is disabled, retirement uses a 30-second minimum grace, extended if the
+configured maintenance relaxation is longer. A streamed reply keeps the connection while its
+reader makes progress; retirement closes it after the same idle grace if the reader stalls.
 
 Client-side cached reads lose continuity on retirement. Cached MGET and opted-in partial HMGET
 reads discard all cached elements if the generation retires during lookup, then refetch the
