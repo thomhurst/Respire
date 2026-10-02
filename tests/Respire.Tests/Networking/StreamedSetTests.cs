@@ -7,6 +7,7 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Respire;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -27,21 +28,25 @@ public sealed class StreamedSetTests
             SuppressReply = command => command == "ASKING",
         };
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", oldTarget.Port)],
+        });
+        var pool = client.Core.DedicatedPool;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", oldTarget.Port,
             new() { Protocol = RespProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var source = new MemoryStream("data"u8.ToArray());
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
         var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
-        var routeCurrent = true;
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
-            CommandDeadline.After(10_000), () => Volatile.Read(ref routeCurrent)).AsTask();
+            CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection)).AsTask();
         while (!oldTarget.ReceivedCommands.Contains("ASKING"))
         {
             if (pending.IsCompleted) await pending;
             await Task.Delay(5, timeout.Token);
         }
-        Volatile.Write(ref routeCurrent, false);
+        await pool.DisposeAsync();
         await oldTarget.SendRawAsync(FakeRespServer.OkReply);
         await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireConnectionRetiredException>();
         await Assert.That(oldTarget.ReceivedCommands).IsEquivalentTo(["ASKING"]);
@@ -1242,6 +1247,13 @@ public sealed class StreamedSetTests
     public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader(bool routeRetires)
     {
         await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var pool = client.Core.DedicatedPool;
+        if (routeRetires) await pool.DisposeAsync();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp2,
@@ -1253,7 +1265,7 @@ public sealed class StreamedSetTests
         var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, SetWhen.Always);
 
         var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET",
-                    validateStreamingRoute: () => !routeRetires)
+                    streamingRoute: new DedicatedStreamRoute(client.Core, pool, connection))
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
