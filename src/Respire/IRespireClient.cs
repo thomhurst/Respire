@@ -330,10 +330,17 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
 
-    /// <summary>Creates a view with a different read routing policy; shares this client's connections.</summary>
+    /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>
+    /// The view shares this client's connections. Only commands whose <see cref="RespireCommand.IsReadOnly"/>
+    /// metadata is set and that have a routable key follow the policy; everything else stays on the primary.
     /// Custom implementations and decorators must implement this member; decorators should forward it
     /// to the wrapped client. Only catalogued read-only commands are routed by the policy.
     /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="readFrom"/> is not a defined policy.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A non-primary policy was requested without Redis Cluster, Sentinel, or configured replica endpoints.
+    /// </exception>
+    /// <exception cref="NotSupportedException">This implementation does not support read routing views.</exception>
     IRespireClient WithReadFrom(RespireReadFrom readFrom);
 }

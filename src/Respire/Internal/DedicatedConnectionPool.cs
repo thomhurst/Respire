@@ -30,6 +30,9 @@ internal sealed partial class DedicatedConnectionPool(
     private bool _stopping;
     private bool _cancellationComplete;
 
+    /// <summary>True for a Cluster replica pool, whose connections enter READONLY mode.</summary>
+    internal bool IsReadOnly => options.ReadOnly;
+
     internal bool IsStopping
     {
         get { lock (_gate) return _stopping; }

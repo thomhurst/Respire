@@ -6,6 +6,9 @@ on:
     paths:
       - 'src/Respire/Networking/**'
       - 'src/Respire/Infrastructure/RespireConnectionMultiplexer.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/Internal/ClusterRouter.cs'
+      - 'src/Respire/Internal/ClusterRouter.ReadRouting.cs'
       - 'benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs'
       - '.github/workflows/benchmark-transport.yml'
 
@@ -76,13 +79,26 @@ jobs:
         shell: python
         run: |
           import json
+          import math
+          import re
           from pathlib import Path
+          # Every phase runs the candidate fixture, so derive the case count from its source:
+          # benchmark methods times the product of each [Params] value count.
+          source = Path("candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs").read_text()
+          # Only literal [Params(...)] lists can be counted from source. Fail loudly on any other
+          # case-multiplying attribute instead of computing a wrong expected count.
+          uncountable = re.findall(r"\[(ParamsSource|ParamsAllValues|Arguments|ArgumentsSource)\b", source)
+          assert not uncountable, f"Update this case count for {sorted(set(uncountable))} in the transport fixture"
+          methods = len(re.findall(r"\[Benchmark[\]\(]", source))
+          params = [len(values.split(",")) for values in re.findall(r"\[Params\(([^)]*)\)\]", source)]
+          expected = methods * math.prod(params)
+          assert methods > 0, "No [Benchmark] methods found in the transport fixture"
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert len(benchmarks) == 8, f"Expected all transport operations with 1 and 2 connections: {report}"
+                  assert len(benchmarks) == expected, f"Expected {expected} benchmark cases ({methods} methods x {params} params): {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"

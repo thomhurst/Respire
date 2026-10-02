@@ -191,6 +191,48 @@ public class ClusterNodeIdentityIndexTests
         await Assert.That(WithLock(gate, () => index.All.ToArray())).IsEquivalentTo([preferred, alias]);
     }
 
+    [Test]
+    public async Task ReplicaRegistryKeepsEndpointAndIdentityMapsConsistent()
+    {
+        var seedEndpoint = new RespireEndpoint("seed.example");
+        var firstEndpoint = new RespireEndpoint("replica-a.example");
+        var secondEndpoint = new RespireEndpoint("replica-b.example");
+        var readOnly = Respire.Networking.RespireConnectionOptions.Default with { ReadOnly = true };
+        await using var seed = RespireConnectionMultiplexer.Create(seedEndpoint.Host, seedEndpoint.Port);
+        await using var first = RespireConnectionMultiplexer.Create(firstEndpoint.Host, firstEndpoint.Port, options: readOnly);
+        await using var second = RespireConnectionMultiplexer.Create(secondEndpoint.Host, secondEndpoint.Port, options: readOnly);
+        var gate = new object();
+        var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, (endpoint, isReadOnly) =>
+        {
+            if (!isReadOnly) throw new InvalidOperationException("Only replica transports are expected.");
+            return endpoint.Host == firstEndpoint.Host ? first : second;
+        }, gate);
+
+        // The same replica identity moves to a new address.
+        var created = WithLock(gate, () => index.GetOrCreateReplica(new ClusterTopologyReplica(firstEndpoint, "replica-id", [])));
+        var moved = WithLock(gate, () => index.GetOrCreateReplica(new ClusterTopologyReplica(secondEndpoint, "replica-id", [])));
+        var registry = index.Replicas;
+
+        await Assert.That(created).IsSameReferenceAs(first);
+        await Assert.That(moved).IsSameReferenceAs(second);
+        await Assert.That(WithLock(gate, () => registry.TryGetById("replica-id", out var owner) ? owner : null))
+            .IsSameReferenceAs(second);
+        await Assert.That(WithLock(gate, () => registry.TryGetId(first, out _))).IsFalse();
+        await Assert.That(WithLock(gate, () => index.IsActive(first))).IsTrue();
+        await Assert.That(WithLock(gate, () => index.GetCurrent(first))).IsSameReferenceAs(first);
+
+        var detached = WithLock(gate, () => index.DetachInactive([second], [seedEndpoint]));
+        await Assert.That(detached).IsEquivalentTo([first]);
+        await Assert.That(WithLock(gate, () => index.IsActive(first))).IsFalse();
+        await Assert.That(WithLock(gate, () => index.IsActive(second))).IsTrue();
+        await Assert.That(WithLock(gate, () => registry.Count)).IsEqualTo(1);
+
+        await first.RetireAsync();
+        lock (gate) index.Forget(first);
+        await Assert.That(WithLock(gate, () => index.All.Contains(first))).IsFalse();
+        await Assert.That(WithLock(gate, () => registry.TryGetId(second, out var id) ? id : null)).IsEqualTo("replica-id");
+    }
+
     private static T WithLock<T>(object gate, Func<T> action)
     {
         lock (gate)

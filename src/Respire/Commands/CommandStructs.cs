@@ -444,7 +444,7 @@ internal readonly struct DynamicCommand(
 {
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
-
+    internal bool IsReadOnly => readKind != ReadCommandKind.None;
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation
             ? RespireCommands.GetCacheMutation(operation)

@@ -90,20 +90,52 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (Volatile.Read(ref reload.Generation) == generation)
-                {
-                    await EnsureLibraryAsync(library, cancellationToken).ConfigureAwait(false);
-                    // Failed reloads leave the generation unchanged so the next waiter can try again.
+                var currentGeneration = Volatile.Read(ref reload.Generation);
+                if (!await EnsureLibraryAsync(library, function.Name, cancellationToken).ConfigureAwait(false))
+                    throw;
+                // Revalidate this function even when another caller refreshed the library.
+                if (currentGeneration == generation)
                     Interlocked.Increment(ref reload.Generation);
-                }
             }
             finally { gate.Release(); }
-            // Redis reserves this reply for a missing function. A second failure escapes;
-            // timeouts, connection failures and arbitrary function errors never trigger retries.
-            // The library was loaded on the primary, and a replica may not have received it yet,
-            // so the one retry goes to the primary even under a replica read policy.
-            var reply = await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false);
+            // Redis reserves this reply for a missing function. A primary retry stays bounded;
+            // replica reads wait only for replication of the registered library.
+            var readFrom = client.GetReadFromForCommand(function.Operation);
+            var reply = readFrom == RespireReadFrom.Primary
+                ? await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false)
+                : await RetryUntilFunctionAvailableAsync(function.Operation, command, cancellationToken,
+                    client.Core.Options.CommandTimeout ?? TimeSpan.FromSeconds(10)).ConfigureAwait(false);
             return client.CreateResult(in reply);
+        }
+    }
+
+    private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync<TCommand>(
+        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan timeout)
+        where TCommand : struct, IRespCommand
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        var delay = TimeSpan.FromMilliseconds(25);
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    return await client.SendAsync(operation, command, deadline.Token).ConfigureAwait(false);
+                }
+                catch (RespireServerException error) when (IsFunctionNotFound(error)
+                    && !deadline.IsCancellationRequested)
+                {
+                    await Task.Delay(delay, deadline.Token).ConfigureAwait(false);
+                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
+                }
+            }
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
+            && deadline.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException(operation, timeout, error);
         }
     }
 
@@ -211,45 +243,53 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
         return convert(this, in reply);
     }
-    private async ValueTask EnsureLibraryAsync(RespireFunctionLibrary library, CancellationToken cancellationToken)
+    private async ValueTask<bool> EnsureLibraryAsync(RespireFunctionLibrary library, string functionName,
+        CancellationToken cancellationToken)
     {
         if (client.Core.Cluster is { } cluster)
         {
             var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
             if (connections.Length == 0) throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
-            await Task.WhenAll(connections.Select(connection => EnsureOnConnectionAsync(connection, library, cancellationToken).AsTask())).ConfigureAwait(false);
+            var results = await Task.WhenAll(connections.Select(connection =>
+                EnsureOnConnectionAsync(connection, library, functionName, cancellationToken).AsTask())).ConfigureAwait(false);
+            return results.All(static available => available);
         }
-        else
-        {
-            await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, cancellationToken).ConfigureAwait(false);
-        }
+        await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        return await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, functionName,
+            cancellationToken).ConfigureAwait(false);
     }
-    private async ValueTask EnsureOnConnectionAsync(RespireConnection connection, RespireFunctionLibrary library, CancellationToken cancellationToken)
+    private async ValueTask<bool> EnsureOnConnectionAsync(RespireConnection connection, RespireFunctionLibrary library,
+        string functionName, CancellationToken cancellationToken)
     {
         // Inspect before loading: concurrent first use accepts identical source, but never silently
         // overwrites a different library unless replacement was explicitly requested.
-        if (await HasMatchingSourceAsync(connection, library, cancellationToken).ConfigureAwait(false)) return;
+        var matching = await FindMatchingLibraryAsync(connection, library, cancellationToken).ConfigureAwait(false);
+        if (matching is not null)
+            return matching.Functions.Any(function => function.Name == functionName);
         try
         {
             _ = await SendAndConvertAsync(connection, "FUNCTION LOAD", LoadCommand(library.Source, library.Replace),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken).ConfigureAwait(false);
+            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken).ConfigureAwait(false);
+            return matching?.Functions.Any(function => function.Name == functionName) == true;
         }
         catch (RespireServerException error) when (!library.Replace
             && error.Message == $"ERR Library '{library.Name}' already exists")
         {
             // Another client/process may load after our LIST. Accept only identical source;
             // never replace, retry LOAD, or hide a conflicting library's original error.
-            if (!await HasMatchingSourceAsync(connection, library, cancellationToken).ConfigureAwait(false)) throw;
+            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken).ConfigureAwait(false);
+            if (matching is null) throw;
+            return matching.Functions.Any(function => function.Name == functionName);
         }
     }
 
-    private async ValueTask<bool> HasMatchingSourceAsync(RespireConnection connection,
+    private async ValueTask<RespireFunctionLibraryInfo?> FindMatchingLibraryAsync(RespireConnection connection,
         RespireFunctionLibrary library, CancellationToken cancellationToken)
     {
         var libraries = await SendAndConvertAsync(connection, "FUNCTION LIST", ListCommand(EscapeLibraryPattern(library.Name), true),
             static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), cancellationToken).ConfigureAwait(false);
-        return libraries.Any(item => item.Name == library.Name && item.Code == library.Source);
+        return libraries.FirstOrDefault(item => item.Name == library.Name && item.Code == library.Source);
     }
 }
 

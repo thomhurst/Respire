@@ -723,6 +723,14 @@ public class ClusterTopologyRefreshTests
         var router = client.Core.Cluster!;
         var originalOwner = router.GetSlotOwnerEndpoint(0);
         var originalReplica = router.GetReplicas().Single();
+        var getKnownReplicas = typeof(ClusterRouter).GetMethod("GetKnownReplicas",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var originalRoutes = getKnownReplicas.Invoke(router, [101]);
+        await Assert.That(originalRoutes).IsNotNull();
+        var originalReplicaNodes = (RespireConnectionMultiplexer[])originalRoutes!.GetType()
+            .GetProperty("Nodes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(originalRoutes)!;
+        var originalReplicaTransport = originalReplicaNodes.Single();
         var staleReplicaTransport = router.GetMultiplexer(originalReplica.Endpoint);
 
         router.SignalTopologyRefresh();
@@ -735,6 +743,8 @@ public class ClusterTopologyRefreshTests
         await Assert.That(replica.Endpoint).IsEqualTo(originalReplica.Endpoint);
         await Assert.That(replica.NodeId).IsEqualTo(originalReplica.NodeId);
         await Assert.That(replica.Aliases).IsEquivalentTo(originalReplica.Aliases);
+        await Assert.That(ReferenceEquals(getKnownReplicas.Invoke(router, [101]), originalRoutes)).IsTrue();
+        await Assert.That(originalReplicaTransport.IsRetired).IsFalse();
         await Assert.That(staleReplicaTransport.IsRetired).IsTrue();
         // The refresh continues through known replicas even after the seed returns a partial map.
         await Assert.That(replicaServer.ReceivedCommands).Contains("CLUSTER SLOTS");

@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Commands;
+using Respire.Infrastructure;
+using Respire.Networking;
 using Respire.Protocol;
 using System.Text;
 using TUnit.Assertions;
@@ -20,6 +22,1111 @@ public class ClusterTests
     });
 
     private static readonly TimeSpan TestConnectTimeout = TimeSpan.FromSeconds(1);
+
+    [Test]
+    public async Task ReadFrom_UsesReplicaHandshakeAndKeepsWritesAndUnknownCommandsOnPrimary()
+    {
+        await using var replica = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "$7\r\nreplica\r\n"u8.ToArray());
+        await using var primary = new FakeRespServer(2, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => ClusterTopology(primary.Port, replica.Port),
+            "SET write value" => FakeRespServer.OkReply,
+            "GET caller-descriptor" or "CUSTOM unknown" or "GET default" => "$7\r\nprimary\r\n"u8.ToArray(),
+            _ => null,
+        };
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var replicaView = client.WithReadFrom(RespireReadFrom.Replica);
+        var prefixedFirst = replicaView.WithKeyPrefix("tenant:");
+        var prefixedSecond = client.WithKeyPrefix("tenant:").WithReadFrom(RespireReadFrom.Replica);
+
+        await Assert.That(await prefixedFirst.Strings.GetStringAsync("first")).IsEqualTo("replica");
+        var cluster = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var routes = (ClusterReplicaSet?[])typeof(ClusterRouter)
+            .GetField("_replicasBySlot", flags)!.GetValue(cluster)!;
+        var replicaNode = routes[ClusterHash.GetSlot("tenant:first")]!.Nodes[0];
+        var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter)
+            .GetField("_identities", flags)!.GetValue(cluster)!;
+        await Assert.That(replicaNode.Options.ReadOnly).IsTrue();
+        await Assert.That(identities.Replicas.TryGetId(replicaNode, out var replicaId)).IsTrue();
+        await Assert.That(replicaId).IsEqualTo("replica-id");
+        await Assert.That(identities.Replicas.TryGetById("replica-id", out var identifiedReplica)).IsTrue();
+        await Assert.That(ReferenceEquals(identifiedReplica, replicaNode)).IsTrue();
+        await Assert.That(await prefixedSecond.Strings.GetStringAsync("second")).IsEqualTo("replica");
+        using (var raw = await replicaView.ExecuteAsync(RespireCommands.String.GET, ["raw"]))
+        {
+            await Assert.That(raw.AsString()).IsEqualTo("replica");
+        }
+        using (var batch = replicaView.CreateBatch())
+        {
+            var batchedRead = batch.Strings.GetString("batch");
+            await batch.ExecuteAsync();
+            await Assert.That(await batchedRead).IsEqualTo("replica");
+        }
+
+        await replicaView.Strings.SetAsync("write", "value");
+        using (var descriptorRead = await replicaView.ExecuteAsync(RespireCommands.String.GET, ["descriptor"]))
+        {
+            await Assert.That(descriptorRead.AsString()).IsEqualTo("replica");
+        }
+        using (var callerDescriptorRead = await replicaView.ExecuteAsync(
+            RespireCommand.Create("GET"), ["caller-descriptor"]))
+        {
+            await Assert.That(primary.ReceivedCommands).Contains("GET caller-descriptor");
+            await Assert.That(callerDescriptorRead.AsString()).IsEqualTo("primary");
+        }
+        using (var unknownRead = await replicaView.ExecuteAsync(RespireCommand.Create("CUSTOM"), ["unknown"]))
+        {
+            await Assert.That(unknownRead.AsString()).IsEqualTo("primary");
+        }
+        await Assert.That(await client.Strings.GetStringAsync("default")).IsEqualTo("primary");
+
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(
+            ["READONLY", "GET tenant:first", "GET tenant:second", "GET raw", "GET batch", "GET descriptor"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "SET write value", "GET caller-descriptor", "CUSTOM unknown", "GET default"]);
+    }
+
+    [Test]
+    [Arguments("?", "hostname", "127.0.0.1")]
+    [Arguments("?", "ip", "127.0.0.1")]
+    [Arguments("", "hostname", "127.0.0.1")]
+    // A known preferred endpoint wins over metadata, as it does for primaries.
+    [Arguments("127.0.0.1", "hostname", "replica.invalid")]
+    public async Task ReadFrom_UsesReplicaMetadataOnlyWhenPreferredEndpointIsUnknown(
+        string preferred, string metadataName, string metadataValue)
+    {
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$7\r\nreplica\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*4\r\n${preferred.Length}\r\n{preferred}\r\n:{replica.Port}\r\n$10\r\nreplica-id\r\n" +
+            $"%1\r\n+{metadataName}\r\n${metadataValue.Length}\r\n{metadataValue}\r\n");
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        var value = await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key");
+
+        await Assert.That(value).IsEqualTo("replica");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", "GET key"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_ViewDisposalDoesNotOwnClientCoreInEitherOrder()
+    {
+        var client = CreateLazyClusterClient();
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        await view.DisposeAsync();
+        await client.DisposeAsync();
+        await view.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ReadFrom_StrictReplicaFailsAndReplicaPreferredFallsBackWhenNoReplicaExists()
+    {
+        var primaryReplies = new byte[][]
+        {
+            [],
+            "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+        var error = await Assert.That(async () => await strict.Strings.GetStringAsync("strict"))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("no replica");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "CLUSTER SLOTS"]);
+
+        var preferred = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        await Assert.That(await preferred.Strings.GetStringAsync("fallback")).IsEqualTo("primary");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "CLUSTER SLOTS", "GET fallback"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_RefreshesEmptyReplicaSnapshotBeforeFailing()
+    {
+        var key = "{replica-added}:key";
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$5\r\nfresh\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [], [] };
+        await using var primary = new FakeRespServer(2, primaryReplies);
+        primaryReplies[0] = ClusterTopologyWithoutReplicas(primary.Port);
+        primaryReplies[1] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
+            .Strings.GetStringAsync(key)).IsEqualTo("fresh");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "CLUSTER SLOTS"]);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_ThrottlesEmptyReplicaSnapshotRefreshAndRetriesAfterInterval()
+    {
+        var key = "{replica-added-later}:key";
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$5\r\nfresh\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [], [], ClusterTopology(1, replica.Port) };
+        await using var primary = new FakeRespServer(3, primaryReplies);
+        primaryReplies[0] = ClusterTopologyWithoutReplicas(primary.Port);
+        primaryReplies[1] = ClusterTopologyWithoutReplicas(primary.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await Assert.That(async () => await strict.Strings.GetStringAsync(key)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(async () => await strict.Strings.GetStringAsync(key)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        await Assert.That(await strict.Strings.GetStringAsync(key)).IsEqualTo("fresh");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task IsConnected_RemainsTrueWhenOnlyReplicaConnectionIsConnected()
+    {
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$8\r\nreplica!\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
+            .Strings.GetStringAsync("{replica-only}:key")).IsEqualTo("replica!");
+        await primary.DisposeAsync();
+        await Task.Delay(100);
+
+        await Assert.That(client.IsConnected).IsTrue();
+    }
+
+    [Test]
+    public async Task ReadFrom_RoutesBlockingCatalogReadToReplicaDedicatedPool()
+    {
+        var key = "{blocking-read}:stream";
+        await using var replica = new FakeRespServer(3)
+        {
+            ReplyOverride = static (_, command) => command.StartsWith("XREAD ", StringComparison.Ordinal)
+                ? "*0\r\n"u8.ToArray()
+                : FakeRespServer.OkReply,
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var routedClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        using var response = await routedClient.WithReadFrom(RespireReadFrom.Replica)
+            .ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", key, "0"]);
+        var entries = await routedClient.WithReadFrom(RespireReadFrom.Replica).Streams.ReadAsync(
+            key, waitFor: TimeSpan.FromMilliseconds(1));
+
+        await Assert.That(entries).IsEmpty();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands).Contains("READONLY");
+    }
+
+    [Test]
+    public async Task ReadFrom_PrimaryPreferredUsesHealthyPrimaryBeforeReplica()
+    {
+        var primaryReplies = new byte[][]
+        {
+            [],
+            "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(primaryReplies);
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n$10\r\nreplica-id\r\n");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.PrimaryPreferred)
+            .Strings.GetStringAsync("preferred")).IsEqualTo("primary");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET preferred"]);
+        await Assert.That(replica.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReadFrom_CancellationDuringReplicaHandshakeDoesNotFallBackToPrimary()
+    {
+        var readOnlyStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var replica = new FakeRespServer
+        {
+            SuppressReply = command =>
+            {
+                if (command == "READONLY") readOnlyStarted.TrySetResult();
+                return command == "READONLY";
+            },
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n$10\r\nreplica-id\r\n");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        using var cancellation = new CancellationTokenSource();
+        var read = client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
+            .Strings.GetStringAsync("cancelled", cancellation.Token).AsTask();
+        await readOnlyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.That(async () => await read).Throws<OperationCanceledException>();
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry()
+    {
+        var key = "{moved}:key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var newReplica = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "$10\r\nreplicated\r\n"u8.ToArray());
+        var targetReplies = new byte[][] { [] };
+        await using var target = new FakeRespServer(targetReplies);
+        targetReplies[0] = ClusterTopology(target.Port, newReplica.Port);
+        var moved = Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
+        await using var oldReplica = new FakeRespServer(FakeRespServer.OkReply, moved);
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, oldReplica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
+            .Strings.GetStringAsync(key)).IsEqualTo("replicated");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(oldReplica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(newReplica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_RefreshStartedForOneMovedSlotRepublishesOtherMovedSlots()
+    {
+        const string firstKey = "{moved-shared-a}:key";
+        const string secondKey = "{moved-shared-b}:key";
+        var firstSlot = ClusterHash.GetSlot(firstKey);
+        var secondSlot = ClusterHash.GetSlot(secondKey);
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$7\r\nreplica\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(firstSlot)!;
+
+        // Two MOVED corrections leave both slots on the one shared empty replica set.
+        router.SetSlotOwner(firstSlot, owner);
+        router.SetSlotOwner(secondSlot, owner);
+        var routes = ReplicaRoutes(client);
+        await Assert.That(routes[firstSlot]).IsSameReferenceAs(routes[secondSlot]);
+        await Assert.That(routes[firstSlot]!.Nodes).IsEmpty();
+
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+        await Assert.That(await strict.Strings.GetStringAsync(firstKey)).IsEqualTo("replica");
+        // The refresh started for the first slot sent CLUSTER SLOTS, which republished the
+        // second slot's replicas as well, so its read needs no refresh of its own.
+        await Assert.That(await strict.Strings.GetStringAsync(secondKey)).IsEqualTo("replica");
+
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+        await Assert.That(primary.ReceivedCommands).DoesNotContain($"GET {firstKey}");
+        await Assert.That(primary.ReceivedCommands).DoesNotContain($"GET {secondKey}");
+    }
+
+    [Test]
+    public async Task ReadFrom_ConcurrentStrictReadsShareInFlightReplicaRefresh()
+    {
+        var key = "{replica-concurrent}:key";
+        await using var replica = new FakeRespServer(8)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$5\r\nfresh\r\n"u8.ToArray(),
+        };
+        var primaryReplies = new byte[][] { [], [] };
+        await using var primary = new FakeRespServer(2, primaryReplies);
+        primaryReplies[0] = ClusterTopologyWithoutReplicas(primary.Port);
+        primaryReplies[1] = ClusterTopology(primary.Port, replica.Port);
+        // Hold the refresh reply so the other reads arrive while it is still in flight.
+        primary.DelayReply(1, 300);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
+        var reads = Enumerable.Range(0, 8)
+            .Select(_ => strict.Strings.GetStringAsync(key).AsTask())
+            .ToArray();
+        var values = await Task.WhenAll(reads);
+
+        await Assert.That(values.All(value => value == "fresh")).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == $"GET {key}")).IsEqualTo(8);
+    }
+
+    [Test]
+    public async Task ReadFrom_ThrottlesRefreshWhenEveryAdvertisedReplicaIsUnreachable()
+    {
+        var key = "{replica-down}:key";
+        // Rejecting READONLY fails every replica handshake immediately, well inside the
+        // refresh interval, so the second read must not trigger another CLUSTER SLOTS.
+        await using var replica = new FakeRespServer(4)
+        {
+            ReplyOverride = static (_, _) => "-ERR replica unavailable\r\n"u8.ToArray(),
+        };
+        var unreachablePort = replica.Port;
+        var primaryReplies = new byte[][] { [], [], "$7\r\nprimary\r\n"u8.ToArray() };
+        await using var primary = new FakeRespServer(2, primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, unreachablePort);
+        primaryReplies[1] = ClusterTopology(primary.Port, unreachablePort);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var preferred = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+
+        await Assert.That(await preferred.Strings.GetStringAsync(key)).IsEqualTo("primary");
+        await Assert.That(await preferred.Strings.GetStringAsync(key)).IsEqualTo("primary");
+
+        // One refresh after the first exhaustion; the second read is inside the interval.
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "CLUSTER SLOTS", $"GET {key}", $"GET {key}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_EmptyReplicaRefreshThrottleIsPerSlotRange()
+    {
+        var lowKey = Enumerable.Range(0, 1000).Select(index => $"{{low{index}}}:key")
+            .First(candidate => ClusterHash.GetSlot(candidate) <= 8191);
+        var highKey = Enumerable.Range(0, 1000).Select(index => $"{{high{index}}}:key")
+            .First(candidate => ClusterHash.GetSlot(candidate) > 8191);
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$4\r\nhigh\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [], [], [] };
+        await using var primary = new FakeRespServer(2, primaryReplies);
+        primaryReplies[0] = SplitClusterTopology(primary.Port, highReplicaPort: null);
+        primaryReplies[1] = SplitClusterTopology(primary.Port, highReplicaPort: null);
+        primaryReplies[2] = SplitClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
+        await Assert.That(async () => await strict.Strings.GetStringAsync(lowKey))
+            .ThrowsExactly<RespireConnectionException>();
+        // The low range's refresh must not throttle the high range's first refresh.
+        await Assert.That(await strict.Strings.GetStringAsync(highKey)).IsEqualTo("high");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(3);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {highKey}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_StrictReplicaFailsOnAskWhilePreferredFollowsIt()
+    {
+        var key = "{asked}:key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var importing = new FakeRespServer(FakeRespServer.OkReply, "$9\r\nimporting\r\n"u8.ToArray());
+        var ask = Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{importing.Port}\r\n");
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : ask,
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        var error = await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica)
+            .Strings.GetStringAsync(key)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("ASK");
+        await Assert.That(importing.ReceivedCommands).IsEmpty();
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
+            .Strings.GetStringAsync(key)).IsEqualTo("importing");
+        await Assert.That(importing.ReceivedCommands).IsEquivalentTo(["ASKING", $"GET {key}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_StreamingGetUsesReplica()
+    {
+        var key = "{streamed}:key";
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$7\r\nreplica\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        string text;
+        await using (var stream = await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStreamAsync(key))
+        {
+            using var reader = new StreamReader(stream!);
+            text = await reader.ReadToEndAsync();
+        }
+
+        await Assert.That(text).IsEqualTo("replica");
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_UnknownCallerSuppliedNamesStayOnPrimary()
+    {
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$7\r\nreplica\r\n"u8.ToArray(),
+        };
+        var primaryReplies = new byte[][] { [], "$7\r\nprimary\r\n"u8.ToArray() };
+        await using var primary = new FakeRespServer(2, primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+
+        using (var implicitName = await view.ExecuteAsync("UNKNOWN_READ", "{implicit}:key"))
+        {
+            await Assert.That(implicitName.AsString()).IsEqualTo("primary");
+        }
+        using (var callerSupplied = await view.ExecuteAsync(RespireCommand.Create("UNKNOWN_READ"), "{caller}:key"))
+        {
+            await Assert.That(callerSupplied.AsString()).IsEqualTo("primary");
+        }
+        using (var catalog = await view.ExecuteAsync(RespireCommands.String.GET, ["{catalog}:key"]))
+            await Assert.That(catalog.AsString()).IsEqualTo("replica");
+
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "UNKNOWN_READ {implicit}:key", "UNKNOWN_READ {caller}:key"]);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", "GET {catalog}:key"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_UnknownInterpolatedCommandsStayOnPrimary()
+    {
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$7\r\nreplica\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        var interpolatedKey = "{interpolated}:key";
+
+        await view.ExecuteFireAndForgetAsync(RespireCommand.Create("UNKNOWN_READ"), ["{forget}:key"]);
+        await view.ExecuteFireAndForgetAsync($"UNKNOWN_READ {"{forget-interpolated}:key"}");
+        using (var interpolated = await view.ExecuteAsync($"UNKNOWN_READ {interpolatedKey}"))
+        {
+            await Assert.That(interpolated.AsString()).IsEqualTo("primary");
+        }
+        await view.ExecuteFireAndForgetAsync(RespireCommands.String.GET, ["{catalog-forget}:key"]);
+
+        // The interpolated read follows the fire-and-forget sends on the same primary pipeline.
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "UNKNOWN_READ {forget}:key", "UNKNOWN_READ {forget-interpolated}:key", "UNKNOWN_READ {interpolated}:key"]);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", "GET {catalog-forget}:key"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_RevalidatesAgedReplicaRoutesInBackground()
+    {
+        var key = "{revalidated}:key";
+        await using var oldReplica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$3\r\nold\r\n"u8.ToArray(),
+        };
+        await using var newReplica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$3\r\nnew\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, oldReplica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+            ReplicaRouteRevalidationInterval = TimeSpan.FromMilliseconds(100),
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+        await Assert.That(await strict.Strings.GetStringAsync(key)).IsEqualTo("old");
+        var oldNode = ReplicaRoutes(client)[ClusterHash.GetSlot(key)]!.Nodes[0];
+
+        // A failover changes the replica role without any redirect reaching this client.
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, newReplica.Port));
+        await Task.Delay(200);
+        // This read is served by the old route and starts the background revalidation.
+        await Assert.That(await strict.Strings.GetStringAsync(key)).IsEqualTo("old");
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        string? value;
+        do
+        {
+            value = await strict.Strings.GetStringAsync(key);
+            if (value == "new") break;
+            await Task.Delay(20);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        await Assert.That(value).IsEqualTo("new");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsGreaterThanOrEqualTo(2);
+        await Assert.That(primary.ReceivedCommands).DoesNotContain($"GET {key}");
+        var retirementDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (!oldNode.IsRetired && DateTime.UtcNow < retirementDeadline) await Task.Delay(10);
+        await Assert.That(oldNode.IsRetired).IsTrue();
+    }
+
+    [Test]
+    public async Task ReadFrom_RecentlyValidatedReplicaRoutesDoNotRefresh()
+    {
+        var key = "{validated}:key";
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$7\r\nreplica\r\n"u8.ToArray(),
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
+        for (var read = 0; read < 3; read++)
+        {
+            await Assert.That(await strict.Strings.GetStringAsync(key)).IsEqualTo("replica");
+        }
+
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
+    [Arguments(RespireErrorCodes.Loading)]
+    [Arguments(RespireErrorCodes.MasterDown)]
+    [Arguments(RespireErrorCodes.ClusterDown)]
+    public async Task ReadFrom_PreferredPoliciesRetryOnOtherRoleAfterUnavailableReply(string code)
+    {
+        var unavailable = Encoding.ASCII.GetBytes($"-{code} unavailable for this test\r\n");
+        var key = "{unavailable}:key";
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : unavailable,
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
+            .Strings.GetStringAsync(key)).IsEqualTo("primary");
+        await using (var stream = await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).Strings.GetStreamAsync(key))
+        {
+            using var reader = new StreamReader(stream!);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("primary");
+        }
+
+        // Strict Replica never switches roles; the server error reaches the caller.
+        var error = await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica)
+            .Strings.GetStringAsync(key)).ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo(code);
+
+        await Assert.That(replica.ReceivedCommands.Count(command => command == $"GET {key}")).IsEqualTo(3);
+        await Assert.That(primary.ReceivedCommands.Count(command => command == $"GET {key}")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReadFrom_PrimaryPreferredRetriesReplicaWhenPrimaryIsLoading()
+    {
+        var key = "{primary-loading}:key";
+        await using var replica = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "$7\r\nreplica\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.PrimaryPreferred)
+            .Strings.GetStringAsync(key)).IsEqualTo("replica");
+        // Primary is the default and never switches roles.
+        var error = await Assert.That(async () => await client.Strings.GetStringAsync(key))
+            .ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.Loading);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_BlockingReplicaPreferredRetriesPrimaryWhenReplicaIsLoading()
+    {
+        var key = "{blocking-loading}:stream";
+        await using var replica = new FakeRespServer(3)
+        {
+            ReplyOverride = static (_, command) => command.StartsWith("XREAD ", StringComparison.Ordinal)
+                ? "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray()
+                : FakeRespServer.OkReply,
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(3)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : "*0\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        var entries = await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).Streams.ReadAsync(
+            key, waitFor: TimeSpan.FromMilliseconds(1));
+
+        await Assert.That(entries).IsEmpty();
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReadFrom_PreferredFallbackStillAppliesWithNoRedirect()
+    {
+        var key = "{no-redirect-loading}:key";
+        await using var replica = new FakeRespServer(3)
+        {
+            ReplyOverride = static (_, command) => command == "READONLY"
+                ? FakeRespServer.OkReply
+                : "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(3)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : command.StartsWith("XREAD ", StringComparison.Ordinal)
+                    ? "*0\r\n"u8.ToArray()
+                    : "$7\r\nprimary\r\n"u8.ToArray(),
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var preferred = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+
+        // NoRedirect only surfaces MOVED and ASK; it does not disable the read policy's role fallback.
+        using (var multiplexed = await preferred.ExecuteAsync(
+                   RespireCommands.String.GET, [key], RespireCommandFlags.NoRedirect))
+        {
+            await Assert.That(multiplexed.AsString()).IsEqualTo("primary");
+        }
+
+        using (var blocking = await preferred.ExecuteAsync(
+                   RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", key, "0"], RespireCommandFlags.NoRedirect))
+        {
+            await Assert.That(blocking.IsError).IsFalse();
+        }
+
+        await Assert.That(replica.ReceivedCommands).Contains($"GET {key}");
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(primary.ReceivedCommands).Contains($"GET {key}");
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReadFrom_BlockingPreferredReadDoesNotSwitchRolesAfterFollowingAsk()
+    {
+        var key = "{blocking-asked-loading}:stream";
+        var slot = ClusterHash.GetSlot(key);
+        await using var importing = new FakeRespServer(3)
+        {
+            ReplyOverride = static (_, command) => command.StartsWith("XREAD ", StringComparison.Ordinal)
+                ? "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray()
+                : FakeRespServer.OkReply,
+        };
+        var ask = Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{importing.Port}\r\n");
+        await using var replica = new FakeRespServer(3)
+        {
+            ReplyOverride = static (_, command) => command.StartsWith("XREAD ", StringComparison.Ordinal)
+                ? "*0\r\n"u8.ToArray()
+                : FakeRespServer.OkReply,
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(3)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? Volatile.Read(ref topology)
+                : ask,
+        };
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        // During a migration only the importing node is authoritative, so its LOADING reply
+        // reaches the caller instead of rerouting the read to a replica of the old owner.
+        var error = await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.PrimaryPreferred)
+                .Streams.ReadAsync(key, waitFor: TimeSpan.FromMilliseconds(1)))
+            .ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.Loading);
+        await Assert.That(importing.ReceivedCommands).Contains("ASKING");
+        await Assert.That(importing.ReceivedCommands.Count(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD ", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
+    public async Task ReadFrom_StrictReplicaBlockingNoRedirectSurfacesAskReply()
+    {
+        var key = "{blocking-ask}:stream";
+        var slot = ClusterHash.GetSlot(key);
+        var ask = Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:1\r\n");
+        await using var replica = new FakeRespServer(3)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("XREAD ", StringComparison.Ordinal)
+                ? ask
+                : FakeRespServer.OkReply,
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
+        // NoRedirect callers handle redirects themselves, so they receive the ASK reply itself.
+        var raw = await Assert.That(async () => await strict.ExecuteAsync(
+                RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", key, "0"], RespireCommandFlags.NoRedirect))
+            .ThrowsExactly<RespireServerException>();
+        await Assert.That(raw!.Code).IsEqualTo(RespireErrorCodes.Ask);
+
+        // Without NoRedirect a strict read still refuses to follow ASK to a primary.
+        var routed = await Assert.That(async () => await strict.ExecuteAsync(
+                RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", key, "0"]))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(routed!.Message).Contains("ASK");
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.Replica)]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    public async Task ReadFrom_MovedWithFailedReplicaRefresh(RespireReadFrom readFrom)
+    {
+        var key = "{moved-refresh-fails}:key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var target = new FakeRespServer(2)
+        {
+            ReplyOverride = static (_, command) => command == "CLUSTER SLOTS"
+                ? "-ERR topology unavailable\r\n"u8.ToArray()
+                : "$6\r\ntarget\r\n"u8.ToArray(),
+        };
+        var moved = Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
+        await using var oldReplica = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : moved,
+        };
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, oldReplica.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var view = client.WithReadFrom(readFrom);
+
+        if (readFrom == RespireReadFrom.Replica)
+        {
+            // Without fresh routes a strict read has no replica to use, so it fails closed.
+            var error = await Assert.That(async () => await view.Strings.GetStringAsync(key))
+                .ThrowsExactly<RespireConnectionException>();
+            await Assert.That(error!.Message).Contains("after a redirect");
+            await Assert.That(target.ReceivedCommands).DoesNotContain($"GET {key}");
+        }
+        else
+        {
+            // A preferred read uses the redirected primary instead.
+            await Assert.That(await view.Strings.GetStringAsync(key)).IsEqualTo("target");
+            await Assert.That(target.ReceivedCommands).Contains($"GET {key}");
+        }
+
+        await Assert.That(oldReplica.ReceivedCommands).Contains($"GET {key}");
+        await Assert.That(target.ReceivedCommands).Contains("CLUSTER SLOTS");
+    }
+
+    private static ClusterReplicaSet?[] ReplicaRoutes(RespireClient client)
+        => (ClusterReplicaSet?[])typeof(ClusterRouter)
+            .GetField("_replicasBySlot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(client.Core.Cluster!)!;
+
+    [Test]
+    [Arguments("GET", true)]
+    [Arguments("get", true)]
+    [Arguments("OBJECT ENCODING", true)]
+    [Arguments("XINFO STREAM", true)]
+    [Arguments("MEMORY USAGE", true)]
+    [Arguments("SET", false)]
+    [Arguments("NOT-A-COMMAND", false)]
+    public async Task ReadOnlyMetadata_MatchesCanonicalMultiWordOperationNames(string operation, bool expected)
+        => await Assert.That(ReadOnlyCommandMetadata.IsReadOnly(operation)).IsEqualTo(expected);
+
+    private static byte[] SplitClusterTopology(int primaryPort, int? highReplicaPort)
+    {
+        var primaryNode = $"*3\r\n$9\r\n127.0.0.1\r\n:{primaryPort}\r\n$7\r\nprimary\r\n";
+        var highRange = highReplicaPort is { } replicaPort
+            ? $"*4\r\n:8192\r\n:16383\r\n{primaryNode}*3\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n"
+            : $"*3\r\n:8192\r\n:16383\r\n{primaryNode}";
+        return Encoding.ASCII.GetBytes($"*2\r\n*3\r\n:0\r\n:8191\r\n{primaryNode}{highRange}");
+    }
+
+    private static byte[] ClusterTopology(int primaryPort, int replicaPort)
+        => Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primaryPort}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n");
+
+    private static byte[] ClusterTopologyWithoutReplicas(int primaryPort)
+        => Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n" +
+            $"*2\r\n$9\r\n127.0.0.1\r\n:{primaryPort}\r\n");
+
+    [Test]
+    public async Task ReadFrom_RoutesReadOnlyScriptCommandsToReplica()
+    {
+        var primaryReplies = new byte[][]
+        {
+            [],
+            "$1\r\n1\r\n"u8.ToArray(),
+            "$1\r\n2\r\n"u8.ToArray(),
+            "$1\r\n3\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(primaryReplies);
+        await using var replica = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "$1\r\n1\r\n"u8.ToArray(),
+            "$1\r\n2\r\n"u8.ToArray(),
+            "$1\r\n3\r\n"u8.ToArray());
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n$10\r\nreplica-id\r\n");
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+        var readView = client.WithReadFrom(RespireReadFrom.Replica);
+        using var eval = await readView.ExecuteAsync(RespireCommands.Scripting.EVAL_RO, ["return 1", "1", "eval-key"]);
+        using var evalSha = await readView.ExecuteAsync(RespireCommands.Scripting.EVALSHA_RO, ["digest", "1", "sha-key"]);
+        using var fcall = await readView.ExecuteAsync(RespireCommands.Scripting.FCALL_RO, ["read", "1", "function-key"]);
+
+        await Assert.That(eval.AsString()).IsEqualTo("1");
+        await Assert.That(evalSha.AsString()).IsEqualTo("2");
+        await Assert.That(fcall.AsString()).IsEqualTo("3");
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(
+            ["READONLY", "EVAL_RO return 1 1 eval-key", "EVALSHA_RO digest 1 sha-key", "FCALL_RO read 1 function-key"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
+    public async Task ReadFrom_KeepsTransactionsOnPrimary()
+    {
+        var primaryReplies = new byte[][]
+        {
+            [],
+            FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(),
+            "*1\r\n+OK\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(primaryReplies);
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n$10\r\nreplica-id\r\n");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
+        });
+
+        await using var transaction = client.WithReadFrom(RespireReadFrom.Replica).CreateTransaction();
+        var pending = transaction.Strings.Set("{tenant}key", "value");
+        await transaction.CommitAsync();
+
+        await Assert.That(pending.Result).IsTrue();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+            ["CLUSTER SLOTS", "MULTI", "SET {tenant}key value", "EXEC"]);
+        await Assert.That(replica.ReceivedCommands).IsEmpty();
+    }
 
     [Test]
     public async Task HashSlot_UsesRedisCrc16AndHashTags()

@@ -1606,7 +1606,6 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteFireAndForgetAsync(command, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
-
         public IRespireClient WithReadFrom(RespireReadFrom readFrom) => inner.WithReadFrom(readFrom);
 
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);

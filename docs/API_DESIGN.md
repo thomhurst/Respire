@@ -521,6 +521,38 @@ calls unambiguous. Custom `IScriptCommands` implementations must implement the s
 
 ## 12. Key-prefixed views
 
+Cluster clients can set a default `RespireOptions.ReadFrom` policy or create a view with
+`WithReadFrom(RespireReadFrom)`. `Primary` is the default. `PrimaryPreferred` chooses a primary
+first and falls back to a replica when it cannot connect; `Replica` requires a healthy replica;
+`ReplicaPreferred` chooses a replica first and falls back to the primary. The two preferred
+policies also retry a read once on the other role when the chosen node replies `LOADING`,
+`MASTERDOWN`, or `CLUSTERDOWN`; reads are idempotent, so the retry is safe. Other server errors
+are returned unchanged, and the strict policies never switch roles. Batches do not perform this
+retry. `RespireCommandFlags.NoRedirect` does not disable it, because that flag only surfaces
+`MOVED` and `ASK`. A reply from an `ASK` target never switches roles, because only the importing
+node is authoritative during a slot migration. Policy applies only to
+commands whose generated Redis metadata marks them read-only and that have a routable key. Writes,
+unknown raw commands, interpolated `ExecuteAsync($"...")` text, fire-and-forget sends, and
+connection-scoped operations stay on the primary. Replica connections
+enter Redis Cluster `READONLY` mode during every connection handshake. Key-prefixed views preserve
+their read policy. Client caching is bypassed for read-policy views so data from replicas cannot
+contaminate primary cache state. Replica reads can be stale and do not provide read-your-writes
+consistency. Use `Primary` when a later read must observe an earlier write.
+
+In a batch, operations that share a hash slot run as one ordered pipeline. A group uses the
+view's policy only when every operation in it is read-only; one write sends the whole group to
+the primary, so a later read in the same batch observes that write. Groups for other slots are
+routed independently.
+
+Replica connections are separate from primary connections, even to the same `host:port`,
+because `READONLY` is connection state. A node that is a primary for one range and a replica for
+another therefore holds two connection sets. After a failover promotes a replica, its read-only
+connections are retired with the next topology refresh. A healthy replica read never redirects,
+so nothing else would trigger that refresh: a read that finds its range's replica routes older
+than 30 seconds starts a background topology refresh without waiting for it. When a range has no reachable replica,
+the client refreshes topology at most once per second for that range. Concurrent reads wait for
+the refresh already in flight instead of starting their own.
+
 ```csharp
 var tenantId = "42";
 var cart = new { Items = new[] { "book" } };

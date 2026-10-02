@@ -21,6 +21,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+    // Every slot in a range shares one replica set, including its cursor and refresh throttle.
+    private readonly ClusterReplicaSet?[] _replicasBySlot = new ClusterReplicaSet?[ClusterHash.SlotCount];
+    // MOVED clears a slot's replicas to this shared set, so a burst of reads across the moved
+    // slots coalesces into one topology refresh. Replaced once a refresh has started through it.
+    private ClusterReplicaSet? _movedReplicaRoutes;
+    private RespireConnectionMultiplexer[] _replicaNodes = [];
     private RespireConnectionMultiplexer[] _masters = [];
     // Published with the slot map under _nodesGate but read without it. Replicas only serve as
     // topology-refresh fallbacks, so a reader that pairs a new slot map with the previous replica
@@ -104,6 +110,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
             }
 
+            foreach (var replica in Volatile.Read(ref _replicaNodes))
+            {
+                if (replica.IsConnected && !replica.IsRetired)
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
     }
@@ -111,6 +125,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionStateChange>? DedicatedStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
+    internal event Action<RespireConnectionMultiplexer>? ReplicaNodeRetired;
     // Arguments: topology version, known primary endpoints, and whether that endpoint set is
     // authoritative. A non-authoritative set (one cached owner cleared, or a redirect onto a
     // partial map) cannot prove that an omitted primary has left the cluster.
@@ -176,6 +191,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // topology callbacks use this while holding their own route gate.
     internal RespireConnectionMultiplexer? GetKnownSlotOwner(int slot) => Volatile.Read(ref _slots[slot]);
 
+    // Replica sets are immutable topology snapshots shared by every slot in a range.
+    private ClusterReplicaSet? GetKnownReplicas(int slot) => Volatile.Read(ref _replicasBySlot[slot]);
+
     // ClientCore acquires its health gate first, then this gate, through membership checks
     // and health mutation. Router callbacks must always run outside this gate.
     internal object NodeStateGate => _nodesGate;
@@ -187,6 +205,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return _nodeStateHandlers.ContainsKey(node);
         }
     }
+
+    internal bool IsReplicaNode(RespireConnectionMultiplexer node)
+        => Array.IndexOf(Volatile.Read(ref _replicaNodes), node) >= 0;
 
     internal bool IsSlotConnected(int slot)
         => Volatile.Read(ref _slots[slot])?.IsConnected == true;
@@ -584,6 +605,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return GetDedicatedPoolWithDiscoveryAsync(slot, cancellationToken, discovery);
     }
 
+    internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
+        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    {
+        if (readFrom == RespireReadFrom.Primary || slot is null)
+            return await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+
+        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery)
+            .ConfigureAwait(false);
+        return connection.Multiplexer is { } node
+            ? GetOrCreateDedicatedPool(node)
+            : GetOrCreateDedicatedPool(new RespireEndpoint(connection.Host, connection.Port));
+    }
+
     private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolWithDiscoveryAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
@@ -701,9 +735,30 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);
 
-    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+    internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, RespireServerException? askRedirect = null, RespireConnection? redirectSource = null)
+        bool reuseIdle = true)
+        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle);
+
+    /// <summary>
+    /// Where a dedicated rent reselects its pool after topology retirement: the slot's route under
+    /// a read policy, or the importing node of a pending ASK redirect.
+    /// </summary>
+    internal readonly record struct DedicatedRoute(
+        int? Slot,
+        RespireReadFrom ReadFrom = RespireReadFrom.Primary,
+        RespireServerException? AskRedirect = null,
+        RespireConnection? RedirectSource = null);
+
+    private ValueTask<DedicatedConnectionPool> ReselectDedicatedPoolAsync(
+        DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        => route.AskRedirect is { } ask
+            ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery)
+            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery);
+
+    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+        DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        bool reuseIdle = true)
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
@@ -727,10 +782,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     }
                     discovery?.Failed(error);
                     // Retirement can cancel a pending handshake; no application command was sent.
-                    pool = askRedirect is null
-                        ? await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false)
-                        : await GetRedirectDedicatedPoolAsync(askRedirect, redirectSource!, cancellationToken, slot, discovery)
-                            .ConfigureAwait(false);
+                    pool = await ReselectDedicatedPoolAsync(route, cancellationToken, discovery).ConfigureAwait(false);
                 }
             }
         }
@@ -1409,6 +1461,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireEndpoint[] publishedEndpoints;
         long publishedTopologyVersion;
         bool topologyChanged;
+        HashSet<RespireConnectionMultiplexer>? retiredReplicaNodes = null;
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -1468,11 +1521,26 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             Volatile.Write(ref _replicas, replicas);
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+            var refreshedReplicas = new ClusterReplicaSet?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)
             {
+                var replicaNodes = range.Replicas.Select(_identities.GetOrCreateReplica).ToArray();
+                // Unchanged routes keep their set, preserving its cursor and refresh throttle,
+                // and this refresh has just confirmed them.
+                ClusterReplicaSet replicaSet;
+                if (_replicasBySlot[range.Start] is { } current && current.HasSameNodes(replicaNodes))
+                {
+                    replicaSet = current;
+                    replicaSet.MarkValidated(_options.ReplicaRouteRevalidationInterval);
+                }
+                else
+                {
+                    replicaSet = new ClusterReplicaSet(replicaNodes, _options.ReplicaRouteRevalidationInterval);
+                }
                 for (var slot = range.Start; slot <= range.End; slot++)
                 {
                     refreshedSlots[slot] = node;
+                    refreshedReplicas[slot] = replicaSet;
                 }
             }
             if (snapshotBatch is not null)
@@ -1480,19 +1548,30 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 for (var slot = 0; slot < _slotSnapshotBatches.Length; slot++)
                 {
                     if (ReferenceEquals(_slotSnapshotBatches[slot], snapshotBatch))
+                    {
                         refreshedSlots[slot] = _slots[slot];
+                        refreshedReplicas[slot] = Volatile.Read(ref _replicasBySlot[slot]);
+                    }
                 }
             }
             if (keptSlots is not null)
             {
                 for (var slot = 0; slot < keptSlots.Length; slot++)
                 {
-                    if (keptSlots[slot]) refreshedSlots[slot] = _slots[slot];
+                    if (keptSlots[slot])
+                    {
+                        refreshedSlots[slot] = _slots[slot];
+                        refreshedReplicas[slot] = Volatile.Read(ref _replicasBySlot[slot]);
+                    }
                 }
             }
 
-            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
-                out topologyChanged);
+            var previousReplicaNodes = Volatile.Read(ref _replicaNodes);
+            retiredNodes = ReplaceSlotOwnersLocked(
+                refreshedSlots, refreshedReplicas, coveredSlots, expectedVersion, snapshotBatch,
+                out topologyChanged, out var activeReplicas);
+            if (retiredNodes is not null && previousReplicaNodes.Length != 0)
+                retiredReplicaNodes = new HashSet<RespireConnectionMultiplexer>(retiredNodes.Where(previousReplicaNodes.Contains));
             publishedTopologyVersion = topologyChanged ? ++_topologyVersion : _topologyVersion;
             // Discovery publishes the primaries that own slots in the reply. A primary omitted
             // from a partial map has lost its slots (usually mid-failover) and is dropped; its
@@ -1500,6 +1579,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             publishedEndpoints = Enumerable.Range(0, _masters.Length)
                 .Where(index => _masterSlotCounts[index] != 0 && !_masters[index].IsRetired)
                 .Select(index => Endpoint(_masters[index])).Distinct().ToArray();
+            Volatile.Write(ref _replicaNodes, activeReplicas.ToArray());
             retirements = RetireInactiveLocked(protectedNodes);
             _publishedDiscoveryGeneration = discoveryGeneration;
             // Older discoveries can no longer publish; later requests capture these versions.
@@ -1518,7 +1598,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             foreach (var node in retiredNodes)
             {
-                NodeRetired?.Invoke(node);
+                if (retiredReplicaNodes?.Contains(node) == true) ReplicaNodeRetired?.Invoke(node);
+                else NodeRetired?.Invoke(node);
             }
         }
         if (topologyChanged) TopologyChanged?.Invoke(publishedTopologyVersion, publishedEndpoints, true);
@@ -1535,6 +1616,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             foreach (var replica in range.Replicas)
             {
+                if (RespireEndpointComparer.Instance.Equals(replica.Endpoint, range.Preferred)) continue;
                 if (!merged.TryGetValue(replica.Endpoint, out var entry))
                 {
                     entry = (replica.NodeId, []);
@@ -1565,6 +1647,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
         var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
+        retained.UnionWith(_replicaNodes);
         if (protectedNodes is not null) retained.UnionWith(protectedNodes);
         var retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
         if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
@@ -1604,10 +1687,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     // Called under _nodesGate: create a lazy transport without connecting or raising state events.
-    private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
-        => RespireConnectionMultiplexer.Create(
-            endpoint.Host, endpoint.Port, _options.Connections, _commandConnectionOptions,
-            _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
+    private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint, bool readOnly)
+    {
+        var connectionOptions = readOnly
+            ? _commandConnectionOptions with { ReadOnly = true }
+            : _commandConnectionOptions;
+        var category = readOnly
+            ? $"Respire.Cluster.Replica.{endpoint.Host}:{endpoint.Port}"
+            : $"Respire.Cluster.{endpoint.Host}:{endpoint.Port}";
+        return RespireConnectionMultiplexer.Create(
+            endpoint.Host, endpoint.Port, _options.Connections, connectionOptions, _options.CreateLogger(category));
+    }
 
     private void ObserveNode(RespireConnectionMultiplexer node)
     {
@@ -1657,6 +1747,20 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Stamp a changed owner before publication so a push observing it gets a newer token.
             if (!ReferenceEquals(previous, node)) MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, node, ++_topologyVersion);
+            // The new owner's replicas are unknown until the next refresh. Moved slots share one
+            // empty set so concurrent replica reads coalesce into a single refresh. A waiter for
+            // one slot may join a refresh started for another slot. That is correct because the
+            // refresh (TryRefreshSlotThroughKnownMastersAsync) sends CLUSTER SLOTS and republishes
+            // the replica routes of every slot, not only the slot that started it.
+            // HasStartedRefresh flips outside _nodesGate, so a refresh can start between this
+            // check and the write below. The slot then shares a set whose refresh is already
+            // running. That is benign: the slot's readers join that refresh, and if it leaves the
+            // slot empty they wait out one refresh interval, as for any throttled empty set.
+            if (_movedReplicaRoutes is not { HasStartedRefresh: false } movedRoutes)
+            {
+                _movedReplicaRoutes = movedRoutes = new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval);
+            }
+            Volatile.Write(ref _replicasBySlot[slot], movedRoutes);
             if (ReferenceEquals(previous, node))
             {
                 return;
@@ -1775,25 +1879,40 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private List<RespireConnectionMultiplexer>? ReplaceSlotOwnersLocked(
         RespireConnectionMultiplexer?[] refreshedSlots,
-        bool[] coveredSlots, long expectedVersion, object? snapshotBatch, out bool topologyChanged)
+        ClusterReplicaSet?[] refreshedReplicas,
+        bool[] coveredSlots, long expectedVersion, object? snapshotBatch, out bool topologyChanged,
+        out HashSet<RespireConnectionMultiplexer> activeReplicas)
     {
         topologyChanged = false;
         // Preserve only slots changed by a redirect since this request began. Snapshot order
         // has its own generation fence, so publishing a snapshot must not look like a later
         // redirect to another discovery that began from the same topology.
         var activeNodes = new HashSet<RespireConnectionMultiplexer>();
+        activeReplicas = [];
+        // Every slot in a range shares one set, so only a change of set needs another union.
+        ClusterReplicaSet? previousReplicas = null;
         for (var slot = 0; slot < refreshedSlots.Length; slot++)
         {
             if (_slotVersions[slot] > expectedVersion)
             {
                 refreshedSlots[slot] = Volatile.Read(ref _slots[slot]);
+                refreshedReplicas[slot] = Volatile.Read(ref _replicasBySlot[slot]);
             }
             if (refreshedSlots[slot] is { } node)
             {
                 activeNodes.Add(node);
             }
+            if (refreshedReplicas[slot] is { } replicas && !ReferenceEquals(replicas, previousReplicas))
+            {
+                activeReplicas.UnionWith(replicas.Nodes);
+                previousReplicas = replicas;
+            }
         }
         foreach (var node in activeNodes)
+        {
+            ObserveNode(node);
+        }
+        foreach (var node in activeReplicas)
         {
             ObserveNode(node);
         }
@@ -1806,7 +1925,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var node = refreshedSlots[slot];
             if (_slotVersions[slot] <= expectedVersion)
             {
-                topologyChanged |= !ReferenceEquals(Volatile.Read(ref _slots[slot]), node);
+                topologyChanged |= !ReferenceEquals(_slots[slot], node);
+                topologyChanged |= !SameReplicaRoutes(_replicasBySlot[slot], refreshedReplicas[slot]);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.
                 if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
@@ -1815,6 +1935,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     MarkSlotMutatedLocked(slot);
                 }
                 PublishSlotLocked(slot, node, _slotVersions[slot]);
+                // Published under the same slot fence as the owner, so the two never disagree.
+                Volatile.Write(ref _replicasBySlot[slot], refreshedReplicas[slot]);
                 if (snapshotBatch is not null && coveredSlots[slot])
                     _slotSnapshotBatches[slot] = snapshotBatch;
             }
@@ -1846,7 +1968,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
         foreach (var node in _nodeStateHandlers.Keys)
         {
-            if (!activeNodes.Contains(node))
+            if (!activeNodes.Contains(node) && !activeReplicas.Contains(node))
             {
                 (retiredNodes ??= []).Add(node);
             }
@@ -1862,6 +1984,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
         }
         return retiredNodes;
+    }
+
+    private static bool SameReplicaRoutes(ClusterReplicaSet? current, ClusterReplicaSet? refreshed)
+    {
+        if (ReferenceEquals(current, refreshed)) return true;
+        return current is not null && refreshed is not null && current.HasSameNodes(refreshed.Nodes);
     }
 
     private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
@@ -1885,20 +2013,24 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
+        => GetOrCreateDedicatedPool(GetOrCreateNode(endpoint, observe: false));
+
+    private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            var node = GetOrCreateNode(endpoint, observe: false);
             if (_dedicatedPools.TryGetValue(node, out var existing))
             {
                 return existing;
             }
 
+            // Dedicated connections never use the command multiplexer's tracking, push, or
+            // maintenance settings. Replica pools add only Cluster READONLY mode.
             var pool = new DedicatedConnectionPool(
                 node.Host,
                 node.Port,
-                _options.ToConnectionOptions(),
+                node.Options.ReadOnly ? _options.ToConnectionOptions() with { ReadOnly = true } : _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
                 change => DedicatedStateChanged?.Invoke(change));
             _dedicatedPools.Add(node, pool);
@@ -1945,10 +2077,29 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         var replica = entry.AsArray();
         if (replica.Length < 2) return null;
-        var host = replica[0].AsString();
         var port = replica[1].AsInteger();
-        if (port is <= 0 or > 65_535 || host == "?") return null;
-        var endpoint = new RespireEndpoint(string.IsNullOrEmpty(host) ? fallbackHost : host, (int)port);
+        if (port is <= 0 or > 65_535) return null;
+        var host = replica[0].IsNull ? fallbackHost : replica[0].AsString();
+        string? hostname = null;
+        string? ip = null;
+        for (var metadataIndex = 3; metadataIndex < replica.Length; metadataIndex++)
+        {
+            var metadata = replica[metadataIndex].AsArray();
+            for (var pairIndex = 0; pairIndex + 1 < metadata.Length; pairIndex += 2)
+            {
+                var name = metadata[pairIndex].AsSpan();
+                if ((!name.SequenceEqual("hostname"u8) && !name.SequenceEqual("ip"u8))
+                    || metadata[pairIndex + 1].IsNull) continue;
+                var alias = metadata[pairIndex + 1].AsString();
+                if (string.IsNullOrEmpty(alias) || alias == "?") continue;
+                if (name.SequenceEqual("hostname"u8)) hostname = alias;
+                else ip = alias;
+            }
+        }
+        if (string.IsNullOrEmpty(host)) host = hostname ?? ip ?? fallbackHost;
+        else if (host == "?") host = hostname ?? ip;
+        if (string.IsNullOrEmpty(host) || host == "?") return null;
+        var endpoint = new RespireEndpoint(host, (int)port);
         var nodeId = replica.Length > 2 && !replica[2].IsNull ? replica[2].AsString() : null;
         return new ClusterTopologyReplica(endpoint, string.IsNullOrEmpty(nodeId) ? null : nodeId,
             ParseEndpointAliases(replica, (int)port));
@@ -2029,6 +2180,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
                     {
                         if (TryParseReplica(values[replicaIndex], seed.Host) is { } replica) replicas.Add(replica);
+                    }
+
+                    for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
+                    {
+                        if (TryParseReplica(values[replicaIndex], seed.Host) is not { } replica
+                            || RespireEndpointComparer.Instance.Equals(replica.Endpoint, preferred)
+                            || replicas.Any(existing => RespireEndpointComparer.Instance.Equals(existing.Endpoint, replica.Endpoint)))
+                        {
+                            continue;
+                        }
+                        replicas.Add(replica);
                     }
 
                     topology.Add(new ClusterTopologyRange((int)start, (int)end, preferred, nodeId, aliases)

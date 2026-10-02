@@ -264,6 +264,7 @@ internal static class Verbs
     public static readonly Verb Watch = new("WATCH");
 
     // Server
+    public static readonly Verb ReadOnly = new("READONLY");
     public static readonly Verb ClientList = new(-1, "CLIENT", "LIST");
     public static readonly Verb ClientKill = new(-1, "CLIENT", "KILL");
     public static readonly Verb CommandCount = new(-1, "COMMAND", "COUNT");

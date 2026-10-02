@@ -17,15 +17,16 @@ internal sealed record ClusterTopologyReplica(
 internal sealed class ClusterNodeIdentityIndex
 {
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = new(EndpointComparer.Instance);
+    private readonly ClusterReplicaRegistry _replicas = new(EndpointComparer.Instance);
     private readonly Dictionary<string, RespireConnectionMultiplexer> _nodesById = new(StringComparer.Ordinal);
     private readonly Dictionary<RespireConnectionMultiplexer, string> _nodeIds = [];
     // Includes detached generations until their owner confirms drain and correction completion.
     private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
-    private readonly Func<RespireEndpoint, RespireConnectionMultiplexer> _create;
+    private readonly Func<RespireEndpoint, bool, RespireConnectionMultiplexer> _create;
     private readonly object _gate;
 
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
-        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object gate)
+        Func<RespireEndpoint, bool, RespireConnectionMultiplexer> create, object gate)
     {
         ArgumentNullException.ThrowIfNull(gate);
         _create = create;
@@ -34,15 +35,24 @@ internal sealed class ClusterNodeIdentityIndex
         _allNodes.Add(primary);
     }
 
+    internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
+        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object gate)
+        : this(endpoint, primary, (address, _) => create(address), gate)
+    {
+    }
+
     internal IEnumerable<RespireConnectionMultiplexer> All => _allNodes;
     internal IEnumerable<RespireEndpoint> Endpoints => _nodes.Keys;
     internal int NodeIdCount => _nodesById.Count;
     internal int ReverseNodeIdCount => _nodeIds.Count;
+    internal ClusterReplicaRegistry Replicas => _replicas;
 
     internal bool IsActive(RespireConnectionMultiplexer node)
     {
         AssertAccess();
-        return _nodes.Values.Contains(node);
+        // Replica transports live only under their own endpoint, so that check is one lookup.
+        // Primary transports can also be stored under aliases, so they keep the value scan.
+        return node.Options.ReadOnly ? _replicas.IsCurrent(node) : _nodes.Values.Contains(node);
     }
 
     /// <summary>Detaches departed generations, retaining configured seed addresses for discovery.</summary>
@@ -60,6 +70,7 @@ internal sealed class ClusterNodeIdentityIndex
         // they are not per-slot or per-command allocations.
         foreach (var (endpoint, node) in _nodes.ToArray())
             if (!retained.Contains(node)) _nodes.Remove(endpoint);
+        _replicas.Retain(retained, activeNodes);
         foreach (var (id, node) in _nodesById.ToArray())
             if (!activeNodes.Contains(node)) _nodesById.Remove(id);
         foreach (var (node, id) in _nodeIds.ToArray())
@@ -73,6 +84,9 @@ internal sealed class ClusterNodeIdentityIndex
     {
         AssertAccess();
         Debug.Assert(!IsActive(node), "An active generation cannot be forgotten.");
+        foreach (var (endpoint, current) in _nodes.ToArray())
+            if (ReferenceEquals(current, node)) _nodes.Remove(endpoint);
+        _replicas.Forget(node);
         _allNodes.Remove(node);
         ValidateInvariants();
     }
@@ -104,16 +118,25 @@ internal sealed class ClusterNodeIdentityIndex
     internal static bool EndpointsEqual(RespireEndpoint left, RespireEndpoint right)
         => EndpointComparer.Instance.Equals(left, right);
 
+    internal RespireConnectionMultiplexer GetOrCreateReplica(ClusterTopologyReplica replica)
+    {
+        AssertAccess();
+        return _replicas.GetOrCreate(replica, endpoint => CreateNode(endpoint, readOnly: true));
+    }
+
     internal RespireConnectionMultiplexer GetCurrent(RespireConnectionMultiplexer node)
     {
         AssertAccess();
+        if (node.Options.ReadOnly) return _replicas.GetCurrent(node);
+
         if (_nodeIds.TryGetValue(node, out var id)
             && _nodesById.TryGetValue(id, out var identified) && IsCurrentTransport(identified))
         {
             return identified;
         }
         // The router checks active membership before publishing this fallback as its seed.
-        return _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var current) ? current : node;
+        var endpoint = new RespireEndpoint(node.Host, node.Port);
+        return _nodes.TryGetValue(endpoint, out var current) ? current : node;
     }
 
     internal List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)> ApplySnapshot(
@@ -259,6 +282,7 @@ internal sealed class ClusterNodeIdentityIndex
         {
             Debug.Assert(_allNodes.Contains(node), "Every endpoint transport must remain owned.");
         }
+        _replicas.ValidateInvariants(_allNodes.Contains);
         foreach (var (id, node) in _nodesById)
         {
             Debug.Assert(_allNodes.Contains(node), "Every identity transport must remain owned.");
@@ -355,9 +379,9 @@ internal sealed class ClusterNodeIdentityIndex
 
     // The factory runs under the router node gate. It must not publish health events or
     // acquire the ClientCore health gate; observation starts only after construction.
-    private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
+    private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint, bool readOnly = false)
     {
-        var node = _create(endpoint);
+        var node = _create(endpoint, readOnly);
         // Retain ownership even if a later range fails before the snapshot is published.
         _allNodes.Add(node);
         return node;

@@ -86,6 +86,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DedicatedStateChanged += NotifyRecoveryStateChanged;
             cluster.DiscoveryStateChanged += NotifyRecoveryStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
+            cluster.ReplicaNodeRetired += NotifyReadReplicaNodeRetired;
             cluster.TopologyChanged += NotifySubscriptionTopologyChanged;
         }
         else if (Sentinel is null)
@@ -266,6 +267,11 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionStateChange change)
     {
+        if (Cluster?.IsReplicaNode(node) == true)
+        {
+            NotifyReadReplicaStateChanged(node, slot, change);
+            return;
+        }
         int? cacheEvictions = null;
 
         lock (_stateGate)
@@ -312,6 +318,18 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
     {
+        if (Cluster?.IsReplicaNode(node) == true)
+        {
+            lock (_stateGate)
+            {
+                _reconnectingCommandSlots.RemoveWhere(item => ReferenceEquals(item.Node, node));
+                _disconnectedCommandSlots.RemoveWhere(item => ReferenceEquals(item.Node, node));
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
+            }
+            PublishQueuedStates();
+            return;
+        }
         int? cacheEvictions = null;
 
         lock (_stateGate)
@@ -339,6 +357,18 @@ internal sealed class ClientCore : IAsyncDisposable
         if (cacheEvictions is { } removed)
         {
             ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+        }
+        PublishQueuedStates();
+    }
+
+    internal void NotifyReadReplicaNodeRetired(RespireConnectionMultiplexer node)
+    {
+        lock (_stateGate)
+        {
+            _reconnectingCommandSlots.RemoveWhere(item => ReferenceEquals(item.Node, node));
+            _disconnectedCommandSlots.RemoveWhere(item => ReferenceEquals(item.Node, node));
+            QueueEndpointStateLocked(new RespireConnectionStateChange(
+                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
         }
         PublishQueuedStates();
     }
@@ -621,6 +651,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
             cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
             cluster.NodeRetired -= NotifyCommandNodeRetired;
+            cluster.ReplicaNodeRetired -= NotifyReadReplicaNodeRetired;
             cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
             await cluster.DisposeAsync(disposeStartedOnSmigratedWorker).ConfigureAwait(false);
         }

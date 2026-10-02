@@ -130,6 +130,12 @@ public sealed record RespireOptions
     public TimeSpan ReplicaRefreshInterval { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
+    /// Age after which a Cluster replica read starts a background topology refresh, so a failover
+    /// that promotes a replica is noticed even when no redirect occurs. Tests shorten it.
+    /// </summary>
+    internal TimeSpan ReplicaRouteRevalidationInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
     /// learned hash slots are routed directly on later commands.
     /// </summary>
@@ -360,11 +366,13 @@ public sealed record RespireOptions
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),
             "must be between zero and one hour");
-        if (ReadFrom != RespireReadFrom.Primary && UseCluster)
-            throw new RespireConfigurationException("RespireOptions.ReadFrom is not supported with Redis Cluster yet.");
+        Require(
+            ReplicaRouteRevalidationInterval >= TimeSpan.Zero && ReplicaRouteRevalidationInterval <= TimeSpan.FromHours(1),
+            nameof(ReplicaRouteRevalidationInterval),
+            "must be between zero and one hour");
         if (UseCluster && ReplicaEndpoints.Count != 0)
             throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Redis Cluster discovers its own topology.");
-        if (ReadFrom != RespireReadFrom.Primary && string.IsNullOrWhiteSpace(SentinelPrimaryName)
+        if (ReadFrom != RespireReadFrom.Primary && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName)
             && ReplicaEndpoints.Count == 0)
             throw new RespireConfigurationException("RespireOptions.ReadFrom requires Sentinel discovery or at least one ReplicaEndpoints entry.");
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
