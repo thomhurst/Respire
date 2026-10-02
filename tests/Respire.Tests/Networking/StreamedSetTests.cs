@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Respire;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -61,6 +62,99 @@ public sealed class StreamedSetTests
         await Assert.That(await client.Strings.SetAsync("sequence", sequence)).IsTrue();
         await Assert.That(server.ValueLength).IsEqualTo(5);
         await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 1, 2, 3, 4, 5 });
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ClusterRedirectReplaysSeekableSetSources(bool ask, bool useStream)
+    {
+        await using var target = ask
+            ? new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply)
+            : new FakeRespServer(FakeRespServer.OkReply);
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        if (useStream)
+        {
+            using var source = new MemoryStream(Encoding.ASCII.GetBytes("xxpayload"));
+            source.Position = 2;
+            await Assert.That(await client.Strings.SetAsync("key", source, 7)).IsTrue();
+            await Assert.That(source.Position).IsEqualTo(9);
+        }
+        else
+        {
+            await Assert.That(await client.Strings.SetAsync(
+                "key", new ReadOnlySequence<byte>(Encoding.ASCII.GetBytes("payload")))).IsTrue();
+        }
+
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "SET key payload"]);
+        string[] expectedTargetCommands = ask ? ["ASKING", "SET key payload"] : ["SET key payload"];
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(expectedTargetCommands);
+    }
+
+    [Test]
+    public async Task ClusterRedirectDoesNotRetryNonSeekableSetSource()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var error = await Assert.That(async () => await client.Strings.SetAsync(
+                "key", new GeneratedStream(7), 7))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task AskRedirectConsumesPreludeReplyBeforeStreamCompletes()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var source = new PausedReplayStream(new byte[RespireConnection.StreamChunkSize + 4]);
+        var set = client.Strings.SetAsync("key", source, RespireConnection.StreamChunkSize + 4).AsTask();
+
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForCommandCountAsync(target, 1);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["ASKING"]);
+        await Assert.That(set.IsCompleted).IsFalse();
+
+        source.ContinueReading.TrySetResult();
+        await Assert.That(await set.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedArguments[1][2].Length)
+            .IsEqualTo(RespireConnection.StreamChunkSize + 4);
     }
 
     [Test]
@@ -991,6 +1085,12 @@ public sealed class StreamedSetTests
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
     }
 
+    private static async Task WaitForCommandCountAsync(FakeRespServer server, int count)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count) await Task.Delay(10, timeout.Token);
+    }
+
     private sealed class UnknownLengthSeekableStream(byte[] bytes) : Stream
     {
         private int _position;
@@ -1199,6 +1299,24 @@ public sealed class StreamedSetTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class PausedReplayStream(byte[] payload) : MemoryStream(payload)
+    {
+        private int _readCount;
+        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _readCount) == 4)
+            {
+                ReadStarted.TrySetResult();
+                await ContinueReading.Task.WaitAsync(cancellationToken);
+            }
+
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
     }
 
     private sealed class PartialThenBlockedStream(byte[] payload, int maxRead, int pauseAfter) : Stream

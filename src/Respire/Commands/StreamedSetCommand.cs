@@ -12,10 +12,19 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
 {
     private sealed class StreamSource(Stream current)
     {
+        private readonly Stream _original = current;
+        private readonly long _originalPosition = current.CanSeek ? current.Position : 0;
         internal Stream Current { get; private set; } = current;
+        internal bool CanReplay => _original.CanSeek;
 
         internal void RestorePrefix(ReadOnlySpan<byte> prefix)
             => Current = new PrefixStream(prefix.ToArray(), Current);
+
+        internal void RestartForRedirect()
+        {
+            _original.Position = _originalPosition;
+            Current = _original;
+        }
     }
 
     private sealed class PrefixStream(byte[] prefix, Stream remainder) : Stream
@@ -66,6 +75,7 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
     private readonly long _length;
     private readonly RespireExpiry _expiry;
     private readonly SetWhen _when;
+    private readonly bool _sendAsking;
 
     internal StreamedSetCommand(RespireValue key, Stream source, long length, RespireExpiry expiry, SetWhen when)
     {
@@ -75,6 +85,7 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
         _length = length;
         _expiry = expiry;
         _when = when;
+        _sendAsking = false;
     }
 
     internal StreamedSetCommand(RespireValue key, ReadOnlySequence<byte> source, RespireExpiry expiry, SetWhen when)
@@ -85,10 +96,26 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
         _length = source.Length;
         _expiry = expiry;
         _when = when;
+        _sendAsking = false;
+    }
+
+    private StreamedSetCommand(StreamedSetCommand source, bool sendAsking)
+    {
+        _key = source._key;
+        _stream = source._stream;
+        _sequence = source._sequence;
+        _length = source._length;
+        _expiry = source._expiry;
+        _when = source._when;
+        _sendAsking = sendAsking;
     }
 
     internal RespireValue Key => _key;
     internal long Length => _length;
+    internal bool SendsAsking => _sendAsking;
+    internal bool CanReplayRedirect => _stream?.CanReplay ?? true;
+    internal StreamedSetCommand WithAsking() => new(this, sendAsking: true);
+    internal void RestartForRedirect() => _stream?.RestartForRedirect();
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
@@ -110,6 +137,12 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
 
     public void Write(ref RespWriter writer)
         => throw new InvalidOperationException("Streamed SET commands must use the streaming connection path.");
+
+    internal void WriteAsking(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(1);
+        writer.WriteBulkString("ASKING"u8);
+    }
 
     internal void WriteStart(ref RespWriter writer)
     {

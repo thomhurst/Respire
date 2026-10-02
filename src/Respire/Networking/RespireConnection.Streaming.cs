@@ -60,6 +60,12 @@ internal sealed partial class RespireConnection
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
+    internal ValueTask<RespValue> SendAskingStreamedSetAsync(
+        StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
+        bool allowConnectionReroute)
+        => SendStreamingCoreAsync(command.WithAsking(), cancellationToken, commandDeadline,
+            pinToConnection: false, allowConnectionReroute: allowConnectionReroute);
+
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
     {
@@ -115,7 +121,8 @@ internal sealed partial class RespireConnection
 
             await DrainBufferedWritesAsync(effectiveCancellation).ConfigureAwait(false);
             await WaitForStreamingAdmissionAsync(
-                static connection => connection._inflight.Capacity - connection._inflight.Count > 0,
+                connection => connection._inflight.Capacity - connection._inflight.Count
+                    >= (command.SendsAsking ? 2 : 1),
                 effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
@@ -499,10 +506,18 @@ internal sealed partial class RespireConnection
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.
             startedBatch = start == 0;
             requestWriteStart = _enqueuedBytes;
+            long askingWriteEnd = 0;
             try
             {
                 var writer = new RespWriter(_activeBuffer);
+                if (command.SendsAsking)
+                {
+                    command.WriteAsking(ref writer);
+                    askingWriteEnd = _enqueuedBytes + _activeBuffer.Count - start;
+                }
                 command.WriteStart(ref writer);
+                if (command.SendsAsking && !_inflight.TryEnqueueDiscard("SET", askingWriteEnd))
+                    throw new InvalidOperationException("No in-flight slot remained for ASKING response.");
             }
             catch
             {
@@ -511,6 +526,7 @@ internal sealed partial class RespireConnection
                 _activeBuffer.TruncateTo(start);
                 throw;
             }
+            if (command.SendsAsking && _responseTimeout is not null) _activeReplyCount++;
             Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + _activeBuffer.Count - start);
             return _activeBuffer.WriteCompletion;
         }
@@ -542,7 +558,7 @@ internal sealed partial class RespireConnection
     }
 
     private Task AppendStreamingEnd(
-        StreamedSetCommand command, PendingResponse source, long requestWriteStart, out bool startedBatch)
+        StreamedSetCommand command, PendingResponseSource source, long requestWriteStart, out bool startedBatch)
     {
         lock (_writeGate)
         {

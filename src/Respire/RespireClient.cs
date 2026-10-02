@@ -2139,7 +2139,7 @@ public sealed partial class RespireClient : IRespireClient
                 cluster,
                 command,
                 cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is IStreamingRespCommand);
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
         else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
@@ -2396,6 +2396,9 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var redirectDisabled = noRedirect
+            || command is IStreamingRespCommand && command is not StreamedSetCommand
+            || command is StreamedSetCommand streamedSet && !streamedSet.CanReplayRedirect;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
@@ -2446,7 +2449,7 @@ public sealed partial class RespireClient : IRespireClient
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
-                    when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                    when (!redirectDisabled && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
@@ -2454,13 +2457,14 @@ public sealed partial class RespireClient : IRespireClient
                     connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
                     discoveryPending = false;
+                    if (command is StreamedSetCommand replayableSet) replayableSet.RestartForRedirect();
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
             }
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect, cancellationToken);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, redirectDisabled, cancellationToken);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2876,11 +2880,22 @@ public sealed partial class RespireClient : IRespireClient
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
-        => sendAsking
-            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute)
-            : connection.SendCheckedAsync(in command, cancellationToken, operation,
+    {
+        if (!sendAsking)
+        {
+            return connection.SendCheckedAsync(in command, cancellationToken, operation,
                 commandDeadline, allowStreamingConnectionReroute);
+        }
+
+        if (command is StreamedSetCommand streamedSet)
+        {
+            return connection.SendAskingStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
+                allowStreamingConnectionReroute);
+        }
+
+        return ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
+            commandDeadline, allowStreamingConnectionReroute);
+    }
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
