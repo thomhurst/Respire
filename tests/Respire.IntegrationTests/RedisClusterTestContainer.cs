@@ -12,6 +12,7 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
     internal static async Task<RedisClusterTestContainer> StartAsync(string image = "redis:7.0.15", bool loadBloomModule = false)
     {
         // This fixture starts server binaries directly, bypassing Redis 8's module-loading entrypoint.
+        // The optional module path matches the official redis:8-alpine image used by probabilistic tests.
         var moduleArguments = loadBloomModule ? " --loadmodule /usr/local/lib/redis/modules/redisbloom.so" : "";
         var container = new ContainerBuilder(image)
             .WithPortBinding(7000, true).WithPortBinding(7001, true).WithPortBinding(7002, true)
