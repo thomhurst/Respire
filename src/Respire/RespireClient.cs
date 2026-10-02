@@ -2178,7 +2178,8 @@ public sealed partial class RespireClient : IRespireClient
             // Large uploads must not own a multiplexed connection's write path while the
             // source or socket stalls. Keep their normal command deadline on the dedicated lease.
             return SendBlockingAsync(operation, command, cancellationToken,
-                noRedirect: true, applyCommandTimeout: true);
+                noRedirect: command is not IReplayableStreamingRespCommand { CanReplay: true },
+                policy: DedicatedSendPolicy.Streaming);
         }
 
         var cache = core.ClientCache;
@@ -3372,6 +3373,18 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    /// <summary>Controls command deadlines and connection reuse after a failed dedicated send.</summary>
+    internal enum DedicatedSendPolicy { Blocking, Streaming }
+
+    private static async ValueTask ReleaseFailedDedicatedConnectionAsync(
+        DedicatedConnectionPool pool, RespireConnection connection, DedicatedSendPolicy policy)
+    {
+        // Streaming closes its socket for incomplete frames. Once the frame is complete,
+        // the receive loop drains an abandoned reply before completing the next command.
+        if (policy == DedicatedSendPolicy.Streaming && connection.IsConnected) pool.Return(connection);
+        else await pool.DiscardAsync(connection).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Sends commands that occupy their connection on a dedicated pooled connection. Blocking
     /// commands omit the command timeout; streamed uploads keep it, so neither stalls multiplexed
@@ -3384,7 +3397,7 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null,
         bool noRedirect = false,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
-        bool applyCommandTimeout = false, bool allowReadFrom = true)
+        DedicatedSendPolicy policy = DedicatedSendPolicy.Blocking, bool allowReadFrom = true)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3398,7 +3411,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 return await SendBlockingClusterAsync(
                         operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
-                        cancellationTimeout, callerCancellationToken, applyCommandTimeout, readFrom)
+                        cancellationTimeout, callerCancellationToken, policy, readFrom)
                     .ConfigureAwait(false);
             }
 
@@ -3418,7 +3431,7 @@ public sealed partial class RespireClient : IRespireClient
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                         core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
-                var response = applyCommandTimeout
+                var response = policy == DedicatedSendPolicy.Streaming
                     ? await connection.SendAsync(in command, cancellationToken, commandName: operation).ConfigureAwait(false)
                     : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
                 pool.Return(connection);
@@ -3448,10 +3461,7 @@ public sealed partial class RespireClient : IRespireClient
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    if (applyCommandTimeout && connection.IsConnected)
-                        pool!.Return(connection);
-                    else
-                        await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    await ReleaseFailedDedicatedConnectionAsync(pool!, connection, policy).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;
@@ -3474,12 +3484,15 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         string? storedProcedureName,
         bool noRedirect,
-        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, bool applyCommandTimeout,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, DedicatedSendPolicy policy,
         RespireReadFrom readFrom)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var commandDeadline = policy == DedicatedSendPolicy.Streaming && core.Options.CommandTimeout is { } streamTimeout
+            ? CommandDeadline.After(Math.Max(1L, (long)streamTimeout.TotalMilliseconds))
+            : CommandDeadline.None;
         DedicatedConnectionPool pool;
         long routeVersion;
         if (command is IStreamingRespCommand)
@@ -3521,26 +3534,38 @@ public sealed partial class RespireClient : IRespireClient
                         telemetryStarted = true;
                     }
 
-                    // Remember whether this reply came from an ASK target: during a migration only
-                    // the importing node is authoritative, so its errors must not switch roles.
+                    // Errors from an ASK target must not switch roles during migration.
                     var sentAsking = sendAsking;
-                    var response = await (sendAsking
-                            ? ClusterRouter.SendBlockingAskingUncheckedAsync(
-                                connection, in command, cancellationToken)
-                            : applyCommandTimeout
-                                ? command is IStreamingRespCommand
-                                    ? connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                                        allowStreamingConnectionReroute: false,
-                                        validateStreamingRoute: () => cluster.IsDedicatedStreamRouteCurrent(
-                                            slot, routeVersion, connection))
-                                    : connection.SendAsync(in command, cancellationToken, commandName: operation)
-                                : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
-                        .ConfigureAwait(false);
-                    sendAsking = false;
-                    if (response.IsError)
+                    RespValue response = default;
+                    RespireServerException? serverError = null;
+                    try
                     {
-                        var error = ResponseReader.ServerError(in response, operation);
-                        response.Dispose();
+                        if (policy == DedicatedSendPolicy.Streaming)
+                        {
+                            // ASK targets intentionally differ from the cached slot owner.
+                            response = await (sendAsking
+                                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
+                                    operation, commandDeadline, allowStreamingConnectionReroute: false,
+                                    validateStreamingRoute: () => !pool.IsStopping)
+                                : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                                    commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
+                                    validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
+                                        slot, routeVersion, connection))).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            response = await (sendAsking
+                                ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken)
+                                : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
+                                .ConfigureAwait(false);
+                        }
+                    }
+                    catch (RespireServerException error) { serverError = error; }
+                    sendAsking = false;
+                    if (serverError is not null || response.IsError)
+                    {
+                        var error = serverError ?? ResponseReader.ServerError(in response, operation);
+                        if (serverError is null) response.Dispose();
                         var strictReplicaAsk = ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom);
                         if (!noRedirect && !strictReplicaAsk && attempt < ClusterRouter.RedirectLimit
                             && ClusterRouter.CanRecover(error, slot))
@@ -3562,6 +3587,16 @@ public sealed partial class RespireClient : IRespireClient
                             pool.Return(connection);
                             returned = true;
                             pool = redirectedPool;
+                            routeVersion = cluster.CaptureSlotVersion(slot);
+                            if (command is IReplayableStreamingRespCommand replayable)
+                            {
+                                try { replayable.ResetSourceForReplay(); }
+                                catch (Exception resetError) when (resetError is not OutOfMemoryException
+                                    and not AccessViolationException and not StackOverflowException)
+                                {
+                                    RethrowPreservingStackTrace(error);
+                                }
+                            }
                             sendAsking = error.Code == RespireErrorCodes.Ask;
                             askingSource = sendAsking ? connection : null;
                             askRedirect = sendAsking ? error : null;
@@ -3603,11 +3638,16 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     if (connection is not null)
                     {
+                        commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                         cluster.RecordRejection(ref discovery, connection, error);
                         if (!returned) pool.Return(connection);
                     }
-                    (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
-                        slot, cancellationToken, discovery).ConfigureAwait(false);
+                    if (sendAsking && askRedirect is not null && askingSource is not null)
+                        pool = await cluster.GetRedirectDedicatedPoolAsync(
+                            askRedirect, askingSource, cancellationToken, slot, discovery).ConfigureAwait(false);
+                    else
+                        (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
+                            slot, cancellationToken, discovery).ConfigureAwait(false);
                     continue;
                 }
                 catch (Exception ex)
@@ -3624,10 +3664,7 @@ public sealed partial class RespireClient : IRespireClient
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
-                        if (applyCommandTimeout && connection.IsConnected)
-                            pool.Return(connection);
-                        else
-                            await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        await ReleaseFailedDedicatedConnectionAsync(pool, connection, policy).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;

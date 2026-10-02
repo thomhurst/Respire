@@ -70,8 +70,8 @@ internal sealed partial class RespireConnection
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
         in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
-        CommandDeadline commandDeadline)
-        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking);
+        CommandDeadline commandDeadline, Func<bool>? validateStreamingRoute = null)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking, validateStreamingRoute);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
@@ -153,15 +153,14 @@ internal sealed partial class RespireConnection
                     throw;
                 }
             }
-            if (validateStreamingRoute is not null && !validateStreamingRoute())
-                throw new RespireConnectionRetiredException(Host, Port);
-
             // A source that ignored the token can complete its read after the caller, the deadline
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
             // the wire yet, so fail here instead of queueing an expired header that a later wait
             // would have to abort the connection for.
             timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
+            if (validateStreamingRoute is not null && !validateStreamingRoute())
+                throw new RespireConnectionRetiredException(Host, Port);
 
             if (prelude is { } prefix)
             {

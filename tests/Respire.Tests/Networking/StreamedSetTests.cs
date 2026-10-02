@@ -27,6 +27,54 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task CancelledReplyIsDrainedBeforeDedicatedConnectionReuse()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+            if (command.StartsWith("SET first ", StringComparison.Ordinal)) firstReceived.TrySetResult();
+            else secondReceived.TrySetResult();
+            return true;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token);
+        var connection = await pool.RentAsync(timeout.Token);
+        using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
+        pool.Return(connection);
+        using var cancellation = new CancellationTokenSource();
+        var first = client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
+            cancellationToken: cancellation.Token).AsTask();
+        await firstReceived.Task.WaitAsync(timeout.Token);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var writeGate = typeof(RespireConnection).GetField("_writeGate", flags)!.GetValue(connection)!;
+        var streaming = typeof(RespireConnection).GetField("_streamingActive", flags)!;
+        while (true)
+        {
+            lock (writeGate) if (!(bool)streaming.GetValue(connection)!) break;
+            await Task.Delay(1, timeout.Token);
+        }
+        cancellation.Cancel();
+        await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+
+        var second = client.Strings.SetAsync("second", new ReadOnlySequence<byte>(new byte[] { 2 }),
+            cancellationToken: timeout.Token).AsTask();
+        await secondReceived.Task.WaitAsync(timeout.Token);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
+        // Distinct replies prove the abandoned first response cannot satisfy the second SET.
+        await server.SendRawAsync("-ERR abandoned first reply\r\n+OK\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+        await Assert.That(await second.WaitAsync(timeout.Token)).IsTrue();
+    }
+
+    [Test]
     public async Task SetStreamSendsFiftyMegabytesWithBoundedBufferMemory()
     {
         const int length = 50 * 1024 * 1024;
@@ -1059,7 +1107,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader(bool routeRetires)
     {
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
@@ -1072,7 +1122,8 @@ public sealed class StreamedSetTests
         var source = new SynchronouslyBlockingStream(TimeSpan.FromMilliseconds(500));
         var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, SetWhen.Always);
 
-        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET")
+        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET",
+                    validateStreamingRoute: () => !routeRetires)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);

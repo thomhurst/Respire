@@ -1858,6 +1858,48 @@ public class ClusterRetirementTests
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
+    [Test]
+    public async Task StreamedSetRetirementPreservesTheOriginalUploadDeadline()
+    {
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new("127.0.0.1", oldServer.Port) },
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
+        using var source = new RetiringUploadStream(new byte[RespireConnection.StreamChunkSize + 1],
+            () => Publish(router, new("127.0.0.1", replacementServer.Port), "new", 2));
+
+        // Each read fits one timeout, but together they exceed it. The first read changes routes
+        // before the header; its known prefix is restored without resetting the overall deadline.
+        await Assert.That(async () => await client.Strings.SetAsync("key", source, source.Length)
+            .AsTask().WaitAsync(Limit)).Throws<RespireTimeoutException>();
+        await Assert.That(oldServer.ReceivedCommands.Any(command => command.StartsWith("SET", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    private sealed class RetiringUploadStream(byte[] payload, Action retire) : MemoryStream(payload)
+    {
+        private bool _firstRead = true;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(650), cancellationToken);
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            if (_firstRead)
+            {
+                _firstRead = false;
+                retire();
+            }
+            return read;
+        }
+    }
+
     private sealed class PausingStream(byte[] payload, int pauseAt) : Stream
     {
         private int _position;

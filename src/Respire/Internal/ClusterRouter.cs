@@ -740,13 +740,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal async ValueTask<(DedicatedConnectionPool Pool, long SlotVersion)> GetDedicatedStreamPoolAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        while (true)
-        {
-            var slotVersion = CaptureSlotVersion(slot);
-            var pool = await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
-            if (slot is null || Volatile.Read(ref _slotVersions[slot.Value]) == slotVersion)
-                return (pool, slotVersion);
-        }
+        // Validate this snapshot before the upload header, where the caller's bounded retry loop
+        // can handle topology churn without spinning indefinitely during pool selection.
+        var slotVersion = CaptureSlotVersion(slot);
+        var pool = await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+        return (pool, slotVersion);
     }
 
     internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection)
@@ -1120,11 +1118,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         string? commandName = null,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        Func<bool>? validateStreamingRoute = null)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand streamedSet)
-            return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline);
+            return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline,
+                validateStreamingRoute);
 
         return connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
             commandDeadline, allowStreamingConnectionReroute);
