@@ -230,7 +230,7 @@ public sealed class RespireTimeoutException : RespireException
     internal static RespireTimeoutException FunctionPropagation(string commandName, TimeSpan timeout, Exception error)
         => new(commandName, timeout, error, RespireTimeoutDiagnostics.Unavailable,
             $"Replica function propagation for {commandName} did not complete within {timeout.TotalMilliseconds:0}ms. " +
-            "Recovery is capped at five seconds, or a shorter RespireOptions.CommandTimeout. " +
+            "Missing-function retries are capped at five seconds, or a shorter RespireOptions.CommandTimeout. " +
             "Disabling or increasing CommandTimeout cannot extend the five-second ceiling. " +
             "Check library replication and replica health.");
 

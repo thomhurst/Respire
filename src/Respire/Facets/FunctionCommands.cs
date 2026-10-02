@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Respire.Commands;
@@ -106,42 +107,41 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             var reply = readFrom == RespireReadFrom.Primary
                 ? await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false)
                 : await RetryUntilFunctionAvailableAsync(function.Operation, command, cancellationToken,
-                    client.Core.Options.CommandTimeout).ConfigureAwait(false);
+                    client.Core.Options.CommandTimeout, error).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
     }
 
     private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan? timeout)
+        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan? timeout,
+        RespireServerException lastMissingFunction)
         where TCommand : struct, IRespCommand
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         // Propagation recovery is finite even when ordinary command timeouts are disabled.
         var propagationLimit = TimeSpan.FromSeconds(5);
         var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < propagationLimit
             ? configuredTimeout : propagationLimit;
-        deadline.CancelAfter(propagationTimeout);
+        var started = Stopwatch.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(25);
-        try
-        {
-            while (true)
-            {
-                try
-                {
-                    return await client.SendAsync(operation, command, deadline.Token).ConfigureAwait(false);
-                }
-                catch (RespireServerException error) when (IsFunctionNotFound(error))
-                {
-                    deadline.Token.ThrowIfCancellationRequested();
-                    await Task.Delay(delay, deadline.Token).ConfigureAwait(false);
-                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
-                }
-            }
-        }
-        catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, error);
+            if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
+                throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+            try
+            {
+                // An accepted attempt may already be executing the function. Its response is
+                // governed by CommandTimeout and caller cancellation, not the propagation budget.
+                return await client.SendAsync(operation, command, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RespireServerException error) when (IsFunctionNotFound(error))
+            {
+                lastMissingFunction = error;
+            }
+            var remaining = propagationTimeout - Stopwatch.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) continue;
+            await Task.Delay(delay < remaining ? delay : remaining, cancellationToken).ConfigureAwait(false);
+            delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
         }
     }
 

@@ -1040,6 +1040,50 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    [Arguments(null, true)]
+    [Arguments(30000, true)]
+    [Arguments(null, false)]
+    [Arguments(30000, false)]
+    public async Task FunctionAttemptOutlastingPropagationBudgetIsNotCancelled(int? timeoutMilliseconds, bool available)
+    {
+        const string source = "#!lua name=readlib\nredis.register_function{function_name='readfn', callback=function() return 1 end, flags={'no-writes'}}";
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("FUNCTION LIST", StringComparison.Ordinal)
+                ? FunctionLibraryList("readlib", "readfn", source) : null,
+        };
+        await using var replica = new FakeRespServer(ReplicaRole,
+            "-ERR Function not found\r\n"u8.ToArray(), available
+                ? ":42\r\n"u8.ToArray() : "-ERR Function not found\r\n"u8.ToArray());
+        // An accepted attempt must finish normally even after the retry budget expires.
+        replica.DelayReply(2, 6000);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        await using var reader = client.WithReadFrom(RespireReadFrom.Replica);
+        var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        if (available)
+        {
+            var result = await reader.Functions.ExecuteIntegerAsync(function, cancellationToken: deadline.Token);
+            await Assert.That(result).IsEqualTo(42);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await reader.Functions.ExecuteIntegerAsync(function,
+                cancellationToken: deadline.Token)).Throws<RespireTimeoutException>();
+            await Assert.That(error!.InnerException is RespireServerException).IsTrue();
+            await Assert.That(error.Message).Contains("Replica function propagation");
+        }
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
     public async Task CursorCommandsAreClassifiedForPinning()
     {
         var cursorCommands = RespireCommands.All.ToArray()

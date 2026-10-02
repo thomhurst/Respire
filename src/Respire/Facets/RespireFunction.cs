@@ -7,7 +7,9 @@ namespace Respire;
 /// <summary>
 /// A named Redis function. Read-only calls use FCALL_RO, which a replica read view can route to a
 /// replica. A library reload after "Function not found" retries on primary; replica calls wait
-/// for replication within the configured command timeout.
+/// for replication with a five-second retry budget, reduced by a shorter configured command timeout.
+/// Disabling command timeouts does not disable that retry budget. Each accepted invocation retains
+/// its normal command timeout and caller cancellation; the propagation budget does not cancel execution.
 /// </summary>
 public sealed class RespireFunction
 {
