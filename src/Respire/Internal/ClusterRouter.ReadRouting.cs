@@ -62,16 +62,27 @@ internal sealed partial class ClusterRouter
         }
     }
 
+    private async ValueTask<ClusterReplicaSet?> GetReplicaRoutesAsync(int slot, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var routes = GetKnownReplicas(slot);
+            if (routes is not null && !ReferenceEquals(routes, _unknownReplicaRoutes)) return routes;
+            // Persistently uncovered slots can require sequential rounds; another slot's partial
+            // reply must not consume this slot's independent coverage attempt (#731).
+            var attempt = await _unknownReplicaDiscovery.DiscoverAsync(slot, cancellationToken).ConfigureAwait(false);
+            routes = GetKnownReplicas(slot);
+            if (routes is not null && !ReferenceEquals(routes, _unknownReplicaRoutes)) return routes;
+            // An owner change can invalidate discovery after it returns. Only a still-valid
+            // uncovered attempt may fail this read; otherwise obtain fresh coverage.
+            if (_unknownReplicaDiscovery.IsCurrent(slot, attempt)) return null;
+        }
+    }
+
     private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery)
     {
-        var routes = GetKnownReplicas(slot);
-        if (routes is null || ReferenceEquals(routes, _unknownReplicaRoutes))
-        {
-            await _unknownReplicaDiscovery.DiscoverAsync(slot, cancellationToken).ConfigureAwait(false);
-            routes = GetKnownReplicas(slot);
-            if (ReferenceEquals(routes, _unknownReplicaRoutes)) routes = null;
-        }
+        var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
         var attempted = 0;
         ClusterReplicaSet? tried = null;
@@ -136,11 +147,12 @@ internal sealed partial class ClusterRouter
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
         int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken, bool revalidate = false)
     {
-        if (revalidate && !HasReplicaCoverage(slot))
+        var needsReplicaRevalidation = revalidate && !ReferenceEquals(GetKnownSlotOwner(slot), node);
+        if (needsReplicaRevalidation && !HasReplicaCoverage(slot))
         {
-            await _unknownReplicaDiscovery.DiscoverAsync(slot, cancellationToken).ConfigureAwait(false);
+            await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
         }
-        else if (revalidate && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
+        else if (needsReplicaRevalidation && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
         {
             var refresh = previous.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);

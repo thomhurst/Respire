@@ -455,6 +455,69 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_PrimaryPinnedCursorDoesNotDiscoverUnknownReplicas()
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = CreateLazyClusterClient();
+        var router = client.Core.Cluster!;
+        var node = router.GetOrCreateNode(new("127.0.0.1", primary.Port));
+        router.SetSlotOwner(1, node);
+        var probes = 0;
+        var coordinator = new ClusterReplicaDiscovery(_ => { probes++; return Task.CompletedTask; }, _ => false);
+        typeof(ClusterRouter).GetField("_unknownReplicaDiscovery",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, coordinator);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var connection = await router.GetPinnedReadConnectionAsync(1, node, timeout.Token, revalidate: true);
+        await Assert.That(connection.Port).IsEqualTo(primary.Port);
+        await Assert.That(probes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ReadFrom_InvalidatedDiscoveryReturnProbesReplacementCoverage()
+    {
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        await using var client = CreateLazyClusterClient();
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var unknown = (ClusterReplicaSet)typeof(ClusterRouter).GetField("_unknownReplicaRoutes", flags)!.GetValue(router)!;
+        var refreshes = 0;
+        var invalidate = true;
+        var refreshing = false;
+        ClusterReplicaDiscovery coordinator = null!;
+        coordinator = new ClusterReplicaDiscovery(_ =>
+        {
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+            refreshing = true;
+            router.ApplyTopology([new ClusterTopologyRange(0, 16383, new("127.0.0.1", 16379), "primary", [])
+            {
+                Replicas = [new(new("127.0.0.1", replica.Port), "replica", [])],
+            }], version, ++refreshes);
+            refreshing = false;
+            return Task.CompletedTask;
+        }, slot =>
+        {
+            var covered = ReplicaRoutes(client)[slot] is { Nodes.Length: > 0 };
+            if (covered && invalidate && !refreshing)
+            {
+                invalidate = false;
+                // Publish exactly the invalidated marker after discovery observes coverage,
+                // before its caller reloads routes. No timing or background thread is needed.
+                Volatile.Write(ref ReplicaRoutes(client)[slot], unknown);
+                coordinator.Invalidate(slot);
+            }
+            return covered;
+        });
+        typeof(ClusterRouter).GetField("_unknownReplicaDiscovery", flags)!.SetValue(router, coordinator);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key", timeout.Token))
+            .IsEqualTo("value");
+        await Assert.That(refreshes).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task ReadFrom_LazyReplicaReadDiscoversConfiguredSeed()
     {
         await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());

@@ -147,21 +147,50 @@ public class ClusterReplicaDiscoveryTests
             return Task.CompletedTask;
         }, _ => Volatile.Read(ref covered));
         var pending = coordinator.DiscoverAsync(1, default).AsTask();
-        var gate = typeof(ClusterReplicaDiscovery).GetField("_gate",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
+        var gate = coordinator.TestingGate;
         bool completed;
         lock (gate)
         {
             first.SetResult();
-            var probe = (Task)typeof(ClusterReplicaDiscovery).GetField("_current",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
-            completed = probe.IsCompleted;
+            completed = coordinator.TestingCurrentProbe!.IsCompleted;
             coordinator.Invalidate(1);
         }
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(completed).IsTrue();
         await Assert.That(commands).IsEqualTo(2);
         await Assert.That(covered).IsTrue();
+    }
+
+    [Test]
+    public async Task CompletedSlotDoesNotWaitForAnotherSlotsProbe()
+    {
+        var first = new TaskCompletionSource();
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commands = 0;
+        var coordinator = new ClusterReplicaDiscovery(slot =>
+        {
+            Interlocked.Increment(ref commands);
+            return slot == 1 ? first.Task : second.Task;
+        }, _ => false);
+        var pending = coordinator.DiscoverAsync(1, default).AsTask();
+        var gate = coordinator.TestingGate;
+        Task other;
+        lock (gate)
+        {
+            first.SetResult();
+            other = coordinator.DiscoverAsync(2, default).AsTask();
+        }
+        try
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(2));
+            await Assert.That(other.IsCompleted).IsFalse();
+            await Assert.That(commands).IsEqualTo(2);
+        }
+        finally
+        {
+            second.TrySetResult();
+            await Task.WhenAll(pending, other).WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Test]

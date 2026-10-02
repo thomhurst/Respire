@@ -10,46 +10,48 @@ internal sealed class ClusterReplicaDiscovery(
     Func<int, Task> refresh, Func<int, bool> hasCoverage, Func<long>? clock = null)
 {
     private readonly object _gate = new();
-    // Only timestamps scale with uncovered slots; there is one in-flight task per router.
-    private readonly Dictionary<int, long> _notBefore = new();
-    private Task<int>? _current;
-    private int _currentSlot;
-    private bool _invalidated;
+    // Only value-type throttle/attempt records scale with uncovered slots; one probe runs per router.
+    private readonly Dictionary<int, (long NotBefore, long Version)> _notBefore = new();
+    private Task<(int Slot, long Version)>? _current;
+    private long _nextVersion;
 
-    internal async ValueTask DiscoverAsync(int slot, CancellationToken cancellationToken)
+    // Deterministic completion/interleaving seam for the coordinator's tests.
+    internal object TestingGate => _gate;
+    internal Task? TestingCurrentProbe => _current;
+
+    internal async ValueTask<long> DiscoverAsync(int slot, CancellationToken cancellationToken)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Task<int> current;
-            TaskCompletionSource<int>? start = null;
+            Task<(int Slot, long Version)> current;
+            TaskCompletionSource<(int Slot, long Version)>? start = null;
+            long version = 0;
             lock (_gate)
             {
                 if (hasCoverage(slot))
                 {
                     _notBefore.Remove(slot);
-                    return;
+                    return 0;
                 }
                 if (_current is { IsCompleted: false } pending) current = pending;
                 else
                 {
                     var now = clock?.Invoke() ?? Environment.TickCount64;
-                    if (_notBefore.TryGetValue(slot, out var next) && now < next) return;
-                    _notBefore[slot] = now + ClusterReplicaSet.RefreshIntervalMilliseconds;
+                    if (_notBefore.TryGetValue(slot, out var next) && now < next.NotBefore) return next.Version;
+                    version = ++_nextVersion;
+                    _notBefore[slot] = (now + ClusterReplicaSet.RefreshIntervalMilliseconds, version);
                     start = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     current = _current = start.Task;
-                    _currentSlot = slot;
-                    _invalidated = false;
                 }
             }
-            if (start is not null) _ = RunAsync(slot, start);
+            if (start is not null) _ = RunAsync(slot, version, start);
             // Caller cancellation only detaches this waiter. The router owns probe cancellation.
-            var attemptedSlot = await current.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var attempt = await current.WaitAsync(cancellationToken).ConfigureAwait(false);
             lock (_gate)
             {
-                // Invalidation can arrive after completion but before this waiter resumes.
-                // Accept only this still-current, valid attempt; a newer probe must be joined.
-                if (attemptedSlot == slot && ReferenceEquals(current, _current) && !_invalidated) return;
+                // Another slot starting a probe does not invalidate this completed attempt.
+                if (attempt.Slot == slot && IsCurrentLocked(slot, attempt.Version)) return attempt.Version;
             }
             // Recheck this slot after shared work. A partial reply for another slot neither
             // completes this discovery nor consumes this slot's refresh interval.
@@ -58,12 +60,19 @@ internal sealed class ClusterReplicaDiscovery(
         }
     }
 
+    internal bool IsCurrent(int slot, long version)
+    {
+        lock (_gate) return IsCurrentLocked(slot, version);
+    }
+
+    private bool IsCurrentLocked(int slot, long version)
+        => version != 0 && _notBefore.TryGetValue(slot, out var attempt) && attempt.Version == version;
+
     internal void Invalidate(int slot)
     {
         lock (_gate)
         {
             _notBefore.Remove(slot);
-            if (_currentSlot == slot) _invalidated = true;
         }
     }
 
@@ -77,7 +86,7 @@ internal sealed class ClusterReplicaDiscovery(
         }
     }
 
-    private async Task RunAsync(int slot, TaskCompletionSource<int> completion)
+    private async Task RunAsync(int slot, long version, TaskCompletionSource<(int Slot, long Version)> completion)
     {
         try { await refresh(slot).ConfigureAwait(false); }
         catch
@@ -87,11 +96,7 @@ internal sealed class ClusterReplicaDiscovery(
         }
         finally
         {
-            lock (_gate)
-            {
-                // A changed owner makes the old probe insufficient even for its target slot.
-                completion.TrySetResult(_invalidated ? -1 : slot);
-            }
+            completion.TrySetResult((slot, version));
         }
     }
 }
