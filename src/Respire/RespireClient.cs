@@ -3459,6 +3459,11 @@ public sealed partial class RespireClient : IRespireClient
                             core.Options.Database, storedProcedureName: storedProcedureName, started: started);
                         telemetryStarted = true;
                     }
+                    else
+                    {
+                        // Keep one logical span while routing advances to a replacement lease.
+                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    }
                     try
                     {
                         response = policy == DedicatedSendPolicy.Streaming
@@ -3589,6 +3594,11 @@ public sealed partial class RespireClient : IRespireClient
                             core.Options.Database,
                             storedProcedureName: storedProcedureName);
                         telemetryStarted = true;
+                    }
+                    else
+                    {
+                        // Keep one logical span while routing advances to a replacement lease.
+                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
 
                     // Errors from an ASK target must not switch roles during migration.

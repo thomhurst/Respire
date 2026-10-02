@@ -416,6 +416,7 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments("standalone")]
     [Arguments("cluster")]
     [Arguments("sentinel")]
@@ -432,6 +433,17 @@ public class MaintenanceNotificationTests
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "moved-upload");
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = activity => { if (activity.OperationName == "SET") started.Enqueue(activity); },
+            ActivityStopped = activity => { if (activity.OperationName == "SET") stopped.Enqueue(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
         await using var payload = new PausedFirstReadStream();
         var upload = client.Strings.SetAsync("moved-upload", payload, payload.Length,
             cancellationToken: timeout.Token).AsTask();
@@ -442,6 +454,11 @@ public class MaintenanceNotificationTests
         await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
         await Assert.That(target.ReceivedCommands).Contains("SET moved-upload payload");
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(stopped.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
     }
 
     [Test]

@@ -429,6 +429,13 @@ internal static class RespireTelemetry
 
     internal readonly struct OperationScope(Activity? activity, long startTimestamp)
     {
+        internal void UpdateServerEndpoint(string host, int port)
+        {
+            if (activity is null) return;
+            activity.SetTag("server.address", host);
+            activity.SetTag("server.port", port == DefaultRedisPort ? (int?)null : port);
+        }
+
         public void Complete(
             ClientCore core,
             string operation,
