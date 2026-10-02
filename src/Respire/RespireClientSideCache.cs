@@ -403,8 +403,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (mutationKind == RawCommandKeyLayouts.MutationKind.IndirectKeys)
             return BeginUnknownMutation();
 
-        var mutation = operation is "TS.CREATE" or "TS.ALTER"
-            ? RespireCacheMutation.Mutation : command.GetCacheMutation(operation);
+        var mutation = command.GetCacheMutation(operation);
         if (mutation == RespireCacheMutation.ReadOnly) return default;
 
         if (mutation == RespireCacheMutation.SingleKey
