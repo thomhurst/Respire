@@ -167,9 +167,9 @@ public sealed class RespireSemaphore
             return;
         }
 
-        await WaitForCleanupAsync(RetryCleanupAsync(
-            Stopwatch.GetTimestamp(), () => TryReleaseOnceAsync(_client, Key, owner),
-            onAbandoned: ReportAbandoned(_client, "release"))).ConfigureAwait(false);
+        await WaitForCleanupAsync(EnqueueCleanupAsync(_client,
+            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken), null,
+            ReportAbandoned(_client, "release"))).ConfigureAwait(false);
     }
 
     // A release that overtakes a delayed acquire would let that acquire recreate the permit, so
@@ -177,22 +177,33 @@ public sealed class RespireSemaphore
     // BestEffortCleanupTimeout; the rest of the cleanup continues in the background.
     private ValueTask CleanupUncertainAcquisitionAsync(
         RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
-        => WaitForCleanupAsync(FenceThenReleaseAsync(wire, execution, owner));
-
-    private async Task FenceThenReleaseAsync(
-        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
     {
-        var started = Stopwatch.GetTimestamp();
-        // If the barrier never succeeds within CleanupRetryLimit, ordering remains uncertain, so
-        // no release is sent; finite expiry remains the fallback.
-        if (!await RetryCleanupAsync(
-                started, () => TryFenceAsync(wire, execution), onAbandoned: ReportAbandoned(_client, "fence"))
-            .ConfigureAwait(false))
-            return;
-        // A fenced connection is retired, so the first release may wait for a replacement.
-        await RetryCleanupAsync(
-                started, () => TryReleaseOnceAsync(_client, Key, owner), onAbandoned: ReportAbandoned(_client, "release"))
-            .ConfigureAwait(false);
+        var fenced = false;
+        var stage = "fence";
+        return WaitForCleanupAsync(EnqueueCleanupAsync(_client, async cancellationToken =>
+        {
+            if (!fenced)
+            {
+                var fence = await TryFenceAsync(wire, execution, cancellationToken).ConfigureAwait(false);
+                if (fence != SemaphoreCleanupAttempt.Succeeded) return fence;
+                fenced = true;
+                stage = "release";
+            }
+            return await TryReleaseOnceAsync(_client, Key, owner, cancellationToken).ConfigureAwait(false);
+        }, null, reason => ReportAbandoned(_client, stage)(reason)));
+    }
+
+    internal static Task EnqueueCleanupAsync(IRespireClient client,
+        Func<CancellationToken, ValueTask<SemaphoreCleanupAttempt>> attempt, Func<bool>? shouldContinue,
+        Action<string> onAbandoned)
+    {
+        if (client is RespireClient respireClient)
+            return respireClient.Core.CoordinationCleanupQueue.EnqueueAsync(async cancellationToken =>
+                await attempt(cancellationToken).ConfigureAwait(false) == SemaphoreCleanupAttempt.Succeeded,
+                shouldContinue, CleanupRetryLimit, CleanupRetryInitialDelay, CleanupRetryMaxDelay, onAbandoned);
+
+        return RetryCleanupAsync(Stopwatch.GetTimestamp(), () => attempt(CancellationToken.None), shouldContinue,
+            onAbandoned);
     }
 
     private static async ValueTask WaitForCleanupAsync(Task cleanup)
@@ -209,11 +220,13 @@ public sealed class RespireSemaphore
     // Without a tracked connection identity there is nothing to fence, and the release proceeds
     // unordered; see the type remarks.
     internal static async ValueTask<SemaphoreCleanupAttempt> TryFenceAsync(
-        RespireClient? wire, RespireClient.TrackedScriptExecution? execution)
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution,
+        CancellationToken cancellationToken = default)
     {
         if (wire is null || execution is not { ConnectionIdentity.ServerClientId: > 0 })
             return SemaphoreCleanupAttempt.Succeeded;
-        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(BestEffortCleanupTimeout);
         var acknowledged = false;
         try
         {
@@ -235,9 +248,11 @@ public sealed class RespireSemaphore
 
     /// <summary>Sends one owner-checked release bounded by <see cref="BestEffortCleanupTimeout"/>.</summary>
     internal static async ValueTask<SemaphoreCleanupAttempt> TryReleaseOnceAsync(
-        IRespireClient client, RespireKey key, RespireLockToken owner)
+        IRespireClient client, RespireKey key, RespireLockToken owner,
+        CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(BestEffortCleanupTimeout);
         try
         {
             using var _ = await client.Scripts.ExecuteAsync(
@@ -793,8 +808,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         try
         {
-            await RespireSemaphore.RetryCleanupAsync(
-                Stopwatch.GetTimestamp(), TryReleaseAndMarkAsync, NeedsDisposeCleanup,
+            await RespireSemaphore.EnqueueCleanupAsync(_client,
+                TryReleaseAndMarkAsync, NeedsDisposeCleanup,
                 RespireSemaphore.ReportAbandoned(_client, "release")).ConfigureAwait(false);
         }
         finally
@@ -852,9 +867,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     }
 
     // The single place that turns a completed release command into local released state.
-    private async ValueTask<SemaphoreCleanupAttempt> TryReleaseAndMarkAsync()
+    private async ValueTask<SemaphoreCleanupAttempt> TryReleaseAndMarkAsync(CancellationToken cancellationToken = default)
     {
-        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner).ConfigureAwait(false);
+        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner, cancellationToken)
+            .ConfigureAwait(false);
         if (outcome == SemaphoreCleanupAttempt.Succeeded) Set(PermitState.Released);
         else Set(PermitState.ReleaseUncertain);
         return outcome;

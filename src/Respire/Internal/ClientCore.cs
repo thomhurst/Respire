@@ -37,6 +37,7 @@ internal sealed class ClientCore : IAsyncDisposable
     }
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
+    internal readonly CoordinationCleanupQueue CoordinationCleanupQueue = new();
     private readonly DedicatedConnectionPool _dedicatedPool;
     public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
     internal readonly SentinelRouter? Sentinel;
@@ -544,6 +545,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        await CoordinationCleanupQueue.DisposeAsync().ConfigureAwait(false);
         Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
