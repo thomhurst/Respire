@@ -9,6 +9,7 @@ internal sealed partial class RespireConnection
 {
     private static readonly RawCommand EnableMaintenance = new(
         "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
+    private static readonly RawCommand MaintenanceDrainBarrier = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
     private readonly RespireConnectionOptions? _maintenanceOptions;
     // Serializes maintenance-window publication with streamed-upload deadline cancellation.
     private readonly object _maintenancePublicationGate = new();
@@ -72,6 +73,18 @@ internal sealed partial class RespireConnection
 
     private static bool IsMaintenanceAcknowledgement(in RespValue reply)
         => reply.Type == RespDataType.SimpleString && reply.AsSpan().SequenceEqual("OK"u8);
+
+    /// <summary>
+    /// Sends a protocol barrier before graceful retirement. Redis emits pushes and command replies
+    /// in wire order, so the PING reply proves that pushes already sent on this connection have
+    /// passed through the receive loop before retirement closes the socket.
+    /// </summary>
+    internal async Task DrainPendingMaintenanceNotificationsAsync()
+    {
+        if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled) return;
+        using var reply = await SendAsync(MaintenanceDrainBarrier, CancellationToken.None,
+            armCommandDeadline: false, commandName: "PING").ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Receive loop only, for the reply that answers the negotiation command (the handshake

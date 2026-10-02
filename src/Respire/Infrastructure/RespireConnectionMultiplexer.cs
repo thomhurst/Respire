@@ -1228,9 +1228,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_maintenanceHandlersGate)
             {
-                var boundary = ClusterSlotMutationClock.Next();
                 Volatile.Write(ref _retired, 1);
-                CloseMaintenanceHandlerEpoch(boundary);
             }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
@@ -1288,6 +1286,12 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             await WaitForPublicationAsync().ConfigureAwait(false);
+            // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
+            // loop before the connection retirement drain closes sockets with empty command rings.
+            await Task.WhenAll(_connections.OfType<RespireConnection>()
+                .Select(connection => connection.DrainPendingMaintenanceNotificationsAsync())).ConfigureAwait(false);
+            lock (_maintenanceHandlersGate)
+                CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
             await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
                 .ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
