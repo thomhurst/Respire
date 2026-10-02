@@ -1214,6 +1214,20 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks legacy review with period after heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review.`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks legacy code review with exclamation after heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review!`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks late bold legacy review with closing ATX markers'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### **Review** ###`n`n1. A concrete finding.")
