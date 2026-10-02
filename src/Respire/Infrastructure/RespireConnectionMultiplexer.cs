@@ -895,12 +895,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
         => GetConnection().SendTransactionAsync(serializedCommands, commandCount, cancellationToken);
 
-    private void ScheduleReconnect(int slot)
+    internal void ScheduleReconnect(int slot)
     {
         if (_options.Generation?.IsRetired == true) return;
         var connection = Volatile.Read(ref _connections[slot]);
-        // An individually draining connection must finish before replacement can dispose it.
-        if (connection is { IsConnected: true, IsAcceptingCommands: false }) return;
+        // A stale request can arrive after a healthy replacement publishes. Do not record
+        // that socket as a correction fence. A draining socket must also finish first.
+        if (connection is { IsConnected: true }) return;
         var error = connection?.CloseError;
         RetireConnection(connection);
         ForgetMovingSequences(connectedOnly: true);

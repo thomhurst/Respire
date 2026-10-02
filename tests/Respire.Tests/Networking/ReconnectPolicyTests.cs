@@ -346,6 +346,24 @@ public class ReconnectPolicyTests
         await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
     }
 
+    [Test]
+    public async Task StaleReconnectRequestDoesNotFenceTheHealthyCurrentConnection()
+    {
+        await using var server = new FakeRespServer(":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port, new()));
+        var multiplexer = client.Core.Multiplexer;
+        await multiplexer.EnsureReliableCorrectionOrderingAsync();
+        var current = multiplexer.GetConnection();
+
+        // A caller can observe an old dead socket, then request recovery after a replacement
+        // has published. Invoke that stale request directly to make the interleaving deterministic.
+        multiplexer.ScheduleReconnect(0);
+
+        await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
+        await Assert.That(multiplexer.GetConnection()).IsSameReferenceAs(current);
+        await Assert.That(multiplexer.IsReconnecting).IsFalse();
+    }
+
     private static RespireOptions Options(int port, RespireReconnectPolicy policy) => new()
     {
         Protocol = RespProtocol.Resp2,

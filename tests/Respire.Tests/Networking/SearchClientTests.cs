@@ -1113,6 +1113,49 @@ public class SearchClientTests
         }
     }
 
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task InFlightCancellationPreservesTokenAndDrainsReplyBeforeNextCommand(int protocol, bool aggregate)
+    {
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => Hello,
+                "GET after-cancel" => "$5\r\nalive\r\n"u8.ToArray(),
+                _ => null,
+            },
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("FT.", StringComparison.Ordinal)) return false;
+                accepted.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, (RespProtocol)protocol));
+        var search = new RespireSearchClient(client);
+        using var cancellation = new CancellationTokenSource();
+        var all = RespireSearchExpression.FromRaw("*");
+        Task pending = aggregate
+            ? search.AggregateAsync("idx", all, cancellationToken: cancellation.Token).AsTask()
+            : search.SearchAsync("idx", new(all), cancellation.Token).AsTask();
+        await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+
+        // Cancellation abandons the wait. The accepted command still owns the first FIFO reply.
+        var reply = aggregate || protocol == 2 ? EmptyAggregate : EmptyResp3Search;
+        await server.SendRawAsync(reply);
+        var next = await client.GetStringAsync("after-cancel").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(next).IsEqualTo("alive");
+        await Assert.That(client.IsConnected).IsTrue();
+    }
+
     private static string[] LastArguments(FakeRespServer server)
         => server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
 
