@@ -44,7 +44,9 @@ If a later chunk is interrupted after at least one confirmed reply, `MultiAddAsy
 Cancellation throws `RespireTimeSeriesMultiAddCanceledException`, which remains an
 `OperationCanceledException` and preserves its cancellation token. Both expose `Progress`;
 `RespireTimeSeriesMultiAddProgress.FromException(error)` also retrieves it from either exception.
-Failures before the first confirmed chunk retain their original exception type.
+Failures before the first confirmed chunk retain their original exception type. Programming and
+resource failures, including client disposal and allocation failures, also retain their original
+type; progress wrappers cover transport, server, malformed-reply, and cancellation failures.
 
 Progress describes three consecutive parts of the request:
 
