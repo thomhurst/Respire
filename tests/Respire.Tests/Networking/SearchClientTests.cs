@@ -26,6 +26,20 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task SettingAnUnchangedDocumentIdPreservesItsBinaryDocumentKey()
+    {
+        var binaryKey = new RespireKey(new byte[] { 0, 255, 128 });
+        var document = new RespireSearchDocument("doc", new Dictionary<string, string?>())
+        {
+            DocumentKey = binaryKey,
+        };
+
+        var unchanged = document with { Id = document.Id };
+
+        await Assert.That(unchanged.DocumentKey).IsEqualTo(binaryKey);
+    }
+
+    [Test]
     public async Task AggregateParsesResp3RowsAndSortsBySeparateTokens()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
@@ -418,6 +432,25 @@ public class SearchClientTests
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<NotSupportedException>();
+    }
+
+    [Test]
+    public async Task HybridSearchDoesNotTranslateUnknownCommandArgumentWhenCommandInfoIsDenied()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => "-ERR unknown command argument: idx\r\n"u8.ToArray(),
+                "COMMAND INFO FT.HYBRID" => "-NOPERM command is not allowed\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+            .Throws<RespireServerException>();
     }
 
     [Test]

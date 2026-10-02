@@ -234,7 +234,32 @@ public sealed class RespireSearchClient
         }
 
         // Redis replies "ERR unknown command 'FT.HYBRID', with args beginning with: ..." when the command does not exist.
-        return error.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase);
+        return IsUnknownHybridCommandMessage(error.Message);
+    }
+
+    private static bool IsUnknownHybridCommandMessage(string message)
+    {
+        const string marker = "unknown command";
+        var markerIndex = message.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0) return false;
+
+        var token = message.AsSpan(markerIndex + marker.Length).TrimStart();
+        if (token.IsEmpty) return false;
+        if (token[0] is '\'' or '"')
+        {
+            var quote = token[0];
+            token = token[1..];
+            var end = token.IndexOf(quote);
+            if (end >= 0) token = token[..end];
+        }
+        else
+        {
+            var end = 0;
+            while (end < token.Length && !char.IsWhiteSpace(token[end]) && token[end] is not ',' and not ':') end++;
+            token = token[..end];
+        }
+
+        return token.Equals("FT.HYBRID", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string RequirePageIndex(RespireSearchAggregateCursorPage page)

@@ -16,8 +16,9 @@ public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string
         get => _id;
         init
         {
+            if (!string.Equals(_id, value, StringComparison.Ordinal))
+                _documentKey = new RespireKey(value);
             _id = value;
-            _documentKey = new RespireKey(value);
         }
     }
 
