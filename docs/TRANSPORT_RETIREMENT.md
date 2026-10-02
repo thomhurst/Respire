@@ -165,6 +165,10 @@ it. Explicit disposal starts every owned pool's abort before awaiting any comple
 one cleanup failure cannot prevent another borrowed lease from being aborted. Concurrent
 retirement and disposal use the pool's existing shared cleanup task.
 
+Client shutdown observes each owner separately in disposal order. A pool, subscription hub,
+or router failure cannot skip a later owner. A single failure is rethrown unchanged; multiple
+owner failures are preserved in an `AggregateException` after cleanup finishes.
+
 This bookkeeping does not participate in healthy command dispatch or lease acquisition.
 Route-version validation, ASK target selection, MOVING publication, cancellation deadlines,
 and accepted-command drain rules remain with their existing owners.

@@ -1262,7 +1262,7 @@ public class ClusterRetirementTests
             await Assert.That(Count(router, "_dedicatedPools")).IsEqualTo(1);
             await Assert.That(Count(router, "_correctionPools")).IsEqualTo(1);
             await Assert.That(Count(router, "_correctionStateHandlers")).IsEqualTo(1);
-            await Assert.That(Count(router, "_ownedPools")).IsEqualTo(2);
+            await Assert.That(router.OwnedPools.Count).IsEqualTo(2);
             var identities = Identities(router);
             await Assert.That(identities.NodeIdCount).IsEqualTo(1);
             await Assert.That(identities.ReverseNodeIdCount).IsEqualTo(1);
@@ -1411,7 +1411,7 @@ public class ClusterRetirementTests
         var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(error).IsSameReferenceAs(logger.Failure);
         await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(1);
-        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(1);
+        await Assert.That(router.OwnedPools.Count).IsEqualTo(1);
         var snapshot = client.GetClusterRetirementSnapshot()!;
         await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(1);
         await Assert.That(snapshot.BorrowedDedicatedConnectionCount).IsEqualTo(0);
@@ -1669,7 +1669,7 @@ public class ClusterRetirementTests
         await Assert.That(original.DrainedSuccessfully).IsTrue();
         await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 42");
         await Assert.That(Count(router, "_correctionPools")).IsEqualTo(0);
-        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(0);
+        await Assert.That(router.OwnedPools.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -1695,7 +1695,7 @@ public class ClusterRetirementTests
         lease.Pool.Return(control);
         await lease.DisposeAsync();
         await Assert.That(control.IsConnected).IsFalse();
-        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(0);
+        await Assert.That(router.OwnedPools.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -1821,7 +1821,7 @@ public class ClusterRetirementTests
             new(endpoint, 42, Connection: connection)).AsTask().WaitAsync(Limit);
         await Assert.That(server.ReceivedCommands).Contains("EVAL return 1 1 key");
         await Assert.That(kills).IsEqualTo(2);
-        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(0);
+        await Assert.That(router.OwnedPools.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -2045,8 +2045,7 @@ public class ClusterRetirementTests
                 var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)
                     typeof(ClusterRouter).GetField("_dedicatedPools", Private)!.GetValue(router)!;
                 pools[oldNode] = pool;
-                ((DedicatedPoolLedger)typeof(ClusterRouter).GetField("_ownedPools", Private)!
-                    .GetValue(router)!).Add(pool);
+                router.OwnedPools.Add(pool);
             }
         }
     }
