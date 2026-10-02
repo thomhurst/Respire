@@ -141,7 +141,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw new RespireTimeoutException(operation, propagationTimeout, error);
+            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, error);
         }
     }
 
