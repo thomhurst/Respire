@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipelines;
@@ -57,6 +58,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
+    private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;
     private readonly string? _networkPeerAddress;
     private readonly int? _networkPeerPort;
@@ -200,6 +202,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
+        _streamPayloadPool = options.StreamPayloadPool ?? ArrayPool<byte>.Shared;
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
@@ -3210,6 +3213,7 @@ internal sealed record RespireConnectionOptions
     internal IConnectionGeneration? Generation { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
+    internal ArrayPool<byte>? StreamPayloadPool { get; init; }
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
     internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }

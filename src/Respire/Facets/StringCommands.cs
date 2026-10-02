@@ -99,6 +99,14 @@ public partial interface IStringCommands
     /// first chunk closes the connection.
     /// </para>
     /// <para>
+    /// The next source read starts while the current chunk is written. Respire runs source reads
+    /// away from the connection write path, so a custom stream that blocks synchronously before
+    /// returning from <see cref="Stream.ReadAsync(Memory{byte}, CancellationToken)"/> does not
+    /// prevent cancellation or a failed socket write from being observed. Cancellation cannot stop
+    /// a synchronous read already in progress; that read can continue in the background until the
+    /// stream returns.
+    /// </para>
+    /// <para>
     /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
     /// wait for the complete frame, so a slow source (for example a network stream) delays
     /// unrelated traffic. Use a separate client for slow sources.

@@ -1208,7 +1208,8 @@ public class ClusterTests
         var value = await client.GetStringAsync("key", timeout.Token);
 
         await Assert.That(value).IsEqualTo("fallback");
-        await Assert.That(seed.ReceivedCommands[^1]).IsEqualTo("GET key");
+        // Disconnect-triggered topology refresh can append CLUSTER SLOTS after the fallback GET.
+        await Assert.That(seed.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
     }
 
     [Test]

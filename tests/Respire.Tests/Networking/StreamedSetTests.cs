@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Respire;
@@ -17,6 +18,13 @@ namespace Respire.Tests.Networking;
 public sealed class StreamedSetTests
 {
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
+
+    private static byte[] PatternedPayload(int length)
+    {
+        var payload = new byte[length];
+        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
+        return payload;
+    }
 
     [Test]
     public async Task SetStreamSendsFiftyMegabytesWithBoundedBufferMemory()
@@ -135,6 +143,165 @@ public sealed class StreamedSetTests
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.ValueLength).IsEqualTo(length);
         await Assert.That(source.Position).IsEqualTo(length);
+    }
+
+    [Test]
+    public async Task NextSourceChunkStartsReadingWhileCurrentChunkWriteIsBlocked()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        var source = new ReadSignalStream(length);
+        transport!.GateSecondWrite();
+        var command = new StreamedSetCommand((RespireValue)"overlap", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+
+        await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(send.IsCompleted).IsFalse();
+
+        transport.OpenSecondWrite();
+        using var response = await send.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(response.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ValueLength).IsEqualTo(length);
+    }
+
+    [Test]
+    public async Task FailedSocketWriteKeepsPendingSourceBufferUntilReadCompletes()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        var pool = new TrackingArrayPool();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            StreamPayloadPool = pool,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        var source = new PartialThenIgnoringCancellationStream(PatternedPayload(length),
+            maxRead: RespireConnection.StreamChunkSize, pauseAfter: RespireConnection.StreamChunkSize);
+        transport!.GateSecondWrite();
+        using var cancellation = new CancellationTokenSource();
+        var command = new StreamedSetCommand((RespireValue)"overlap-cancel", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
+
+        try
+        {
+            await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsFalse();
+        }
+        finally
+        {
+            source.ContinueReading.TrySetResult();
+            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { }
+        }
+
+        await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pool.WaitForReturnAsync(source.CapturedBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
+    }
+
+    [Test]
+    public async Task PrefetchReadFailureSurfacesAfterCurrentWriteCompletes()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        var source = new FailingSecondReadStream(length);
+        transport!.GateSecondWrite();
+        var command = new StreamedSetCommand((RespireValue)"failed-prefetch", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+
+        try
+        {
+            await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(send.IsCompleted).IsFalse();
+            transport.OpenSecondWrite();
+            await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<IOException>();
+        }
+        finally
+        {
+            transport.OpenSecondWrite();
+            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { }
+        }
+    }
+
+    [Test]
+    public async Task DisposeKeepsPartialChunkBufferPooledOutUntilFillTaskSettles()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        var source = new ShortReadThenBlockedStream();
+        var pool = new TrackingArrayPool();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            StreamPayloadPool = pool,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        transport!.GateSecondWrite();
+        using var cancellation = new CancellationTokenSource();
+        var command = new StreamedSetCommand((RespireValue)"partial-prefetch", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
+        try
+        {
+            await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            var pendingBuffer = source.CapturedBuffer!;
+            await Assert.That(pool.Returned.Contains(pendingBuffer)).IsFalse();
+        }
+        finally
+        {
+            source.ContinueThirdRead.TrySetResult();
+            transport.OpenSecondWrite();
+            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { }
+        }
+        await pool.WaitForReturnAsync(source.CapturedBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
     }
 
     [Test]
@@ -514,6 +681,41 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task CancellationDuringSynchronouslyBlockedPrefetchReturnsAndRetainsBufferUntilReadSettles()
+    {
+        await using var server = new CountingSetServer();
+        var pool = new TrackingArrayPool();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new RespireConnectionOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            StreamPayloadPool = pool,
+        });
+        using var cancellation = new CancellationTokenSource();
+        using var source = new SynchronouslyBlockedSecondReadStream();
+        var command = new StreamedSetCommand((RespireValue)"sync-block", source, source.Length, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
+
+        byte[]? buffer = null;
+        try
+        {
+            await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            buffer = source.CapturedBuffer!;
+            await Assert.That(pool.Returned.Contains(buffer)).IsFalse();
+        }
+        finally
+        {
+            source.ContinueSecondRead.Set();
+        }
+        if (buffer is null) return;
+        await source.SecondReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pool.WaitForReturnAsync(buffer).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pool.Returned.Contains(buffer)).IsTrue();
+    }
+
+    [Test]
     public async Task CancellationDuringFirstChunkReadLeavesConnectionOpen()
     {
         await using var server = new CountingSetServer();
@@ -552,8 +754,8 @@ public sealed class StreamedSetTests
                 Protocol = RespProtocol.Resp2,
                 CommandTimeout = timeout ? TimeSpan.FromMilliseconds(200) : null,
             });
-            // The source sees the linked token cancelled between its own reads and reports it with
-            // an exception that carries CancellationToken.None, which streams are allowed to do.
+            // The source sees the linked token cancelled during a read and may report it with an
+            // exception that carries CancellationToken.None, which streams are allowed to do.
             var source = new TokenlessCancellationStream();
             var command = new StreamedSetCommand((RespireValue)"tokenless", source, 4, default, SetWhen.Always);
             var set = Task.Run(async () =>
@@ -581,7 +783,8 @@ public sealed class StreamedSetTests
                     .Throws<RespireConnectionException>();
             }
 
-            await Assert.That(source.ThrewTokenless).IsTrue();
+            // WaitAsync may return before the background source read observes cancellation.
+            await source.TokenlessCancellationThrown.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
@@ -666,7 +869,7 @@ public sealed class StreamedSetTests
     [Arguments(true)]
     public async Task AbortDoesNotRunSourceCancellationCallbacksInline(bool blockCallback)
     {
-        var server = new CountingSetServer();
+        CountingSetServer? server = new();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp2,
@@ -674,17 +877,23 @@ public sealed class StreamedSetTests
         var source = new CancellationCallbackStream(blockCallback);
         var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, SetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
-        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        await server.DisposeAsync();
-        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
-            .Throws<RespireConnectionException>();
-        await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(connection.IsConnected).IsFalse();
-
-        source.ReleaseCallback.TrySetResult();
+        try
+        {
+            await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.DisposeAsync();
+            server = null;
+            await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
+                .Throws<RespireConnectionException>();
+            await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.IsConnected).IsFalse();
+        }
+        finally
+        {
+            source.ReleaseCallback.TrySetResult();
+            if (server is not null) await server.DisposeAsync();
+            await source.DisposeAsync();
+        }
         await source.CallbackCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await source.DisposeAsync();
     }
 
     [Test]
@@ -814,7 +1023,10 @@ public sealed class StreamedSetTests
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
         await Assert.That(connection.IsConnected).IsTrue();
-        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING");
+        // This PING only verifies the untouched connection. Its wait must not inherit
+        // the deliberately tiny deadline used to reject the blocked source read.
+        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING",
+            commandDeadline: CommandDeadline.After(5_000));
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
@@ -917,6 +1129,64 @@ public sealed class StreamedSetTests
         await command.SourceStream!.ReadExactlyAsync(replayed);
         await Assert.That(replayed).IsEquivalentTo(payload);
         await Assert.That(peer.Available).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementSettlesWholeFirstFillBeforeRestoringPrefix(bool synchronousRead)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        var generation = new TestConnectionGeneration();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2, CommandTimeout = null, Generation = generation,
+            });
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        using var source = new GatedFirstReadStream(synchronousRead);
+        var command = new StreamedSetCommand("retry", source, 4, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            generation.IsRetired = true;
+            _ = connection.RetireAsync();
+            await connection.DisposeAsync();
+            await Task.Delay(50);
+            await Assert.That(send.IsCompleted).IsFalse();
+        }
+        finally { source.Release.TrySetResult(); }
+        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+
+        var replay = new byte[4];
+        await command.SourceStream!.ReadExactlyAsync(replay);
+        await Assert.That(replay).IsEquivalentTo(new byte[] { 1, 2, 3, 4 });
+        await Assert.That(peer.Available).IsEqualTo(0);
+    }
+
+    private sealed class GatedFirstReadStream(bool synchronousRead) : MemoryStream(new byte[] { 1, 2, 3, 4 })
+    {
+        private bool _first = true;
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (!_first) return base.ReadAsync(buffer, cancellationToken);
+            _first = false;
+            Entered.TrySetResult();
+            if (!synchronousRead) return ReadAfterReleaseAsync(buffer);
+            Release.Task.GetAwaiter().GetResult();
+            return base.ReadAsync(buffer[..2], CancellationToken.None);
+        }
+        private async ValueTask<int> ReadAfterReleaseAsync(Memory<byte> buffer)
+        {
+            await Release.Task;
+            return await base.ReadAsync(buffer[..2], CancellationToken.None);
+        }
     }
 
     [Test]
@@ -1084,9 +1354,13 @@ public sealed class StreamedSetTests
     {
         private readonly NetworkStream _inner = client.GetStream();
         private readonly TaskCompletionSource _writeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondWriteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _secondWriteGate = CreateOpenGate();
         private TaskCompletionSource _gate = CreateOpenGate();
+        private int _writeCount;
 
         internal Task WriteStarted => _writeStarted.Task;
+        internal Task SecondWriteStarted => _secondWriteStarted.Task;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => true;
@@ -1097,8 +1371,17 @@ public sealed class StreamedSetTests
 
         internal void OpenGate() => _gate.TrySetResult();
 
+        internal void GateSecondWrite() => _secondWriteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal void OpenSecondWrite() => _secondWriteGate.TrySetResult();
+
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (Interlocked.Increment(ref _writeCount) == 2)
+            {
+                _secondWriteStarted.TrySetResult();
+                await _secondWriteGate.Task.WaitAsync(cancellationToken);
+            }
             _writeStarted.TrySetResult();
             await _gate.Task.WaitAsync(cancellationToken);
             await _inner.WriteAsync(buffer, cancellationToken);
@@ -1125,6 +1408,7 @@ public sealed class StreamedSetTests
             if (disposing)
             {
                 OpenGate();
+                OpenSecondWrite();
                 _inner.Dispose();
                 client.Dispose();
             }
@@ -1137,6 +1421,168 @@ public sealed class StreamedSetTests
             gate.TrySetResult();
             return gate;
         }
+    }
+
+    private sealed class ReadSignalStream(int length) : Stream
+    {
+        private int _position;
+        private int _reads;
+        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _reads) == 2) SecondReadStarted.TrySetResult();
+            var count = Math.Min(buffer.Length, length - _position);
+            for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_position + index) % 251);
+            _position += count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class FailingSecondReadStream(int length) : Stream
+    {
+        private int _readCount;
+        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _readCount) == 2)
+            {
+                SecondReadStarted.TrySetResult();
+                return ValueTask.FromException<int>(new IOException("Prefetched source read failed."));
+            }
+
+            for (var index = 0; index < buffer.Length; index++) buffer.Span[index] = (byte)(index % 251);
+            return ValueTask.FromResult(buffer.Length);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class TrackingArrayPool : ArrayPool<byte>
+    {
+        internal ConcurrentBag<byte[]> Returned { get; } = [];
+        private readonly ConcurrentDictionary<byte[], TaskCompletionSource> _returnSignals = new(ReferenceEqualityComparer.Instance);
+
+        internal Task WaitForReturnAsync(byte[] buffer)
+        {
+            var signal = _returnSignals.GetOrAdd(buffer, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+            if (Returned.Contains(buffer)) signal.TrySetResult();
+            return signal.Task;
+        }
+
+        public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+
+        public override void Return(byte[] array, bool clearArray = false)
+        {
+            Returned.Add(array);
+            _returnSignals.GetOrAdd(array, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+        }
+    }
+
+    private sealed class SynchronouslyBlockedSecondReadStream : Stream
+    {
+        private int _readCount;
+        private int _position;
+        internal ManualResetEventSlim ContinueSecondRead { get; } = new();
+        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource SecondReadCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? CapturedBuffer { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => RespireConnection.StreamChunkSize * 2L;
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _readCount) == 2)
+            {
+                MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment);
+                CapturedBuffer = segment.Array;
+                SecondReadStarted.TrySetResult();
+                ContinueSecondRead.Wait();
+                Fill(buffer.Span);
+                SecondReadCompleted.TrySetResult();
+                return ValueTask.FromResult(buffer.Length);
+            }
+            Fill(buffer.Span);
+            return ValueTask.FromResult(buffer.Length);
+        }
+
+        private void Fill(Span<byte> buffer)
+        {
+            for (var index = 0; index < buffer.Length; index++) buffer[index] = (byte)((_position + index) % 251);
+            _position += buffer.Length;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ShortReadThenBlockedStream : Stream
+    {
+        private int _readCount;
+        internal byte[]? CapturedBuffer { get; private set; }
+        internal TaskCompletionSource ThirdReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ContinueThirdRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => RespireConnection.StreamChunkSize * 2L;
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
+            switch (Interlocked.Increment(ref _readCount))
+            {
+                case 1:
+                    buffer.Span.Fill((byte)'a');
+                    return buffer.Length;
+                case 2:
+                    buffer.Span[0] = (byte)'b';
+                    return 1;
+                case 3:
+                    ThirdReadStarted.TrySetResult();
+                    await ContinueThirdRead.Task.ConfigureAwait(false);
+                    buffer.Span[0] = (byte)'c';
+                    return 1;
+                default:
+                    buffer.Span.Fill((byte)'d');
+                    return buffer.Length;
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class SynchronouslyBlockingStream(TimeSpan delay) : Stream
@@ -1239,6 +1685,9 @@ public sealed class StreamedSetTests
         private int _blocked;
         internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? CapturedBuffer { get; private set; }
+        internal int CapturedBufferLength => CapturedBuffer?.Length ?? throw new InvalidOperationException("No source buffer captured.");
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -1247,6 +1696,7 @@ public sealed class StreamedSetTests
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
             if (_position >= pauseAfter && Interlocked.Exchange(ref _blocked, 1) == 0)
             {
                 Paused.TrySetResult();
@@ -1256,6 +1706,7 @@ public sealed class StreamedSetTests
             var count = Math.Min(Math.Min(buffer.Length, maxRead), payload.Length - _position);
             payload.AsMemory(_position, count).CopyTo(buffer);
             _position += count;
+            if (_position == payload.Length) Completed.TrySetResult();
             return count;
         }
 
@@ -1309,12 +1760,13 @@ public sealed class StreamedSetTests
         public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
     }
 
-    // First read waits (blocking) until its token is cancelled and still returns a byte; the next
-    // read reports the cancellation with a token-less exception.
+    // The read waits (blocking) until its token is cancelled, then reports cancellation without
+    // including that token. No second source call is needed after cancellation.
     private sealed class TokenlessCancellationStream : Stream
     {
         private int _reads;
         internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource TokenlessCancellationThrown { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool ThrewTokenless { get; private set; }
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -1328,12 +1780,11 @@ public sealed class StreamedSetTests
             {
                 ReadStarted.TrySetResult();
                 SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested, TimeSpan.FromSeconds(5));
-                buffer.Span[0] = 1;
-                return ValueTask.FromResult(1);
             }
 
             if (!cancellationToken.IsCancellationRequested) throw new InvalidOperationException("Token was not cancelled.");
             ThrewTokenless = true;
+            TokenlessCancellationThrown.TrySetResult();
             return ValueTask.FromException<int>(new OperationCanceledException("Source observed cancellation."));
         }
 

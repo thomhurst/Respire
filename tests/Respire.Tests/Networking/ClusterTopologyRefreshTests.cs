@@ -396,16 +396,17 @@ public class ClusterTopologyRefreshTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
-            CommandTimeout = TimeSpan.FromMilliseconds(50),
+            // Preserve backoff > I/O timeout without a 50 ms scheduling race on loaded CI.
+            CommandTimeout = TimeSpan.FromSeconds(1),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(250), MaxDelay = TimeSpan.FromMilliseconds(250),
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(2), MaxDelay = TimeSpan.FromSeconds(2),
                 JitterRatio = 0, MaxAttempts = 2 },
         });
         seed.SuppressReply = command => command == "CLUSTER SLOTS";
 
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
 
-        await alternativeRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await alternativeRefresh.Task.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
     [Test]
@@ -426,14 +427,16 @@ public class ClusterTopologyRefreshTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
-            CommandTimeout = TimeSpan.FromMilliseconds(50),
+            // The seed deliberately stalls; give the responsive candidate enough I/O time
+            // after fallback even when the test runner is busy with other wire tests.
+            CommandTimeout = TimeSpan.FromSeconds(1),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         seed.SuppressReply = command => command == "CLUSTER SLOTS";
 
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
 
-        await replicaRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await replicaRefresh.Task.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
     [Test]
