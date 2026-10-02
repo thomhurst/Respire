@@ -17,7 +17,7 @@ public class CoordinationCleanupQueueTests
         {
             started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return false;
+            return CleanupAttemptResult.Failed;
         }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2),
             reason => abandoned = reason);
 
@@ -44,7 +44,7 @@ public class CoordinationCleanupQueueTests
                 if (Interlocked.Increment(ref started) == CoordinationCleanupQueue.WorkerCount)
                     allWorkersStarted.TrySetResult();
                 await gate.Task.WaitAsync(cancellationToken);
-                return true;
+                return CleanupAttemptResult.Succeeded;
             }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), _ => { });
         }
         for (var i = 0; i < CoordinationCleanupQueue.WorkerCount; i++)
@@ -54,7 +54,7 @@ public class CoordinationCleanupQueueTests
         for (var i = 0; i < CoordinationCleanupQueue.Capacity; i++)
             completions.Add(EnqueueBlockedCleanup());
 
-        var accepted = queue.EnqueueAsync(_ => new ValueTask<bool>(true), null, TimeSpan.FromMinutes(1),
+        var accepted = queue.EnqueueAsync(_ => new ValueTask<CleanupAttemptResult>(CleanupAttemptResult.Succeeded), null, TimeSpan.FromMinutes(1),
             TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), _ => { });
         await Assert.That(accepted.IsCompleted).IsFalse();
         gate.TrySetResult();
@@ -74,7 +74,7 @@ public class CoordinationCleanupQueueTests
             {
                 if (Interlocked.Increment(ref started) == CoordinationCleanupQueue.WorkerCount)
                     firstAttempts.TrySetResult();
-                return new ValueTask<bool>(false);
+                return new ValueTask<CleanupAttemptResult>(CleanupAttemptResult.Failed);
             }, null, TimeSpan.FromMinutes(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5), _ => { }))
             .ToArray();
         await firstAttempts.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -83,7 +83,7 @@ public class CoordinationCleanupQueueTests
         var later = queue.EnqueueAsync(_ =>
         {
             laterStarted.TrySetResult();
-            return new ValueTask<bool>(true);
+            return new ValueTask<CleanupAttemptResult>(CleanupAttemptResult.Succeeded);
         }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), _ => { });
 
         await laterStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -105,7 +105,7 @@ public class CoordinationCleanupQueueTests
             if (Interlocked.Increment(ref startedCount) == CoordinationCleanupQueue.WorkerCount)
                 allStarted.TrySetResult();
             await gate.Task.WaitAsync(cancellationToken);
-            return true;
+            return CleanupAttemptResult.Succeeded;
         }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), _ => { })).ToArray();
         await allStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var attempts = 0;
@@ -113,7 +113,7 @@ public class CoordinationCleanupQueueTests
         var queued = queue.EnqueueAsync(_ =>
         {
             Interlocked.Increment(ref attempts);
-            return new ValueTask<bool>(false);
+            return new ValueTask<CleanupAttemptResult>(CleanupAttemptResult.Failed);
         }, null, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2), reason => abandoned = reason);
 
         await Task.Delay(50);
@@ -124,3 +124,4 @@ public class CoordinationCleanupQueueTests
         await Assert.That(abandoned).IsEqualTo("exhausted");
     }
 }
+

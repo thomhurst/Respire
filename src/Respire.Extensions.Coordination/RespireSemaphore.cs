@@ -203,7 +203,12 @@ public sealed class RespireSemaphore
     {
         if (client is RespireClient respireClient)
             return respireClient.Core.CoordinationCleanupQueue.EnqueueAsync(async cancellationToken =>
-                await attempt(cancellationToken).ConfigureAwait(false) == SemaphoreCleanupAttempt.Succeeded,
+                await attempt(cancellationToken).ConfigureAwait(false) switch
+                {
+                    SemaphoreCleanupAttempt.Succeeded => CleanupAttemptResult.Succeeded,
+                    SemaphoreCleanupAttempt.Abandoned => CleanupAttemptResult.Abandoned,
+                    _ => CleanupAttemptResult.Failed,
+                },
                 shouldContinue, CleanupRetryLimit, CleanupRetryInitialDelay, CleanupRetryMaxDelay, onAbandoned);
 
         return RetryCleanupAsync(Stopwatch.GetTimestamp(), () => attempt(CancellationToken.None), shouldContinue,
@@ -939,3 +944,4 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         return result >= long.MaxValue ? long.MaxValue - 1 : (long)result;
     }
 }
+

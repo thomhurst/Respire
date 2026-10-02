@@ -3,6 +3,8 @@ using System.Threading.Channels;
 
 namespace Respire.Internal;
 
+internal enum CleanupAttemptResult { Succeeded, Failed, Abandoned }
+
 /// <summary>Runs bounded, retryable coordination cleanup for one client core.</summary>
 internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 {
@@ -17,13 +19,15 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         AllowSynchronousContinuations = false,
     });
     private readonly CancellationTokenSource _stopping = new();
+    private readonly CancellationToken _stoppingToken;
+    private readonly SemaphoreSlim _outstanding = new(Capacity + WorkerCount);
     private readonly object _workerGate = new();
     private readonly object _scheduledGate = new();
     private readonly List<Task> _scheduledRetries = [];
     private Task[]? _workers;
     private int _disposed;
 
-    internal CoordinationCleanupQueue() { }
+    internal CoordinationCleanupQueue() => _stoppingToken = _stopping.Token;
     internal int StartedWorkerCount => _workers?.Length ?? 0;
 
     /// <summary>
@@ -31,7 +35,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     /// work is never discarded.
     /// </summary>
     internal async Task<bool> EnqueueAsync(
-        Func<CancellationToken, ValueTask<bool>> attempt,
+        Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
         Func<bool>? shouldContinue,
         TimeSpan retryLimit,
         TimeSpan initialDelay,
@@ -40,24 +44,31 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(onAbandoned);
+        try { await _outstanding.WaitAsync(_stoppingToken).ConfigureAwait(false); }
+        catch (OperationCanceledException)
+        {
+            onAbandoned("client_disposed");
+            return false;
+        }
         var cleanup = new Cleanup(attempt, shouldContinue, retryLimit, initialDelay, maximumDelay, onAbandoned,
+            () => _outstanding.Release(),
             Stopwatch.GetTimestamp());
         if (Volatile.Read(ref _disposed) != 0)
         {
             cleanup.Report("client_disposed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
         else
         {
             try
             {
-                await _queue.Writer.WriteAsync(cleanup, _stopping.Token).ConfigureAwait(false);
+                await _queue.Writer.WriteAsync(cleanup, _stoppingToken).ConfigureAwait(false);
                 StartWorkers();
             }
             catch (Exception error) when (error is OperationCanceledException or ChannelClosedException)
             {
                 cleanup.Report("client_disposed");
-                cleanup.Completion.TrySetResult(false);
+                cleanup.Complete(false);
             }
         }
 
@@ -83,7 +94,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         while (_queue.Reader.TryRead(out var cleanup))
         {
             cleanup.Report("client_disposed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
 
         _stopping.Dispose();
@@ -103,7 +114,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     {
         try
         {
-            await foreach (var cleanup in _queue.Reader.ReadAllAsync(_stopping.Token).ConfigureAwait(false))
+            await foreach (var cleanup in _queue.Reader.ReadAllAsync(_stoppingToken).ConfigureAwait(false))
                 await RunCleanupAsync(cleanup).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
@@ -116,20 +127,24 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
             if (_stopping.IsCancellationRequested)
             {
                 cleanup.Report("client_disposed");
-                cleanup.Completion.TrySetResult(false);
+                cleanup.Complete(false);
                 return;
             }
             if (cleanup.ShouldContinue is not null && !cleanup.ShouldContinue())
-            { cleanup.Completion.TrySetResult(false); return; }
+            { cleanup.Complete(false); return; }
             if (cleanup.HasAttempted && Stopwatch.GetElapsedTime(cleanup.EnqueuedAt) >= cleanup.RetryLimit)
-            { cleanup.Report("exhausted"); cleanup.Completion.TrySetResult(false); return; }
+            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
             cleanup.HasAttempted = true;
-            if (await cleanup.Attempt(_stopping.Token).ConfigureAwait(false))
-            { cleanup.Completion.TrySetResult(true); return; }
+            var outcome = await cleanup.Attempt(_stoppingToken).ConfigureAwait(false);
+            if (outcome == CleanupAttemptResult.Succeeded)
+            { cleanup.Complete(true); return; }
+            if (outcome == CleanupAttemptResult.Abandoned)
+            { cleanup.Report("client_disposed"); cleanup.Complete(false); return; }
             if (Stopwatch.GetElapsedTime(cleanup.EnqueuedAt) >= cleanup.RetryLimit)
-            { cleanup.Report("exhausted"); cleanup.Completion.TrySetResult(false); return; }
+            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
 
-            var delay = WithJitter(cleanup.NextDelay);
+            var remaining = cleanup.RetryLimit - Stopwatch.GetElapsedTime(cleanup.EnqueuedAt);
+            var delay = WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
             cleanup.NextDelay = TimeSpan.FromTicks(Math.Min(
                 cleanup.NextDelay.Ticks * 2, cleanup.MaximumDelay.Ticks));
             ScheduleRetry(cleanup, delay);
@@ -137,17 +152,17 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
             cleanup.Report("client_disposed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
         catch (ObjectDisposedException)
         {
             cleanup.Report("client_disposed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
         catch
         {
             cleanup.Report("failed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
     }
 
@@ -165,13 +180,13 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     {
         try
         {
-            await Task.Delay(delay, _stopping.Token).ConfigureAwait(false);
-            await _queue.Writer.WriteAsync(cleanup, _stopping.Token).ConfigureAwait(false);
+            await Task.Delay(delay, _stoppingToken).ConfigureAwait(false);
+            await _queue.Writer.WriteAsync(cleanup, _stoppingToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is OperationCanceledException or ChannelClosedException)
         {
             cleanup.Report("client_disposed");
-            cleanup.Completion.TrySetResult(false);
+            cleanup.Complete(false);
         }
     }
 
@@ -179,15 +194,16 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         => TimeSpan.FromTicks((long)(delay.Ticks * (0.75 + Random.Shared.NextDouble() * 0.5)));
 
     private sealed class Cleanup(
-        Func<CancellationToken, ValueTask<bool>> attempt,
+        Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
         Func<bool>? shouldContinue,
         TimeSpan retryLimit,
         TimeSpan initialDelay,
         TimeSpan maximumDelay,
         Action<string> onAbandoned,
+        Action onComplete,
         long enqueuedAt)
     {
-        internal Func<CancellationToken, ValueTask<bool>> Attempt { get; } = attempt;
+        internal Func<CancellationToken, ValueTask<CleanupAttemptResult>> Attempt { get; } = attempt;
         internal Func<bool>? ShouldContinue { get; } = shouldContinue;
         internal TimeSpan RetryLimit { get; } = retryLimit;
         internal TimeSpan InitialDelay { get; } = initialDelay;
@@ -196,6 +212,11 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         internal TimeSpan NextDelay { get; set; } = initialDelay;
         internal bool HasAttempted { get; set; }
         internal TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void Complete(bool result)
+        {
+            if (Completion.TrySetResult(result))
+                onComplete();
+        }
         internal void Report(string reason)
         {
             try { onAbandoned(reason); }
