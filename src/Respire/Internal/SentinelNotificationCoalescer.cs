@@ -260,6 +260,7 @@ internal sealed class SentinelNotificationCoalescer
         if (_pending is not { } next)
         {
             if (Active is not { AdditionalReportingSentinels: { Length: > 0 } reporters } active) return null;
+            if (!activeFailed && HasSwitchSource(in active)) return null;
             next = active with
             {
                 ReportingSentinel = reporters[0],
@@ -291,7 +292,8 @@ internal sealed class SentinelNotificationCoalescer
                     };
                 }
             }
-            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
+            else if (!HasSwitchSource(in activeHint)
+                && activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
             {
                 var unqueried = activeHint with
                 {
@@ -307,6 +309,12 @@ internal sealed class SentinelNotificationCoalescer
         Active = next;
         return next;
     }
+
+    // A successful switch discovery consumes its old-source evidence. Replaying an alternate
+    // reporter can retire the just-published primary using a delayed copy of the earlier switch.
+    // Pure delivery-gap hints have no switch sources; each reporter still needs a catch-up query.
+    private static bool HasSwitchSource(in SentinelHint hint)
+        => hint.OldPrimary is not null || hint.AdditionalOldPrimaries is { Length: > 0 };
 
     /// <summary>Ends the worker: no hint is active or pending.</summary>
     internal void Complete()

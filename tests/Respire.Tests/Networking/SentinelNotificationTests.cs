@@ -190,6 +190,43 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConflictingFailbackReportersAreFallbacksOnlyAfterFailure(bool activeFailed)
+    {
+        var first = new RespireEndpoint("10.0.1.1", 26379);
+        var delayed = new RespireEndpoint("10.0.1.2", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), false);
+        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
+        var recovery = coalescer.TakePending()!.Value;
+        await Assert.That(recovery.ReportingSentinel).IsEqualTo(first);
+
+        var next = coalescer.TakePending(activeFailed);
+
+        if (activeFailed) await Assert.That(next!.Value.ReportingSentinel).IsEqualTo(delayed);
+        else await Assert.That(next).IsNull();
+    }
+
+    [Test]
+    public async Task SuccessfulFailbackDoesNotCarryDelayedReporterIntoNewHint()
+    {
+        var first = new RespireEndpoint("10.0.1.1", 26379);
+        var delayed = new RespireEndpoint("10.0.1.2", 26379);
+        var currentReporter = new RespireEndpoint("10.0.1.3", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), false);
+        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
+        coalescer.TakePending();
+        var fresh = new SentinelHint("gap", MustRediscover: true, ReportingSentinel: currentReporter);
+        coalescer.Offer(in fresh, false);
+
+        await Assert.That(coalescer.TakePending(activeFailed: false)).IsEqualTo(fresh);
+    }
+
+    [Test]
     public async Task MergeKeepsReporterForNewTargetWhenItIsAlsoAnEarlierSwitchSource()
     {
         var third = new RespireEndpoint("10.0.0.3", 6381);
