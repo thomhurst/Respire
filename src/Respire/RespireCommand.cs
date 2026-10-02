@@ -22,11 +22,7 @@ public readonly struct RespireCommand
         Name = name;
         _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
             | (isReadOnly ? ReadOnlyMetadataFlag : 0);
-        var readKind = isReadOnly
-            ? name is "SCAN" or "HSCAN" or "SSCAN" or "ZSCAN" or "ARSCAN"
-                ? ReadCommandKind.CursorRead
-                : ReadCommandKind.Read
-            : ReadCommandKind.None;
+        var readKind = Verb.GetReadKind(name, isReadOnly);
         _verb = new Verb(name, readKind);
         Behavior = Classify(name);
     }
@@ -60,6 +56,8 @@ public readonly struct RespireCommand
     internal Verb Verb => _verb;
 
     internal ReadCommandKind ReadKind => _verb.ReadKind;
+
+    internal int CursorArgumentIndex => _verb.Bulk is null ? -1 : _verb.CursorArgumentIndex;
 
     internal RespireCommandBehavior Behavior { get; }
 

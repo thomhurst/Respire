@@ -2661,6 +2661,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Writes MULTI + a pre-serialized command block + EXEC as one frame sequence.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands) : IRespCommand
     {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteRaw(RespCommands.Multi);
@@ -2690,6 +2692,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public ReadCommandKind ReadKind => _command.ReadKind;
+        public int CursorArgumentIndex => _command.CursorArgumentIndex;
     }
 
     private static Exception TranslateReceiveFault(Exception ex)

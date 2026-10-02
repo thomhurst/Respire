@@ -402,6 +402,8 @@ internal readonly struct BitOpCommand(
     RespireValue destination,
     RespireValue[] sourceKeys) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetClusterSlot(out int slot) => destination.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)

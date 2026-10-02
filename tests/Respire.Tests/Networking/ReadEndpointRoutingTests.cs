@@ -790,17 +790,17 @@ public class ReadEndpointRoutingTests
     public async Task CursorContinuationIsReadFromTheCursorArgument()
     {
         var hscan = RespireCommands.All.ToArray().First(command => command.Name == "HSCAN");
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["0", "COUNT", 10]))).IsFalse();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, [0]))).IsFalse();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["17"]))).IsTrue();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("hscan", new CatalogCommand(hscan, ["key", "0"]))).IsFalse();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("HSCAN", new CatalogCommand(hscan, ["key", "9"]))).IsTrue();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("ZSCAN",
-            new DynamicCommand(["ZSCAN", "key", "9"], routingKeyIndex: 1))).IsTrue();
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("SSCAN",
-            new DynamicCommand(["SSCAN", "key", "0"], routingKeyIndex: 1))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, ["0", "COUNT", 10]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, [0]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, ["17"]))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CatalogCommand(hscan, ["key", "0"]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CatalogCommand(hscan, ["key", "9"]))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
+            new DynamicCommand(["ZSCAN", "key", "9"], routingKeyIndex: 1, cursorArgumentIndex: 1))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
+            new DynamicCommand(["SSCAN", "key", "0"], routingKeyIndex: 1, cursorArgumentIndex: 1))).IsFalse();
         // ARSCAN's cursor position is unknown, so it is always treated as a fresh scan.
-        await Assert.That(CursorCommandMetadata.IsCursorContinuation("ARSCAN",
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
             new DynamicCommand(["ARSCAN", "key", "9"], routingKeyIndex: 1))).IsFalse();
     }
 

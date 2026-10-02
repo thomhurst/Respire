@@ -5,7 +5,8 @@ using Respire.Networking;
 namespace Respire.Commands;
 
 /// <summary>An owned RESP frame used when caller-owned arguments must survive an async send.</summary>
-internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind) : IRespCommand
+internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind,
+    int cursorArgumentIndex = -1) : IRespCommand
 {
     public static SnapshotCommand Create<TCommand>(in TCommand command)
         where TCommand : struct, IRespCommand
@@ -16,7 +17,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
         {
             var writer = new RespWriter(buffer);
             command.Write(ref writer);
-            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind);
+            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind, command.CursorArgumentIndex);
         }
         finally
         {
@@ -31,6 +32,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
     }
 
     public ReadCommandKind ReadKind => readKind;
+    public int CursorArgumentIndex => cursorArgumentIndex;
 
     public void Write(ref RespWriter writer) => writer.WriteRaw(frame);
 }
@@ -41,6 +43,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -63,6 +66,7 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -86,6 +90,7 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -112,6 +117,7 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -141,6 +147,7 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -173,6 +180,7 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -209,6 +217,7 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetArgument(int index, out RespireValue value)
     {
@@ -265,6 +274,7 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -355,6 +365,7 @@ internal static class CommandRouting
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -427,9 +438,11 @@ internal readonly struct DynamicCommand(
     int routingKeyIndex,
     int argumentOffset = 1,
     RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
-    ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
+    ReadCommandKind readKind = ReadCommandKind.None,
+    int cursorArgumentIndex = -1) : IRespCommand
 {
     public ReadCommandKind ReadKind => readKind;
+    public int CursorArgumentIndex => cursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown
@@ -639,8 +652,10 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public ReadCommandKind ReadKind => command.ReadKind != ReadCommandKind.None
+    private readonly ReadCommandKind readKind = command.ReadKind != ReadCommandKind.None
         ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(command.Name, args);
+    public ReadCommandKind ReadKind => readKind;
+    public int CursorArgumentIndex => command.CursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => command.CacheMutation == RespireCacheMutation.Unknown
@@ -706,6 +721,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -754,6 +770,8 @@ internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCo
 /// </summary>
 internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = key;
@@ -784,6 +802,8 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = key;
@@ -850,6 +870,8 @@ internal readonly struct SetCommand(
 /// <summary>GETEX key PX milliseconds | PXAT unix-milliseconds | PERSIST.</summary>
 internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = key;

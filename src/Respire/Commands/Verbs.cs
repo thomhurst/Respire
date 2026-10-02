@@ -13,6 +13,7 @@ internal readonly struct Verb
     public readonly int Tokens;
     public readonly int RoutingKeyIndex;
     public readonly ReadCommandKind ReadKind;
+    public readonly int CursorArgumentIndex;
 
     public Verb(string command) : this(0, command, ReadCommandKind.None)
     {
@@ -38,6 +39,7 @@ internal readonly struct Verb
 
         RoutingKeyIndex = routingKeyIndex;
         ReadKind = readKind;
+        CursorArgumentIndex = GetCursorArgumentIndex(command);
         Tokens = 0;
         var encodedLength = 0;
         var start = 0;
@@ -98,6 +100,18 @@ internal readonly struct Verb
             start = end + 1;
         }
     }
+
+    internal static int GetCursorArgumentIndex(string command)
+        => command.Equals("SCAN", StringComparison.OrdinalIgnoreCase) ? 0
+            : command.Equals("HSCAN", StringComparison.OrdinalIgnoreCase)
+                || command.Equals("SSCAN", StringComparison.OrdinalIgnoreCase)
+                || command.Equals("ZSCAN", StringComparison.OrdinalIgnoreCase) ? 1
+            : -1;
+
+    internal static ReadCommandKind GetReadKind(string command, bool isReadOnly)
+        => !isReadOnly ? ReadCommandKind.None
+            : GetCursorArgumentIndex(command) >= 0 || command == "ARSCAN"
+                ? ReadCommandKind.CursorRead : ReadCommandKind.Read;
 
     private static int DecimalDigits(int value)
         => value < 10 ? 1 : value < 100 ? 2 : value < 1_000 ? 3 : value < 10_000 ? 4 : 5;

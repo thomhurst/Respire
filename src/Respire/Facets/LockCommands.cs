@@ -480,6 +480,8 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 /// <summary>SET key token NX PX milliseconds.</summary>
 internal readonly struct LockTakeCommand(RespireValue key, RespireValue token, long milliseconds) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)

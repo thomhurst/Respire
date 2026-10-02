@@ -681,6 +681,8 @@ public class RespireConnectionTests
     /// <summary>SET key value, serialized through the public writer API.</summary>
     private readonly struct SetCommand(string key, string value) : IRespCommand
     {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteArrayHeader(3);

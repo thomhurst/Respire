@@ -676,7 +676,8 @@ public sealed partial class RespireClient : IRespireClient
         var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
-            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments));
+            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
+            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation));
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
@@ -729,7 +730,8 @@ public sealed partial class RespireClient : IRespireClient
             operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
-            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments));
+            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
+            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -892,7 +894,8 @@ public sealed partial class RespireClient : IRespireClient
         var routingKeyIndex = GetRawRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
         return (storedProcedureName,
-            new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind));
+            new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
+                Verb.GetCursorArgumentIndex(operation)));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -2162,7 +2165,7 @@ public sealed partial class RespireClient : IRespireClient
         // A raw command's own cursor argument says whether it starts a scan or continues one.
         var connection = readKind == ReadCommandKind.CursorRead
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
-                affinity is null && CursorCommandMetadata.IsCursorContinuation(operation, in command),
+                affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
                 cancellationToken).ConfigureAwait(false)
             : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);

@@ -669,6 +669,8 @@ internal readonly struct GeoSearchCommand(
 internal readonly struct GeoAddCommand(
     Verb verb, RespireValue key, SetWhen when, bool changed, GeoEntry[] entries) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)

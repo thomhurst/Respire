@@ -125,7 +125,9 @@ internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 
-    ReadCommandKind ReadKind => ReadCommandKind.None;
+    ReadCommandKind ReadKind { get; }
+
+    int CursorArgumentIndex => -1;
 
     /// <summary>Returns cache mutation metadata for the command.</summary>
     RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.GetCacheMutation(operation);
