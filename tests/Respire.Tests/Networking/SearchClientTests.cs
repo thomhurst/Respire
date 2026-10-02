@@ -537,6 +537,8 @@ public class SearchClientTests
     [Test]
     public async Task SearchExpressionBuilderEscapesValuesAndComposesTypedExpressions()
     {
+        await Assert.That(RespireSearchQueryBuilder.MatchAll().Value).IsEqualTo("*");
+
         var expression = RespireSearchQueryBuilder.And(
             RespireSearchQueryBuilder.TextField("title", "redis search"),
             RespireSearchQueryBuilder.Tag("category", "cache"));

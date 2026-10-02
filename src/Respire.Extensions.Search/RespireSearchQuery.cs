@@ -36,7 +36,8 @@ public readonly record struct RespireSearchExpression
         return this;
     }
 
-    /// <inheritdoc/>
+    /// <summary>Formats expression for diagnostics.</summary>
+    /// <remarks>A default expression formats as an empty string; accessing <see cref="Value"/> still throws.</remarks>
     public override string ToString() => _value ?? string.Empty;
 }
 
@@ -49,6 +50,7 @@ public readonly record struct RespireSearchExpression
 public sealed record RespireSearchQuery(RespireSearchExpression Expression, RespireSearchQueryOptions? Options = null)
 {
     /// <summary>Query expression.</summary>
+    // Validate both initial construction and record-copy assignment; either can set this property.
     public RespireSearchExpression Expression { get; init => field = value.RequireValid(nameof(Expression)); } = Expression.RequireValid(nameof(Expression));
 
     internal RespireValue[] ToArguments() => (Options ?? RespireSearchQueryOptions.Default).ToArguments();
@@ -70,6 +72,9 @@ public sealed record RespireSearchQuery(RespireSearchExpression Expression, Resp
 /// </remarks>
 public static class RespireSearchQueryBuilder
 {
+    /// <summary>Matches all indexed documents.</summary>
+    public static RespireSearchExpression MatchAll() => RespireSearchExpression.FromBuilder("*");
+
     /// <summary>Matches an exact quoted term or phrase across indexed text fields.</summary>
     public static RespireSearchExpression Text(string term) => RespireSearchExpression.FromBuilder(Quote(term));
 
