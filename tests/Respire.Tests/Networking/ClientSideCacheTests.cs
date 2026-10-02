@@ -964,7 +964,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray());
-        server.DelayReply(1, 250);
+        server.SuppressReply = command => command.StartsWith("BLPOP ", StringComparison.Ordinal);
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
@@ -972,7 +972,9 @@ public class ClientSideCacheTests
         await WaitUntilAsync(() => server.CommandsSeen >= 6);
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(execution.IsCompleted).IsFalse();
         InsertCachedValue(cache, "key", "old");
+        await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds.Last());
 
         using var result = await execution;
 
