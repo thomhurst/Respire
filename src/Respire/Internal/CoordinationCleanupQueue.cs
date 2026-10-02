@@ -47,7 +47,8 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         try { await _outstanding.WaitAsync(_stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException)
         {
-            onAbandoned("client_disposed");
+            try { onAbandoned("client_disposed"); }
+            catch { /* Diagnostics must not stop cleanup callers. */ }
             return false;
         }
         var cleanup = new Cleanup(attempt, shouldContinue, retryLimit, initialDelay, maximumDelay, onAbandoned,
@@ -145,6 +146,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 
             var remaining = cleanup.RetryLimit - Stopwatch.GetElapsedTime(cleanup.EnqueuedAt);
             var delay = WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
+            if (delay > remaining) delay = remaining;
             cleanup.NextDelay = TimeSpan.FromTicks(Math.Min(
                 cleanup.NextDelay.Ticks * 2, cleanup.MaximumDelay.Ticks));
             ScheduleRetry(cleanup, delay);
