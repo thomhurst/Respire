@@ -194,6 +194,53 @@ public class ClusterReplicaDiscoveryTests
     }
 
     [Test]
+    public async Task ThrottledSlotDoesNotJoinAnotherSlotsPendingProbe()
+    {
+        var reply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commands = 0;
+        var coordinator = new ClusterReplicaDiscovery(slot =>
+        {
+            commands++;
+            return slot == 1 ? Task.CompletedTask : reply.Task;
+        }, _ => false, () => 10);
+        var version = await coordinator.DiscoverAsync(1, default);
+        var other = coordinator.DiscoverAsync(2, default).AsTask();
+        try
+        {
+            var repeated = await coordinator.DiscoverAsync(1, default).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await Assert.That(repeated).IsEqualTo(version);
+            await Assert.That(other.IsCompleted).IsFalse();
+            await Assert.That(commands).IsEqualTo(2);
+        }
+        finally
+        {
+            reply.TrySetResult();
+            await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task SameSlotWaiterStillJoinsItsPendingProbe()
+    {
+        var reply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commands = 0;
+        var coordinator = new ClusterReplicaDiscovery(_ => { commands++; return reply.Task; }, _ => false, () => 10);
+        var first = coordinator.DiscoverAsync(1, default).AsTask();
+        var joined = coordinator.DiscoverAsync(1, default).AsTask();
+        try
+        {
+            await Assert.That(joined.IsCompleted).IsFalse();
+            await Assert.That(commands).IsEqualTo(1);
+        }
+        finally
+        {
+            reply.TrySetResult();
+            await Task.WhenAll(first, joined).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await Assert.That(await joined).IsEqualTo(await first);
+    }
+
+    [Test]
     [NotInParallel]
     public async Task UncoveredSlotBookkeepingAllocatesLessThanPerSlotCoalescers()
     {

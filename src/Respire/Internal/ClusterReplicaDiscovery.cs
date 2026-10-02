@@ -12,12 +12,12 @@ internal sealed class ClusterReplicaDiscovery(
     private readonly object _gate = new();
     // Only value-type throttle/attempt records scale with uncovered slots; one probe runs per router.
     private readonly Dictionary<int, (long NotBefore, long Version)> _notBefore = new();
-    private Task<(int Slot, long Version)>? _current;
+    private (int Slot, Task<(int Slot, long Version)>? Completion) _current;
     private long _nextVersion;
 
     // Deterministic completion/interleaving seam for the coordinator's tests.
     internal object TestingGate => _gate;
-    internal Task? TestingCurrentProbe => _current;
+    internal Task? TestingCurrentProbe => _current.Completion;
 
     internal async ValueTask<long> DiscoverAsync(int slot, CancellationToken cancellationToken)
     {
@@ -34,15 +34,20 @@ internal sealed class ClusterReplicaDiscovery(
                     _notBefore.Remove(slot);
                     return 0;
                 }
-                if (_current is { IsCompleted: false } pending) current = pending;
+                var pending = _current.Completion is { IsCompleted: false };
+                var now = clock?.Invoke() ?? Environment.TickCount64;
+                // A completed attempt remains usable while another slot probes. The current
+                // slot must still join its own pending probe, whose throttle starts at launch.
+                if ((!pending || _current.Slot != slot)
+                    && _notBefore.TryGetValue(slot, out var next) && now < next.NotBefore) return next.Version;
+                if (pending) current = _current.Completion!;
                 else
                 {
-                    var now = clock?.Invoke() ?? Environment.TickCount64;
-                    if (_notBefore.TryGetValue(slot, out var next) && now < next.NotBefore) return next.Version;
                     version = ++_nextVersion;
                     _notBefore[slot] = (now + ClusterReplicaSet.RefreshIntervalMilliseconds, version);
                     start = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    current = _current = start.Task;
+                    current = start.Task;
+                    _current = (slot, current);
                 }
             }
             if (start is not null) _ = RunAsync(slot, version, start);

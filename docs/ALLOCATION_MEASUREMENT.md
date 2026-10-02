@@ -160,8 +160,12 @@ Windows x64 Release measurements for 256 uncovered slots:
 
 | Runtime | Per-slot coalescers | Shared coordinator |
 | --- | ---: | ---: |
-| .NET 8.0.31 | 73,664 bytes | 46,984 bytes |
-| .NET 10.0.12 | 73,672 bytes | 46,984 bytes |
+| .NET 8.0.31 | 73,664 bytes | 55,288 bytes |
+| .NET 10.0.12 | 73,672 bytes | 55,288 bytes |
+
+The shared coordinator measurement includes per-slot attempt versions and the
+current probe slot used to distinguish a pending attempt from a completed,
+throttled attempt.
 
 A separate concurrent comparison holds a full-coverage reply until all 256
 callers have joined. The old coalescers start 256 probes; the shared coordinator
@@ -170,6 +174,12 @@ slot that the first reply did not cover. Uncovered slots retain independent
 one-second throttles, while MOVED owner changes and SMIGRATED invalidate their
 old discovery attempt. Caller cancellation detaches only that caller; router
 disposal cancels the physical probe.
+
+With stable owners, N distinct, previously unattempted slots that remain
+uncovered require N sequential probe rounds. This preserves each slot's own
+coverage attempt when replies are partial. A completed, throttled slot returns
+its cached attempt immediately even while another slot probes; a caller for the
+pending probe's own slot still joins that probe.
 
 `CoveredSlotsDoNotAllocate` checks 1,000 already-covered lookups with the same
 no-GC boundary and an escaping allocation positive control. Healthy replica
