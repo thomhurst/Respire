@@ -66,6 +66,7 @@ internal readonly record struct SentinelHint(
 internal sealed class SentinelNotificationCoalescer
 {
     private SentinelHint? _pending;
+    internal long Revision { get; private set; }
 
     /// <summary>The hint the worker is discovering, or null when no worker runs.</summary>
     internal SentinelHint? Active { get; private set; }
@@ -83,6 +84,7 @@ internal sealed class SentinelNotificationCoalescer
     /// <param name="targetIsCurrent">Whether the hint's target is already the healthy current primary.</param>
     internal bool Offer(in SentinelHint hint, bool targetIsCurrent)
     {
+        Revision++;
         // State table: idle starts one worker; active coalesces duplicates; active+pending unions evidence.
         if (Active is null)
         {

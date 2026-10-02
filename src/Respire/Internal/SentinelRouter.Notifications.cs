@@ -255,8 +255,10 @@ internal sealed partial class SentinelRouter
     }
 
     private async Task ResolveAndRetireSwitchSourceAsync(SentinelHint hint, Generation arrivedDuring,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, long? evidenceVersion = null)
     {
+        long version;
+        lock (_gate) version = evidenceVersion ?? _coalescer.Revision;
         try
         {
             var oldPrimary = hint.OldPrimary!.Value;
@@ -267,6 +269,12 @@ internal sealed partial class SentinelRouter
             {
                 if (_disposed) return;
                 _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
+                // DNS may finish after a failback hint or successful discovery. Use the evidence
+                // still retained by the worker. An already completed newer hint supersedes it;
+                // without newer evidence, a late source lookup must still fence its generation.
+                if (_coalescer.Active is null && _coalescer.Revision != version) return;
+                var retained = _coalescer.Active ?? hint.WithSourceAddresses(oldPrimary, addresses);
+                if (_coalescer.Pending is { } pending) retained = SentinelNotificationCoalescer.Merge(retained, in pending);
                 var current = Current;
                 // Do not apply an old resolution to a later generation for the same endpoint:
                 // a failback can legitimately publish that address again. A changed endpoint
@@ -274,11 +282,10 @@ internal sealed partial class SentinelRouter
                 if (current is null || !ReferenceEquals(current, arrivedDuring)
                     && (SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)
                         || IsCurrentPeer(current, arrivedDuring.Endpoint, addresses))) return;
-                if (!IsAnnouncedTarget(current, in hint)
-                    && IsSwitchSource(current, hint.WithSourceAddresses(hint.OldPrimary!.Value, addresses)))
+                if (!IsAnnouncedTarget(current, in retained) && IsSwitchSource(current, in retained))
                 {
                     Invalidate(current!);
-                    QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
+                    QueueNotificationRediscoveryCore(retained with { MustRediscover = true });
                 }
             }
         }
@@ -299,7 +306,8 @@ internal sealed partial class SentinelRouter
         lock (_gate)
         {
             if (_disposed) return;
-            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken), CancellationToken.None);
+            var version = _coalescer.Revision;
+            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, version), CancellationToken.None);
             _switchSourceResolutions.Add(resolution);
         }
         _ = resolution.ContinueWith(static (completed, state) =>

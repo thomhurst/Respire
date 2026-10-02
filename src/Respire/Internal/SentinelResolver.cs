@@ -179,7 +179,7 @@ internal static class SentinelResolver
                     // Switch evidence names its source, not whichever healthy generation application
                     // traffic may have published while the notification was waiting to retry.
                     var matchesSwitchSource = notificationHint is { } hint
-                        ? MatchesSwitchSource(primary, in hint)
+                        ? MatchesSwitchSource(primary, in hint, primaryAddresses)
                         : previouslyValidatedPrimary is { } previous && RespireEndpointComparer.Instance.Equals(primary, previous);
                     var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
                         && !RespireEndpointComparer.Instance.Equals(target, primary)
@@ -429,10 +429,15 @@ internal static class SentinelResolver
         return primary;
     }
 
-    internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)
+    internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint, string[]? candidateAddresses = null)
     {
         foreach (var source in hint.Sources)
+        {
             if (MatchesSwitchSource(candidate, source)) return true;
+            if (candidateAddresses is null) continue;
+            foreach (var address in candidateAddresses)
+                if (MatchesSwitchSource(new RespireEndpoint(address, candidate.Port), source)) return true;
+        }
         return false;
     }
 

@@ -15,6 +15,8 @@ public class SentinelConfigurationTests
     [Arguments(true, "0:0:0:0:0:0:0:1", "::1")]
     [Arguments(false, "::ffff:127.0.0.1", "127.0.0.1")]
     [Arguments(true, "0:0:0:0:0:ffff:7f00:1", "127.0.0.1")]
+    [Arguments(false, "old-primary.internal", "127.0.0.1")]
+    [Arguments(true, "candidate.internal", "127.0.0.1")]
     public async Task FallbackDiscoveryRejectsSwitchSourceAliasesBeforeRoleValidation(
         bool resolvedAlias, string candidateHost, string sourceHost)
     {
@@ -46,7 +48,8 @@ public class SentinelConfigurationTests
             // Both servers would report ROLE master; stale evidence must be rejected first.
             validated.Add(candidate.Endpoints[0]);
             return ValueTask.FromResult(candidate.Endpoints[0]);
-        }, timeout.Token, previouslyValidatedPrimary: previous, preferredTarget: target, notificationHint: hint);
+        }, timeout.Token, previouslyValidatedPrimary: previous, preferredTarget: target, notificationHint: hint,
+            hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>([System.Net.IPAddress.Loopback]));
         await Assert.That(result).IsEqualTo(target);
         await Assert.That(validated).IsEquivalentTo([target]);
     }

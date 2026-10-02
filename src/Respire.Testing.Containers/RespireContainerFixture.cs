@@ -22,6 +22,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private const int ClusterBusPortStart = 16379;
     private const int SentinelQuorum = 2;
     private const int SentinelDownAfterMilliseconds = 5000;
+    // A failed election retries after twice this interval. Keep retries within fixture tests'
+    // bounded failover windows instead of the server default's six-minute retry delay.
+    private const int SentinelFailoverTimeoutMilliseconds = 10000;
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
@@ -67,6 +70,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
     /// <summary>The owned container ID, for diagnostics.</summary>
     public string ContainerId => _container.Id;
+
+    internal Task<string> ReadServerLogsAsync(CancellationToken cancellationToken)
+        => ExecuteAsync(["cat", .. _ports.Select(port => $"/tmp/respire-fixture/{port}.log")], cancellationToken);
     /// <summary>Host-accessible data endpoints. In Sentinel mode the first endpoint is the initial primary.</summary>
     public IReadOnlyList<RespireEndpoint> DataEndpoints { get; private set; } = Array.Empty<RespireEndpoint>();
     /// <summary>Host-accessible Sentinel endpoints, empty for other topologies.</summary>
@@ -268,6 +274,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         {
             var config = BaseConfiguration(_ports[index]) +
                 $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {SentinelDownAfterMilliseconds}\n" +
+                $"sentinel failover-timeout {SentinelServiceName} {SentinelFailoverTimeoutMilliseconds}\n" +
                 $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
             await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
         }

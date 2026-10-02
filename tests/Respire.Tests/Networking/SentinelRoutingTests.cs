@@ -820,9 +820,45 @@ public class SentinelRoutingTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
         var hint = new SentinelHint("switch", new RespireEndpoint("127.0.0.1", 6381), new RespireEndpoint("127.0.0.1", 6380));
-        await ((Task)resolve.Invoke(router, [hint, arrivedDuring, CancellationToken.None])!).WaitAsync(Limit);
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
+            .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(router)!;
+        coalescer.Offer(in hint, targetIsCurrent: false);
+        await ((Task)resolve.Invoke(router, [hint, arrivedDuring, CancellationToken.None, null])!).WaitAsync(Limit);
 
         await Assert.That(current.IsRetired).IsEqualTo(sameGeneration);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task DelayedSourceResolutionKeepsNewerFailbackEvidence(bool discoveryCompleted, bool failbackArrives)
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var current = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
+        typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
+        var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
+        var hint = new SentinelHint("switch-out", new("127.0.0.1", 6380), current.Endpoint);
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
+            .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(router)!;
+        coalescer.Offer(in hint, targetIsCurrent: false);
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
+        var failback = new SentinelHint("switch-back", current.Endpoint, new("127.0.0.1", 6380), MustRediscover: true);
+        if (failbackArrives) coalescer.Offer(in failback, targetIsCurrent: true);
+        if (discoveryCompleted) coalescer.Complete();
+        addresses.SetResult([IPAddress.Loopback]);
+        await pending.WaitAsync(Limit);
+        await Assert.That(current.IsRetired).IsEqualTo(!failbackArrives);
+        if (discoveryCompleted && failbackArrives) await Assert.That(coalescer.Active).IsNull();
+        else if (failbackArrives) await Assert.That(coalescer.Pending!.Value.Targets).Contains(current.Endpoint);
     }
 
     [Test]
@@ -844,7 +880,7 @@ public class SentinelRoutingTests
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
-        await ((Task)resolve.Invoke(router, [hint, current, CancellationToken.None])!).WaitAsync(Limit);
+        await ((Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!).WaitAsync(Limit);
 
         await Assert.That(current.IsRetired).IsTrue();
         await Assert.That(coalescer.Pending).IsNotNull();
