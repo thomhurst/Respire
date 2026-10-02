@@ -111,8 +111,12 @@ internal sealed class SentinelNotificationCoalescer
             .ToHashSet(SentinelDiscoveryState.EndpointComparer.Instance);
         var targets = EnumerateTargets(previous).Concat(EnumerateTargets(hint))
             .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
+        var selectedTarget = merged.Target is { } candidate && !sourceEndpoints.Contains(candidate)
+            ? candidate
+            : (RespireEndpoint?)null;
         return merged with
         {
+            Target = selectedTarget,
             AdditionalOldPrimaries = additionalSources.Length == 0 ? null
                 : additionalSources.Select(static source => source.Endpoint).ToArray(),
             AdditionalOldPrimaryAddresses = additionalSources.Length == 0 ? null
@@ -121,7 +125,7 @@ internal sealed class SentinelNotificationCoalescer
             ReportingSentinel = hint.Target is not null
                 ? hint.ReportingSentinel ?? previous.ReportingSentinel
                 : previous.ReportingSentinel ?? hint.ReportingSentinel,
-            AdditionalTargets = targets.Where(target => merged.Target is not { } primaryTarget
+            AdditionalTargets = targets.Where(target => selectedTarget is not { } primaryTarget
                 || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primaryTarget))
                 .Where(target => !sourceEndpoints.Contains(target))
                 .ToArray() is { Length: > 0 } extraTargets

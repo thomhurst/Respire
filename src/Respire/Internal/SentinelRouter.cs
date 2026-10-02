@@ -586,7 +586,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
-        QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true));
+        QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true,
+            ReportingSentinel: sentinel));
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)
