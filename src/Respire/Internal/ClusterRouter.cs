@@ -735,15 +735,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);
 
-    internal long CaptureSlotVersion(int? slot)
+    internal readonly record struct StreamRouteVersion(long RedirectVersion, long OwnerVersion);
+
+    internal StreamRouteVersion CaptureSlotVersion(int? slot)
     {
-        if (slot is not { } value) return 0;
+        if (slot is not { } value) return default;
         // PublishSlotLocked writes the version before the owner. Do not capture the new
         // version while pool selection can still observe the previous owner.
-        lock (_nodesGate) return _slotVersions[value];
+        // Discovery preserves the redirect version but advances the owner-mutation fence.
+        // Capture both so ASK cannot outlive discovery changes, including owner A -> B -> A.
+        lock (_nodesGate) return new(_slotVersions[value], _slotFences.Version(value));
     }
 
-    internal async ValueTask<(DedicatedConnectionPool Pool, long SlotVersion)> GetDedicatedStreamPoolAsync(
+    internal async ValueTask<(DedicatedConnectionPool Pool, StreamRouteVersion SlotVersion)> GetDedicatedStreamPoolAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         // Validate this snapshot before the upload header, where the caller's bounded retry loop
@@ -753,13 +757,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return (pool, slotVersion);
     }
 
-    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection,
+    internal bool IsDedicatedStreamRouteCurrent(int? slot, StreamRouteVersion slotVersion, RespireConnection connection,
         DedicatedConnectionPool? askingPool = null)
     {
         if (slot is not { } value) return true;
         lock (_nodesGate)
         {
-            if (_slotVersions[value] != slotVersion) return false;
+            if (_slotVersions[value] != slotVersion.RedirectVersion
+                || _slotFences.Version(value) != slotVersion.OwnerVersion) return false;
             if (askingPool is not null)
             {
                 // ASK bypasses the slot owner, but never the target's MOVING publication.
@@ -772,7 +777,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             // Read the version and owner together; a half-published route must not validate.
             // With no discovered owner, the selected seed is still eligible. Learning an owner
-            // changes the slot version, so that publication invalidates this provisional route.
+            // changes the owner fence, so that publication invalidates this provisional route.
             return _slots[value] is not { } owner
                 || owner.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port);
         }

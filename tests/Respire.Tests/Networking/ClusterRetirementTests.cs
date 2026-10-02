@@ -1842,8 +1842,8 @@ public class ClusterRetirementTests
         lock (gate)
         {
             // Pause PublishSlotLocked between its version and owner writes.
-            var version = versions[42] + 1;
-            Volatile.Write(ref versions[42], version);
+            var version = router.CaptureSlotVersion(42) with { RedirectVersion = versions[42] + 1 };
+            Volatile.Write(ref versions[42], version.RedirectVersion);
             var reader = new Thread(() =>
             {
                 try
@@ -1864,9 +1864,11 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task AskUploadRevalidatesSlotAfterSourceReadAndAsking(bool changeDuringRead)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task AskUploadRevalidatesSlotAfterSourceReadAndAsking(bool changeDuringRead, bool discovery)
     {
         var slot = ClusterHash.GetSlot("key");
         await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -1890,7 +1892,7 @@ public class ClusterRetirementTests
         using var timeout = new CancellationTokenSource(Limit);
         using var source = new ReplayReadStream(() =>
         {
-            if (changeDuringRead) router.SetSlotOwner(slot, next);
+            if (changeDuringRead) ChangeOwner();
         });
         var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
         if (!changeDuringRead)
@@ -1900,13 +1902,25 @@ public class ClusterRetirementTests
                 if (upload.IsCompleted) await upload;
                 await Task.Delay(5, timeout.Token);
             }
-            router.SetSlotOwner(slot, next);
+            ChangeOwner();
             await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
         }
         await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(oldNode.IsRetired).IsFalse();
         await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
         await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+
+        void ChangeOwner()
+        {
+            if (!discovery) { router.SetSlotOwner(slot, next); return; }
+            var ranges = new List<ClusterTopologyRange>
+            {
+                new(slot, slot, new("127.0.0.1", replacement.Port), "replacement", []),
+                new((slot + 1) % 16384, (slot + 1) % 16384, new("127.0.0.1", oldTarget.Port), "ask", []),
+            };
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
+            router.ApplyTopology(ranges, version, 2L);
+        }
     }
 
     [Test]

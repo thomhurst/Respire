@@ -3539,7 +3539,7 @@ public sealed partial class RespireClient : IRespireClient
             ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
         var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
         DedicatedConnectionPool pool;
-        long routeVersion;
+        ClusterRouter.StreamRouteVersion routeVersion;
         try
         {
             if (command is IStreamingRespCommand)
@@ -3548,7 +3548,7 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, acquisitionToken, discovery: null).ConfigureAwait(false);
-                routeVersion = 0;
+                routeVersion = default;
             }
         }
         catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation) is { } timeout)
