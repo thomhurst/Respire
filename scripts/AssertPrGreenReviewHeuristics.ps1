@@ -401,29 +401,35 @@ function Get-UnansweredClaudeReviewReason {
         return $null
     }
 
-    # The workflow emits one explicit verdict. Missing or conflicting verdicts
-    # fail closed; Claude review titles and body headings do not identify a verdict.
+    # A clear verdict passes. A blocking or missing verdict needs a later authorized
+    # maintainer disposition; conflicting verdicts still fail closed.
     $body = [string]$latestReview.body
     $verdicts = [regex]::Matches($body, '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*(CLEAR|BLOCKING)\s*-->\s*$')
     if ($verdicts.Count -eq 1) {
         if ($verdicts[0].Groups[1].Value -eq 'CLEAR') {
             return $null
         }
-
-        return 'review verdict marker: BLOCKING'
     }
 
-    if ($verdicts.Count -gt 0) {
+    if ($verdicts.Count -gt 1) {
         return 'Claude review has conflicting review verdict markers'
     }
 
-    $reason = 'no REVIEW_VERDICT: CLEAR marker'
+    $reason = if ($verdicts.Count -eq 1) {
+        'review verdict marker: BLOCKING'
+    } else {
+        'no REVIEW_VERDICT: CLEAR marker'
+    }
     $reviewedAt = Get-CommentCreatedAt $latestReview
     $reply = $ordered | Where-Object {
         ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
     } | Select-Object -First 1
     if ($null -ne $reply) {
         return $null
+    }
+
+    if ($verdicts.Count -eq 1) {
+        return $reason
     }
 
     return "latest Claude review comment ($($reviewedAt.ToString('u'))) has no later maintainer reply marked $($script:ReviewDispositionMarker): $reason"

@@ -1156,6 +1156,7 @@ $claudeFindings = "**Review: streamed SET**`n`n**Concerns**`n`n1. **Lost wakeups
 $unmarkedReviewFindings = "**Review of #654**`n`nThe design is sound.`n`n1. Head-of-line blocking: document it."
 $integrationReport = "## 🧪 Integration Test Results (net8.0, RESP2)`n`n- **Status**: success"
 $clearReview = "## Review`n`nNothing needs action.`n`n<!-- REVIEW_VERDICT: CLEAR -->`n<!-- claude-code-review -->"
+$blockingReview = "## Review`n`nA finding needs disposition.`n`n<!-- REVIEW_VERDICT: BLOCKING -->`n<!-- claude-code-review -->"
 
 $claudeCommentCases = @(
     @{
@@ -1226,6 +1227,21 @@ $claudeCommentCases = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T09:00:00Z' $claudeFindings),
             (New-TestComment 'thomhurst' '2026-10-01T09:30:00Z' "Addressed in def456.`n<!-- REVIEW_DISPOSITION -->"),
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview)
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'blocks BLOCKING verdict without a reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'allows BLOCKING verdict after maintainer disposition'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' "Handled in def789.`n<!-- REVIEW_DISPOSITION -->")
         )
         Blocks = $false
     },
