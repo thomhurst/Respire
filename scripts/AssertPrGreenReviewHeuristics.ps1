@@ -367,6 +367,7 @@ function Test-IsClaudeReviewComment {
     }
 
     $createdAt = Get-CommentCreatedAt $Comment
+    $beforeMarkerRollout = $null -ne $createdAt -and $createdAt -lt $script:ClaudeReviewMarkerIntroducedAt
     if ($body -match '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*(?:CLEAR|BLOCKING)\s*-->\s*$') {
         return $true
     }
@@ -382,14 +383,19 @@ function Test-IsClaudeReviewComment {
             $title = $rawTitle -replace '^#{1,6}\s*', '' -replace '^(?:\*\*|__)\s*', ''
             $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
             $title = $title -replace '(?:\*\*|__).*$' , ''
-            if ($title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)') { return $true }
+            $isLegacyReviewTitle = if ($beforeMarkerRollout) {
+                $title -match '(?i)^(?:[\p{L}\p{N}-]+\s+){0,2}Review(?:$|:|\s+(?:of|for|PR\b|#|\d))'
+            }
+            else {
+                $title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:$|:|\s+(?:of|for|PR\b|#|\d))'
+            }
+            if ($isLegacyReviewTitle) { return $true }
         }
     }
 
     # A pre-rollout workflow run can finish or be rerun after the marker cutoff.
     # Preserve strong legacy review structures across that boundary; weak or unknown
     # titles remain limited to comments posted before rollout.
-    $beforeMarkerRollout = $null -ne $createdAt -and $createdAt -lt $script:ClaudeReviewMarkerIntroducedAt
     if (-not $beforeMarkerRollout) {
         $hasStructuredFindings = $body -match $script:LegacyStructuredReviewPattern
         if ($hasStructuredFindings) { return $true }

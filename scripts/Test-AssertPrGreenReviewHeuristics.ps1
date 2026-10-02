@@ -1235,6 +1235,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'ignores late automation heading starting with Review'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review apps deployed`n`nDeployment completed.")
+        )
+        Blocks = $false
+    },
+    @{
         Name = 'blocks legacy review quoting automation marker on standalone line'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: PR 700`n`n1. A concrete finding.`n`n<!-- respire-automation-report -->")
@@ -1252,6 +1259,13 @@ $claudeCommentCases = @(
         Name = 'blocks legacy Claude review with Code Review heading'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Code Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks pre-rollout legacy Claude review with PR Review heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## PR Review`n`n1. A concrete finding.")
         )
         Blocks = $true
     },
