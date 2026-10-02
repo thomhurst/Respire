@@ -513,6 +513,24 @@ public class SearchClientTests
         await Assert.That(() => query with { Expression = default }).Throws<ArgumentException>();
         await Assert.That(() => RespireSearchExpression.FromRaw(" ")).Throws<ArgumentException>();
         await Assert.That(() => RespireSearchQueryBuilder.And(default)).Throws<ArgumentException>();
+        await Assert.That(() => _ = default(RespireSearchExpression).Value).Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task QueryEntryPointsRejectDefaultExpressionBeforeSendingCommands()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var search = new RespireSearchClient(client);
+
+        await Assert.That(async () => await search.AggregateAsync("idx", default)).Throws<ArgumentException>();
+        await Assert.That(async () => await search.ExplainAsync("idx", default)).Throws<ArgumentException>();
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new(default, "embedding", new byte[] { 1, 2 }, 3)))
+            .Throws<ArgumentException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]

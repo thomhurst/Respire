@@ -8,10 +8,12 @@ namespace Redis.Search;
 /// <summary>Redis Search query syntax with an explicit trust boundary.</summary>
 public readonly record struct RespireSearchExpression
 {
-    private RespireSearchExpression(string value) => Value = value;
+    private readonly string? _value;
+
+    private RespireSearchExpression(string value) => _value = value;
 
     /// <summary>Query syntax sent to Redis Search.</summary>
-    public string Value { get; }
+    public string Value => _value ?? throw new InvalidOperationException("A default search expression is invalid.");
 
     /// <summary>Creates an expression from trusted native Redis Search syntax.</summary>
     /// <remarks>Do not concatenate untrusted input into raw query syntax.</remarks>
@@ -25,7 +27,7 @@ public readonly record struct RespireSearchExpression
 
     internal RespireSearchExpression RequireValid(string parameterName)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(Value, parameterName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(_value, parameterName);
         return this;
     }
 
