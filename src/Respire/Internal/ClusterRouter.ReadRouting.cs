@@ -336,7 +336,7 @@ internal sealed partial class ClusterRouter
     }
 
     /// <summary>
-    /// Selects the other server role after <see cref="ReadFallbackPolicy.CanFallBackToOtherRole"/> accepted
+    /// Selects the other server role after <see cref="ReadFallbackPolicy.CanFallBackToOtherRole(RespireServerException, RespireReadFrom, int?, bool)"/> accepted
     /// <paramref name="error"/>. When no candidate of that role is reachable, the server error is
     /// surfaced unchanged.
     /// </summary>

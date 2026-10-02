@@ -3410,15 +3410,61 @@ public sealed partial class RespireClient : IRespireClient
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
+            var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
+            bool? fallbackReplica = null;
+            RespireServerException? fallbackError = null;
             try
             {
-                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
-                    preferredZone: ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
-                telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                    core.Options.Database, storedProcedureName: storedProcedureName, started: started);
-                telemetryStarted = true;
-                var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                RespValue response;
+                while (true)
+                {
+                    var onReplica = false;
+                    if (readFrom != RespireReadFrom.Primary)
+                    {
+                        try
+                        {
+                            (pool, connection, onReplica) = await core.ReadRouter.RentDedicatedConnectionAsync(
+                                readFrom, cancellationToken, preferredZone, fallbackReplica).ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (fallbackError is not null && ReadEndpointRouter.IsUnavailable(error, cancellationToken))
+                        {
+                            RethrowPreservingStackTrace(fallbackError);
+                            throw;
+                        }
+                    }
+                    else
+                    {
+                        pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                        (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
+                            preferredZone: preferredZone).ConfigureAwait(false);
+                    }
+                    if (!telemetryStarted)
+                    {
+                        telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                            core.Options.Database, storedProcedureName: storedProcedureName, started: started);
+                        telemetryStarted = true;
+                    }
+                    else
+                    {
+                        // Keep one logical span while routing advances to a replacement lease.
+                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    }
+                    response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                    if (response.IsError && fallbackReplica is null && readFrom != RespireReadFrom.Primary)
+                    {
+                        var error = ResponseReader.ServerError(in response, operation);
+                        if (ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, onReplica))
+                        {
+                            response.Dispose();
+                            pool.Return(connection);
+                            connection = null;
+                            fallbackReplica = !onReplica;
+                            fallbackError = error;
+                            continue;
+                        }
+                    }
+                    break;
+                }
                 pool.Return(connection);
                 returned = true;
                 if (response.IsError)
@@ -3438,12 +3484,13 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
+                            core.Sentinel is null && readFrom == RespireReadFrom.Primary ? (RespireEndpoint?)core.Endpoint : null))
                     : null;
                 if (!telemetryStarted)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
                         started, timeoutError ?? ex, storedProcedureName,
-                        endpoint: core.Sentinel is null ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
+                        endpoint: core.Sentinel is null && readFrom == RespireReadFrom.Primary
+                            ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {

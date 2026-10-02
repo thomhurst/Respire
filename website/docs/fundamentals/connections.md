@@ -615,8 +615,15 @@ Pinned cursors retain the zone preference on every page while staying on the ser
 issued the cursor. When a dedicated read pool has mixed zone metadata, rental prefers a
 healthy same-zone idle connection compatible with the operation. If none is idle, normal
 rental or connection establishment preserves availability; it does not open extra
-connections merely to search for a matching zone. Cluster role fallback retains this
+connections merely to search for a matching zone. Role fallback retains this
 physical-connection preference after narrowing the read to its fallback role.
+
+Blocking reads such as `XREAD BLOCK` select an endpoint using the read policy, then rent a
+dedicated connection from that endpoint. This applies to configured replica groups,
+Sentinel, and Cluster. Standalone and Sentinel replica leases validate their own socket's
+`ROLE` before use. Blocking waits do not occupy the multiplexed read connection or inherit
+the normal response timeout; caller cancellation still ends the wait and discards its
+socket. Removing a replica drains accepted blocking reads, while client disposal aborts them.
 
 ### Cursor reads
 
