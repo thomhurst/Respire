@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/Respire/Networking/**'
       - 'src/Respire/Infrastructure/RespireConnectionMultiplexer.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/Internal/Cluster*.cs'
       - 'benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs'
       - '.github/workflows/benchmark-transport.yml'
 
@@ -57,6 +59,7 @@ jobs:
           # The shared fixture must compile against both pinned APIs. A mismatch fails this
           # step; the always() upload below retains its phase log without masking that failure.
           cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/Program.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -66,6 +69,8 @@ jobs:
             (
               cd "$source"
               git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --transport-case-count "$GITHUB_WORKSPACE/$phase.case-count" "$job"
               /usr/bin/time -f '%U %S %P' -o "$GITHUB_WORKSPACE/$phase.cpu" \
                 dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
@@ -78,11 +83,13 @@ jobs:
           import json
           from pathlib import Path
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              expected = int(Path(f"{phase}.case-count").read_text())
+              assert expected > 0, f"No benchmark cases discovered: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert len(benchmarks) == 8, f"Expected all transport operations with 1 and 2 connections: {report}"
+                  assert len(benchmarks) == expected, f"Expected {expected} discovered benchmark cases: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
@@ -156,3 +163,4 @@ jobs:
           path: |
             results/
             *.log
+            *.case-count

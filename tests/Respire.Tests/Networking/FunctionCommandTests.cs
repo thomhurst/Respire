@@ -134,9 +134,14 @@ public class FunctionCommandTests
     public async Task MissingFunctionReloadIsBoundedAndOtherErrorsNeverRetry()
     {
         var missing = "-ERR Function not found\r\n"u8.ToArray();
-        await using var server = new FakeRespServer(missing, "*0\r\n"u8.ToArray(), "$6\r\nsample\r\n"u8.ToArray(), missing, "-ERR runtime failure\r\n"u8.ToArray());
+        var source = "#!lua name=sample\nreturn 1";
+        var libraryWithoutFunctions = Encoding.ASCII.GetBytes(
+            $"*1\r\n*8\r\n+library_name\r\n$6\r\nsample\r\n+engine\r\n$3\r\nLUA\r\n" +
+            $"+functions\r\n*0\r\n+library_code\r\n${Encoding.UTF8.GetByteCount(source)}\r\n{source}\r\n");
+        await using var server = new FakeRespServer(missing, "*0\r\n"u8.ToArray(), "$6\r\nsample\r\n"u8.ToArray(),
+            libraryWithoutFunctions, "-ERR runtime failure\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var function = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1").Function("function");
+        var function = RespireFunctionLibrary.Create(source).Function("function");
         await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function)).Throws<RespireServerException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(4);
         await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function)).Throws<RespireServerException>();
@@ -223,8 +228,20 @@ public class FunctionCommandTests
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
-        await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), "$6\r\nsample\r\n"u8.ToArray(), ":42\r\n"u8.ToArray())
+        var listCalls = 0;
+        const string source = "#!lua name=sample\nreturn 1";
+        await using var server = new FakeRespServer("+OK\r\n"u8.ToArray())
         {
+            ReplyOverride = (_, command) => command switch
+            {
+                "FUNCTION LIST LIBRARYNAME sample WITHCODE"
+                    => Interlocked.Increment(ref listCalls) == 1
+                        ? "*0\r\n"u8.ToArray() : FunctionLibraryList(source, "function"),
+                _ when command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal)
+                    => "$6\r\nsample\r\n"u8.ToArray(),
+                _ when command.StartsWith("FCALL ", StringComparison.Ordinal) => ":42\r\n"u8.ToArray(),
+                _ => null,
+            },
             SuppressReply = command =>
             {
                 if (!command.StartsWith("FCALL ", StringComparison.Ordinal)) return false;
@@ -234,13 +251,14 @@ public class FunctionCommandTests
             }
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var function = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1").Function("function");
+        var function = RespireFunctionLibrary.Create(source).Function("function");
         var first = client.Functions.ExecuteIntegerAsync(function).AsTask();
         var second = client.Functions.ExecuteIntegerAsync(function).AsTask();
         await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await server.SendRawAsync("-ERR Function not found\r\n-ERR Function not found\r\n"u8.ToArray());
         await Assert.That(await Task.WhenAll(first, second)).IsEquivalentTo(new long[] { 42, 42 });
-        await Assert.That(server.ReceivedCommands.Count(command => command == "FUNCTION LIST LIBRARYNAME sample WITHCODE")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "FUNCTION LIST LIBRARYNAME sample WITHCODE")).IsEqualTo(3);
+        await Assert.That(listCalls).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))).IsEqualTo(1);
         await Assert.That(calls).IsEqualTo(4);
     }
@@ -273,7 +291,8 @@ public class FunctionCommandTests
         const string source = "#!lua name=sample\nreturn 1";
         var loadedSource = outcome == 1 ? source + " -- changed" : source;
         var metadata = outcome == 2 ? "*0\r\n"u8.ToArray() : Encoding.UTF8.GetBytes(
-            "*1\r\n*8\r\n+library_name\r\n+sample\r\n+engine\r\n+LUA\r\n+functions\r\n*0\r\n+library_code\r\n" +
+            "*1\r\n*8\r\n+library_name\r\n+sample\r\n+engine\r\n+LUA\r\n+functions\r\n*1\r\n*6\r\n" +
+            "+name\r\n+function\r\n+description\r\n$-1\r\n+flags\r\n*0\r\n+library_code\r\n" +
             $"${Encoding.UTF8.GetByteCount(loadedSource)}\r\n{loadedSource}\r\n");
         await using var server = new FakeRespServer("-ERR Function not found\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(),
             "-ERR Library 'sample' already exists\r\n"u8.ToArray(), metadata, ":42\r\n"u8.ToArray());
@@ -302,4 +321,9 @@ public class FunctionCommandTests
     public async Task ReusableLibraryHeaderAllowsWhitespaceAroundPlainName()
         => await Assert.That(RespireFunctionLibrary.Create("#!lua\t name=sample \r\nreturn 1").Name).IsEqualTo("sample");
 
+    private static byte[] FunctionLibraryList(string source, string functionName)
+        => Encoding.ASCII.GetBytes(
+            $"*1\r\n*8\r\n+library_name\r\n$6\r\nsample\r\n+engine\r\n$3\r\nLUA\r\n" +
+            $"+functions\r\n*1\r\n*6\r\n+name\r\n${functionName.Length}\r\n{functionName}\r\n+description\r\n$-1\r\n" +
+            $"+flags\r\n*0\r\n+library_code\r\n${Encoding.UTF8.GetByteCount(source)}\r\n{source}\r\n");
 }

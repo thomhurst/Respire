@@ -48,7 +48,8 @@ public readonly struct RespireCommand
     /// <summary>
     /// Whether all audited providers explicitly mark this command read-only.
     /// False includes unknown metadata and caller-supplied commands; it does not prove a command writes.
-    /// This metadata does not change routing, blocking behavior, or connection affinity.
+    /// Read routing policies may send this command to a replica only when every audited provider marks it read-only.
+    /// This metadata does not change blocking behavior or connection affinity.
     /// </summary>
     public bool IsReadOnly => (_sourceAndMutationMetadata & ReadOnlyMetadataFlag) != 0;
 

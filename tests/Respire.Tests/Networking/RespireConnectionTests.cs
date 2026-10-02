@@ -442,8 +442,12 @@ public class RespireConnectionTests
     [Test]
     public async Task ResponseWatchdog_StillAppliesToNonBlockingDedicatedConnection()
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        server.DelayReply(0, 250);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            // Keep the response absent until the watchdog aborts. A delayed PONG can beat
+            // the watchdog continuation when the CI worker is heavily loaded.
+            SuppressReply = command => command == "PING",
+        };
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -453,8 +457,9 @@ public class RespireConnectionTests
         var connection = await client.Core.DedicatedPool.RentAsync(CancellationToken.None);
 
         await Assert.That(async () =>
-                await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+                await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(connection.IsConnected).IsFalse();
 
         await client.Core.DedicatedPool.DiscardAsync(connection);
     }

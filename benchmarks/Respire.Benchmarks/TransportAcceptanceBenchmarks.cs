@@ -37,6 +37,7 @@ public class TransportAcceptanceBenchmarks
             ThreadPoolMonitoring = false,
         });
         await Pipeline();
+        await _client.PingAsync();
     }
 
     [GlobalCleanup]
@@ -87,4 +88,7 @@ public class TransportAcceptanceBenchmarks
             return await base.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    [Benchmark]
+    public async Task ClientPing() => await _client.PingAsync();
 }

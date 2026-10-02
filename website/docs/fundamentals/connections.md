@@ -478,7 +478,7 @@ configuration keeps its current validation and connection-time fallback behavior
 
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
 it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
-them read-only. Caller-defined commands, writes, blocking operations, subscriptions, batches, and
+them read-only. For standalone and Sentinel clients, caller-defined commands, writes, blocking operations, subscriptions, batches, and
 transactions stay on the primary. `Replica` fails when no validated replica is available.
 `PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
 uses the primary when replica selection fails.
@@ -489,7 +489,7 @@ matching the rest of Respire: a command accepted by a failed connection is never
 
 ### Validation and staleness
 
-Respire validates each replica connection with `ROLE` before sending reads to it, and rejects a
+For standalone and Sentinel clients, Respire validates each replica connection with `ROLE` before sending reads to it, and rejects a
 node that does not report the `slave`/`replica` role. `ROLE` also reports the replica's link to
 its primary. A replica whose link is `connected` is always chosen over one that is still
 connecting or syncing, because an unlinked replica can serve arbitrarily stale data. When no
@@ -536,18 +536,50 @@ selects a healthy server, but a command that continues a cursor (any other curso
 `RespireConnectionException` rather than sending the cursor to a server that never issued it;
 restart that scan with cursor `0`. Respire does not know where `ARSCAN` keeps its cursor, so a raw
 `ARSCAN` always reselects once its pin is dropped.
+Fresh Cluster cursor-`0` calls also revalidate replica routes when due; continuation pages keep
+their existing node affinity.
 
 Fire-and-forget commands follow the same policy: a catalogued read sent with
 `ExecuteFireAndForgetAsync` goes to the server the policy selects.
 
 ### Consistency
 
-Replica reads can be stale and do not provide read-your-writes consistency. Read views bypass
-client-side cache reads to avoid mixing primary-tracked cache entries with replica data, and a
+Replica reads can be stale and do not provide read-your-writes consistency. Both
+preferred policies can return stale data whenever they select a replica, including immediately
+after a successful write. Choosing a primary on another call does not make the policy consistent.
+Read views bypass client-side cache reads to avoid mixing primary-tracked cache entries with replica data, and a
 replica disconnect does not flush the client-side cache. A read-only function that reports
-`Function not found` on a replica is reloaded on the primary and retried once on the primary.
+`Function not found` on a replica causes the registered library to be checked or reloaded on the
+primary, then retried under the original read policy until replication makes it available.
+`CommandTimeout` bounds this propagation wait; `null` disables that cap, leaving caller
+cancellation available to stop the wait.
 Replica connection health is reported through `ConnectionStateChanged` with the replica's
-endpoint. Cluster replica reads are not supported yet.
+endpoint.
+
+### Cluster routing
+
+Cluster clients discover replicas per slot range from `CLUSTER SLOTS` and negotiate `READONLY`
+on their replica connections. `ReadFrom` and `WithReadFrom` select among those routes. Strict
+`Replica` reads fail if no replica route is usable. Preferred policies can fall back to the
+other role on connection selection failures and server unavailability replies such as `LOADING`,
+`MASTERDOWN`, and `CLUSTERDOWN`. Once a read switches roles, redirect and retirement recovery
+keep that fallback role for the rest of the attempt.
+
+Known read-only commands, including registered read-only functions and eligible blocking reads,
+follow the selected policy. Writes, unknown commands, transactions, and cache-backed reads stay
+on primary routes. `TOUCH` also stays on the primary because its purpose is to update that
+server's access metadata. `MEMORY USAGE` reports the selected node's memory use; read-only scripts
+(`EVAL_RO` and `EVALSHA_RO`) run on the selected node and need not return deterministic results.
+A batch can use a replica only when all its operations are eligible reads.
+Cursor enumerations remain pinned to the node that issued their cursor.
+
+Replica refreshes are shared by concurrent callers for the same slot range. The refresh has a
+total budget of `ConnectTimeout + CommandTimeout` (using `ConnectTimeout` again when the command
+timeout is disabled). Known candidates are probed in parallel under that shared deadline, so
+stalled nodes cannot consume the time available to healthy candidates. After a reply supplies
+replicas for the requested slot, remaining probes are cancelled and observed. Empty replica
+snapshots are published only if no candidate supplies replicas. A failed refresh keeps existing
+routes, and partial replies preserve uncovered slot ranges.
 
 ## Cancellation and timeouts
 

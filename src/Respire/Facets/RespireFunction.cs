@@ -6,7 +6,8 @@ namespace Respire;
 
 /// <summary>
 /// A named Redis function. Read-only calls use FCALL_RO, which a replica read view can route to a
-/// replica. A library reload after "Function not found" retries once on the primary.
+/// replica. A library reload after "Function not found" retries on primary; replica calls wait
+/// for replication within the configured command timeout.
 /// </summary>
 public sealed class RespireFunction
 {

@@ -230,6 +230,7 @@ internal sealed partial class ClusterRouter
         var parsed = ParseMigrations(item, migrations);
 
         List<RespireConnectionMultiplexer>? retiredNodes = null;
+        List<RespireConnectionMultiplexer>? retiredReplicas = null;
         List<RetiredGeneration>? retirements = null;
         var skippedMetrics = new List<(string Reason, RespireConnectionMultiplexer Sender)>();
         var topologyChanged = false;
@@ -262,9 +263,10 @@ internal sealed partial class ClusterRouter
                     (RespireEndpoint source, RespireEndpoint target, int[] slots, long token, out int[]? waiting)
                         => TryApplyMigrationLocked(source, target, slots, token, ref retiredNodes, out waiting));
 
-            if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
             if (topologyChanged)
             {
+                retiredReplicas = RemoveUnroutedReplicasLocked();
+                retirements = RetireInactiveLocked(_redirectVersions.Keys);
                 topologyVersion = _topologyVersion;
                 topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
                     .Select(static master => Endpoint(master)).Distinct().ToArray();
@@ -281,7 +283,24 @@ internal sealed partial class ClusterRouter
         if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
+        if (retiredReplicas is not null)
+            foreach (var node in retiredReplicas) ReplicaNodeRetired?.Invoke(node);
         if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
+    }
+
+    // Caller holds _nodesGate. Shared replica sets can still serve another slot range.
+    private List<RespireConnectionMultiplexer>? RemoveUnroutedReplicasLocked()
+    {
+        if (_replicaNodes.Length == 0) return null;
+        var active = new HashSet<RespireConnectionMultiplexer>();
+        var sets = new HashSet<ClusterReplicaSet>();
+        foreach (var routes in _replicasBySlot)
+            if (routes is not null && sets.Add(routes)) active.UnionWith(routes.Nodes);
+        List<RespireConnectionMultiplexer>? retired = null;
+        foreach (var node in _replicaNodes)
+            if (!active.Contains(node)) (retired ??= []).Add(node);
+        if (retired is not null) Volatile.Write(ref _replicaNodes, active.ToArray());
+        return retired;
     }
 
     // A malformed entry is skipped on its own; the other entries still apply. One enumeration
@@ -359,7 +378,13 @@ internal sealed partial class ClusterRouter
         // One discovery fence per migration: older in-flight CLUSTER SLOTS replies cannot
         // overwrite these slots.
         var migrationVersion = ++_topologyVersion;
-        foreach (var slot in movable) PublishSlotLocked(slot, target, migrationVersion);
+        foreach (var slot in movable)
+        {
+            PublishSlotLocked(slot, target, migrationVersion);
+            // The source shard's replicas cannot serve the migrated slot or its pinned cursors.
+            Volatile.Write(ref _replicasBySlot[slot], null);
+            _unknownReplicaRoutes.TryRemove(slot, out _);
+        }
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count, preserveMaintenanceHandlerForRetirement: true))

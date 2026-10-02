@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -240,8 +241,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
 
         // Batch commands bypass the client's per-command mutation classifier. Conservatively
-        // fence older reads before any queued operation can reach Redis.
-        core.ClientCache?.FlushForUnknownCommand();
+        // fence older reads unless the complete policy-routed batch is known to be read-only.
+        var cacheToInvalidate = core.ClientCache;
+        if (cacheToInvalidate is not null && core.Cluster is not null
+            && GetGroupReadFrom(_ops) != RespireReadFrom.Primary)
+            cacheToInvalidate = null;
+        cacheToInvalidate?.FlushForUnknownCommand();
 
         if (core.Cluster is not null)
         {
@@ -266,14 +271,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 for (var i = 0; i < groups.Count; i++)
                 {
                     clusterTasks[i] = RunClusterGroupAsync(
-                        groups[i].Slot, groups[i].Operations, cancellationToken);
+                        groups[i].Slot, groups[i].Operations,
+                        GetGroupReadFrom(groups[i].Operations), cancellationToken);
                 }
 
                 await Task.WhenAll(clusterTasks).ConfigureAwait(false);
             }
             finally
             {
-                core.ClientCache?.FlushForUnknownCommand();
+                cacheToInvalidate?.FlushForUnknownCommand();
             }
 
             var failures = CollectFailures(_ops);
@@ -330,7 +336,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
         finally
         {
-            core.ClientCache?.FlushForUnknownCommand();
+            cacheToInvalidate?.FlushForUnknownCommand();
         }
 
         var batchFailures = CollectFailures(_ops);
@@ -372,12 +378,13 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private async Task RunClusterGroupAsync(
         int? slot,
         List<Op> operations,
+        RespireReadFrom readFrom,
         CancellationToken cancellationToken)
     {
         RespireConnection connection;
         try
         {
-            connection = await _client.AcquireConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+            connection = await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -406,9 +413,23 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         for (var i = 0; i < operations.Count; i++)
         {
             _ = await operations[i].CompleteClusterSendAsync(
-                    _client, connection, sends[i], cancellationToken)
+                    _client, connection, sends[i], readFrom, cancellationToken)
                 .ConfigureAwait(false);
         }
+    }
+
+    // Operations in one slot group share a pipeline and run in order. One write sends the whole
+    // group to the primary: splitting reads onto a replica would let a later read in the batch
+    // miss an earlier write to the same slot.
+    private RespireReadFrom GetGroupReadFrom(List<Op> operations)
+    {
+        var policy = _client.GetBatchReadFromPolicy();
+        if (policy == RespireReadFrom.Primary) return RespireReadFrom.Primary;
+        for (var index = 0; index < operations.Count; index++)
+        {
+            if (!operations[index].IsReadOnly) return RespireReadFrom.Primary;
+        }
+        return policy;
     }
 
     private static RespireBatchFailure[]? CollectFailures(IReadOnlyList<Op> operations)
@@ -466,6 +487,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public abstract bool IsCompleted { get; }
 
+        public abstract bool IsReadOnly { get; }
+
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
@@ -480,6 +503,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireClient client,
             RespireConnection connection,
             ValueTask<RespValue> send,
+            RespireReadFrom readFrom,
             CancellationToken cancellationToken);
 
         public abstract void Fail(Exception error);
@@ -496,6 +520,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public override bool IsCompleted => pending.IsCompleted;
 
+        public override bool IsReadOnly => command.ReadKind != ReadCommandKind.None;
+
         public override void Fail(Exception error) => pending.Fail(error);
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
@@ -510,6 +536,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireClient client,
             RespireConnection connection,
             ValueTask<RespValue> send,
+            RespireReadFrom readFrom,
             CancellationToken cancellationToken)
         {
             try
@@ -523,13 +550,22 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
                     value = await client.ResumeRetiredClusterSendAsync(
-                        Operation, command, connection, error, cancellationToken).ConfigureAwait(false);
+                        Operation, command, connection, error, readFrom, cancellationToken).ConfigureAwait(false);
+                }
+                catch (RespireServerException error) when (command.TryGetClusterSlot(out var readSlot)
+                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, readSlot,
+                        ReadFallbackPolicy.IsReplicaConnection(connection)))
+                {
+                    // Complete each operation in queue order; retry only its rejected read.
+                    value = await client.ResumeRejectedClusterSendAsync(
+                            Operation, command, connection, error, readFrom, cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
                     ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
                     value = await client.ResumeRejectedClusterSendAsync(
-                            Operation, command, connection, error, cancellationToken)
+                            Operation, command, connection, error, readFrom, cancellationToken)
                         .ConfigureAwait(false);
                 }
 

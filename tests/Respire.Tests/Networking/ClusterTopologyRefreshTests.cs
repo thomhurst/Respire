@@ -412,31 +412,43 @@ public class ClusterTopologyRefreshTests
     [Test]
     public async Task RefreshUsesKnownReplicaWhenPrimariesAndSeedsStall()
     {
+        var clock = new ManualTopologyRefreshClock();
+        var seedRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var replicaRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var replica = new FakeRespServer(FakeRespServer.OkReply);
         replica.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") replicaRefresh.TrySetResult();
-            return Topology(replica.Port, replica.Port);
+            if (command != "CLUSTER SLOTS") return null;
+            replicaRefresh.TrySetResult();
+            return Topology(replica.Port, replica.Port, "127.0.0.1");
         };
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var replicaPort = replica.Port;
-        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(seed.Port, replicaPort) : null;
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(seed.Port, replicaPort, "127.0.0.1") : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
-            // The seed deliberately stalls; give the responsive candidate enough I/O time
-            // after fallback even when the test runner is busy with other wire tests.
-            CommandTimeout = TimeSpan.FromSeconds(1),
+            ClusterTopologyRefreshClock = clock,
+            CommandTimeout = TimeSpan.FromSeconds(10),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
-        seed.SuppressReply = command => command == "CLUSTER SLOTS";
+        seed.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            seedRefresh.TrySetResult();
+            return true;
+        };
 
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
 
-        await replicaRefresh.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await seedRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Expire only the stalled seed. A healthy loopback candidate does not have to finish
+        // its connection and topology query within a 50 ms wall-clock scheduling window.
+        var stalled = await clock.NextTimerAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(5));
+        stalled.Fire();
+        await replicaRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]
@@ -723,6 +735,14 @@ public class ClusterTopologyRefreshTests
         var router = client.Core.Cluster!;
         var originalOwner = router.GetSlotOwnerEndpoint(0);
         var originalReplica = router.GetReplicas().Single();
+        var getKnownReplicas = typeof(ClusterRouter).GetMethod("GetKnownReplicas",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var originalRoutes = getKnownReplicas.Invoke(router, [101]);
+        await Assert.That(originalRoutes).IsNotNull();
+        var originalReplicaNodes = (RespireConnectionMultiplexer[])originalRoutes!.GetType()
+            .GetProperty("Nodes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(originalRoutes)!;
+        var originalReplicaTransport = originalReplicaNodes.Single();
         var staleReplicaTransport = router.GetMultiplexer(originalReplica.Endpoint);
 
         router.SignalTopologyRefresh();
@@ -735,6 +755,8 @@ public class ClusterTopologyRefreshTests
         await Assert.That(replica.Endpoint).IsEqualTo(originalReplica.Endpoint);
         await Assert.That(replica.NodeId).IsEqualTo(originalReplica.NodeId);
         await Assert.That(replica.Aliases).IsEquivalentTo(originalReplica.Aliases);
+        await Assert.That(ReferenceEquals(getKnownReplicas.Invoke(router, [101]), originalRoutes)).IsTrue();
+        await Assert.That(originalReplicaTransport.IsRetired).IsFalse();
         await Assert.That(staleReplicaTransport.IsRetired).IsTrue();
         // The refresh continues through known replicas even after the seed returns a partial map.
         await Assert.That(replicaServer.ReceivedCommands).Contains("CLUSTER SLOTS");

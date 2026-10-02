@@ -11,11 +11,12 @@ public class RespireOptionsTests
     {
         await Assert.That(() => RespireClient.Create(ValidOptions() with { ReadFrom = RespireReadFrom.Replica }))
             .ThrowsExactly<RespireConfigurationException>();
-        await Assert.That(() => RespireClient.Create(ValidOptions() with
+        await using var clusterClient = RespireClient.Create(ValidOptions() with
         {
             UseCluster = true,
             ReadFrom = RespireReadFrom.Replica,
-        })).ThrowsExactly<RespireConfigurationException>();
+        });
+        await Assert.That(clusterClient.WithReadFrom(RespireReadFrom.Replica)).IsNotNull();
         await Assert.That(() => RespireClient.Create(ValidOptions() with
         {
             Endpoints = [new("primary"), new("replica")],
@@ -65,6 +66,21 @@ public class RespireOptionsTests
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
         await Assert.That(options.ClientSideCache).IsNull();
+        await Assert.That(options.ReadFrom).IsEqualTo(RespireReadFrom.Primary);
+    }
+
+    [Test]
+    public async Task ReadFrom_RequiresClusterAndDefinedPolicy()
+    {
+        await Assert.That(() => RespireClient.Create(ValidOptions() with
+        {
+            ReadFrom = RespireReadFrom.Replica,
+        })).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(() => RespireClient.Create(ValidOptions() with
+        {
+            UseCluster = true,
+            ReadFrom = (RespireReadFrom)99,
+        })).ThrowsExactly<RespireConfigurationException>();
     }
 
     [Test]

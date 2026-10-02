@@ -12,21 +12,25 @@ internal sealed class ReadAffinity
 {
     internal ReadEndpointRouter.Entry? Replica;
     internal RespireConnectionMultiplexer? Primary;
+    internal RespireConnectionMultiplexer? ClusterNode;
+    internal int? ClusterSlot;
 
-    internal bool IsPinned => Replica is not null || Primary is not null;
+    internal bool IsPinned => Replica is not null || Primary is not null || ClusterNode is not null;
 }
 
 /// <summary>
 /// Keeps cursor reads on the server that issued their cursor. Typed scans own a
-/// <see cref="ReadAffinity"/> per enumeration. Raw cursor commands share one pin per read policy:
-/// a fresh cursor (<c>0</c>) may reselect when the pin is gone, but a continuation cursor fails
-/// instead of reaching a server that never issued it.
+/// <see cref="ReadAffinity"/> per enumeration. Raw standalone cursor commands share one pin per
+/// read policy; Cluster cursor commands share one per policy and hash slot. A fresh cursor
+/// (<c>0</c>) may reselect when its pin is gone, but a continuation cursor fails instead of
+/// reaching a server that never issued it.
 /// </summary>
 internal sealed class ReadCursorAffinity
 {
     // Taken only to publish a new shared pin; reads through an existing pin never wait on it.
     private readonly SemaphoreSlim _sharedGate = new(1, 1);
     private readonly ConcurrentDictionary<RespireReadFrom, ReadAffinity> _shared = new();
+    private readonly ConcurrentDictionary<(RespireReadFrom ReadFrom, int Slot), ReadAffinity> _clusterShared = new();
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation,
@@ -68,13 +72,63 @@ internal sealed class ReadCursorAffinity
         finally { _sharedGate.Release(); }
     }
 
+    internal async ValueTask<RespireConnection> GetClusterConnectionAsync(
+        ClusterRouter cluster, int slot, RespireReadFrom readFrom, ReadAffinity? affinity,
+        bool isContinuation, CancellationToken cancellationToken)
+    {
+        if (affinity is not null)
+        {
+            if (affinity.ClusterNode is { } pinned)
+                return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken).ConfigureAwait(false);
+            var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
+            affinity.ClusterSlot = slot;
+            affinity.ClusterNode = first.Multiplexer;
+            return first;
+        }
+
+        var key = (readFrom, slot);
+        if (_clusterShared.TryGetValue(key, out var shared) && shared.ClusterNode is { } sharedNode)
+        {
+            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation).ConfigureAwait(false); }
+            catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
+            {
+                _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
+            }
+        }
+        else if (isContinuation)
+        {
+            throw CursorLost();
+        }
+
+        if (isContinuation) throw CursorLost();
+        await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_clusterShared.TryGetValue(key, out shared) && shared.ClusterNode is { } currentNode)
+            {
+                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true).ConfigureAwait(false); }
+                catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
+                {
+                    _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
+                }
+            }
+            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
+            _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot };
+            return connection;
+        }
+        finally { _sharedGate.Release(); }
+    }
+
     /// <summary>Publishes a shared pin directly. Tests use it to model a pin that went stale.</summary>
     internal void PinShared(RespireReadFrom readFrom, ReadAffinity affinity) => _shared[readFrom] = affinity;
+
+    internal void PinClusterShared(RespireReadFrom readFrom, int slot, RespireConnectionMultiplexer node)
+        => _clusterShared[(readFrom, slot)] = new ReadAffinity { ClusterSlot = slot, ClusterNode = node };
 
     internal bool TryGetShared(RespireReadFrom readFrom, out ReadAffinity? affinity)
         => _shared.TryGetValue(readFrom, out affinity);
 
-    internal void Clear() => _shared.Clear();
+    internal void Clear() { _shared.Clear(); _clusterShared.Clear(); }
 
     private static RespireConnectionException CursorLost()
         => new("The server that issued this cursor left the read topology or failed. Restart the scan with cursor 0.");

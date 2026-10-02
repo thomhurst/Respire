@@ -967,9 +967,10 @@ public class ClusterRetirementTests
         await Assert.That(selected.IsStopping).IsTrue();
         // The ASK error originates at the slot owner, not at the temporary target.
         var redirectSource = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
-        var (pool, connection) = await router.RentDedicatedConnectionAsync(
-            selected, 42, timeout.Token, discovery: null, reuseIdle,
+        var route = new ClusterRouter.DedicatedRoute(42, RespireReadFrom.Primary,
             asking ? new RespireServerException($"ASK 42 127.0.0.1:{oldServer.Port}") : null, redirectSource);
+        var (pool, connection) = await router.RentDedicatedConnectionAsync(
+            selected, route, timeout.Token, discovery: null, reuseIdle);
         try
         {
             await Assert.That(ReferenceEquals(pool, selected)).IsFalse();
@@ -1901,7 +1902,7 @@ public class ClusterRetirementTests
     public async Task TrackedConnectionTimeoutNamesTheOperationThatWaited(bool requireIdentity, string operation)
     {
         // The RESP3 handshake never completes, so selecting the slot owner's connection times out.
-        await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
+        await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp3,

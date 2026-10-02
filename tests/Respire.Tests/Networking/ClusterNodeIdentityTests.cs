@@ -276,7 +276,8 @@ public class ClusterNodeIdentityTests
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(600),
             MaintenanceWindowTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
-            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            // Connection setup is outside the maintenance deadline under test.
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };
@@ -295,7 +296,8 @@ public class ClusterNodeIdentityTests
         var retirement = node.RetireAsync();
         using var reply = await acceptedCommand.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reply.IsError).IsFalse();
-        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        // The suppressed PING consumes ConnectTimeout before retirement cleanup begins.
+        await retirement.WaitAsync(options.ConnectTimeout + TimeSpan.FromSeconds(5));
     }
 
     [Test]
@@ -1745,6 +1747,82 @@ public class ClusterNodeIdentityTests
         await Assert.That(ReferenceEquals(slots[0], current)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetMultiplexer(endpoint), current)).IsTrue();
         await Assert.That(ReferenceEquals(typeof(ClusterRouter).GetField("_seed", flags)!.GetValue(router), current)).IsTrue();
+    }
+
+    [Test]
+    public async Task ReplicaPromotionCreatesPrimaryTransportAndDropsReplicaIdentity()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var primaryEndpoint = new RespireEndpoint("primary.local", 6379);
+        var replicaEndpoint = new RespireEndpoint("replica.local", 6380);
+        List<ClusterTopologyRange> replicaTopology =
+        [
+            new(0, 16383, primaryEndpoint, "primary-id", [])
+            {
+                Replicas = [new ClusterTopologyReplica(replicaEndpoint, "replica-id", [])],
+            },
+        ];
+
+        apply.Invoke(router, [replicaTopology, 0L, 1L]);
+        var replicaRoutes = (ClusterReplicaSet?[])typeof(ClusterRouter)
+            .GetField("_replicasBySlot", flags)!.GetValue(router)!;
+        var replica = replicaRoutes[0]!.Nodes[0];
+        await Assert.That(replica.Options.ReadOnly).IsTrue();
+
+        List<ClusterTopologyRange> promotedTopology = [new(0, 16383, replicaEndpoint, "replica-id", [])];
+        apply.Invoke(router, [promotedTopology, 0L, 2L]);
+        var primary = router.GetMultiplexer(replicaEndpoint);
+        var replicas = ((ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", flags)!
+            .GetValue(router)!).Replicas;
+
+        await Assert.That(primary.Options.ReadOnly).IsFalse();
+        await Assert.That(ReferenceEquals(primary, replica)).IsFalse();
+        await Assert.That(replicas.TryGetById("replica-id", out _)).IsFalse();
+        // The promoted node's read-only transport leaves the replica map with the refresh.
+        await Assert.That(replicas.ContainsEndpoint(replicaEndpoint)).IsFalse();
+        await Assert.That(replicas.IsCurrent(replica)).IsFalse();
+        await Assert.That(replicaRoutes[0]!.Nodes).IsEmpty();
+    }
+
+    [Test]
+    public async Task EndpointThatIsPrimaryAndReplicaKeepsSeparateReadOnlyTransport()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var first = new RespireEndpoint("first.local", 6379);
+        var second = new RespireEndpoint("second.local", 6379);
+        // Each node is a primary for one range and a replica for the other.
+        List<ClusterTopologyRange> topology =
+        [
+            new(0, 8191, first, "first-id", []) { Replicas = [new ClusterTopologyReplica(second, "second-id", [])] },
+            new(8192, 16383, second, "second-id", []) { Replicas = [new ClusterTopologyReplica(first, "first-id", [])] },
+        ];
+
+        apply.Invoke(router, [topology, 0L, 1L]);
+        var replicaRoutes = (ClusterReplicaSet?[])typeof(ClusterRouter)
+            .GetField("_replicasBySlot", flags)!.GetValue(router)!;
+        var secondAsReplica = replicaRoutes[0]!.Nodes[0];
+        var secondAsPrimary = router.GetMultiplexer(second);
+
+        // READONLY is connection state, so the replica role needs its own transport.
+        await Assert.That(ReferenceEquals(secondAsReplica, secondAsPrimary)).IsFalse();
+        await Assert.That(secondAsReplica.Options.ReadOnly).IsTrue();
+        await Assert.That(secondAsPrimary.Options.ReadOnly).IsFalse();
+        await Assert.That(ReferenceEquals(replicaRoutes[0], replicaRoutes[8191])).IsTrue();
+        await Assert.That(ReferenceEquals(replicaRoutes[0], replicaRoutes[8192])).IsFalse();
     }
 
     [Test]

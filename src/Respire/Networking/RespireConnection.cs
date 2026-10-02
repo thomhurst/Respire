@@ -545,7 +545,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 new Commands.SelectCommand(options.Database), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
-        if (options.EnableClientTracking && !options.RequireClusterDatabaseSupport)
+        // Session steps (SELECT, READONLY, CLIENT TRACKING) pipeline here, unless Cluster
+        // database support must be validated first; then they run in the same order below.
+        var deferSessionSteps = options.RequireClusterDatabaseSupport;
+        if (options.ReadOnly && !deferSessionSteps)
+        {
+            (pending ??= new(4)).Add(("READONLY", SendAsync(
+                new Commands.Cmd(Commands.Verbs.ReadOnly), cancellationToken, armCommandDeadline: armCommandDeadline)));
+        }
+
+        if (options.EnableClientTracking && !deferSessionSteps)
         {
             (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
                 new Commands.ClientTrackingCommand(options.ClientTrackingOptions), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -599,13 +608,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
-        if (options.RequireClusterDatabaseSupport)
+        if (deferSessionSteps)
         {
             // Do not select a database or publish this connection until capability validation
             // succeeds. SELECT also verifies the configured database range and ACL permission.
             // Tracking must follow SELECT so its initial registration uses the selected database.
             await CompleteHandshakeStepAsync("SELECT", new Commands.SelectCommand(options.Database),
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
+            if (options.ReadOnly)
+            {
+                await CompleteHandshakeStepAsync("READONLY", new Commands.Cmd(Commands.Verbs.ReadOnly),
+                    cancellationToken, armCommandDeadline).ConfigureAwait(false);
+            }
             if (options.EnableClientTracking)
             {
                 await CompleteHandshakeStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(options.ClientTrackingOptions),
@@ -3289,6 +3303,7 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Verify Valkey 9+ Cluster support before selecting a non-zero database.</summary>
     internal bool RequireClusterDatabaseSupport { get; init; }
+    internal bool ReadOnly { get; init; }
 
     /// <summary>Requested wire protocol. Auto permits only explicit unsupported-HELLO fallback.</summary>
     /// <remarks>Low-level connections retain their RESP2 default; RespireOptions supplies the client preference.</remarks>
