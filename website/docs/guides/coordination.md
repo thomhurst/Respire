@@ -256,10 +256,15 @@ and [replication guarantees](https://redis.io/docs/latest/operate/oss_and_stack/
 
 ## Renewal, release and uncertain outcomes
 
-`ResetExpiryAsync` renews only the current owner and retains its fencing token.
+`RespireLock.ResetExpiryAsync` renews only the current owner and retains its fencing token.
 `VerifyStillHeldAsync` checks ownership at one instant; it cannot promise ownership for a
 later write. `RemainingEstimate` measures elapsed time from before acquisition and is a
-local estimate. Stop protected work when the lease expires or ownership becomes uncertain.
+local estimate. For `RespireLock`, a renewal attempted after this estimate expires returns
+`false` without contacting Redis. A renewal already in flight can return `true` on an
+accepted reply even if the previous estimate elapsed while it waited; that reply does not
+trigger owner-token cleanup. A hash-field `RespireCoordinationLease.ResetExpiryAsync` checks
+the owner field in Redis instead, so it can return `true` after its local estimate expires
+while the field still exists. Stop protected work when ownership expires or becomes uncertain.
 
 Renewal and release reuse the existing [managed lock lifecycle](distributed-locks.md).
 Managed renewal and concrete-client hash-field lease acquisition require `CLIENT ID` and
@@ -421,3 +426,74 @@ The count and generation live in Redis and follow its persistence and failover g
 Asynchronous failover or restore can roll back acknowledged signals or resets. Use suitable
 Redis durability for the work being coordinated; this latch does not provide consensus across
 independent Redis histories.
+
+## Distributed semaphores
+
+Use `RespireSemaphore` for immediate permit acquisition:
+
+```csharp
+using Respire.Extensions.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var semaphore = new RespireSemaphore(client, "{batch:42}:permits", capacity: 4);
+await using var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
+if (!attempt.Acquired) return;
+// Run work while holding attempt.Permit.
+```
+
+Each permit has unique ownership. Release it with `ReleaseAsync` or `DisposeAsync`, verify it
+with `VerifyStillHeldAsync`, or renew/change expiry with `ResetExpiryAsync`. Pass `null` at
+acquisition or renewal for a permit that expires only when its owner releases it. Expiring permits
+use whole-millisecond durations and Redis server time, and are pruned atomically on the next
+operation, so abandoned capacity is recovered without a cleanup worker. `RemainingEstimate` is a
+conservative local estimate measured from when the command was sent.
+
+Failures are handled differently by each operation:
+
+- A failed or canceled verification throws and leaves the permit held, so you can retry it.
+  Verification is a point-in-time check. It prunes expired permits, so it runs on the primary and
+  needs write permission for the key.
+- Cancellation while waiting for another permit operation to finish leaves it unchanged. Once a
+  renewal starts, a failed or canceled renewal surrenders the permit. The renewal may still run on Redis, so
+  Respire attempts an owner-token release with a separate one-second bound before the exception
+  propagates. After any failed renewal, `IsReleased` is true, `RemainingEstimate` is zero, and later
+  renewals return `false` without contacting Redis. A canceled renewal could still overwrite a newer
+  expiry, and a script error reply does not undo writes made before the error, so the permit's
+  lifetime on Redis is unknown. Release or dispose the permit and acquire a new one.
+- A failed or canceled `ReleaseAsync` also attempts one bounded owner-token release before the
+  exception propagates. If that cannot confirm release, the handle becomes unusable for protected
+  work because ownership is uncertain. Keep it only to retry `ReleaseAsync` and confirm cleanup.
+- `DisposeAsync` never throws and waits about one second at most. If release is not confirmed by
+  then, it retries in the background with capped, jittered backoff for up to one minute.
+
+Every contender must use the same positive capacity. While any permit is active, an acquisition
+with a different capacity throws `RespireSemaphoreCapacityMismatchException`; release or expiry of
+every permit allows a new capacity. A lower capacity never revokes existing permits. Acquisition
+does not queue, poll or promise fairness; callers choose retry behavior. Use a dedicated key.
+Binary keys and client prefixes work, and one-key Lua scripts need no Cluster hash-tag
+coordination. The scripts read Redis `TIME` before writing, so they need Redis 5 or later (or a
+compatible server) for effects-based script replication. Each script requests effects replication
+first, so Redis 5 and 6 work even with `lua-replicate-commands` disabled.
+
+Redis asynchronous failover can roll back permit state. Expiry scores are absolute server
+timestamps, so after failover a replica with a skewed clock expires permits early or late. After an
+uncertain acquisition, Respire attempts owner-token cleanup; finite expiry is the fallback if the
+reply and cleanup are both lost. With `RespireClient`, non-expiring acquisitions and acquisitions
+under a command timeout or cancellation require Redis ACL permission for `CLIENT ID` and `CLIENT KILL`,
+so Respire can fence an uncertain acquire before cleanup and prevent a delayed acquire from
+recreating a released permit. If the fence never succeeds, Respire sends no release. Other
+`IRespireClient` implementations cannot fence, so their cleanup can be overtaken by the delayed
+acquire.
+
+An error reply to an acquisition other than a capacity mismatch, such as an ACL rejecting a command
+partway through the script, can follow writes that Redis does not roll back. Respire therefore
+sends an owner-token release before the exception propagates.
+
+Background cleanup that gives up, for example because Redis keeps rejecting the `CLIENT KILL` fence
+or the release for a full minute, increments the `respire.coordination.cleanup.abandoned` counter
+(tagged with the stage and reason) and logs a warning through the client's `LoggerFactory`.
+
+Prefer a finite expiry. A permit without expiry has no server-side fallback: if its holder crashes,
+or background cleanup cannot reach Redis within one minute, it consumes capacity, and blocks
+capacity changes, until it is removed. To recover, stop every holder and delete the semaphore key,
+or remove the stale `P:`-prefixed members of its sorted set.

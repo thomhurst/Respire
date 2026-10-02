@@ -138,6 +138,8 @@ internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 
+    void OnAccepted() { }
+
     ReadCommandKind ReadKind { get; }
 
     int CursorArgumentIndex => -1;

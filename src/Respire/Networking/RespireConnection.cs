@@ -1455,6 +1455,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
                 else _inflight.TryEnqueue(source, _enqueuedBytes);
+                command.OnAccepted();
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1542,6 +1543,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
             else _inflight.TryEnqueue(source, _enqueuedBytes);
+            command.OnAccepted();
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -2745,6 +2747,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _prefix.Write(ref writer);
             _command.Write(ref writer);
         }
+
+        public void OnAccepted() => _command.OnAccepted();
 
         public ReadCommandKind ReadKind => _command.ReadKind;
         public int CursorArgumentIndex => _command.CursorArgumentIndex;

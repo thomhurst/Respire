@@ -10,6 +10,37 @@ public class FencedLockWireTests
 {
     [Test]
     [NotInParallel]
+    public async Task CancellationAfterSuccessfulSemaphoreReplyReleasesUnreturnedPermit()
+    {
+        await using var server = new FakeRespServer(
+            SemaphoreWireTests.ClientIdReply, SemaphoreWireTests.ClientKillReply,
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is "EVALSHA"
+                    && activity.GetTagItem("server.port") is int port && port == server.Port)
+                    cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var semaphore = new RespireSemaphore(client, "{job}:semaphore", capacity: 1);
+        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        var commands = server.ReceivedCommands;
+        await Assert.That(commands.Count).IsEqualTo(4);
+        await Assert.That(commands.Skip(2).All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(server.ReceivedArguments[3][4].SequenceEqual(server.ReceivedArguments[2][5])).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
     {
         var evalCount = 0;
@@ -204,6 +235,31 @@ public class FencedLockWireTests
         await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.MaxValue)).IsTrue();
         await Assert.That(attempt.Lock.IsReleased).IsFalse();
         await Assert.That(await attempt.Lock.ReleaseAsync()).IsTrue();
+    }
+
+    [Test]
+    public async Task SemaphoreDisposeBoundsTheInitialReleaseWhenCommandTimeoutIsDisabled()
+    {
+        var evalCount = 0;
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && Interlocked.Increment(ref evalCount) > 1,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        var attempt = await new RespireSemaphore(client, "{job}:semaphore", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromSeconds(30)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+
+        await attempt.Permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+
+        await Assert.That(server.CommandsSeen >= 2).IsTrue();
     }
 
     [Test]

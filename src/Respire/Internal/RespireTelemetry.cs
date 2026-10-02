@@ -80,6 +80,34 @@ internal static class RespireTelemetry
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 
+    public static readonly Counter<long> CoordinationCleanupsAbandoned = Meter.CreateCounter<long>(
+        "respire.coordination.cleanup.abandoned", unit: "{cleanup}",
+        description: "Background coordination cleanups that stopped without confirming their fence or release.");
+
+    /// <summary>
+    /// Records a coordination cleanup that gave up, for example a semaphore fence that Redis kept
+    /// rejecting. Without it the leaked permit is invisible until capacity runs out.
+    /// </summary>
+    internal static void RecordCoordinationCleanupAbandoned(
+        string primitive, string stage, string reason, ILogger? logger)
+    {
+        try
+        {
+            CoordinationCleanupsAbandoned.Add(1,
+                new KeyValuePair<string, object?>("respire.coordination.primitive", primitive),
+                new KeyValuePair<string, object?>("respire.coordination.cleanup.stage", stage),
+                new KeyValuePair<string, object?>("respire.coordination.cleanup.reason", reason));
+        }
+        catch { /* Instrumentation must not change cleanup behaviour. */ }
+        try
+        {
+            logger?.LogWarning(new EventId(4101, "CoordinationCleanupAbandoned"),
+                "Background {Primitive} cleanup stopped at its {Stage} step ({Reason}); the owner may stay on Redis until it expires or is removed manually",
+                primitive, stage, reason);
+        }
+        catch { /* User loggers must not terminate cleanup. */ }
+    }
+
     public static readonly Counter<long> FailoverProbes = Meter.CreateCounter<long>(
         "respire.failover.probes", unit: "{probe}", description: "Failover deployment health probes.");
 

@@ -3380,6 +3380,22 @@ public sealed partial class RespireClient : IRespireClient
     internal bool RequiresReliableCorrectionOrdering(CancellationToken cancellationToken)
         => cancellationToken.CanBeCanceled || _core.Options.CommandTimeout is not null;
 
+    /// <summary>
+    /// Returns this client when uncertain script outcomes can be fenced before a corrective
+    /// command: required whenever the command can time out or be canceled, and opportunistic
+    /// otherwise. Returns null when ordering cannot be established without that requirement.
+    /// </summary>
+    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)
+    {
+        if (RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            return this;
+        }
+
+        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;
+    }
+
     internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
     {
         if (_core.Cluster is not null)
@@ -3481,19 +3497,74 @@ public sealed partial class RespireClient : IRespireClient
     internal sealed class TrackedScriptExecution
     {
         internal TrackedScriptExecution(
-            RespireConnection connection, TrackedConnectionIdentity connectionIdentity)
+            RespireConnection connection, TrackedConnectionIdentity connectionIdentity,
+            Action<long>? onSerialized = null, Action? onCommandNotApplied = null)
         {
             Connection = connection;
             ConnectionIdentity = connectionIdentity;
+            OnSerialized = onSerialized;
+            OnCommandNotApplied = onCommandNotApplied;
         }
 
         internal RespireConnection Connection { get; set; }
 
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
 
+        /// <summary>
+        /// When the final attempt was serialized into the connection's write path. It is taken
+        /// after any wait for in-flight capacity and before the bytes reach Redis, so it never
+        /// postdates the server's execution of the script.
+        /// </summary>
         internal long StartedTimestamp { get; set; }
 
+        private long PendingSerializedTimestamp { get; set; }
+
+        private Action<long>? OnSerialized { get; }
+
+        private Action? OnCommandNotApplied { get; }
+
+        internal void RecordSerialized(long timestamp)
+        {
+            PendingSerializedTimestamp = timestamp;
+        }
+
+        internal void RecordAccepted()
+        {
+            var timestamp = PendingSerializedTimestamp;
+            StartedTimestamp = timestamp;
+            OnSerialized?.Invoke(timestamp);
+        }
+
+        internal void RecordCommandNotApplied() => OnCommandNotApplied?.Invoke();
+
         internal ValueTask<RespireResult> Response { get; set; }
+    }
+
+    /// <summary>
+    /// Records <see cref="TrackedScriptExecution.StartedTimestamp"/> when the connection serializes
+    /// the command. Serialization happens at enqueue, after any wait for in-flight ring capacity, so
+    /// a lease measured from it does not count time parked behind other commands. A retried enqueue
+    /// serializes again, so the last write wins.
+    /// </summary>
+    private readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+        {
+            command.Write(ref writer);
+            execution.RecordSerialized(Stopwatch.GetTimestamp());
+        }
+
+        public ReadCommandKind ReadKind => command.ReadKind;
+
+        public void OnAccepted() => execution.RecordAccepted();
+
+        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+
+        public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+            => command.TryGetClientCacheKey(operation, out key);
     }
 
     internal ValueTask<RespireResult> ExecuteScriptAsync(
@@ -3584,7 +3655,10 @@ public sealed partial class RespireClient : IRespireClient
         RespireKey[] keys,
         RespireValue[] args,
         CancellationToken cancellationToken,
-        bool requireReliableCorrectionOrdering = false)
+        bool requireReliableCorrectionOrdering = false,
+        bool captureSendTimestampOnly = false,
+        Action<long>? onSerialized = null,
+        Action? onCommandNotApplied = null)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -3593,8 +3667,8 @@ public sealed partial class RespireClient : IRespireClient
         var responseOwnsFence = false;
         try
         {
-            var requiresIdentity = requireReliableCorrectionOrdering
-                || RequiresReliableCorrectionOrdering(cancellationToken);
+            var requiresIdentity = !captureSendTimestampOnly && (requireReliableCorrectionOrdering
+                || RequiresReliableCorrectionOrdering(cancellationToken));
             var tail = BuildScriptTail(keys, args);
 
             RespireConnection connection;
@@ -3611,19 +3685,19 @@ public sealed partial class RespireClient : IRespireClient
                 var multiplexer = core.Sentinel is { } sentinel
                     ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
                     : core.Multiplexer;
-                if (core.Sentinel is null && !multiplexer.HasReliableCorrectionOrdering)
+                if (requiresIdentity && core.Sentinel is null && !multiplexer.HasReliableCorrectionOrdering)
                 {
                     throw new InvalidOperationException(
                         "Reliable correction ordering must be initialized before a tracked script starts.");
                 }
 
-                connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken)
+                connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken, requiresIdentity)
                     .ConfigureAwait(false);
             }
 
             var identity = GetTrackedConnectionIdentity(
                 connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
-            var execution = new TrackedScriptExecution(connection, identity);
+            var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied);
             ValueTask<RespireResult> response;
             if (core.Cluster is { } router)
             {
@@ -3633,7 +3707,7 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution);
             }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
@@ -3652,12 +3726,13 @@ public sealed partial class RespireClient : IRespireClient
 
     private async ValueTask<RespireConnection> GetTrackedConnectionAsync(
         Infrastructure.RespireConnectionMultiplexer multiplexer,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireIdentity = true)
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
             // Initialize the captured generation: failover may have retired the preflight generation.
-            if (_core.Sentinel is not null)
+            if (requireIdentity && _core.Sentinel is not null)
                 await multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -3666,18 +3741,18 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             // Initialize the captured generation: failover may have retired the preflight generation.
-            if (_core.Sentinel is not null)
+            if (requireIdentity && _core.Sentinel is not null)
                 await multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 multiplexer.CaptureConnectionWait());
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
 
@@ -3706,12 +3781,12 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
 
@@ -3739,14 +3814,19 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, null,
                 RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException(TrackedConnectionOperation(requireIdentity), timeout, ex);
         }
     }
+
+    // Names the operation in a tracked-connection timeout. Without identity capture only the script
+    // itself was waiting, so ACL guidance for CLIENT ID / CLIENT KILL would mislead.
+    private static string TrackedConnectionOperation(bool requireIdentity)
+        => requireIdentity ? "CLIENT ID / CLIENT KILL" : "script";
 
     private static TrackedConnectionIdentity GetTrackedConnectionIdentity(
         RespireConnection connection,
@@ -3815,7 +3895,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     execution.StartedTimestamp = Stopwatch.GetTimestamp();
                     var reply = await SendOnConnectionAsync(
-                            operation, connection, command,
+                            operation, connection, new SendTimestampCommand<Cmd2N>(command, execution),
                             cancellationToken, storedProcedureName, sendAsking)
                         .ConfigureAwait(false);
                     return new RespireResult(in reply, _core.Options.Serializer);
@@ -3834,6 +3914,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    execution.RecordCommandNotApplied();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await GetTrackedRedirectConnectionAsync(
@@ -3862,7 +3943,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TrackedScriptExecution execution)
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
@@ -3873,7 +3955,8 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: script.Sha1);
         try
         {
-            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
+            var result = await ExecuteScriptOnConnectionCoreAsync(
+                    connection, script, tail, cancellationToken, execution)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
@@ -3892,30 +3975,50 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TrackedScriptExecution? execution = null)
     {
         try
         {
-            var reply = await SendOnConnectionCoreAsync(
-                    script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]), cancellationToken)
+            var reply = await SendScriptCommandAsync(
+                    script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
+                    cancellationToken, execution)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
-            var reply = await SendOnConnectionCoreAsync(
-                    script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]), cancellationToken)
+            execution?.RecordCommandNotApplied();
+            if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
+            var reply = await SendScriptCommandAsync(
+                    script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
+                    cancellationToken, execution)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
     }
+
+    private ValueTask<RespValue> SendScriptCommandAsync(
+        string operation,
+        RespireConnection connection,
+        Cmd2N command,
+        CancellationToken cancellationToken,
+        TrackedScriptExecution? execution)
+        => execution is null
+            ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+            : SendOnConnectionCoreAsync(
+                operation, connection, new SendTimestampCommand<Cmd2N>(command, execution), cancellationToken);
 
     /// <summary>
     /// Kills one multiplexed Redis client through a separate control connection and waits for
     /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
     /// from the target client can execute afterward.
     /// </summary>
-    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
+    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
+        => FenceCorrectionConnectionAsync(identity, CancellationToken.None, null);
+
+    internal async ValueTask FenceCorrectionConnectionAsync(
+        TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
@@ -3932,15 +4035,15 @@ public sealed partial class RespireClient : IRespireClient
                 ?? throw new InvalidOperationException("Sentinel corrections require the original connection identity.")) : null;
         var pool = sentinelCorrection?.Pool ?? correction?.Pool ?? (core.Cluster is { } routerPool
             ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
-        // A cold control connection may need SELECT/AUTH while the server is paused.
-        // The fence cannot abandon those commands before it reaches CLIENT KILL.
-        var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+        // Cleanup callers bound each attempt. They retire a canceled control connection and
+        // retry; no caller may release the owner token before an acknowledged fence.
+        var control = await pool.RentAsync(cancellationToken, armHandshakeDeadline: false).ConfigureAwait(false);
         try
         {
-            // The kill is an ordering barrier; once owed it must not be abandonable, so no
-            // command deadline applies.
+            // No command deadline applies. Cleanup cancellation still retires this control
+            // connection before retrying the barrier on a replacement.
             var reply = await control.SendAsync(
-                    new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None,
+                    new ClientKillIdCommand(identity.ServerClientId), cancellationToken,
                     armCommandDeadline: false)
                 .ConfigureAwait(false);
             if (reply.IsError)
@@ -3950,7 +4053,16 @@ public sealed partial class RespireClient : IRespireClient
                 throw error;
             }
 
+            onAcknowledged?.Invoke();
             reply.Dispose();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (control.Multiplexer is { } controlMultiplexer)
+                await controlMultiplexer.RetireConnectionAsync(control).ConfigureAwait(false);
+            else
+                await control.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
         finally
         {

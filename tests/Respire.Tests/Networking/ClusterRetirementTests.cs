@@ -5,6 +5,7 @@ using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,6 +16,28 @@ public class ClusterRetirementTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
+
+    private readonly struct AdmissionCallbackCommand(Action onAccepted) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public void Write(ref RespWriter writer) { }
+        public void OnAccepted() => onAccepted();
+    }
+
+    [Test]
+    public async Task PrefixedCommandForwardsAdmissionCallback()
+    {
+        var accepted = 0;
+        var prefix = new Cmd(RespireCommands.String.SET.Verb);
+        var command = new AdmissionCallbackCommand(() => accepted++);
+        var wrapper = typeof(RespireConnection).GetNestedType("PrefixedCommand`2", BindingFlags.NonPublic)!
+            .MakeGenericType(typeof(Cmd), typeof(AdmissionCallbackCommand));
+        var prefixed = (IRespCommand)Activator.CreateInstance(wrapper, prefix, command)!;
+
+        prefixed.OnAccepted();
+
+        await Assert.That(accepted).IsEqualTo(1);
+    }
 
     [Test]
     public async Task RetirementSnapshotsAreOwnedAndRequireALiveClient()
@@ -1870,6 +1893,62 @@ public class ClusterRetirementTests
         var connections = (RespireConnection?[])typeof(RespireConnectionMultiplexer).GetField("_connections", Private)!.GetValue(node)!;
         connections[0] = connection;
         connection.Multiplexer = node;
+    }
+
+    [Test]
+    [Arguments(false, "script")]
+    [Arguments(true, "CLIENT ID / CLIENT KILL")]
+    public async Task TrackedConnectionTimeoutNamesTheOperationThatWaited(bool requireIdentity, string operation)
+    {
+        // The RESP3 handshake never completes, so selecting the slot owner's connection times out.
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+        });
+        Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "node", 1);
+
+        var error = await Assert.That(async () =>
+            {
+                var execution = await client.StartTrackedScriptExecutionAsync(
+                    RespireScript.Create("return 1"), ["key"], [], CancellationToken.None,
+                    requireReliableCorrectionOrdering: requireIdentity, captureSendTimestampOnly: !requireIdentity);
+                using var _ = await execution.Response;
+            }).Throws<RespireTimeoutException>();
+
+        // A capture-only script never asks for a client identity, so ACL guidance would mislead.
+        await Assert.That(error!.CommandName).IsEqualTo(operation);
+    }
+
+    [Test]
+    public async Task TrackedScriptSendTimestampFollowsTheRedirectedSend()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        using var timeout = new CancellationTokenSource(Limit);
+        Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "owner", 1);
+        var slot = ClusterHash.GetSlot("key");
+        var evals = 0;
+        long redirectedAt = 0;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLIENT ID") return ":42\r\n"u8.ToArray();
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+            if (Interlocked.Increment(ref evals) > 1) return ":1\r\n"u8.ToArray();
+            Volatile.Write(ref redirectedAt, System.Diagnostics.Stopwatch.GetTimestamp());
+            return System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{server.Port}\r\n");
+        };
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            RespireScript.Create("return 1"), ["key"], [], timeout.Token, captureSendTimestampOnly: true);
+        using (await execution.Response) { }
+
+        // Lease-based callers measure validity from this timestamp, so it must belong to the
+        // redirected send, not the rejected first attempt.
+        await Assert.That(evals).IsEqualTo(2);
+        await Assert.That(execution.StartedTimestamp).IsGreaterThan(Volatile.Read(ref redirectedAt));
     }
 
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,

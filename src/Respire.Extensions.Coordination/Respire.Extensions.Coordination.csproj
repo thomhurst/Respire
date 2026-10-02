@@ -2,8 +2,8 @@
   <PropertyGroup>
     <PackageId>Respire.Extensions.Coordination</PackageId>
     <Title>Respire.Extensions.Coordination</Title>
-    <Description>Redis coordination primitives, leases, fencing tokens, and distributed rate limiters.</Description>
-    <PackageTags>$(PackageTags);coordination;distributed-lock;fencing;rate-limiting</PackageTags>
+    <Description>Redis coordination primitives with explicit lease, capacity, hash-field, and fencing semantics, plus distributed rate limiters.</Description>
+    <PackageTags>$(PackageTags);coordination;distributed-lock;fencing;rate-limiting;semaphore;hash-field</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Threading.RateLimiting" />
