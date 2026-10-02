@@ -402,7 +402,8 @@ internal sealed partial class ClusterRouter
         foreach (var slot in movable) PublishSlotLocked(slot, target, migrationVersion);
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);
-        if (RemoveSlot(source!, movable.Count)) (retiredNodes ??= []).Add(source!);
+        if (RemoveSlot(source!, movable.Count, preserveMaintenanceHandlerForRetirement: true))
+            (retiredNodes ??= []).Add(source!);
         return new AppliedSmigratedMove(target, [.. movable]);
     }
 

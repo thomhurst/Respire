@@ -1728,7 +1728,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         Volatile.Write(ref _masters, expanded);
     }
 
-    private bool RemoveSlot(RespireConnectionMultiplexer node, int count = 1)
+    private bool RemoveSlot(RespireConnectionMultiplexer node, int count = 1,
+        bool preserveMaintenanceHandlerForRetirement = false)
     {
         var masters = Volatile.Read(ref _masters);
         var index = Array.IndexOf(masters, node);
@@ -1749,9 +1750,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         // Zero-slot nodes no longer affect command health or routed slot state, so stale state
         // callbacks must not invalidate the client cache. Keep maintenance handlers on redirect-
         // protected nodes and configured seeds, which may still send useful SMIGRATED pushes.
+        // SMIGRATED retirement also keeps its handler until the PING barrier drains unread pushes.
         if (_nodeStateHandlers.Remove(node, out var handler))
             node.SlotStateChanged -= handler;
-        if (!_redirectVersions.ContainsKey(node)
+        if (!preserveMaintenanceHandlerForRetirement
+            && !_redirectVersions.ContainsKey(node)
             && !_seeds.Any(seed => ClusterNodeIdentityIndex.EndpointsEqual(seed, Endpoint(node)))
             && _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
             node.MaintenanceNotificationReceived -= maintenanceHandler;
