@@ -77,7 +77,7 @@ public class ClusterMigrationStateTests
     public async Task ExpiryUsesExactBoundaryAndPreservesYoungerEntries()
     {
         long now = 29_999;
-        var state = new MigrationState { Clock = () => now };
+        var state = new MigrationState(() => now);
         var first = new object();
         var second = new object();
         var skipped = new List<(string Reason, object Sender)>();

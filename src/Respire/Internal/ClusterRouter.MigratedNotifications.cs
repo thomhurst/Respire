@@ -22,9 +22,7 @@ internal sealed partial class ClusterRouter
 
     private readonly Channel<QueuedSmigratedNotification> _smigratedNotifications;
     private readonly Dictionary<RespireConnectionMultiplexer, MaintenanceNotificationHandler> _nodeMaintenanceHandlers = [];
-    private readonly MigrationState _migrations = new();
-    // Test seam: the millisecond clock that ages deferred entries.
-    internal Func<long> SmigratedClock { get => _migrations.Clock; set => _migrations.Clock = value; }
+    private readonly MigrationState _migrations;
     // Started on the first queued notification, so routers that never see SMIGRATED own no task.
     // DisposeAsync swaps in a completed task, after which no worker can start.
     private Task? _smigratedWorker;
@@ -256,7 +254,7 @@ internal sealed partial class ClusterRouter
                 }
                 if (waiting is not null)
                     _migrations.Defer(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
-                        SmigratedClock(), item.Sender), skippedMetrics);
+                        _migrations.Timestamp, item.Sender), skippedMetrics);
             }
             if (applied is not null && _migrations.DeferredCount != 0)
                 _migrations.RetryDependencies(applied,

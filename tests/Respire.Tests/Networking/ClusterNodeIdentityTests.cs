@@ -907,9 +907,8 @@ public class ClusterNodeIdentityTests
         var options = Options(6379);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
-        await using var router = new ClusterRouter(options, primary);
         var now = 1_000L;
-        router.SmigratedClock = () => now;
+        await using var router = new ClusterRouter(options, primary, migrationClock: () => now);
         var aEndpoint = new RespireEndpoint("a", 7000);
         var bEndpoint = new RespireEndpoint("b", 7001);
         var cEndpoint = new RespireEndpoint("c", 7002);
@@ -940,11 +939,10 @@ public class ClusterNodeIdentityTests
         var options = Options(6379);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
-        await using var router = new ClusterRouter(options, primary);
+        var now = 1_000L;
+        await using var router = new ClusterRouter(options, primary, migrationClock: () => now);
         var original = router.GetMultiplexer(new("original-metric-sender", 7100));
         var later = router.GetMultiplexer(new("later-metric-sender", 7101));
-        var now = 1_000L;
-        router.SmigratedClock = () => now;
         var recorded = new List<(string? Host, int? Port)>();
         using var listener = new System.Diagnostics.Metrics.MeterListener
         {
@@ -1226,9 +1224,8 @@ public class ClusterNodeIdentityTests
         var options = Options(6379);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
-        var router = new ClusterRouter(options, primary);
         var now = 1_000L;
-        router.SmigratedClock = () => now;
+        var router = new ClusterRouter(options, primary, migrationClock: () => now);
         var aEndpoint = new RespireEndpoint(disposingHost, 7000);
         var bEndpoint = new RespireEndpoint("b", 7001);
         var cEndpoint = new RespireEndpoint("c", 7002);

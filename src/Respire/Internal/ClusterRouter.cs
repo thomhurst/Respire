@@ -59,15 +59,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
-    internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
-        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true))
+    internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary, Func<long>? migrationClock = null)
+        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true), migrationClock)
     {
     }
 
     internal ClusterRouter(
         RespireOptions options,
         RespireConnectionMultiplexer primary,
-        RespireConnectionOptions commandConnectionOptions)
+        RespireConnectionOptions commandConnectionOptions,
+        Func<long>? migrationClock = null)
     {
         _options = options;
         _logger = options.CreateLogger("Respire.Cluster");
@@ -76,6 +77,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ? [new RespireEndpoint("localhost")]
             : options.Endpoints.ToArray();
         _primary = primary;
+        _migrations = new(migrationClock);
         _smigratedNotifications = CreateSmigratedChannel();
         _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         _topologyRefreshClock = options.ClusterTopologyRefreshClock;

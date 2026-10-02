@@ -20,7 +20,12 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     private readonly List<DeferredMigration> _deferred = [];
     private int _deferredSlots;
 
-    internal Func<long> Clock { get; set; } = static () => Environment.TickCount64;
+    private readonly Func<long> _clock;
+
+    internal ClusterMigrationState(Func<long>? clock = null)
+        => _clock = clock ?? (static () => Environment.TickCount64);
+
+    internal long Timestamp => _clock();
     internal int DeferredCount => _deferred.Count;
     internal int DeferredSlots => _deferredSlots;
 
@@ -97,7 +102,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     internal void Expire(List<(string Reason, TNode Sender)> skippedMetrics)
     {
         if (_deferred.Count == 0) return;
-        var now = Clock();
+        var now = Timestamp;
         var expired = 0;
         while (expired < _deferred.Count
                && now - _deferred[expired].DeferredAt >= DeferredLifetimeMilliseconds)
