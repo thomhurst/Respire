@@ -371,26 +371,33 @@ function Test-IsClaudeReviewComment {
         return $true
     }
 
+    # Explicit legacy review titles remain trustworthy after rollout because an
+    # in-flight run can post them later. Normalize supported Markdown title forms
+    # once, then apply the same recognition before and after the cutoff.
+    $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+    if ($firstLine.Count -gt 0) {
+        $rawTitle = $firstLine[0].Trim()
+        $hasFormattedTitle = $rawTitle -match '^(?:#{1,6}\s+|\*\*.+\*\*|__.+__)'
+        if ($hasFormattedTitle) {
+            $title = $rawTitle -replace '^#{1,6}\s*', '' -replace '^(?:\*\*|__)\s*', ''
+            $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
+            $title = $title -replace '(?:\*\*|__).*$' , ''
+            if ($title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)') { return $true }
+        }
+    }
+
     # A pre-rollout workflow run can finish or be rerun after the marker cutoff.
-    # Preserve unmistakable legacy review shapes across that boundary while keeping
-    # weaker heading heuristics limited to comments posted before rollout.
+    # Preserve strong legacy review structures across that boundary; weak or unknown
+    # titles remain limited to comments posted before rollout.
     $beforeMarkerRollout = $null -ne $createdAt -and $createdAt -lt $script:ClaudeReviewMarkerIntroducedAt
     if (-not $beforeMarkerRollout) {
         $hasStructuredFindings = $body -match $script:LegacyStructuredReviewPattern
-        $hasExplicitReviewHeading = $body -match '(?im)^\s*#{1,4}\s+(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)'
-        if ($hasStructuredFindings -or $hasExplicitReviewHeading) { return $true }
+        if ($hasStructuredFindings) { return $true }
         return $false
     }
 
     # Legacy Claude reviews used a small set of explicit first-line headings.
-    $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
     if ($firstLine.Count -eq 0) { return $false }
-    $title = $firstLine[0].Trim() -replace '^#{1,6}\s*', '' -replace '^(?:\*\*|__)\s*', ''
-    $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
-    $title = $title -replace '(?:\*\*|__).*$' , ''
-    if ($title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)') {
-        return $true
-    }
 
     # Some legacy reviews used a summary first, then an explicit issues section
     # with numbered findings. Require all three signals to avoid report false positives.

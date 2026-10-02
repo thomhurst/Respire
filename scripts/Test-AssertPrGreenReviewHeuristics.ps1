@@ -1207,6 +1207,34 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks late legacy review with bold Review heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "**Review**`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with emoji heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### 🔍 Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with five-level heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "##### Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with six-level underline heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "###### __Review of #654__`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks legacy review quoting automation marker on standalone line'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: PR 700`n`n1. A concrete finding.`n`n<!-- respire-automation-report -->")
