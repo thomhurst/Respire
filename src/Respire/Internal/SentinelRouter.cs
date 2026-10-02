@@ -308,7 +308,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint,
-                    () => Volatile.Write(ref rearm, CurrentMonitorRearm())));
+                    () => Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)))));
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
@@ -383,6 +383,16 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal Task CurrentMonitorRearm()
     {
         lock (_gate) return _monitorRearm.Task;
+    }
+
+    internal Task RefreshMonitorRearm(Task reconnectEpoch)
+    {
+        lock (_gate)
+        {
+            // A publication can complete the old epoch after the socket closes but before
+            // SubscriptionHub reports the reconnect episode. Keep that signal through exhaustion.
+            return reconnectEpoch.IsCompleted ? reconnectEpoch : _monitorRearm.Task;
+        }
     }
 
     private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)
