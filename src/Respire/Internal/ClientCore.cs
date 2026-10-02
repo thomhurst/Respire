@@ -658,7 +658,7 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     internal ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
-        => _ownedPools.ReleaseAsync(pool);
+        => new(_ownedPools.ReleaseAsync(pool));
 
     public async ValueTask DisposeAsync()
     {
@@ -717,38 +717,39 @@ internal sealed class ClientCore : IAsyncDisposable
             hub = _hub;
         }
 
-        try
+        Exception? disposeError = null;
+        // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
+        await DisposeOwnerAsync(() => new(_ownedPools.DisposeAllAsync())).ConfigureAwait(false);
+        if (hub is not null) await DisposeOwnerAsync(hub.DisposeAsync).ConfigureAwait(false);
+        if (Sentinel is { } sentinel) await DisposeOwnerAsync(sentinel.DisposeAsync).ConfigureAwait(false);
+        await DisposeOwnerAsync(ReadRouter.DisposeAsync).ConfigureAwait(false);
+        if (Cluster is { } cluster)
         {
-            // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
-            await _ownedPools.DisposeAllAsync().ConfigureAwait(false);
+            cluster.SlotStateChanged -= NotifyCommandStateChanged;
+            cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
+            cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
+            cluster.NodeRetired -= NotifyCommandNodeRetired;
+            cluster.ReplicaNodeRetired -= NotifyReadReplicaNodeRetired;
+            cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
+            await DisposeOwnerAsync(() => cluster.DisposeAsync(disposeStartedOnSmigratedWorker)).ConfigureAwait(false);
         }
-        finally
+        else
         {
-            // A failed dedicated pool must not prevent disposal of the other client owners.
-            if (hub is not null)
-            {
-                await hub.DisposeAsync().ConfigureAwait(false);
-            }
+            Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
+            Multiplexer.MovingHandoffPublished -= RefreshStandaloneDedicatedPool;
+        }
 
-            if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
-            await ReadRouter.DisposeAsync().ConfigureAwait(false);
-            if (Cluster is { } cluster)
-            {
-                cluster.SlotStateChanged -= NotifyCommandStateChanged;
-                cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
-                cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
-                cluster.NodeRetired -= NotifyCommandNodeRetired;
-                cluster.ReplicaNodeRetired -= NotifyReadReplicaNodeRetired;
-                cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
-                await cluster.DisposeAsync(disposeStartedOnSmigratedWorker).ConfigureAwait(false);
-            }
-            else
-            {
-                Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
-                Multiplexer.MovingHandoffPublished -= RefreshStandaloneDedicatedPool;
-            }
+        await DisposeOwnerAsync(_multiplexer.DisposeAsync).ConfigureAwait(false);
+        if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
 
-            await _multiplexer.DisposeAsync().ConfigureAwait(false);
+        async ValueTask DisposeOwnerAsync(Func<ValueTask> dispose)
+        {
+            // Keep shutdown ordered, but never let one owner's failure skip another or mask an earlier error.
+            try { await dispose().ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                disposeError = disposeError is null ? error : new AggregateException(disposeError, error);
+            }
         }
     }
 }

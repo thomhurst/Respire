@@ -158,7 +158,9 @@ public class DedicatedPoolLedgerTests
     }
 
     [Test]
-    public async Task ClientDisposalContinuesAfterMainPoolCleanupFails()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClientDisposalContinuesAfterMainPoolCleanupFails(bool laterOwnerAlsoFails)
     {
         await using var server = new FakeRespServer(3)
         {
@@ -178,12 +180,24 @@ public class DedicatedPoolLedgerTests
         var lease = await pool.RentAsync(CancellationToken.None);
         pool.Return(lease);
         await Assert.That(async () => await pool.RetireAsync()).ThrowsExactly<InvalidOperationException>();
-        logger.ThrowOnDisconnect = false;
+        logger.ThrowOnDisconnect = laterOwnerAlsoFails;
         logger.ThrowOnWarning = true;
         try
         {
-            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
-                .ThrowsExactly<InvalidOperationException>();
+            if (laterOwnerAlsoFails)
+            {
+                var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                    .ThrowsExactly<AggregateException>();
+                var failures = error!.Flatten().InnerExceptions;
+                await Assert.That(failures.Contains(logger.WarningFailure)).IsTrue();
+                await Assert.That(failures.Contains(logger.Failure)).IsTrue();
+            }
+            else
+            {
+                var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                    .ThrowsExactly<InvalidOperationException>();
+                await Assert.That(ReferenceEquals(error, logger.WarningFailure)).IsTrue();
+            }
             await Assert.That(core.Multiplexer.IsRetired).IsTrue();
             await Assert.That(connection.IsConnected).IsFalse();
             await Assert.That(subscription.Completion.IsCompleted).IsTrue();
@@ -192,9 +206,11 @@ public class DedicatedPoolLedgerTests
         finally
         {
             logger.ThrowOnWarning = false;
+            logger.ThrowOnDisconnect = false;
             // Also close owners explicitly when the regression is run against the broken implementation.
             await hub.DisposeAsync();
-            await core.Multiplexer.DisposeAsync();
+            try { await core.Multiplexer.DisposeAsync(); }
+            catch (InvalidOperationException error) when (ReferenceEquals(error, logger.Failure)) { }
             await pool.DisposeAsync();
         }
     }
@@ -202,6 +218,7 @@ public class DedicatedPoolLedgerTests
     private sealed class CleanupFailureLogger : ILogger, ILoggerFactory
     {
         internal readonly InvalidOperationException Failure = new("Injected pool cleanup failure.");
+        internal readonly InvalidOperationException WarningFailure = new("Injected pool warning failure.");
         internal bool ThrowOnWarning;
         internal bool ThrowOnDisconnect = true;
         internal int Warnings;
@@ -220,7 +237,7 @@ public class DedicatedPoolLedgerTests
             if (formatter(state, exception).StartsWith("Failed to dispose a dedicated pool", StringComparison.Ordinal))
                 Interlocked.Increment(ref PoolDisposalWarnings);
             Interlocked.Increment(ref Warnings);
-            if (ThrowOnWarning) throw Failure;
+            if (ThrowOnWarning) throw WarningFailure;
         }
     }
 
