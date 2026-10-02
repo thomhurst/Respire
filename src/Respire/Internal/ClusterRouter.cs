@@ -63,6 +63,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         _topologyRefreshClock = options.ClusterTopologyRefreshClock;
         _topologyRefresh = new ClusterTopologyRefreshScheduler(options.ClusterTopologyRefreshInterval, _topologyRefreshClock);
+        _discoveryClock = options.ClusterDiscoveryClock;
+        _sharedRefreshCoordinator = new SharedRefreshCoordinator(_topologyRefreshClock, TopologyRefreshCoalescingWindow);
         ObserveNode(primary);
     }
 

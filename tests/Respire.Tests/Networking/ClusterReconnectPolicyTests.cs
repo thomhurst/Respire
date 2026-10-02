@@ -55,15 +55,15 @@ public class ClusterReconnectPolicyTests
         await using var first = new FakeRespServer("-ERR first unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer(FakeRespServer.OkReply,
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
+        var clock = new GatedDiscoveryClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 1 },
+            ClusterDiscoveryClock = clock,
         });
-        var clock = new GatedDiscoveryClock();
-        client.Core.Cluster!.DiscoveryClock = clock;
         using var caller = new CancellationTokenSource();
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -733,9 +733,8 @@ public class ClusterReconnectPolicyTests
     [Test]
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
-        await using var client = RespireClient.Create(Options(1));
         var clock = new GatedDiscoveryClock();
-        client.Core.Cluster!.DiscoveryClock = clock;
+        await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster, new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
@@ -787,17 +786,17 @@ public class ClusterReconnectPolicyTests
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n") : null;
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+        var clock = new GatedDiscoveryClock(autoCompleteLaterDelays: true);
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
         {
             ConnectTimeout = TimeSpan.FromSeconds(4),
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 2 },
+            ClusterDiscoveryClock = clock,
         });
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null);
         router.SetSlotOwner(cachedOwner ? 42 : 43, router.GetMultiplexer(new("127.0.0.1", candidate.Port)));
-        var clock = new GatedDiscoveryClock(autoCompleteLaterDelays: true);
-        router.DiscoveryClock = clock;
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.DiscoveryStateChanged += change =>
@@ -944,10 +943,9 @@ public class ClusterReconnectPolicyTests
     [Arguments(true)]
     public async Task FinishDuringBackoffPreservesExceptionAndPublishesTerminalOnce(bool cancel)
     {
-        await using var client = RespireClient.Create(Options(1));
-        var router = client.Core.Cluster!;
         var clock = new GatedDiscoveryClock();
-        router.DiscoveryClock = clock;
+        await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
+        var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("unused.invalid");
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

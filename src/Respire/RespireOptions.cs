@@ -245,6 +245,9 @@ public sealed record RespireOptions
     // Test seam: drives the Cluster topology refresh schedule, debounce and discovery deadlines.
     internal TimeProvider ClusterTopologyRefreshClock { get; init; } = TimeProvider.System;
 
+    /// <summary>Clock used for cluster discovery retry delays.</summary>
+    internal TimeProvider ClusterDiscoveryClock { get; init; } = TimeProvider.System;
+
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
 

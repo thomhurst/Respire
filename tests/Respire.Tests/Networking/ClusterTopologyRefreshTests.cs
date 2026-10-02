@@ -617,11 +617,8 @@ public class ClusterTopologyRefreshTests
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
 
         using var flightCancellation = new CancellationTokenSource();
-        var flight = ClusterRouter.RefreshFlight.ForReadOnly(ClusterHash.GetSlot("key"),
-            new RespireEndpoint("127.0.0.1", seed.Port), flightCancellation, discoveryLease: null);
-        flight.Waiters = 1;
-        var sharedGate = SharedRefreshGate(router);
-        lock (sharedGate) SharedRefreshField.SetValue(router, flight);
+        var flight = router.SharedRefreshCoordinator.JoinReadOnly(ClusterHash.GetSlot("key"),
+            new RespireEndpoint("127.0.0.1", seed.Port), flightCancellation, discoveryLease: null).Flight;
 
         router.SignalTopologyRefresh(force: true);
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
@@ -630,12 +627,7 @@ public class ClusterTopologyRefreshTests
         // The READONLY repair does not answer a topology request.
         await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(1);
 
-        lock (sharedGate)
-        {
-            flight.Completed = true;
-            SharedRefreshField.SetValue(router, null);
-        }
-        flight.Completion.SetResult(true);
+        router.SharedRefreshCoordinator.Complete(flight, result: true, failure: null);
 
         await fullRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(2);
@@ -657,12 +649,10 @@ public class ClusterTopologyRefreshTests
         });
         var router = client.Core.Cluster!;
         using var flightCancellation = new CancellationTokenSource();
-        var flight = ClusterRouter.RefreshFlight.ForReadOnly(0, new RespireEndpoint("127.0.0.1", 1),
-            flightCancellation, discoveryLease: null);
-        // This caller is one of the waiters.
-        flight.Waiters = waiters;
-        var sharedGate = SharedRefreshGate(router);
-        lock (sharedGate) SharedRefreshField.SetValue(router, flight);
+        var flight = router.SharedRefreshCoordinator.JoinReadOnly(0, new RespireEndpoint("127.0.0.1", 1),
+            flightCancellation, discoveryLease: null).Flight;
+        // Model another joined caller when checking last-waiter cancellation.
+        if (waiters == 2) flight.Waiters++;
         var round = new ClusterRouter.DiscoveryRound(router, policy);
         using var caller = new CancellationTokenSource();
         await caller.CancelAsync();
@@ -672,8 +662,7 @@ public class ClusterTopologyRefreshTests
         var wait = (Task<bool>)awaitShared.Invoke(router, [flight, caller.Token, round])!;
         await Assert.That(async () => await wait).Throws<OperationCanceledException>();
 
-        bool published;
-        lock (sharedGate) published = ReferenceEquals(SharedRefreshField.GetValue(router), flight);
+        var published = router.SharedRefreshCoordinator.IsPublished(flight);
         await Assert.That(flight.Abandoned).IsEqualTo(expectAbandoned);
         await Assert.That(flightCancellation.IsCancellationRequested).IsEqualTo(expectAbandoned);
         // An abandoned flight never stays joinable.
@@ -685,13 +674,6 @@ public class ClusterTopologyRefreshTests
         await Assert.That(round.TerminalError).IsNull();
         round.Finish();
     }
-
-    private static readonly System.Reflection.FieldInfo SharedRefreshField = typeof(ClusterRouter).GetField(
-        "_sharedRefresh", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-
-    private static object SharedRefreshGate(ClusterRouter router) => typeof(ClusterRouter).GetField(
-        "_sharedRefreshGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-        .GetValue(router)!;
 
     [Test]
     public async Task PartialRefreshKeepsUncoveredOwnersAndReplicaMetadata()
