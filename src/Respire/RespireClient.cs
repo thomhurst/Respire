@@ -3480,8 +3480,16 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null)
-            .ConfigureAwait(false);
+        DedicatedConnectionPool pool;
+        long routeVersion;
+        if (command is IStreamingRespCommand)
+            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, cancellationToken, discovery: null)
+                .ConfigureAwait(false);
+        else
+        {
+            pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
+            routeVersion = 0;
+        }
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
@@ -3520,7 +3528,12 @@ public sealed partial class RespireClient : IRespireClient
                             ? ClusterRouter.SendBlockingAskingUncheckedAsync(
                                 connection, in command, cancellationToken)
                             : applyCommandTimeout
-                                ? connection.SendAsync(in command, cancellationToken, commandName: operation)
+                                ? command is IStreamingRespCommand
+                                    ? connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                                        allowStreamingConnectionReroute: false,
+                                        validateStreamingRoute: () => cluster.IsDedicatedStreamRouteCurrent(
+                                            slot, routeVersion, connection))
+                                    : connection.SendAsync(in command, cancellationToken, commandName: operation)
                                 : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
                         .ConfigureAwait(false);
                     sendAsking = false;
@@ -3584,6 +3597,18 @@ public sealed partial class RespireClient : IRespireClient
                     returned = true;
                     telemetry.Complete(core, operation, storedProcedureName, connection: connection);
                     return response;
+                }
+                catch (RespireConnectionRetiredException error)
+                    when (command is IStreamingRespCommand && cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    if (connection is not null)
+                    {
+                        cluster.RecordRejection(ref discovery, connection, error);
+                        if (!returned) pool.Return(connection);
+                    }
+                    (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
+                        slot, cancellationToken, discovery).ConfigureAwait(false);
+                    continue;
                 }
                 catch (Exception ex)
                 {

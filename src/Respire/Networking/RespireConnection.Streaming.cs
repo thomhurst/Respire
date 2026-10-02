@@ -59,10 +59,12 @@ internal sealed partial class RespireConnection
     }
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
-        in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline)
+        in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
+        Func<bool>? validateStreamingRoute)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
-            ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline)
+            ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
+                validateStreamingRoute: validateStreamingRoute)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
@@ -73,7 +75,7 @@ internal sealed partial class RespireConnection
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        RawCommand? prelude = null)
+        RawCommand? prelude = null, Func<bool>? validateStreamingRoute = null)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -151,6 +153,8 @@ internal sealed partial class RespireConnection
                     throw;
                 }
             }
+            if (validateStreamingRoute is not null && !validateStreamingRoute())
+                throw new RespireConnectionRetiredException(Host, Port);
 
             // A source that ignored the token can complete its read after the caller, the deadline
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on

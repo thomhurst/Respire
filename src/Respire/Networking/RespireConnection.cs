@@ -814,11 +814,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default,
         string? commandName = null,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        Func<bool>? validateStreamingRoute = null)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
-            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute);
+            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+            validateStreamingRoute: validateStreamingRoute);
 
     /// <summary>
     /// Sends a command through a typed in-flight source, avoiding intermediate async state
@@ -1246,7 +1248,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool armCommandDeadline = true,
         CommandDeadline commandDeadline = default,
         bool pinToConnection = false,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        Func<bool>? validateStreamingRoute = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1255,7 +1258,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (command is IStreamingRespCommand)
         {
             return SendStreamingCoreAsync(command, cancellationToken, commandDeadline, pinToConnection,
-                allowStreamingConnectionReroute);
+                allowStreamingConnectionReroute, validateStreamingRoute);
         }
 
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -1294,21 +1297,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
-        bool allowConnectionReroute)
+        bool allowConnectionReroute, Func<bool>? validateStreamingRoute)
         where TCommand : struct, IRespCommand
     {
         if (!allowConnectionReroute)
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline).ConfigureAwait(false);
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, validateStreamingRoute)
+                .ConfigureAwait(false);
 
         try
         {
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline).ConfigureAwait(false);
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, validateStreamingRoute)
+                .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(
             pinToConnection, commandDeadline, out var target, out var reroutedDeadline))
         {
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
-                    allowConnectionReroute)
+                    allowConnectionReroute, validateStreamingRoute)
                 .ConfigureAwait(false);
         }
     }

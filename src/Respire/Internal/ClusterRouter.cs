@@ -734,6 +734,28 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);
 
+    internal long CaptureSlotVersion(int? slot)
+        => slot is { } value ? Volatile.Read(ref _slotVersions[value]) : 0;
+
+    internal async ValueTask<(DedicatedConnectionPool Pool, long SlotVersion)> GetDedicatedStreamPoolAsync(
+        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    {
+        while (true)
+        {
+            var slotVersion = CaptureSlotVersion(slot);
+            var pool = await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+            if (slot is null || Volatile.Read(ref _slotVersions[slot.Value]) == slotVersion)
+                return (pool, slotVersion);
+        }
+    }
+
+    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection)
+    {
+        if (slot is not { } value) return true;
+        if (Volatile.Read(ref _slotVersions[value]) != slotVersion) return false;
+        return Volatile.Read(ref _slots[value]) is not { } owner || IsSameEndpoint(owner, connection);
+    }
+
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
         bool reuseIdle = true)
