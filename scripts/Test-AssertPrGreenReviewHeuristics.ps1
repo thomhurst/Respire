@@ -1277,6 +1277,20 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks late legacy review with Pull Request Review heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Pull Request Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with Security Review heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Security Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks late legacy review with five-level heading'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "##### Review`n`n1. A concrete finding.")
@@ -1294,6 +1308,13 @@ $claudeCommentCases = @(
         Name = 'ignores late automation heading starting with Review'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review apps deployed`n`nDeployment completed.")
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'ignores late automation heading with comma after Review'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review, apps deployed`n`nDeployment completed.")
         )
         Blocks = $false
     },
