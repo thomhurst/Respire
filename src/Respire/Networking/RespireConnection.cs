@@ -2232,6 +2232,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int payloadLength)
     {
         var payload = source.BeginPayload();
+        if (source.IsPayloadAborted)
+        {
+            payload = null;
+        }
         Exception? failure = null;
         var remaining = payloadLength;
 
@@ -2277,7 +2281,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     var destination = payload.GetMemory(Math.Min(4096, remaining));
                     var target = destination[..Math.Min(destination.Length, remaining)];
                     received = await ReceiveAsync(target).ConfigureAwait(false);
-                    if (received > 0)
+                    if (source.IsPayloadAborted)
+                    {
+                        payload = null;
+                    }
+                    else if (received > 0)
                     {
                         payload.Advance(received);
                     }

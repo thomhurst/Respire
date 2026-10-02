@@ -90,8 +90,10 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     internal void AbortPayload(Exception exception)
     {
         Interlocked.CompareExchange(ref _payloadAbortError, exception, null);
-        Volatile.Read(ref _payload)?.Abort(Volatile.Read(ref _payloadAbortError));
+        Volatile.Read(ref _payload)?.CancelPendingFlush();
     }
+
+    internal bool IsPayloadAborted => Volatile.Read(ref _payloadAbortError) is not null;
 
     internal void CompleteMissing()
     {
@@ -188,10 +190,11 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompletePayload(Exception? exception)
     {
-        Volatile.Read(ref _payload)?.Complete(exception);
+        var completionError = exception ?? Volatile.Read(ref _payloadAbortError);
+        Volatile.Read(ref _payload)?.Complete(completionError);
         DisposeStreamCancellationRegistration();
         _onFrameCompleted?.Invoke(
-            exception ?? Volatile.Read(ref _completionError) ?? Volatile.Read(ref _prefixError));
+            completionError ?? Volatile.Read(ref _completionError) ?? Volatile.Read(ref _prefixError));
     }
 
     protected override Exception PrepareException(Exception exception)
@@ -234,6 +237,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 /// <summary>Bounded bridge from the connection receive loop to one caller-owned stream.</summary>
 internal sealed class RespBulkPayloadPipe : IDisposable
 {
+    private readonly object _flushGate = new();
     private readonly Pipe _pipe = new(new PipeOptions(
         pauseWriterThreshold: 64 * 1024,
         resumeWriterThreshold: 32 * 1024,
@@ -241,6 +245,7 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         useSynchronizationContext: false));
     private readonly Stream _readStream;
     private int _completed;
+    private bool _flushCancelled;
 
     internal RespBulkPayloadPipe()
         => _readStream = _pipe.Reader.AsStream(leaveOpen: false);
@@ -251,20 +256,34 @@ internal sealed class RespBulkPayloadPipe : IDisposable
 
     internal void Advance(int count) => _pipe.Writer.Advance(count);
 
-    internal ValueTask<FlushResult> FlushAsync() => _pipe.Writer.FlushAsync();
+    internal ValueTask<FlushResult> FlushAsync()
+    {
+        lock (_flushGate)
+        {
+            return _flushCancelled
+                ? ValueTask.FromResult(new FlushResult(isCanceled: true, isCompleted: false))
+                : _pipe.Writer.FlushAsync();
+        }
+    }
 
     internal void Complete(Exception? exception = null)
     {
-        if (Interlocked.Exchange(ref _completed, 1) == 0)
+        lock (_flushGate)
         {
+            if (_completed != 0) return;
+            _completed = 1;
             _pipe.Writer.Complete(exception);
         }
     }
 
-    internal void Abort(Exception exception)
+    internal void CancelPendingFlush()
     {
-        _pipe.Writer.CancelPendingFlush();
-        Complete(exception);
+        lock (_flushGate)
+        {
+            if (_completed != 0) return;
+            _flushCancelled = true;
+            _pipe.Writer.CancelPendingFlush();
+        }
     }
 
     public void Dispose()
