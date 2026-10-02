@@ -558,7 +558,8 @@ Cluster clients discover replicas per slot range from `CLUSTER SLOTS` and negoti
 on their replica connections. `ReadFrom` and `WithReadFrom` select among those routes. Strict
 `Replica` reads fail if no replica route is usable. Preferred policies can fall back to the
 other role on connection selection failures and server unavailability replies such as `LOADING`,
-`MASTERDOWN`, and `CLUSTERDOWN`.
+`MASTERDOWN`, and `CLUSTERDOWN`. Once a read switches roles, redirect and retirement recovery
+keep that fallback role for the rest of the attempt.
 
 Known read-only commands, including registered read-only functions and eligible blocking reads,
 follow the selected policy. Writes, unknown commands, transactions, and cache-backed reads stay
@@ -567,8 +568,10 @@ Cursor enumerations remain pinned to the node that issued their cursor.
 
 Replica refreshes are shared by concurrent callers for the same slot range. The refresh has a
 total budget of `ConnectTimeout + CommandTimeout` (using `ConnectTimeout` again when the command
-timeout is disabled). Candidate limits do not shrink with the number of known masters. A failed
-refresh keeps existing routes, and partial replies preserve uncovered slot ranges.
+timeout is disabled). Known candidates are probed in parallel under that shared deadline, so
+stalled nodes cannot consume the time available to healthy candidates. After a reply covers the
+requested slot, remaining probes are cancelled and observed. A failed refresh keeps existing
+routes, and partial replies preserve uncovered slot ranges.
 
 ## Cancellation and timeouts
 

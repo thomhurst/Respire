@@ -171,27 +171,37 @@ internal sealed partial class ClusterRouter
             var budget = _options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout);
             timeout.CancelAfter(budget);
             var replicas = GetKnownReplicas(slot)?.Nodes ?? [];
-            // Do not shrink a healthy command's configured timeout as the cluster grows.
-            // This cap still leaves the smaller configured budget for another candidate.
-            var candidateTimeout = TimeSpan.FromTicks(Math.Max(_options.ConnectTimeout.Ticks,
-                (_options.CommandTimeout ?? _options.ConnectTimeout).Ticks));
-            // A connected replica may be the only reachable node after its primary fails.
-            // Query it first so a failed primary cannot consume the shared refresh deadline.
-            foreach (var replica in replicas)
-            {
-                if (replica.IsConnected && !replica.IsRetired
-                    && await TryRefreshReplicaCandidateAsync(replica, slot, timeout.Token, candidateTimeout).ConfigureAwait(false))
-                    return;
-            }
-            if (Volatile.Read(ref _masters).Length == 0)
+            if (Volatile.Read(ref _masters).Length == 0
+                && !replicas.Any(static node => node.IsConnected && !node.IsRetired))
             {
                 await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
                 if (GetKnownReplicas(slot) is not null) return;
             }
-            var owner = await TryRefreshSlotThroughKnownMastersAsync(
-                slot, failedOwner: null, cancellationToken: timeout.Token, discovery: null,
-                keepUncoveredOwners: true, candidateTimeout: candidateTimeout).ConfigureAwait(false);
-            if (owner is null) LogReplicaRefreshFailure(slot, error: null);
+            var candidates = replicas.Where(static node => node.IsConnected && !node.IsRetired)
+                .Concat(Volatile.Read(ref _masters)).Distinct().ToArray();
+            var version = CaptureTopologyVersion();
+            var snapshotBatch = new object();
+            // Each known candidate gets the shared deadline. Parallel probes prevent stalled
+            // nodes from consuming healthy nodes' time; one snapshot batch fences late replies.
+            var attempts = candidates.Select(node => TryRefreshReplicaCandidateAsync(
+                node, slot, timeout.Token, version, snapshotBatch)).ToArray();
+            var pending = new List<Task<bool>>(attempts);
+            try
+            {
+                while (pending.Count != 0)
+                {
+                    var completed = await Task.WhenAny(pending).ConfigureAwait(false);
+                    pending.Remove(completed);
+                    if (await completed.ConfigureAwait(false)) return;
+                }
+                LogReplicaRefreshFailure(slot, error: null);
+            }
+            finally
+            {
+                // Stop losing probes and observe all work before disposing its shared token.
+                await timeout.CancelAsync().ConfigureAwait(false);
+                await Task.WhenAll(attempts).ConfigureAwait(false);
+            }
         }
         catch (Exception error)
         {
@@ -199,20 +209,18 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private async ValueTask<bool> TryRefreshReplicaCandidateAsync(
-        RespireConnectionMultiplexer node, int slot, CancellationToken cancellationToken, TimeSpan candidateTimeout,
-        long? expectedTopologyVersion = null, object? snapshotBatch = null)
+    private async Task<bool> TryRefreshReplicaCandidateAsync(
+        RespireConnectionMultiplexer node, int slot, CancellationToken cancellationToken,
+        long expectedTopologyVersion, object snapshotBatch)
     {
-        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        attempt.CancelAfter(candidateTimeout);
         try
         {
-            return await TryRefreshTopologyAsync(node, attempt.Token, discovery: null,
+            return await TryRefreshTopologyAsync(node, cancellationToken, discovery: null,
                 expectedTopologyVersion, snapshotBatch, keepUncoveredOwners: true, requiredSlot: slot).ConfigureAwait(false);
         }
-        catch (Exception error) when (attempt.IsCancellationRequested && IsReadCandidateFailure(error, cancellationToken))
+        catch (Exception error) when (cancellationToken.IsCancellationRequested
+            && (error is OperationCanceledException || IsDiscoveryFailure(error)))
         {
-            // This candidate spent its slice; later candidates still share the outer deadline.
             return false;
         }
     }
@@ -228,36 +236,7 @@ internal sealed partial class ClusterRouter
     }
 
     /// <summary>
-    /// True when a preferred policy should retry a read on the other server role after
-    /// <paramref name="error"/>. Reads are idempotent, so one retry is safe.
-    /// </summary>
-    /// <remarks>
-    /// Covers server-side unavailability of the chosen role: <c>LOADING</c> while a node loads its
-    /// dataset, <c>MASTERDOWN</c> from a replica that lost its primary link, and <c>CLUSTERDOWN</c>
-    /// from a node whose view of the cluster is failing. Strict policies never switch roles.
-    /// </remarks>
-    internal static bool CanFallBackToOtherRole(
-        RespireServerException error, RespireReadFrom readFrom, int? slot, bool onReplica)
-    {
-        if (slot is null || error.Code is not (RespireErrorCodes.Loading or RespireErrorCodes.MasterDown
-            or RespireErrorCodes.ClusterDown))
-        {
-            return false;
-        }
-
-        return readFrom switch
-        {
-            RespireReadFrom.ReplicaPreferred => onReplica,
-            RespireReadFrom.PrimaryPreferred => !onReplica,
-            _ => false,
-        };
-    }
-
-    internal static bool IsReplicaConnection(RespireConnection connection)
-        => connection.Multiplexer?.Options.ReadOnly == true;
-
-    /// <summary>
-    /// Selects the other server role after <see cref="CanFallBackToOtherRole"/> accepted
+    /// Selects the other server role after <see cref="ReadFallbackPolicy.CanFallBackToOtherRole"/> accepted
     /// <paramref name="error"/>. When no candidate of that role is reachable, the server error is
     /// surfaced unchanged.
     /// </summary>
@@ -298,14 +277,6 @@ internal sealed partial class ClusterRouter
     private static bool IsReadCandidateFailure(Exception error, CancellationToken cancellationToken)
         => !cancellationToken.IsCancellationRequested
             && (error is OperationCanceledException || IsDiscoveryFailure(error));
-
-    // ASK sends one command to the importing primary during slot migration. Its replicas do not
-    // own the key yet, so a strict Replica read fails instead of silently reading from a primary.
-    internal static bool IsStrictReplicaAsk(RespireServerException error, RespireReadFrom readFrom)
-        => readFrom == RespireReadFrom.Replica && error.Code == RespireErrorCodes.Ask;
-
-    internal static RespireConnectionException CreateStrictReplicaAskException(RespireServerException error, int? slot)
-        => new($"Redis Cluster slot {slot} is migrating and ASK redirects to a primary, so a Replica read cannot follow it.", error);
 
     private ValueTask<bool> RefreshTopologyFromAsync(
         RespireConnection connection, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery)

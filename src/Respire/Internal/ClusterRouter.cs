@@ -1327,8 +1327,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
         int slot,
         RespireConnectionMultiplexer? failedOwner,
-        CancellationToken cancellationToken, DiscoveryRound? discovery, bool keepUncoveredOwners = false,
-        TimeSpan? candidateTimeout = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery, bool keepUncoveredOwners = false)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1337,10 +1336,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // A failed owner can still own other slots. Spend fallback budget on a distinct
             // generation instead of immediately retrying the already rejected connection.
             if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
-            var refreshed = candidateTimeout is { } slice
-                ? await TryRefreshReplicaCandidateAsync(master, slot, cancellationToken, slice,
-                    expectedTopologyVersion, snapshotBatch).ConfigureAwait(false)
-                : await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
+            var refreshed = await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
                     keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null).ConfigureAwait(false);
             if (!refreshed)
             {

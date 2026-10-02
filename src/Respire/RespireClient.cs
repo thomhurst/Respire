@@ -2050,7 +2050,7 @@ public sealed partial class RespireClient : IRespireClient
                     throw error;
                 }
 
-                if (ClusterRouter.IsStrictReplicaAsk(error, readFrom)) throw ClusterRouter.CreateStrictReplicaAskException(error, slot);
+                if (ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
                 _core.ClientCache?.FlushForContinuityLoss();
                 cluster.RecordRejection(ref discovery, connection, error);
                 discoveryPending = true;
@@ -2486,6 +2486,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = readFromOverride ?? GetReadFromForCommand(in command, allowReadFrom);
+        var cursorReadFrom = readFrom;
         var cursorContinuation = command.ReadKind == ReadCommandKind.CursorRead
             && (cursorAffinity?.IsPinned == true || CursorCommandMetadata.IsCursorContinuation(in command));
         ClusterRouter.DiscoveryRound? discovery = null;
@@ -2512,17 +2513,18 @@ public sealed partial class RespireClient : IRespireClient
             }
             var switchedRole = false;
             if (initialRejection is not null && !cursorContinuation
-                && ClusterRouter.CanFallBackToOtherRole(initialRejection, readFrom, slot,
-                    ClusterRouter.IsReplicaConnection(connection)))
+                && ReadFallbackPolicy.CanFallBackToOtherRole(initialRejection, readFrom, slot,
+                    ReadFallbackPolicy.IsReplicaConnection(connection)))
             {
                 connection = await cluster.GetOtherRoleReadConnectionAsync(
                     slot!.Value, readFrom, initialRejection, cancellationToken, discovery).ConfigureAwait(false);
+                readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
                 switchedRole = true;
             }
             else if (initialRejection is not null)
             {
                 if (cursorContinuation) throw initialRejection;
-                if (ClusterRouter.IsStrictReplicaAsk(initialRejection, readFrom)) throw ClusterRouter.CreateStrictReplicaAskException(initialRejection, slot);
+                if (ReadFallbackPolicy.IsStrictReplicaAsk(initialRejection, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(initialRejection, slot);
                 cluster.RecordRejection(ref discovery, connection, initialRejection);
                 _core.ClientCache?.FlushForContinuityLoss();
                 discoveryPending = true;
@@ -2554,9 +2556,9 @@ public sealed partial class RespireClient : IRespireClient
                         cursorAffinity.ClusterNode = cursorNode;
                     }
                     else if (command.ReadKind == ReadCommandKind.CursorRead && slot is { } rawCursorSlot
-                        && readFrom != RespireReadFrom.Primary && connection.Multiplexer is { } rawCursorNode)
+                        && cursorReadFrom != RespireReadFrom.Primary && connection.Multiplexer is { } rawCursorNode)
                     {
-                        _core.ReadRouter.Cursors.PinClusterShared(readFrom, rawCursorSlot, rawCursorNode);
+                        _core.ReadRouter.Cursors.PinClusterShared(cursorReadFrom, rawCursorSlot, rawCursorNode);
                     }
                     return result;
                 }
@@ -2579,7 +2581,7 @@ public sealed partial class RespireClient : IRespireClient
                     when (!cursorContinuation && !noRedirect && attempt < ClusterRouter.RedirectLimit
                         && ClusterRouter.CanRecover(error, slot))
                 {
-                    if (ClusterRouter.IsStrictReplicaAsk(error, readFrom)) throw ClusterRouter.CreateStrictReplicaAskException(error, slot);
+                    if (ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
                     // Learn the new owner before touching the caller-owned stream. A broken seek
                     // must not leave later commands pinned to the stale slot owner.
                     _core.ClientCache?.FlushForContinuityLoss();
@@ -2613,13 +2615,14 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (RespireServerException error) when (!switchedRole && !sendAsking
                     && !cursorContinuation
-                    && ClusterRouter.CanFallBackToOtherRole(error, readFrom, slot, ClusterRouter.IsReplicaConnection(connection)))
+                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Reads are idempotent; retry once on the other server role. NoRedirect only
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
                     switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
                         slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
                 }
             }
         }
@@ -3149,7 +3152,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
-                    if (ClusterRouter.IsStrictReplicaAsk(error, readFrom)) throw ClusterRouter.CreateStrictReplicaAskException(error, slot);
+                    if (ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
@@ -3164,11 +3167,12 @@ public sealed partial class RespireClient : IRespireClient
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
                 catch (RespireServerException error) when (!switchedRole && !sendAsking
-                    && ClusterRouter.CanFallBackToOtherRole(error, readFrom, slot, ClusterRouter.IsReplicaConnection(connection)))
+                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
                         slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
                 }
             }
         }
@@ -3508,7 +3512,7 @@ public sealed partial class RespireClient : IRespireClient
                     {
                         var error = ResponseReader.ServerError(in response, operation);
                         response.Dispose();
-                        var strictReplicaAsk = ClusterRouter.IsStrictReplicaAsk(error, readFrom);
+                        var strictReplicaAsk = ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom);
                         if (!noRedirect && !strictReplicaAsk && attempt < ClusterRouter.RedirectLimit
                             && ClusterRouter.CanRecover(error, slot))
                         {
@@ -3536,7 +3540,7 @@ public sealed partial class RespireClient : IRespireClient
                         }
 
                         if (!switchedRole && !sentAsking
-                            && ClusterRouter.CanFallBackToOtherRole(error, readFrom, slot, pool.IsReadOnly))
+                            && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, pool.IsReadOnly))
                         {
                             // Reads are idempotent; retry once on the other role's dedicated pool.
                             // NoRedirect only surfaces MOVED and ASK, so it does not suppress this retry.
@@ -3545,6 +3549,7 @@ public sealed partial class RespireClient : IRespireClient
                             var otherRolePool = await cluster.GetOtherRoleDedicatedPoolAsync(
                                     slot!.Value, readFrom, error, cancellationToken, discovery)
                                 .ConfigureAwait(false);
+                            readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;
@@ -3555,7 +3560,7 @@ public sealed partial class RespireClient : IRespireClient
                         pool.Return(connection);
                         returned = true;
                         // NoRedirect callers handle redirects themselves and must see the ASK reply.
-                        if (strictReplicaAsk && !noRedirect) throw ClusterRouter.CreateStrictReplicaAskException(error, slot);
+                        if (strictReplicaAsk && !noRedirect) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
                         throw error;
                     }
 

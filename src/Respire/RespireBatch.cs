@@ -549,8 +549,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                         Operation, command, connection, error, readFrom, cancellationToken).ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (command.TryGetClusterSlot(out var readSlot)
-                    && ClusterRouter.CanFallBackToOtherRole(error, readFrom, readSlot,
-                        ClusterRouter.IsReplicaConnection(connection)))
+                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, readSlot,
+                        ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Complete each operation in queue order; retry only its rejected read.
                     value = await client.ResumeRejectedClusterSendAsync(
