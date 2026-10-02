@@ -548,6 +548,8 @@ internal readonly struct GeoSearchCommand(
     Verb verb, RespireValue source, GeoSearchOrigin origin, GeoSearchShape shape,
     GeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = source;

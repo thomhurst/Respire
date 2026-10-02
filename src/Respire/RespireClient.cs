@@ -343,7 +343,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             return ExecuteRawAsync(
                 command.Name, args, flags, cancellationToken,
-                readKind: RawCommandDescriptorLookup.GetReadKind(command.Name));
+                readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
@@ -354,11 +354,13 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
+        var readKind = command.ReadKind != ReadCommandKind.None
+            ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
         if (_keyPrefix is null) return ExecuteRawAsync(
-            operation, rawArguments, flags, cancellationToken, readKind: command.ReadKind);
+            operation, rawArguments, flags, cancellationToken, readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, readKind: command.ReadKind)
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, readKind: readKind)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -371,7 +373,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             return ExecuteRawFireAndForgetAsync(
                 command.Name, args, cancellationToken,
-                readKind: RawCommandDescriptorLookup.GetReadKind(command.Name));
+                readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
@@ -382,12 +384,14 @@ public sealed partial class RespireClient : IRespireClient
             rawArguments = args;
         }
 
+        var readKind = command.ReadKind != ReadCommandKind.None
+            ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(
-            operation, rawArguments, cancellationToken, readKind: command.ReadKind);
+            operation, rawArguments, cancellationToken, readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
-                operation, prefixedArguments, cancellationToken, readKind: command.ReadKind)
+                operation, prefixedArguments, cancellationToken, readKind: readKind)
             : ValueTask.FromException(prefixError);
     }
 
@@ -672,7 +676,7 @@ public sealed partial class RespireClient : IRespireClient
         var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
-            readKind: RawCommandDescriptorLookup.GetReadKind(operation));
+            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments));
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
@@ -725,7 +729,7 @@ public sealed partial class RespireClient : IRespireClient
             operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
-            readKind: RawCommandDescriptorLookup.GetReadKind(operation));
+            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -946,7 +950,7 @@ public sealed partial class RespireClient : IRespireClient
     internal static string? KnownRawOperation(string command, string candidate)
         => KnownRawOperation(command, (RespireValue)candidate);
 
-    private static string? KnownRawOperation(string command, RespireValue candidate)
+    internal static string? KnownRawOperation(string command, RespireValue candidate)
         => command switch
         {
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "CONFIG GET",

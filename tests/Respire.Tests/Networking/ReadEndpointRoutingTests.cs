@@ -74,6 +74,59 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task DescriptorSubcommandAndTypedModuleReadsUseReplicaPolicy()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "GET key" or "OBJECT ENCODING key" => Bulk("value"),
+                "MEMORY USAGE key" => ":1\r\n"u8.ToArray(),
+                "GEOSEARCH geo FROMLONLAT 0 0 BYRADIUS 1 m" => "*0\r\n"u8.ToArray(),
+                "XPENDING stream group" or "XPENDING stream group - + 10" => "*0\r\n"u8.ToArray(),
+                "XINFO STREAM stream" or "XINFO GROUPS stream" or "XINFO CONSUMERS stream group"
+                    => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        using (await view.ExecuteAsync(RespireCommand.Create("GET"), "key")) { }
+        var key = "key";
+        using (await view.ExecuteAsync($"OBJECT ENCODING {key}")) { }
+        using (await view.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key")) { }
+        await view.Geo.SearchAsync("geo", GeoSearchOrigin.FromCoordinates(0, 0), GeoSearchShape.Circle(1));
+        await view.Streams.PendingSummaryAsync("stream", "group");
+        await view.Streams.PendingAsync("stream", "group");
+        await view.Streams.InfoAsync("stream");
+        await view.Streams.GroupInfoAsync("stream");
+        await view.Streams.ConsumerInfoAsync("stream", "group");
+
+        await Assert.That(replica.ReceivedCommands.Where(command => command != "ROLE")).IsEquivalentTo(
+        [
+            "GET key",
+            "OBJECT ENCODING key",
+            "MEMORY USAGE key",
+            "GEOSEARCH geo FROMLONLAT 0 0 BYRADIUS 1 m",
+            "XPENDING stream group",
+            "XPENDING stream group - + 10",
+            "XINFO STREAM stream",
+            "XINFO GROUPS stream",
+            "XINFO CONSUMERS stream group",
+        ]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task ReplicaPolicyRejectsWrongRoleAndReplicaPreferredFallsBackDuringCooldown()
     {
         await using var primary = new FakeRespServer(Bulk("primary"));

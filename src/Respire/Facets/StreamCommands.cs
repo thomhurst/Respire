@@ -516,12 +516,12 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
     private static readonly Verb XGroupCreateConsumer = new("XGROUP CREATECONSUMER");
     private static readonly Verb XSetId = new("XSETID");
     private static readonly Verb XGroupSetId = new("XGROUP SETID");
-    private static readonly Verb XPending = new("XPENDING");
+    private static readonly Verb XPending = new("XPENDING", ReadCommandKind.Read);
     private static readonly Verb XClaim = new("XCLAIM");
     private static readonly Verb XAutoClaim = new("XAUTOCLAIM");
-    private static readonly Verb XInfoStream = new("XINFO STREAM");
-    private static readonly Verb XInfoGroups = new("XINFO GROUPS");
-    private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
+    private static readonly Verb XInfoStream = new("XINFO STREAM", ReadCommandKind.Read);
+    private static readonly Verb XInfoGroups = new("XINFO GROUPS", ReadCommandKind.Read);
+    private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS", ReadCommandKind.Read);
 
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => AddRequiredAsync(BuildAddCommand(client, key, default, fields), CancellationToken.None);

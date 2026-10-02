@@ -639,7 +639,8 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public ReadCommandKind ReadKind => command.ReadKind;
+    public ReadCommandKind ReadKind => command.ReadKind != ReadCommandKind.None
+        ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(command.Name, args);
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => command.CacheMutation == RespireCacheMutation.Unknown
