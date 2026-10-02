@@ -1,13 +1,12 @@
 # WorktreeCleanup.ps1
-# Shared worktree-removal helper, dot-sourced by Merge-Pr.ps1 and
+# Shared unattended-cleanup helper, dot-sourced by Merge-Pr.ps1 and
 # Remove-MergedWorktrees.ps1. Not meant to be run directly.
 #
-# Removal policy (one place, both callers):
+# Cleanup policy (one place, both callers):
 #   - PRESERVE tracked changes and untracked/ignored files outside known generated paths.
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
-#   - Long-path safe: git's own delete now works because core.longpaths=true is set
-#     system-wide; the `\\?\` extended-length Remove-Item is kept as a fallback for
-#     environments where that config is missing.
+#   - PRESERVE the checkout itself: a free lock cannot rule out background directory handles.
+#     Explicit owner release removes checkouts after the owner stops its processes.
 
 function New-OrdinalStringMap {
     [CmdletBinding()]
@@ -117,14 +116,21 @@ function Test-SameNativePath {
     }
 }
 
-function Get-PrNumberFromWorktreePath {
-    param([Parameter(Mandatory)][string]$Path)
+function Get-WorktreeIdentity {
+    param([AllowNull()][string]$Name)
 
-    $leaf = Split-Path -Path $Path -Leaf
-    if ($leaf -match '^pr-(?<Number>\d+)(?:-|$)') {
-        return [int]$Matches.Number
+    if ($Name -match '(?:^|/)(?<Kind>pr|issue)-(?<Number>\d+)(?:$|[-/])') {
+        return [pscustomobject]@{
+            PrNumber = if ($Matches.Kind -eq 'pr') { [int]$Matches.Number } else { $null }
+            LockName = "$($Matches.Kind)-$($Matches.Number)"
+        }
     }
     return $null
+}
+
+function Get-PrNumberFromWorktreePath {
+    param([Parameter(Mandatory)][string]$Path)
+    return (Get-WorktreeIdentity -Name (Split-Path -Path $Path -Leaf)).PrNumber
 }
 
 function Test-BranchIdentifiesPrNumber {
@@ -133,7 +139,7 @@ function Test-BranchIdentifiesPrNumber {
         [Parameter(Mandatory)][int]$PrNumber
     )
 
-    return $Branch -match "(?:^|/)pr-$PrNumber(?:$|[-/])"
+    return (Get-WorktreeIdentity -Name $Branch).PrNumber -eq $PrNumber
 }
 
 function Test-IsCanonicalPrWorktree {
@@ -186,69 +192,148 @@ function Select-MergeCleanupWorktree {
     return $null
 }
 
-function Remove-MergedWorktree {
+function Get-AgentLockBlocker {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$LockName
+    )
+    # Repo is the primary checkout, never the potentially stale worktree copy.
+    # Do not cache FREE across checks: another agent may acquire ownership during a sweep.
+    $agentLocks = Join-Path $Repo 'scripts/AgentLocks.ps1'
+    if (-not (Test-Path -LiteralPath $agentLocks -PathType Leaf)) { return 'canonical lock script is unavailable' }
+    $state = @(& pwsh -NoProfile -File $agentLocks status -LockName $LockName -OwnerId worktree-cleanup-observer 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $state.Count -ne 1 -or $state[0] -ne 'FREE') {
+        return "Redis lock '$LockName' is held or could not be checked"
+    }
+    return $null
+}
+
+function Get-WorktreeOwnershipBlocker {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree
+    )
+
+    $gitDirectory = git -C $Worktree rev-parse --absolute-git-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory) { return 'could not inspect Git worktree ownership' }
+    if (Test-Path -LiteralPath (Join-Path $gitDirectory 'locked')) { return 'Git worktree is locked' }
+
+    $lockNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $enabled = git -C $Worktree config --local --bool --get extensions.worktreeConfig 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree configuration' }
+    if ($enabled -eq 'true') {
+        $marker = git -C $Worktree config --worktree --get agent.lockName 2>$null
+        if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect ownership marker' }
+        if ($marker) { [void]$lockNames.Add($marker.Trim()) }
+    }
+    # Also cover the short interval between checkout creation and marker registration.
+    $branch = git -C $Worktree symbolic-ref --quiet --short HEAD 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree branch' }
+    foreach ($name in @((Split-Path $Worktree -Leaf), $branch)) {
+        $identity = Get-WorktreeIdentity -Name $name
+        if ($identity) { [void]$lockNames.Add($identity.LockName) }
+    }
+    foreach ($lockName in $lockNames) {
+        $blocker = Get-AgentLockBlocker -Repo $Repo -LockName $lockName
+        if ($blocker) { return $blocker }
+    }
+    return $null
+}
+
+function Get-WorktreeStatusBlocker {
+    param([Parameter(Mandatory)][string]$Worktree)
+    $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
+    if ($LASTEXITCODE -ne 0) { return 'could not inspect worktree status' }
+    $work = @($status | Where-Object {
+        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
+        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
+    })
+    if ($work.Count -gt 0) { return "uncommitted work: $($work -join ', ')" }
+    return $null
+}
+
+function Clear-CompletedWorktreeArtifacts {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Repo,       # a checkout that is NOT the one being removed (main)
-        [Parameter(Mandatory)][string]$Worktree,   # path to remove
+        [Parameter(Mandatory)][string]$Repo,       # primary checkout for canonical ownership checks
+        [Parameter(Mandatory)][string]$Worktree,   # completed checkout whose generated output may be cleared
+        [string]$ExpectedHead,                    # tip independently verified as completed by the caller
         [string]$Label = '',                       # e.g. "#1234" for log lines
         [switch]$WhatIf
     )
 
     if (-not (Test-Path -LiteralPath $Worktree)) {
-        if (-not $WhatIf) { git -C $Repo worktree prune }
         return
     }
 
-    # Only linked worktrees are valid deletion targets. This rejects the primary
-    # checkout even through a filesystem alias before any git or recursive delete.
+    # Only linked worktrees are valid cleanup targets. This rejects the primary
+    # checkout even through a filesystem alias before any Git cleanup.
     if (-not (Test-IsLinkedWorktree -Path $Worktree)) {
-        Write-Host "WARNING: refusing to remove primary checkout or non-linked worktree $Label : $Worktree"
+        Write-Host "WARNING: refusing to clean primary checkout or non-linked worktree $Label : $Worktree"
+        return
+    }
+
+    $head = git -C $Worktree rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $ExpectedHead -or $head -ne $ExpectedHead) {
+        Write-Host "Preserving worktree $Label : $Worktree (completed HEAD is missing or changed)"
+        return
+    }
+    $blocker = Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
         return
     }
 
     # Preserve source and unknown ignored files; only known generated output is disposable.
+    $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
+        return
+    }
+
+    if ($WhatIf) { Write-Host "sweep: WOULD clear generated output in $Worktree -- $Label"; return }
+
+    # Recheck after status inspection, which can take time in a large build tree.
+    $head = git -C $Worktree rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead -or
+        (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree)) {
+        Write-Host "Preserving worktree $Label : $Worktree (HEAD or ownership changed during inspection)"
+        return
+    }
+
+    $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
+        return
+    }
+    # A free lease cannot prove that an old process has released its cwd/directory
+    # handles. Even renaming the tree cannot stop that process from writing ignored
+    # source after inspection. Unattended cleanup therefore removes only disposable
+    # generated output; owner-driven release remains responsible for checkout removal.
     $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Preserving worktree $Label : $Worktree (could not inspect worktree status)"
+        Write-Host "Preserving worktree $Label : $Worktree (could not enumerate generated output)"
         return
     }
-    $work = @($status | Where-Object {
-        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
-        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
-    })
-    if ($work.Count -gt 0) {
-        Write-Host "Preserving dirty worktree $Label : $Worktree (uncommitted work)"
-        foreach ($entry in $work) { Write-Host "  $entry" }
-        return
-    }
-
-    if ($WhatIf) { Write-Host "sweep: WOULD remove $Worktree -- $Label"; return }
-
-    # Primary path: let git remove it (force clears untracked artifacts; tracked is clean).
-    git -C $Repo worktree remove --force $Worktree 2>$null
-
-    # Fallback for long-path failures (only if core.longpaths is somehow off).
-    if (Test-Path -LiteralPath $Worktree) {
-        # Avoid recursing through a package-manager junction if one exists in a docs
-        # worktree. Leave it for manual cleanup instead of risking deletion outside
-        # the worktree.
-        $junction = Get-ChildItem -LiteralPath $Worktree -Directory -Recurse -Force -Filter node_modules -ErrorAction SilentlyContinue |
-            Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 } |
-            Select-Object -First 1
-        if ($junction) {
-            Write-Host "WARNING: worktree $Label requires manual removal -- detach the node_modules junction at $($junction.FullName) first, then re-run cleanup: $Worktree"
+    foreach ($entry in $status) {
+        if ($entry -notmatch '^(\?\?|!!) ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) {
+            Write-Host "Preserving worktree $Label : $Worktree (new source or unknown output: $entry)"
             return
         }
-        # \\?\ disables Win32 path normalization, so forward slashes (git's output
-        # format) are NOT translated — convert to backslashes or the delete no-ops.
-        Remove-Item -LiteralPath ('\\?\' + ($Worktree -replace '/', '\')) -Recurse -Force -ErrorAction SilentlyContinue
     }
-
-    git -C $Repo worktree prune
-    if (Test-Path -LiteralPath $Worktree) {
-        Write-Host "WARNING: could not fully remove $Worktree"
-    } else {
-        Write-Host "Removed worktree $Label : $Worktree"
+    foreach ($entry in $status) {
+        $head = git -C $Worktree rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead -or
+            (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree)) {
+            Write-Host "Preserving worktree $Label : $Worktree (HEAD or ownership changed before artifact cleanup)"
+            return
+        }
+        git -C $Worktree --literal-pathspecs clean -fdx -- $entry.Substring(3) 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Preserving worktree $Label : $Worktree (could not clear generated path $($entry.Substring(3)))"
+            return
+        }
     }
+    Write-Host "Cleared generated output; preserving checkout for owner release or manual recovery $Label : $Worktree"
+    return $true
 }

@@ -17,20 +17,23 @@ if ($primaryGuardIndex -lt 0 -or $primaryGuardIndex -gt $mergeMatch.Index) {
     throw 'Primary-checkout cleanup guard must run before gh pr merge.'
 }
 
-$cleanupIndex = $script.IndexOf('Remove-MergedWorktree', $mergeMatch.Index)
-$remoteDeleteIndex = $script.IndexOf('push origin --delete', $mergeMatch.Index)
-$localDeleteIndex = $script.IndexOf('branch -D', $mergeMatch.Index)
+$cleanupIndex = $script.IndexOf('Clear-CompletedWorktreeArtifacts', $mergeMatch.Index)
+$remoteDeleteIndex = $script.IndexOf('push "--force-with-lease=${remoteRef}:$mergedHead" origin ":$remoteRef"', $mergeMatch.Index)
 
 if ($cleanupIndex -lt 0) {
     throw 'Merged worktree cleanup is missing.'
 }
 
-if ($remoteDeleteIndex -lt 0 -or $localDeleteIndex -lt 0) {
-    throw 'Post-merge remote/local branch cleanup is missing.'
+if ($remoteDeleteIndex -lt 0) {
+    throw 'Post-merge remote branch cleanup must compare the verified head.'
 }
 
-if ($cleanupIndex -gt $remoteDeleteIndex -or $cleanupIndex -gt $localDeleteIndex) {
-    throw 'The worktree must be removed before deleting its local or remote branch.'
+if ($cleanupIndex -gt $remoteDeleteIndex) {
+    throw 'The worktree must be removed before deleting its remote branch.'
+}
+
+if ($script -match 'branch -[dD]|update-ref -d') {
+    throw 'Merge cleanup must retain local refs that another worktree can reuse.'
 }
 
 $mergedConfirmationIndex = $script.IndexOf('Write-Host "Merged', $mergeMatch.Index)

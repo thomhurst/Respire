@@ -31,6 +31,14 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-CommandCatalog.ps1
 
+      - name: Verify worktree cleanup safety
+        shell: pwsh
+        run: |
+          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr')) {
+            & pwsh -NoProfile -File "./scripts/$test.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "$test failed" }
+          }
+
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
