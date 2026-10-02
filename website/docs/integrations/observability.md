@@ -31,11 +31,15 @@ by physical connections, tagged with `server.availability_zone` and
 `respire.availability_zone.status=known`. These are attempts, not successful operations:
 a redirected or retried command can count more than once. Local cache hits do not count.
 Individually submitted batch reads count; composite transactions do not.
+All read policies count, including `Primary` and `Replica`; affinity is not required.
 
 Missing zone metadata uses `respire.availability_zone.status=unknown` without a zone tag.
 The process retains counters for at most 64 distinct zone names. Additional names share
 `respire.availability_zone.status=overflow`, also without a zone tag. Totals survive
-connection disposal. The status tag distinguishes real zone names such as `unknown`
+connection disposal. The first 64 names retain their counters for the process lifetime;
+names are never evicted, so later names continue to use overflow even after old connections
+close. This preserves monotonic totals without resetting or relabeling a counter.
+The status tag distinguishes real zone names such as `unknown`
 from missing metadata. Observation happens outside transport locks; accepting a read
 only increments its connection's cached counter.
 

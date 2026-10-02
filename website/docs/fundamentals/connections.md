@@ -593,7 +593,10 @@ Zone names use ordinal, case-sensitive comparison. The selection order is:
 | `AzAffinityReplicasAndPrimary` | Same-zone replicas, same-zone primary, other replicas, primary |
 
 The existing replica health checks still apply: a linked replica takes precedence over
-an unlinked replica. Writes and operations that already require the primary keep their
+an unlinked replica. For `AzAffinityReplicasAndPrimary`, a same-zone primary also precedes
+unlinked replicas, including same-zone replicas. If no linked replica or preferred primary
+is available, unlinked same-zone replicas precede other unlinked replicas.
+Writes and operations that already require the primary keep their
 existing routing. Replica reads can return stale data regardless of zone.
 
 Valkey servers configured with `availability-zone` advertise `availability_zone` in

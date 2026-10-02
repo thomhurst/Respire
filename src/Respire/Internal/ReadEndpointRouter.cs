@@ -247,9 +247,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         var attempted = false;
         // A replica whose replication link is down still serves reads when nothing better exists
         // (the server's replica-serve-stale-data setting decides), but a linked replica wins.
-        Selection? unlinked = null;
-        Selection? remote = null;
-        var preferZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom);
+        var candidates = new ReadFallbackPolicy.ReplicaCandidates<Selection>();
         for (var offset = 0; offset < endpoints.Length; offset++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -264,12 +262,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 var selection = new Selection(await entry.GetConnectionAsync(cancellationToken).ConfigureAwait(false), entry, null);
                 var local = ReadFallbackPolicy.IsSameZone(selection.Connection, core.Options.ClientAvailabilityZone);
-                if (!entry.IsReplicationLinkDown)
-                {
-                    if (!preferZone || local) return selection;
-                    remote ??= selection;
-                }
-                else if (unlinked is null || preferZone && local) unlinked = selection;
+                if (candidates.Offer(selection, local, !entry.IsReplicationLinkDown, readFrom)) return selection;
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
             {
@@ -280,7 +273,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
         }
 
-        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary)
+        if (ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, core.Multiplexer, core.Options.ClientAvailabilityZone))
         {
             try
             {
@@ -289,10 +282,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
             catch (Exception error) when (IsUnavailable(error, cancellationToken)) { lastError = error; }
         }
-        if (remote is { } fallback && fallback.Connection.IsAcceptingCommands
-            && fallback.Replica is { } fallbackEntry && IsCurrent(fallbackEntry)) return fallback;
-        if (unlinked is { } stale && stale.Connection.IsAcceptingCommands
-            && stale.Replica is { } staleEntry && IsCurrent(staleEntry)) return stale;
+        while (candidates.TryTake(out var fallback))
+            if (fallback.Connection.IsAcceptingCommands
+                && fallback.Replica is { } fallbackEntry && IsCurrent(fallbackEntry)) return fallback;
         throw attempted
             ? new RespireConnectionException("No healthy, role-validated read replicas are available.",
                 lastError ?? new InvalidOperationException("No replica connection attempt was completed."))

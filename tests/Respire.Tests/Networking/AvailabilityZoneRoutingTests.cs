@@ -122,7 +122,10 @@ public class AvailabilityZoneRoutingTests
         await using var primary = Node("primary", "remote", false);
         await using var replica = Node("replica", "local", true);
         ConfigureTopology(primary, replica);
-        await replica.DisposeAsync();
+        // Keep the port reserved; a disposed listener's port can be reused by a parallel test.
+        var previous = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command is "ROLE" or "READONLY"
+            ? "-LOADING unavailable\r\n"u8.ToArray() : previous(id, command);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster, RespireReadFrom.AzAffinity));
         await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo("primary");
     }
@@ -154,12 +157,15 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    public async Task AcceptedReadsAreCountedByZoneWithoutCountingWrites()
+    [Arguments(RespireReadFrom.Primary)]
+    [Arguments(RespireReadFrom.Replica)]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    public async Task AcceptedReadsAreCountedByZoneWithoutCountingWrites(RespireReadFrom policy)
     {
-        const string zone = "telemetry-zone";
-        await using var primary = Node("primary", "remote", false);
+        var zone = $"telemetry-zone-{policy}";
+        await using var primary = Node("primary", zone, false);
         await using var replica = Node("replica", zone, true);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, RespireReadFrom.AzAffinity)
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, policy)
             with { ClientAvailabilityZone = zone });
         long observed = 0;
         using var listener = new MeterListener();
@@ -209,6 +215,83 @@ public class AvailabilityZoneRoutingTests
         });
         await Assert.That(() => client.WithReadFrom(RespireReadFrom.AzAffinityReplicasAndPrimary))
             .Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.AzAffinity, true, "local", "remote")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, "local", "primary")]
+    [Arguments(RespireReadFrom.AzAffinity, false, "local", "unlinked")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, "local", "primary")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, "remote", "remote")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, "remote", "unlinked")]
+    public async Task UnlinkedLocalReplicaFollowsHealthyCandidates(
+        RespireReadFrom policy, bool includeRemote, string primaryZone, string expected)
+    {
+        await using var primary = Node("primary", primaryZone, false);
+        await using var local = Node("unlinked", "local", true);
+        await using var remote = Node("remote", "remote", true);
+        var previous = local.ReplyOverride!;
+        local.ReplyOverride = (id, command) => command == "ROLE"
+            ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$12\r\ndisconnected\r\n:0\r\n"u8.ToArray()
+            : previous(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary,
+            includeRemote ? [local, remote] : [local], false, policy));
+        for (var index = 0; index < 4; index++)
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task PrimarySelectionFallbackDoesNotBounceAfterTwoLoadingReplies(RespireReadFrom policy)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "remote", true);
+        ConfigureTopology(primary, replica);
+        var ready = 0;
+        var primaryReply = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) =>
+        {
+            if (!command.StartsWith("GET ")) return primaryReply(id, command);
+            Volatile.Write(ref ready, 1);
+            return "-LOADING unavailable\r\n"u8.ToArray();
+        };
+        var replicaReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("GET ")
+            || command == "READONLY" && Volatile.Read(ref ready) == 0
+                ? "-LOADING unavailable\r\n"u8.ToArray() : replicaReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true, policy));
+        await Assert.That(async () => await client.GetStringAsync("{zone}:key")).Throws<RespireServerException>();
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PrimaryZoneProbeUsesPhysicalConnectionMetadata()
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], false, RespireReadFrom.Primary));
+        var multiplexer = client.Core.Multiplexer;
+        await Assert.That(ReadFallbackPolicy.ShouldProbeLocalPrimary(
+            RespireReadFrom.AzAffinityReplicasAndPrimary, multiplexer, "local")).IsFalse();
+        await Assert.That(ReadFallbackPolicy.ShouldProbeLocalPrimary(
+            RespireReadFrom.AzAffinityReplicasAndPrimary, multiplexer, "remote")).IsTrue();
+        await Assert.That(ReadFallbackPolicy.ShouldProbeLocalPrimary(
+            RespireReadFrom.AzAffinityReplicasAndPrimary, null, "local")).IsTrue();
+        await Assert.That(ReadFallbackPolicy.ShouldProbeLocalPrimary(
+            RespireReadFrom.AzAffinity, multiplexer, "remote")).IsFalse();
+        var previous = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk("availability_zone:local\r\n") : previous(id, command);
+        var old = multiplexer.GetConnection();
+        primary.CloseConnections();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (old.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+        await Assert.That(multiplexer.MayBeInAvailabilityZone("local")).IsFalse();
+        multiplexer.ScheduleReconnect(0);
+        while (!multiplexer.HasConnection(connection => !ReferenceEquals(connection, old)))
+            await Task.Delay(5, timeout.Token);
+        await Assert.That(multiplexer.MayBeInAvailabilityZone("local")).IsTrue();
     }
 
     private static RespireOptions Options(FakeRespServer primary, FakeRespServer[] replicas, bool cluster, RespireReadFrom policy)

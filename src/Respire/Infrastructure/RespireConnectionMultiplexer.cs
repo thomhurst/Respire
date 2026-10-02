@@ -241,6 +241,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    // Metadata belongs to each physical connection and changes on replacement. A known
+    // remote primary need not reconnect merely to lose an AZ-affinity comparison.
+    internal bool MayBeInAvailabilityZone(string? clientZone)
+    {
+        if (IsRetired) return true;
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            var connection = Volatile.Read(ref _connections[slot]);
+            if (connection?.AvailabilityZone is not { } zone
+                || string.Equals(zone, clientZone, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
     internal bool HasConnection(Func<RespireConnection, bool> predicate)
     {
         if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected) return false;

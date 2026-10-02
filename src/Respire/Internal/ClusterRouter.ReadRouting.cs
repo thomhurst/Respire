@@ -129,8 +129,7 @@ internal sealed partial class ClusterRouter
         var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
         Exception? lastError = null;
-        RespireConnection? remote = null;
-        var preferZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom);
+        var fallbacks = new ReadFallbackPolicy.ReplicaCandidates<RespireConnection>();
         cancellationToken.ThrowIfCancellationRequested();
         while (candidates.TryNext(out var node))
         {
@@ -145,16 +144,16 @@ internal sealed partial class ClusterRouter
                 if (routes.IsDueForRevalidation)
                     _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
                 var connection = node.GetConnection(slot);
-                if (!preferZone || ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone))
+                if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
+                    linked: true, readFrom))
                     return (connection, lastError, attempted);
-                remote ??= connection;
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 lastError = error;
             }
         }
-        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary)
+        if (ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, GetKnownSlotOwner(slot), _options.ClientAvailabilityZone))
         {
             try
             {
@@ -163,9 +162,11 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
         }
-        if (remote is not null && (!remote.IsAcceptingCommands || remote.Multiplexer is not { IsRetired: false } owner
-            || GetKnownReplicas(slot) is not { } current || !current.Nodes.Contains(owner))) remote = null;
-        return (remote, lastError, attempted);
+        while (fallbacks.TryTake(out var fallback))
+            if (fallback.IsAcceptingCommands && fallback.Multiplexer is { IsRetired: false } owner
+                && GetKnownReplicas(slot) is { } current && current.Nodes.Contains(owner))
+                return (fallback, lastError, attempted);
+        return (null, lastError, attempted);
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(

@@ -38,8 +38,8 @@ public enum RespireReadFrom
     /// <summary>Prefer replicas in the client's availability zone, then other replicas, then the primary.</summary>
     AzAffinity,
     /// <summary>
-    /// Prefer replicas in the client's availability zone, then a primary in that zone,
-    /// then other replicas, then the primary in any zone.
+    /// Prefer linked replicas in the client's availability zone, then a primary in that zone,
+    /// then other linked replicas, then unlinked replicas (same-zone first), then the primary in any zone.
     /// </summary>
     AzAffinityReplicasAndPrimary,
 }

@@ -14,7 +14,7 @@ internal static class AvailabilityZoneTelemetry
 
     internal static readonly ObservableCounter<long> Reads = RespireTelemetry.Meter.CreateObservableCounter(
         "respire.read.availability_zone", Observe, "{read}",
-        "Accepted independently routed read commands by server availability zone, when ClientAvailabilityZone is configured.");
+        "Accepted read commands by server availability zone, when ClientAvailabilityZone is configured.");
 
     internal sealed class Counter
     {

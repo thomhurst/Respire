@@ -8,6 +8,24 @@ namespace Respire.Tests;
 public class ReadFallbackPolicyTests
 {
     [Test]
+    public async Task ReplicaCandidatesPreserveHealthZoneAndRotationOrder()
+    {
+        var candidates = new ReadFallbackPolicy.ReplicaCandidates<int>();
+        await Assert.That(candidates.Offer(1, local: false, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+        await Assert.That(candidates.Offer(2, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+        await Assert.That(candidates.Offer(3, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+        await Assert.That(candidates.Offer(4, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
+        await Assert.That(candidates.Offer(5, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
+        await Assert.That(candidates.TryTake(out var linked)).IsTrue();
+        await Assert.That(linked).IsEqualTo(4);
+        await Assert.That(candidates.TryTake(out var unlinked)).IsTrue();
+        await Assert.That(unlinked).IsEqualTo(2);
+        await Assert.That(candidates.TryTake(out _)).IsFalse();
+        await Assert.That(candidates.Offer(6, local: true, linked: true, RespireReadFrom.AzAffinity)).IsTrue();
+        await Assert.That(candidates.Offer(7, local: false, linked: true, RespireReadFrom.Replica)).IsTrue();
+    }
+
+    [Test]
     public async Task RoleSwitchPinsRecoveryToTheOtherRole()
     {
         await Assert.That(ReadFallbackPolicy.AfterRoleSwitch(selectedReplica: false)).IsEqualTo(RespireReadFrom.Primary);
