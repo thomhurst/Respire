@@ -255,6 +255,70 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedTelemetryUsesEndpointAfterMoving(bool streaming)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
+            : command.StartsWith("BLPOP ") ? "_\r\n"u8.ToArray() : targetReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name is "SET" or "BLPOP"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = started.Enqueue,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        if (streaming)
+            await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray()), cancellationToken: timeout.Token);
+        else
+            _ = await client.Lists.LeftPopAsync("queue", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token);
+
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(started.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(started.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(target.ReceivedCommands).Contains(streaming ? "SET upload value" : "BLPOP queue 1");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DedicatedAcquisitionFailureRecordsOneActivityForIntendedEndpoint()
+    {
+        await using var server = Server(maxConnections: 4);
+        server.SuppressReply = command => command == "HELLO 3";
+        await using var client = RespireClient.Create(Options(server) with { ConnectTimeout = TimeSpan.FromMilliseconds(100) });
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await Assert.That(async () => await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray())))
+            .Throws<Exception>();
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single().Status).IsEqualTo(ActivityStatusCode.Error);
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(server.Port);
+    }
+
+    [Test]
     public async Task StandaloneUploadAcceptsMixedCaseHost()
     {
         await using var server = Server(maxConnections: 4);

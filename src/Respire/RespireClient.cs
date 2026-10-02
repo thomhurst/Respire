@@ -3432,13 +3432,9 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
-            var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
-                operation,
-                core.Endpoint,
-                core.Options.Database,
-                storedProcedureName: storedProcedureName) : default;
-            var telemetryStarted = core.Sentinel is null;
+            var started = RespireTelemetry.CaptureStartTimestamp();
+            RespireTelemetry.OperationScope telemetry = default;
+            var telemetryStarted = false;
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
@@ -3458,7 +3454,7 @@ public sealed partial class RespireClient : IRespireClient
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                            core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
+                            core.Options.Database, storedProcedureName: storedProcedureName, started: started);
                         telemetryStarted = true;
                     }
                     try
@@ -3502,9 +3498,10 @@ public sealed partial class RespireClient : IRespireClient
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
                             core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
                     : null);
-                if (connection is null)
+                if (!telemetryStarted)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
-                        sentinelStarted, timeoutError ?? ex, storedProcedureName);
+                        started, timeoutError ?? ex, storedProcedureName,
+                        endpoint: core.Sentinel is null ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
