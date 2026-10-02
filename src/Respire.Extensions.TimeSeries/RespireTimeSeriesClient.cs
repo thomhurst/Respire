@@ -1,3 +1,5 @@
+using Respire.Protocol;
+
 namespace Respire.Extensions.TimeSeries;
 
 /// <summary>Typed RedisTimeSeries operations over a caller-owned Respire client.</summary>
@@ -76,6 +78,10 @@ public sealed class RespireTimeSeriesClient
     /// is not atomic. Every timestamp is validated before the first chunk is sent. If a chunk fails to send, or the
     /// operation is cancelled, the chunks before it stay written. Samples rejected by the server do not stop later
     /// chunks: every chunk is sent, and the rejections are reported together at the end.
+    /// After a confirmed chunk, interruption reports progress through
+    /// <see cref="RespireTimeSeriesMultiAddProgress.FromException"/>. The current attempted chunk may have executed
+    /// even if its reply was lost; uncertain chunks are not automatically replayed. Failures before the first confirmed chunk
+    /// retain their original exception type and carry no confirmed progress.
     /// </remarks>
     /// <param name="samples">The key, timestamp, and value of each sample.</param>
     /// <param name="maxBatchSize">The largest number of samples sent in one TS.MADD command. It must be positive.</param>
@@ -83,6 +89,12 @@ public sealed class RespireTimeSeriesClient
     /// <exception cref="RespireTimeSeriesMultiAddException">
     /// The server rejected one or more samples. Accepted samples were written; the exception reports the
     /// timestamp or error of every sample, across all chunks.
+    /// </exception>
+    /// <exception cref="RespireTimeSeriesMultiAddInterruptedException">
+    /// A later chunk failed. Progress records confirmed outcomes and the uncertain chunk; InnerException is the original failure.
+    /// </exception>
+    /// <exception cref="RespireTimeSeriesMultiAddCanceledException">
+    /// Cancellation occurred after a confirmed chunk. The exception retains the original cancellation token and reports progress.
     /// </exception>
     public async ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
     {
@@ -102,33 +114,52 @@ public sealed class RespireTimeSeriesClient
 
         var timestamps = new long[sampleCount];
         string?[]? errors = null;
-        for (var start = 0; start < sampleCount;)
+        var start = 0;
+        var completedChunks = 0;
+        var uncertainCount = 0;
+        try
         {
-            var count = Math.Min(maxBatchSize, sampleCount - start);
-            var arguments = new RespireValue[checked(count * 3)];
-            for (var index = 0; index < count; index++)
+            while (start < sampleCount)
             {
-                var sample = stableSamples[start + index];
-                arguments[index * 3] = sample.Key;
-                arguments[index * 3 + 1] = validatedTimestamps[start + index];
-                arguments[index * 3 + 2] = sample.Value;
-            }
-            using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
-            if (result.Count != count) throw TimeSeriesReplyParser.UnexpectedReply();
-
-            for (var index = 0; index < count; index++)
-            {
-                var reply = result[index];
-                if (reply.IsError)
+                var count = Math.Min(maxBatchSize, sampleCount - start);
+                var arguments = new RespireValue[checked(count * 3)];
+                for (var index = 0; index < count; index++)
                 {
-                    errors ??= new string?[timestamps.Length];
-                    errors[start + index] = reply.ErrorMessage;
-                    continue;
+                    var sample = stableSamples[start + index];
+                    arguments[index * 3] = sample.Key;
+                    arguments[index * 3 + 1] = validatedTimestamps[start + index];
+                    arguments[index * 3 + 2] = sample.Value;
                 }
-                timestamps[start + index] = reply.AsInteger();
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                uncertainCount = count;
+                using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
+                if (result.Type != RespDataType.Array || result.Count != count) throw TimeSeriesReplyParser.UnexpectedReply();
 
-            start += count;
+                for (var index = 0; index < count; index++)
+                {
+                    var reply = result[index];
+                    if (reply.IsError)
+                    {
+                        errors ??= new string?[timestamps.Length];
+                        errors[start + index] = reply.ErrorMessage;
+                        continue;
+                    }
+                    if (reply.Type != RespDataType.Integer) throw TimeSeriesReplyParser.UnexpectedReply();
+                    timestamps[start + index] = reply.AsInteger();
+                }
+
+                start += count;
+                completedChunks++;
+                uncertainCount = 0;
+            }
+        }
+        catch (Exception error) when (start > 0)
+        {
+            var progress = new RespireTimeSeriesMultiAddProgress(sampleCount, completedChunks,
+                start, uncertainCount, timestamps, errors);
+            if (error is OperationCanceledException canceled)
+                throw new RespireTimeSeriesMultiAddCanceledException(progress, canceled);
+            throw new RespireTimeSeriesMultiAddInterruptedException(progress, error);
         }
         if (errors is null) return timestamps;
 

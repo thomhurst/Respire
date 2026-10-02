@@ -39,6 +39,28 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 
 `CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample. By default the whole batch goes to Redis as one `TS.MADD` command, and Respire does not limit its size. Redis finishes the command before it serves other clients, so for very large batches pass a maximum batch size, as in `MultiAddAsync(samples, maxBatchSize: 2_000)`. Respire then sends the samples in `TS.MADD` commands of at most that many samples, one after another, and still returns or reports every sample's outcome in request order. The chunked batch is not atomic: other clients can run commands between chunks, and if a chunk fails to send or the call is cancelled, the earlier chunks stay written. Timestamps are still validated before the first chunk is sent. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
 
+If a later chunk is interrupted after at least one confirmed reply, `MultiAddAsync` throws
+`RespireTimeSeriesMultiAddInterruptedException`, with the original failure in `InnerException`.
+Cancellation throws `RespireTimeSeriesMultiAddCanceledException`, which remains an
+`OperationCanceledException` and preserves its cancellation token. Both expose `Progress`;
+`RespireTimeSeriesMultiAddProgress.FromException(error)` also retrieves it from either exception.
+Failures before the first confirmed chunk retain their original exception type.
+
+Progress describes three consecutive parts of the request:
+
+- `CompletedSampleCount` samples have fully decoded replies, across `CompletedChunkCount` chunks.
+  `Timestamps` and `Errors` contain only this prefix, including any per-sample server rejections.
+- The next `UncertainSampleCount` samples belong to the attempted chunk without a complete reply.
+  This count is conservative even if the transport rejected the command locally. Cancellation
+  detected before attempting the next chunk leaves this count at zero.
+- The final `UnattemptedSampleCount` samples were never attempted by this call.
+
+A lost reply does **not** prove that a write failed. Do not automatically replay the uncertain
+chunk or the whole batch: duplicate policies and server-assigned timestamps can change the result.
+Respire does not automatically replay uncertain chunks. Server rejection replies still accumulate across
+all chunks and produce the existing `RespireTimeSeriesMultiAddException` when every chunk finishes.
+
+
 Timestamps are checked before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions, and `Align` take a non-negative millisecond timestamp, `Minimum`, or `Maximum`.
 
 ## Client-side cache

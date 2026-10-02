@@ -451,6 +451,80 @@ public class TimeSeriesClientTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MultiAdd_InterruptedChunkReportsConfirmedAndUncertainSamples(bool cancel)
+    {
+        await using var server = new FakeRespServer(Frame("*2\r\n:11\r\n-ERR missing series\r\n"));
+        server.SuppressReply = command => command.StartsWith("TS.MADD third ");
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        using var cancellation = new CancellationTokenSource();
+        var write = timeSeries.MultiAddAsync([
+            new("first", 11, 1), new("missing", 12, 2), new("third", 13, 3),
+            new("fourth", 14, 4), new("unsent", 15, 5)], 2, cancellation.Token).AsTask();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(5, deadline.Token);
+        if (cancel) await cancellation.CancelAsync();
+        else server.CloseConnections();
+
+        var error = await Assert.That(async () => await write.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
+        if (cancel)
+        {
+            await Assert.That(error).IsTypeOf<RespireTimeSeriesMultiAddCanceledException>();
+            await Assert.That(((OperationCanceledException)error!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else
+        {
+            await Assert.That(error).IsTypeOf<RespireTimeSeriesMultiAddInterruptedException>();
+            await Assert.That(error!.InnerException).IsTypeOf<RespireConnectionException>();
+        }
+        var progress = RespireTimeSeriesMultiAddProgress.FromException(error!);
+        await Assert.That(progress).IsNotNull();
+        await Assert.That(progress!.CompletedChunkCount).IsEqualTo(1);
+        await Assert.That(progress.TotalSampleCount).IsEqualTo(5);
+        await Assert.That(progress.CompletedSampleCount).IsEqualTo(2);
+        await Assert.That(progress.UncertainSampleCount).IsEqualTo(2);
+        await Assert.That(progress.UnattemptedSampleCount).IsEqualTo(1);
+        await Assert.That(progress.Timestamps).IsEquivalentTo([(long?)11, null]);
+        await Assert.That(progress.Errors).IsEquivalentTo([null, "ERR missing series"]);
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MultiAdd_MalformedLaterReplyDoesNotExposePartiallyDecodedChunkAsConfirmed()
+    {
+        await using var server = new FakeRespServer(
+            Frame("*2\r\n:11\r\n:12\r\n"), Frame("*2\r\n:13\r\n+invalid\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var error = await Assert.That(async () => await timeSeries.MultiAddAsync([
+            new("a", 11, 1), new("b", 12, 2), new("c", 13, 3),
+            new("d", 14, 4), new("e", 15, 5)], 2)).Throws<RespireTimeSeriesMultiAddInterruptedException>();
+        await Assert.That(error!.Progress.CompletedChunkCount).IsEqualTo(1);
+        await Assert.That(error.Progress.Timestamps).IsEquivalentTo([(long?)11, 12]);
+        await Assert.That(error.Progress.UncertainSampleCount).IsEqualTo(2);
+        await Assert.That(error.Progress.UnattemptedSampleCount).IsEqualTo(1);
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MultiAdd_PreCancellationPreservesOriginalExceptionAndSendsNothing()
+    {
+        await using var server = new FakeRespServer(Ok);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var error = await Assert.That(async () => await timeSeries.MultiAddAsync(
+            [new("first", 1, 1), new("second", 2, 2)], 1, cancellation.Token)).Throws<OperationCanceledException>();
+        var progress = RespireTimeSeriesMultiAddProgress.FromException(error!);
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(progress).IsNull();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task MultiAdd_SnapshotsMutableSamplesBeforeSendingChunks()
     {
         await using var server = new FakeRespServer(Frame("*1\r\n:1\r\n"));
