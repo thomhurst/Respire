@@ -244,21 +244,23 @@ internal sealed partial class SentinelRouter
                     ReportingSentinel: sentinel);
                 // Only the generation current when the event arrived can be its source. A later
                 // failover back to the same endpoint publishes a new generation that must survive.
-                var arrivedDuring = Current;
-                QueueNotificationRediscovery(in hint);
-                if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
-                    && !SameEndpoint(arrivedDuring.Endpoint, source))
-                    StartSwitchSourceResolution(hint, arrivedDuring, cancellationToken);
+                lock (_gate)
+                {
+                    var arrivedDuring = Current;
+                    QueueNotificationRediscovery(in hint);
+                    if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
+                        && !SameEndpoint(arrivedDuring.Endpoint, source))
+                        StartSwitchSourceResolution(hint, arrivedDuring, cancellationToken);
+                }
                 return ValueTask.CompletedTask;
         }
         return ValueTask.CompletedTask;
     }
 
     private async Task ResolveAndRetireSwitchSourceAsync(SentinelHint hint, Generation arrivedDuring,
-        CancellationToken cancellationToken, long? evidenceVersion = null)
+        CancellationToken cancellationToken, SentinelNotificationCoalescer.SourceResolution? resolution = null)
     {
-        long version;
-        lock (_gate) version = evidenceVersion ?? _coalescer.Revision;
+        lock (_gate) resolution ??= _coalescer.BeginSourceResolution(in hint);
         try
         {
             var oldPrimary = hint.OldPrimary!.Value;
@@ -269,12 +271,7 @@ internal sealed partial class SentinelRouter
             {
                 if (_disposed) return;
                 _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
-                // DNS may finish after a failback hint or successful discovery. Use the evidence
-                // still retained by the worker. An already completed newer hint supersedes it;
-                // without newer evidence, a late source lookup must still fence its generation.
-                if (_coalescer.Active is null && _coalescer.Revision != version) return;
-                var retained = _coalescer.Active ?? hint.WithSourceAddresses(oldPrimary, addresses);
-                if (_coalescer.Pending is { } pending) retained = SentinelNotificationCoalescer.Merge(retained, in pending);
+                var retained = resolution.Hint.WithSourceAddresses(oldPrimary, addresses);
                 var current = Current;
                 // Do not apply an old resolution to a later generation for the same endpoint:
                 // a failback can legitimately publish that address again. A changed endpoint
@@ -295,6 +292,10 @@ internal sealed partial class SentinelRouter
             SafeLog(error, static (logger, error)
                 => logger.LogDebug(error, "Could not retire the primary named by a Sentinel switch event"));
         }
+        finally
+        {
+            lock (_gate) _coalescer.EndSourceResolution(resolution);
+        }
     }
 
     // Starts and registers the resolution in one step under the gate. Disposal sets _disposed before
@@ -306,8 +307,8 @@ internal sealed partial class SentinelRouter
         lock (_gate)
         {
             if (_disposed) return;
-            var version = _coalescer.Revision;
-            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, version), CancellationToken.None);
+            var evidence = _coalescer.BeginSourceResolution(in hint);
+            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, evidence), CancellationToken.None);
             _switchSourceResolutions.Add(resolution);
         }
         _ = resolution.ContinueWith(static (completed, state) =>
@@ -406,6 +407,7 @@ internal sealed partial class SentinelRouter
         while (!_lifetime.IsCancellationRequested)
         {
             var succeeded = false;
+            Generation? validated = null;
             var retryDelay = TimeSpan.Zero;
             try
             {
@@ -429,7 +431,7 @@ internal sealed partial class SentinelRouter
                     }
                     hint = _coalescer.Active;
                 }
-                await GetGenerationAsync(_lifetime.Token, forceDiscovery: true, notificationHint: hint).ConfigureAwait(false);
+                validated = await GetGenerationAsync(_lifetime.Token, forceDiscovery: true, notificationHint: hint).ConfigureAwait(false);
                 succeeded = true;
                 if (consecutiveFailures > 0)
                     SafeLog(consecutiveFailures, static (logger, count) => logger.LogInformation(
@@ -447,6 +449,19 @@ internal sealed partial class SentinelRouter
             lock (_gate)
             {
                 if (_disposed) return;
+                // Discovery releases its semaphore before this lock. A command may have
+                // published another generation meanwhile; old reporters cannot undo it.
+                if (succeeded && !ReferenceEquals(validated, Current))
+                {
+                    if (_coalescer.SupersedeActive() is null)
+                    {
+                        _notificationRediscovery = null;
+                        return;
+                    }
+                    failures = 0;
+                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    continue;
+                }
                 var policy = core.Options.ReconnectPolicy;
                 if (!succeeded && policy?.IsExhausted(failures) == true)
                 {
@@ -455,7 +470,7 @@ internal sealed partial class SentinelRouter
                     _notificationRediscovery = null;
                     return;
                 }
-                if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: succeeded ? Current?.Endpoint : null) is not { } next)
+                if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: validated?.Endpoint) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
                     // because a switch may already have retired the current generation. Without a

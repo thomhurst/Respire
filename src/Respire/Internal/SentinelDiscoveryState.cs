@@ -4,13 +4,16 @@ namespace Respire.Internal;
 
 // Reusable discovery state for runtime failover. Configured endpoints are never evicted;
 // learned peers are bounded, deduplicated by host/port, and copied before asynchronous work.
-internal sealed class SentinelDiscoveryState
+internal sealed partial class SentinelDiscoveryState
 {
     internal const int MaximumDiscoveredEndpoints = 64;
     private readonly object _gate = new();
     private readonly List<RespireEndpoint> _endpoints = [];
     private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
     private readonly int _configuredCount;
+    // Observe raises the epoch floor before transport/ROLE validation. Commit advances the
+    // accepted epoch only after validation. Failed validation never lowers either floor;
+    // equal/missing epochs may only reuse the observed owner or one unambiguous address alias.
     private long? _acceptedEpoch;
     private RespireEndpoint? _observedPrimary;
     private long? _observedEpoch;
@@ -39,24 +42,35 @@ internal sealed class SentinelDiscoveryState
     }
 
     private bool SameAddress(RespireEndpoint primary, RespireEndpoint current, string[]? addresses)
-        => _observedAddresses?.Contains(SentinelResolver.NormalizeHost(primary.Host), StringComparer.OrdinalIgnoreCase) == true
-            || addresses?.Contains(SentinelResolver.NormalizeHost(current.Host), StringComparer.OrdinalIgnoreCase) == true
-            || addresses is not null && _observedAddresses is not null
-                && addresses.Intersect(_observedAddresses, StringComparer.OrdinalIgnoreCase).Any();
+        => SingleAddress(primary, addresses) is { } candidate
+            && SingleAddress(current, _observedAddresses) is { } observed
+            && StringComparer.OrdinalIgnoreCase.Equals(candidate, observed);
+
+    private static string? SingleAddress(RespireEndpoint endpoint, string[]? addresses)
+    {
+        if (System.Net.IPAddress.TryParse(endpoint.Host, out var literal)) return SentinelResolver.NormalizeAddress(literal);
+        if (addresses is not { Length: > 0 }) return null;
+        var address = SentinelResolver.NormalizeHost(addresses[0]);
+        for (var index = 1; index < addresses.Length; index++)
+            if (!StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(addresses[index]))) return null;
+        return address;
+    }
 
     internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
     {
-        lock (_gate)
+        lock (_gate) return TryObserveConfigurationLocked(primary, epoch, addresses);
+    }
+
+    private bool TryObserveConfigurationLocked(RespireEndpoint primary, long? epoch, string[]? addresses)
+    {
+        if (!IsCurrentConfigurationLocked(primary, epoch, addresses)) return false;
+        if (epoch is { } candidate && (_observedEpoch is null || candidate > _observedEpoch))
         {
-            if (!IsCurrentConfigurationLocked(primary, epoch, addresses)) return false;
-            if (epoch is { } candidate && (_observedEpoch is null || candidate > _observedEpoch))
-            {
-                _observedEpoch = candidate;
-                _observedPrimary = primary;
-                _observedAddresses = addresses;
-            }
-            return true;
+            _observedEpoch = candidate;
+            _observedPrimary = primary;
+            _observedAddresses = addresses;
         }
+        return true;
     }
 
     internal void WarnMissingEpoch(ILogger? logger, RespireEndpoint sentinel)
@@ -64,16 +78,19 @@ internal sealed class SentinelDiscoveryState
         if (logger is null || Interlocked.Exchange(ref _missingEpochWarning, 1) != 0) return;
         try
         {
-            logger.LogWarning("Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.", sentinel);
+            LogMissingEpoch(logger, sentinel);
         }
         catch { /* Diagnostic providers must not prevent failover. */ }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.")]
+    private static partial void LogMissingEpoch(ILogger logger, RespireEndpoint sentinel);
 
     internal void AcceptConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
     {
         lock (_gate)
         {
-            if (!TryObserveConfiguration(primary, epoch, addresses))
+            if (!TryObserveConfigurationLocked(primary, epoch, addresses))
                 throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
             _acceptedEpoch = epoch ?? _observedEpoch;
         }

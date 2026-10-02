@@ -51,6 +51,20 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConfigurationEpochRejectsAmbiguousDnsOverlap(bool candidateIsNumeric)
+    {
+        var state = new SentinelDiscoveryState([]);
+        state.AcceptConfiguration(new("active.internal", 6379), 10, ["192.0.2.1", "192.0.2.2"]);
+        var candidate = new RespireEndpoint(candidateIsNumeric ? "192.0.2.1" : "stale.internal", 6379);
+        var addresses = candidateIsNumeric ? null : new[] { "192.0.2.1", "192.0.2.3" };
+        await Assert.That(state.TryObserveConfiguration(candidate, 10, addresses)).IsFalse();
+        await Assert.That(state.TryObserveConfiguration(candidate, null, addresses)).IsFalse();
+        await Assert.That(state.TryObserveConfiguration(candidate, 11, addresses)).IsTrue();
+    }
+
+    [Test]
     public async Task RandomMergeOrdersPreserveSourceAddressesAndEveryReporter()
     {
         var random = new Random(678);
@@ -64,14 +78,12 @@ public class SentinelNotificationTests
             SentinelHint? merged = null;
             foreach (var hint in shuffled) merged = SentinelNotificationCoalescer.Merge(merged, in hint);
             var result = merged!.Value;
-            var sources = new Dictionary<RespireEndpoint, string[]?> { [result.OldPrimary!.Value] = result.OldPrimaryAddresses };
-            foreach (var source in result.AdditionalSources!)
-                sources[source.Endpoint] = source.Addresses;
-            var reporters = new[] { result.ReportingSentinel!.Value }.Concat(result.AdditionalReportingSentinels!).ToArray();
+            var sources = result.Sources.ToDictionary(source => source.Endpoint, source => source.Addresses);
+            var reporters = result.Reporters;
             await Assert.That(sources.Count).IsEqualTo(hints.Length);
             await Assert.That(reporters).IsEquivalentTo(hints.Select(hint => hint.ReportingSentinel!.Value));
             foreach (var hint in hints)
-                await Assert.That(sources[hint.OldPrimary!.Value]).IsEquivalentTo(hint.OldPrimaryAddresses!);
+                await Assert.That(sources[hint.OldPrimary!.Value]).IsEquivalentTo(hint.Sources[0].Addresses!);
             await Assert.That(result.MustRediscover).IsTrue();
         }
     }
@@ -83,6 +95,43 @@ public class SentinelNotificationTests
         await Assert.That(actual.Targets).IsEquivalentTo(expected.Targets);
         await Assert.That(actual.Sources).IsEquivalentTo(expected.Sources);
         await Assert.That(actual.Reporters).IsEquivalentTo(expected.Reporters);
+    }
+
+    [Test]
+    public async Task OfferedEvidenceIsAlwaysQueuedOrDiscoveredAcrossWorkerTransitions()
+    {
+        var random = new Random(727);
+        for (var run = 0; run < 64; run++)
+        {
+            var coalescer = new SentinelNotificationCoalescer();
+            var offered = new HashSet<RespireEndpoint>();
+            var discovered = new HashSet<RespireEndpoint>();
+            var resolution = coalescer.BeginSourceResolution(new SentinelHint("lookup"));
+            try
+            {
+                for (var step = 0; step < 64; step++)
+                {
+                    if (coalescer.Active is null || random.Next(3) != 0)
+                    {
+                        var source = new RespireEndpoint($"source-{run}-{step}", 6379);
+                        offered.Add(source);
+                        coalescer.Offer(new SentinelHint($"hint-{step}", OldPrimary: source, MustRediscover: true), false);
+                    }
+                    else
+                    {
+                        discovered.UnionWith(coalescer.Active.Value.Sources.Select(source => source.Endpoint));
+                        var next = random.Next(2) == 0 ? coalescer.TakePending() : coalescer.SupersedeActive();
+                        if (next is null) coalescer.Complete();
+                    }
+                    var retained = new HashSet<RespireEndpoint>(discovered);
+                    if (coalescer.Active is { } active) retained.UnionWith(active.Sources.Select(source => source.Endpoint));
+                    if (coalescer.Pending is { } pending) retained.UnionWith(pending.Sources.Select(source => source.Endpoint));
+                    await Assert.That(retained).IsEquivalentTo(offered);
+                    await Assert.That(resolution.Hint.Sources.Select(source => source.Endpoint)).IsEquivalentTo(offered);
+                }
+            }
+            finally { coalescer.EndSourceResolution(resolution); }
+        }
     }
 
     [Test]
@@ -252,7 +301,7 @@ public class SentinelNotificationTests
 
         // B may still report ROLE master briefly, so the target shortcut must not consume C's hint.
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
-        await Assert.That(coalescer.Pending!.Value.AdditionalSources!.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        await Assert.That(coalescer.Pending!.Value.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
     }
 
     [Test]
@@ -269,7 +318,7 @@ public class SentinelNotificationTests
         var pending = coalescer.Pending!.Value;
         await Assert.That(pending.Target).IsEqualTo(c);
         await Assert.That(pending.ReportingSentinel).IsEqualTo(sentinelForC);
-        await Assert.That(pending.AdditionalSources!.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        await Assert.That(pending.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
     }
 
     [Test]
@@ -287,9 +336,9 @@ public class SentinelNotificationTests
         await Assert.That(pending.MustRediscover).IsTrue();
         await Assert.That(pending.Target).IsNull();
         await Assert.That(pending.ReportingSentinel).IsEqualTo(bToAReporter);
-        await Assert.That(pending.AdditionalReportingSentinels).IsEquivalentTo([delayedReporter]);
+        await Assert.That(pending.Reporters.Skip(1)).IsEquivalentTo([delayedReporter]);
         await Assert.That(pending.OldPrimary).IsEqualTo(a);
-        await Assert.That(pending.AdditionalSources!.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        await Assert.That(pending.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
     }
 
     [Test]
@@ -332,7 +381,7 @@ public class SentinelNotificationTests
 
         var next = coalescer.TakePending(activeFailed: false)!.Value;
         await Assert.That(next.ReportingSentinel).IsEqualTo(delayed);
-        await Assert.That(next.AdditionalReportingSentinels).Contains(currentReporter);
+        await Assert.That(next.Reporters.Skip(1)).Contains(currentReporter);
         await Assert.That(next.MustRediscover).IsTrue();
     }
 
@@ -350,7 +399,7 @@ public class SentinelNotificationTests
         var merged = coalescer.Pending!.Value;
 
         await Assert.That(merged.ReportingSentinel).IsEqualTo(reporterForB);
-        await Assert.That(merged.AdditionalReportingSentinels).IsEquivalentTo([reporterForA]);
+        await Assert.That(merged.Reporters.Skip(1)).IsEquivalentTo([reporterForA]);
         await Assert.That(merged.MustRediscover).IsTrue();
     }
 
@@ -365,8 +414,8 @@ public class SentinelNotificationTests
         coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
         var pending = coalescer.TakePending();
 
-        await Assert.That(pending!.Value.AdditionalSources!.Select(static source => source.Endpoint)).Contains(NewPrimary);
-        await Assert.That(pending.Value.AdditionalSources![0].Addresses).IsEquivalentTo(["192.0.2.2"]);
+        await Assert.That(pending!.Value.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        await Assert.That(pending.Value.Sources.Single(source => source.Endpoint == NewPrimary).Addresses).IsEquivalentTo(["192.0.2.2"]);
     }
 
     [Test]
@@ -379,7 +428,7 @@ public class SentinelNotificationTests
         coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary), targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(c);
-        await Assert.That(coalescer.Pending!.Value.AdditionalTargets).IsNull();
+        await Assert.That(coalescer.Pending!.Value.Targets).IsEquivalentTo([NewPrimary, c]);
     }
 
     [Test]
@@ -394,7 +443,7 @@ public class SentinelNotificationTests
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
         await Assert.That(coalescer.Pending!.Value.Target).IsNull();
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
-        await Assert.That(coalescer.Pending!.Value.AdditionalTargets).IsNull();
+        await Assert.That(coalescer.Pending!.Value.Targets).IsEquivalentTo([NewPrimary, a]);
     }
 
     [Test]
@@ -408,7 +457,7 @@ public class SentinelNotificationTests
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
         await Assert.That(coalescer.Pending!.Value.OldPrimary).IsEqualTo(OldPrimary);
-        await Assert.That(coalescer.Pending!.Value.AdditionalSources!.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        await Assert.That(coalescer.Pending!.Value.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
     }
 
     [Test]
@@ -423,10 +472,10 @@ public class SentinelNotificationTests
         var catchUp = coalescer.TakePending();
 
         await Assert.That(catchUp!.Value.ReportingSentinel).IsEqualTo(first);
-        await Assert.That(catchUp.Value.AdditionalReportingSentinels).IsEquivalentTo([second]);
+        await Assert.That(catchUp.Value.Reporters.Skip(1)).IsEquivalentTo([second]);
         var secondPass = coalescer.TakePending();
         await Assert.That(secondPass!.Value.ReportingSentinel).IsEqualTo(second);
-        await Assert.That(secondPass.Value.AdditionalReportingSentinels).IsNull();
+        await Assert.That(secondPass.Value.Reporters.Skip(1)).IsEmpty();
     }
 
     [Test]
@@ -444,7 +493,7 @@ public class SentinelNotificationTests
         var next = coalescer.TakePending(activeFailed: false)!.Value;
         await Assert.That(next.MustRediscover).IsTrue();
         await Assert.That(next.ReportingSentinel).IsEqualTo(second);
-        await Assert.That(next.AdditionalReportingSentinels).IsEquivalentTo([third]);
+        await Assert.That(next.Reporters.Skip(1)).IsEquivalentTo([third]);
     }
 
     [Test]
@@ -568,7 +617,7 @@ public class SentinelNotificationTests
         var afterSuccess = coalescer.TakePending(activeFailed: false);
 
         await Assert.That(replacement.ReportingSentinel).IsEqualTo(second);
-        await Assert.That(replacement.AdditionalReportingSentinels).IsNull();
+        await Assert.That(replacement.Reporters.Skip(1)).IsEmpty();
         await Assert.That(afterSuccess).IsNull();
     }
 

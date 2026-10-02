@@ -862,6 +862,35 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DelayedSourceResolutionRetainsSourceAfterDeliveryGap(bool discoveryCompleted)
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var current = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
+        typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
+        var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
+        var hint = new SentinelHint("switch", new("127.0.0.1", 6380), current.Endpoint);
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
+            .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(router)!;
+        coalescer.Offer(in hint, targetIsCurrent: false);
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
+        coalescer.Complete();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
+        if (discoveryCompleted) coalescer.Complete();
+        addresses.SetResult([IPAddress.Loopback]);
+        await pending.WaitAsync(Limit);
+        await Assert.That(current.IsRetired).IsTrue();
+    }
+
+    [Test]
     [NotInParallel]
     public async Task RetiredSwitchSourceResolutionQueuesFreshDiscoveryBehindActiveHint()
     {
@@ -1109,6 +1138,7 @@ public class SentinelRoutingTests
     private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _recoveries;
+        internal Action? OnRecovery { get; set; }
         internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures { get; } = new();
         internal int Recoveries => Volatile.Read(ref _recoveries);
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
@@ -1123,8 +1153,70 @@ public class SentinelRoutingTests
             if (message.StartsWith("Sentinel notification-triggered primary discovery failed", StringComparison.Ordinal))
                 Failures.Enqueue(level);
             else if (message.StartsWith("Sentinel notification-triggered primary discovery succeeded after", StringComparison.Ordinal))
+            {
                 Interlocked.Increment(ref _recoveries);
+                OnRecovery?.Invoke();
+            }
         }
+    }
+
+    [Test]
+    public async Task NotificationReconciliationCannotOverwriteInterveningPublication()
+    {
+        await using var original = Primary();
+        var ready = false;
+        await using var promoted = Primary((_, command) => command == "ROLE" && !Volatile.Read(ref ready)
+            ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null);
+        var freshPort = original.Port;
+        var stalePort = original.Port;
+        await using var fresh = Sentinel(() => Volatile.Read(ref freshPort));
+        await using var stale = Sentinel(() => Volatile.Read(ref stalePort));
+        await using var alternate = Sentinel(() => Volatile.Read(ref stalePort));
+        foreach (var sentinel in new[] { fresh, stale, alternate })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        }
+        var logger = new RediscoveryLogger();
+        await using var client = RespireClient.Create(Options(fresh.Port) with
+        {
+            Endpoints = [new("127.0.0.1", fresh.Port), new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)],
+            LoggerFactory = logger,
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
+        });
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, fresh);
+        await WaitForInitialSentinelValidationAsync(client, stale);
+        await WaitForInitialSentinelValidationAsync(client, alternate);
+        var router = client.Core.Sentinel!;
+        using var release = new ManualResetEventSlim();
+        var revalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        logger.OnRecovery = () =>
+        {
+            revalidated.TrySetResult();
+            if (!release.Wait(Limit)) throw new TimeoutException("Reconciliation was not released");
+        };
+        Volatile.Write(ref freshPort, promoted.Port);
+        Volatile.Write(ref stalePort, promoted.Port);
+        router.QueueNotificationRediscovery(new SentinelHint("switch", new("127.0.0.1", promoted.Port),
+            new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", fresh.Port),
+            AdditionalReportingSentinels: [new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)]));
+        var worker = router.NotificationRediscovery!;
+        try
+        {
+            using var deadline = new CancellationTokenSource(Limit);
+            while (logger.Failures.IsEmpty) await Task.Delay(5, deadline.Token);
+            Volatile.Write(ref ready, true);
+            await revalidated.Task.WaitAsync(Limit);
+            Volatile.Write(ref freshPort, original.Port);
+            var failback = await router.GetGenerationAsync(deadline.Token, forceDiscovery: true);
+            await Assert.That(failback.Endpoint.Port).IsEqualTo(original.Port);
+            release.Set();
+            await worker.WaitAsync(Limit);
+            await Assert.That(router.Current).IsSameReferenceAs(failback);
+        }
+        finally { release.Set(); }
     }
 
     private sealed class MonitorExhaustionLogger(int port) : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger

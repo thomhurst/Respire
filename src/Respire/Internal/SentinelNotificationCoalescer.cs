@@ -37,21 +37,7 @@ internal readonly record struct SentinelHint(
         }
     }
     internal RespireEndpoint? OldPrimary => Sources.Length == 0 ? (RespireEndpoint?)null : Sources[0].Endpoint;
-    internal string[]? OldPrimaryAddresses => Sources.Length == 0 ? null : Sources[0].Addresses;
-    internal SentinelSwitchSource[]? AdditionalSources => Sources.Length < 2 ? null : Sources[1..];
     internal RespireEndpoint? ReportingSentinel => Reporters.Length == 0 ? (RespireEndpoint?)null : Reporters[0];
-    internal RespireEndpoint[]? AdditionalReportingSentinels => Reporters.Length < 2 ? null : Reporters[1..];
-    internal RespireEndpoint[]? AdditionalTargets
-    {
-        get
-        {
-            var sources = Sources;
-            var selected = Target;
-            return Targets.Where(target => !sources.Any(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target))
-                && (selected is null || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(selected.Value, target)))
-                .ToArray() is { Length: > 0 } others ? others : null;
-        }
-    }
 
     internal SentinelHint WithSourceAddresses(RespireEndpoint endpoint, string[] addresses)
         => this with { Sources = Sources.Select(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)
@@ -66,7 +52,23 @@ internal readonly record struct SentinelHint(
 internal sealed class SentinelNotificationCoalescer
 {
     private SentinelHint? _pending;
-    internal long Revision { get; private set; }
+    private readonly HashSet<SourceResolution> _sourceResolutions = [];
+
+    // A pending DNS lookup retains its switch evidence across worker completion and later
+    // down/gap hints. Later targets remain visible so a failback is never retired by old DNS.
+    internal sealed class SourceResolution(SentinelHint hint)
+    {
+        internal SentinelHint Hint = hint;
+    }
+
+    internal SourceResolution BeginSourceResolution(in SentinelHint hint)
+    {
+        var resolution = new SourceResolution(hint);
+        _sourceResolutions.Add(resolution);
+        return resolution;
+    }
+
+    internal void EndSourceResolution(SourceResolution resolution) => _sourceResolutions.Remove(resolution);
 
     /// <summary>The hint the worker is discovering, or null when no worker runs.</summary>
     internal SentinelHint? Active { get; private set; }
@@ -84,7 +86,7 @@ internal sealed class SentinelNotificationCoalescer
     /// <param name="targetIsCurrent">Whether the hint's target is already the healthy current primary.</param>
     internal bool Offer(in SentinelHint hint, bool targetIsCurrent)
     {
-        Revision++;
+        foreach (var resolution in _sourceResolutions) resolution.Hint = Merge(resolution.Hint, in hint);
         // State table: idle starts one worker; active coalesces duplicates; active+pending unions evidence.
         if (Active is null)
         {
@@ -147,17 +149,9 @@ internal sealed class SentinelNotificationCoalescer
     /// <summary>Retains a completed DNS lookup for its source in active and pending hints.</summary>
     internal void RetainResolvedOldPrimaryAddresses(RespireEndpoint oldPrimary, string[] addresses)
     {
-        if (Active is { } active) Active = AddResolvedAddresses(active, oldPrimary, addresses);
-        if (_pending is { } pending) _pending = AddResolvedAddresses(pending, oldPrimary, addresses);
+        if (Active is { } active) Active = active.WithSourceAddresses(oldPrimary, addresses);
+        if (_pending is { } pending) _pending = pending.WithSourceAddresses(oldPrimary, addresses);
     }
-
-    private static SentinelHint AddResolvedAddresses(SentinelHint hint, RespireEndpoint oldPrimary, string[] addresses)
-        => hint.WithSourceAddresses(oldPrimary, addresses);
-
-    private static IEnumerable<RespireEndpoint> EnumerateReportingSentinels(SentinelHint hint) => hint.Reporters;
-
-    private static SentinelHint PrioritizeReportingSentinels(SentinelHint hint, IEnumerable<RespireEndpoint> prioritized)
-        => hint with { Reporters = UnionEndpoints(prioritized, hint.Reporters) };
 
     // Set union preserves first-seen reporter order without assigning event chronology.
     private static RespireEndpoint[] UnionEndpoints(
@@ -187,11 +181,11 @@ internal sealed class SentinelNotificationCoalescer
     {
         if (_pending is not { } next)
         {
-            if (Active is not { AdditionalReportingSentinels: { Length: > 0 } reporters } active) return null;
+            if (Active is not { Reporters.Length: > 1 } active) return null;
             next = (activeFailed ? active : ForReporterReconciliation(active, validatedPrimary)) with
             {
                 MustRediscover = true,
-                Reporters = reporters,
+                Reporters = active.Reporters[1..],
             };
             Active = next;
             return next;
@@ -203,27 +197,28 @@ internal sealed class SentinelNotificationCoalescer
             if (!activeFailed && next.Key == activeHint.Key) next = ForReporterReconciliation(next, validatedPrimary);
             if (activeFailed)
             {
-                var unqueriedReporters = EnumerateReportingSentinels(next)
+                var unqueriedReporters = next.Reporters
                     .Where(reporter => activeHint.ReportingSentinel is not { } activeReporter
                         || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
                 if (unqueriedReporters.Length > 0)
                 {
-                    var reporters = UnionEndpoints(unqueriedReporters, EnumerateReportingSentinels(next), activeHint.ReportingSentinel);
+                    var reporters = UnionEndpoints(unqueriedReporters, next.Reporters, activeHint.ReportingSentinel);
                     next = next with
                     {
                         Reporters = reporters,
                     };
                 }
             }
-            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
+            else if (activeHint.Reporters.Length > 1)
             {
+                var unqueriedReporters = activeHint.Reporters[1..];
                 var unqueried = ForReporterReconciliation(activeHint, validatedPrimary) with
                 {
                     Reporters = unqueriedReporters,
                 };
                 next = Merge(unqueried, in next);
-                next = PrioritizeReportingSentinels(next, unqueriedReporters);
+                next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
         }
         _pending = null;
@@ -240,6 +235,14 @@ internal sealed class SentinelNotificationCoalescer
             Sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
                 !SentinelResolver.MatchesSwitchSource(primary, source)).ToArray() : hint.Sources,
         };
+
+    /// <summary>Discards superseded active evidence while retaining hints offered during its discovery.</summary>
+    internal SentinelHint? SupersedeActive()
+    {
+        Active = _pending;
+        _pending = null;
+        return Active;
+    }
 
     /// <summary>Ends the worker: no hint is active or pending.</summary>
     internal void Complete()
