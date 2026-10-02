@@ -1249,6 +1249,20 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks legacy Claude review with five-level heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "##### Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks legacy Claude review with six-level heading and underline formatting'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "###### __Review of #654__`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks titleless legacy Claude review with summary and numbered issues'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Summary`nReview complete.`n`n## Issues`n`n### 1. Retire the lease after removing it`nThe stale lease remains visible.")

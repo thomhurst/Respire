@@ -385,9 +385,9 @@ function Test-IsClaudeReviewComment {
     # Legacy Claude reviews used a small set of explicit first-line headings.
     $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
     if ($firstLine.Count -eq 0) { return $false }
-    $title = $firstLine[0].Trim() -replace '^#{1,4}\s*', '' -replace '^\*\*\s*', ''
+    $title = $firstLine[0].Trim() -replace '^#{1,6}\s*', '' -replace '^(?:\*\*|__)\s*', ''
     $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
-    $title = $title -replace '\*\*.*$', ''
+    $title = $title -replace '(?:\*\*|__).*$' , ''
     if ($title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:\b|\s|:|$)') {
         return $true
     }
