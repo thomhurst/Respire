@@ -5,7 +5,8 @@ namespace Respire.Internal;
 /// <summary>
 /// Process-wide monotonic clock for Cluster slot owner-mutation fences and maintenance-handler
 /// subscription epochs. Receive loops read it as soon as they identify a <c>SMIGRATED</c> push;
-/// routers read it when MOVED, slot clears or discovery change an owner.
+/// routers read it when MOVED, slot clears or discovery change an owner. Capture scopes belong
+/// to one multiplexer, so completing a push only prunes that multiplexer’s handler epochs.
 /// </summary>
 /// <remarks>
 /// The clock is global rather than per router because the receive loop reads it before it knows
@@ -16,7 +17,8 @@ namespace Respire.Internal;
 internal static class ClusterSlotMutationClock
 {
     private static readonly object s_gate = new();
-    private static readonly SortedSet<long> s_activeCaptures = [];
+    private static readonly SortedSet<long> s_globalCaptures = [];
+    private static readonly ConditionalWeakTable<RespireConnectionMultiplexer, SortedSet<long>> s_multiplexerCaptures = new();
     private static readonly List<WeakReference<RespireConnectionMultiplexer>> s_multiplexers = [];
     private static long s_value;
 
@@ -40,29 +42,39 @@ internal static class ClusterSlotMutationClock
         }
     }
 
-    internal static CaptureScope BeginCapture()
+    internal static CaptureScope BeginCapture(RespireConnectionMultiplexer? multiplexer = null)
     {
         lock (s_gate)
         {
             var token = ++s_value;
-            s_activeCaptures.Add(token);
-            return new CaptureScope(token);
+            if (multiplexer is null) s_globalCaptures.Add(token);
+            else s_multiplexerCaptures.GetOrCreateValue(multiplexer).Add(token);
+            return new CaptureScope(token, multiplexer);
         }
     }
 
-    internal static long EarliestActiveCapture
-    {
-        get
-        {
-            lock (s_gate) return s_activeCaptures.Count == 0 ? long.MaxValue : s_activeCaptures.Min;
-        }
-    }
-
-    private static RespireConnectionMultiplexer[] EndCapture(long token)
+    internal static long EarliestActiveCapture(RespireConnectionMultiplexer multiplexer)
     {
         lock (s_gate)
         {
-            if (!s_activeCaptures.Remove(token)) return [];
+            var earliest = s_globalCaptures.Count == 0 ? long.MaxValue : s_globalCaptures.Min;
+            if (s_multiplexerCaptures.TryGetValue(multiplexer, out var captures)
+                && captures.Count > 0 && captures.Min < earliest) earliest = captures.Min;
+            return earliest;
+        }
+    }
+
+    private static RespireConnectionMultiplexer[] EndCapture(long token, RespireConnectionMultiplexer? multiplexer)
+    {
+        lock (s_gate)
+        {
+            if (multiplexer is null)
+            {
+                if (!s_globalCaptures.Remove(token)) return [];
+            }
+            else if (!s_multiplexerCaptures.TryGetValue(multiplexer, out var captures) || !captures.Remove(token))
+                return [];
+            if (multiplexer is not null) return [multiplexer];
             var active = new List<RespireConnectionMultiplexer>(s_multiplexers.Count);
             for (var i = s_multiplexers.Count - 1; i >= 0; i--)
             {
@@ -73,13 +85,13 @@ internal static class ClusterSlotMutationClock
         }
     }
 
-    internal readonly struct CaptureScope(long token) : IDisposable
+    internal readonly struct CaptureScope(long token, RespireConnectionMultiplexer? multiplexer) : IDisposable
     {
         internal long Token => token;
 
         public void Dispose()
         {
-            foreach (var current in EndCapture(token)) current.PruneMaintenanceHandlerEpochs();
+            foreach (var current in EndCapture(token, multiplexer)) current.PruneMaintenanceHandlerEpochs();
         }
     }
 }

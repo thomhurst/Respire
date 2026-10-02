@@ -148,7 +148,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
     {
-        using var capture = ClusterSlotMutationClock.BeginCapture();
+        using var capture = ClusterSlotMutationClock.BeginCapture(this);
         return CaptureMaintenanceHandlers(capture.Token);
     }
 
@@ -170,7 +170,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void PruneMaintenanceHandlerEpochsLocked()
     {
-        var earliestCapture = ClusterSlotMutationClock.EarliestActiveCapture;
+        var earliestCapture = ClusterSlotMutationClock.EarliestActiveCapture(this);
         var removable = 0;
         while (removable < _maintenanceHandlerEpochs.Count
                && _maintenanceHandlerEpochs[removable].End != long.MaxValue
@@ -1288,7 +1288,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
             // loop before the connection retirement drain closes sockets with empty command rings.
             await Task.WhenAll(_connections.OfType<RespireConnection>()
-                .Select(connection => connection.DrainPendingMaintenanceNotificationsAsync())).ConfigureAwait(false);
+                .Select(DrainMaintenanceNotificationsBeforeRetirementAsync)).ConfigureAwait(false);
             lock (_maintenanceHandlersGate)
                 CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
             await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
@@ -1306,6 +1306,30 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         catch (Exception ex)
         {
             completion.TrySetException(ex);
+        }
+    }
+
+    private async Task DrainMaintenanceNotificationsBeforeRetirementAsync(RespireConnection connection)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
+        timeout.CancelAfter(_options.ConnectTimeout);
+        try
+        {
+            await connection.DrainPendingMaintenanceNotificationsAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            // A barrier failure cannot keep graceful retirement open. RetireAsync below still
+            // drains accepted commands and closes the physical connection. Abort now because a
+            // timed-out PING may still occupy the command ring and block that drain.
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception disposeError)
+            {
+                try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
+                catch { /* Logging must not stop retirement. */ }
+            }
+            try { _logger?.LogDebug(error, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", Host, Port); }
+            catch { /* Logging must not stop retirement. */ }
         }
     }
 

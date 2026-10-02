@@ -10,10 +10,12 @@ internal sealed partial class ClusterRouter
     private readonly HashSet<DedicatedConnectionPool> _ownedPools = [];
     private readonly CancellationTokenSource _stopRetirement = new();
 
-    private sealed class RetiredGeneration(RespireConnectionMultiplexer node, DedicatedConnectionPool? dedicatedPool)
+    private sealed class RetiredGeneration(RespireConnectionMultiplexer node, DedicatedConnectionPool? dedicatedPool,
+        MaintenanceNotificationHandler? maintenanceHandler)
     {
         internal readonly RespireConnectionMultiplexer Node = node;
         internal readonly DedicatedConnectionPool? DedicatedPool = dedicatedPool;
+        internal readonly MaintenanceNotificationHandler? MaintenanceHandler = maintenanceHandler;
         internal readonly long StartedAt = Stopwatch.GetTimestamp();
         private bool _cleanupFailed;
         internal bool CleanupFailed => Volatile.Read(ref _cleanupFailed);
@@ -30,9 +32,8 @@ internal sealed partial class ClusterRouter
             _dedicatedPools.Remove(node, out var pool);
             _redirectVersions.Remove(node);
             if (_nodeStateHandlers.Remove(node, out var handler)) node.SlotStateChanged -= handler;
-            if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
-                node.MaintenanceNotificationReceived -= maintenanceHandler;
-            var retirement = new RetiredGeneration(node, pool);
+            _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler);
+            var retirement = new RetiredGeneration(node, pool, maintenanceHandler);
             _retiringNodes.Add(node, retirement);
             retirements.Add(retirement);
         }
@@ -54,6 +55,11 @@ internal sealed partial class ClusterRouter
             catch (Exception error) when (node.RetirementDrained && !_stopRetirement.IsCancellationRequested)
             {
                 _logger?.LogDebug(error, "Cluster generation retirement needs correction cleanup at {Host}:{Port}", node.Host, node.Port);
+            }
+            finally
+            {
+                if (retirement.MaintenanceHandler is { } handler)
+                    node.MaintenanceNotificationReceived -= handler;
             }
 
             const int maximumRetrySeconds = 30;

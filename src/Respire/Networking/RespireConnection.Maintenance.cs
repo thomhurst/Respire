@@ -79,10 +79,10 @@ internal sealed partial class RespireConnection
     /// in wire order, so the PING reply proves that pushes already sent on this connection have
     /// passed through the receive loop before retirement closes the socket.
     /// </summary>
-    internal async Task DrainPendingMaintenanceNotificationsAsync()
+    internal async Task DrainPendingMaintenanceNotificationsAsync(CancellationToken cancellationToken)
     {
         if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled) return;
-        using var reply = await SendAsync(MaintenanceDrainBarrier, CancellationToken.None,
+        using var reply = await SendAsync(MaintenanceDrainBarrier, cancellationToken,
             armCommandDeadline: false, commandName: "PING").ConfigureAwait(false);
     }
 
@@ -108,9 +108,10 @@ internal sealed partial class RespireConnection
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
-            using var capture = ClusterSlotMutationClock.BeginCapture();
+            var multiplexer = Multiplexer;
+            using var capture = ClusterSlotMutationClock.BeginCapture(multiplexer);
             slotMutationToken = capture.Token;
-            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
+            migrationHandlers = multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
         }
         if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not
