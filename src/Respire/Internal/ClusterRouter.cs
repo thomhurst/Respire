@@ -92,8 +92,66 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionStateChange>? DedicatedStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
+    // Arguments: topology version, known primary endpoints, and whether that endpoint set is
+    // authoritative. A non-authoritative set (one cached owner cleared, or a redirect onto a
+    // partial map) cannot prove that an omitted primary has left the cluster.
+    internal event Action<long, RespireEndpoint[], bool>? TopologyChanged;
 
-    internal event Action? TopologyChanged;
+    internal async ValueTask<RespireEndpoint> GetSlotOwnerEndpointAsync(
+        int slot, CancellationToken cancellationToken)
+    {
+        if ((uint)slot >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
+        // A concurrent topology change can replace the owner between routing and the check
+        // below. That is transient, so resolve again a few times before reporting a failure.
+        for (var attempt = 1; ; attempt++)
+        {
+            var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            var owner = Volatile.Read(ref _slots[slot]);
+            if (owner is { IsRetired: false, IsConnected: true }
+                && owner.Host == connection.Host && owner.Port == connection.Port)
+                return new RespireEndpoint(connection.Host, connection.Port);
+            if (attempt >= SlotOwnerResolveAttempts)
+                throw new RespireConnectionException("Redis Cluster did not provide a connected owner for the notification slot.");
+        }
+    }
+
+    private const int SlotOwnerResolveAttempts = 3;
+
+    // Primaries that own slots in a freshly loaded complete map. A cached map can predate a
+    // failover or an added primary, so it is refreshed first with one CLUSTER SLOTS on a node
+    // that is already connected; this does not open connections to every primary. Falls back
+    // to full discovery when no node is connected or the refreshed map is not usable.
+    internal async ValueTask<RespireEndpoint[]> GetPrimaryEndpointsAsync(CancellationToken cancellationToken)
+    {
+        if (TryGetConnectedNode() is { } node
+            && await TryRefreshTopologyAsync(node, cancellationToken, discovery: null).ConfigureAwait(false)
+            && TryGetCachedPrimaryEndpoints() is { } endpoints)
+            return endpoints;
+        var connections = await GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        return connections.Select(static connection => new RespireEndpoint(connection.Host, connection.Port))
+            .Distinct().ToArray();
+    }
+
+    // Slot-owning primaries of the cached complete map, or null when the map is incomplete or
+    // names a retired primary.
+    private RespireEndpoint[]? TryGetCachedPrimaryEndpoints()
+    {
+        lock (_nodesGate)
+        {
+            if (!HasCompleteTopology()) return null;
+            var masters = _masters;
+            var counts = _masterSlotCounts;
+            List<RespireEndpoint> endpoints = new(masters.Length);
+            for (var index = 0; index < masters.Length; index++)
+            {
+                if (counts[index] == 0) continue;
+                if (masters[index].IsRetired) return null;
+                var endpoint = Endpoint(masters[index]);
+                if (!endpoints.Contains(endpoint)) endpoints.Add(endpoint);
+            }
+            return endpoints.Count != 0 ? [.. endpoints] : null;
+        }
+    }
 
     // Read the published generation without connecting or taking _nodesGate. Subscription
     // topology callbacks use this while holding their own route gate.
@@ -1317,6 +1375,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
         List<RetiredGeneration> retirements;
+        RespireEndpoint[] publishedEndpoints;
+        long publishedTopologyVersion;
         bool topologyChanged;
         lock (_nodesGate)
         {
@@ -1402,6 +1462,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
                 out topologyChanged);
+            publishedTopologyVersion = topologyChanged ? ++_topologyVersion : _topologyVersion;
+            // Discovery publishes the primaries that own slots in the reply. A primary omitted
+            // from a partial map has lost its slots (usually mid-failover) and is dropped; its
+            // promoted replica appears in a later discovery.
+            publishedEndpoints = Enumerable.Range(0, _masters.Length)
+                .Where(index => _masterSlotCounts[index] != 0 && !_masters[index].IsRetired)
+                .Select(index => Endpoint(_masters[index])).Distinct().ToArray();
             // Resolve stable node identity before pruning the old reverse mapping.
             if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
             var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
@@ -1428,7 +1495,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 NodeRetired?.Invoke(node);
             }
         }
-        if (topologyChanged) TopologyChanged?.Invoke();
+        if (topologyChanged) TopologyChanged?.Invoke(publishedTopologyVersion, publishedEndpoints, true);
     }
 
     // A replica that serves several slot ranges is listed once per range. Merge those entries by
@@ -1514,6 +1581,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
+        long topologyVersion;
+        RespireEndpoint[]? topologyEndpoints;
+        bool topologyAuthoritative;
         lock (_nodesGate)
         {
             if (_retiringNodes.ContainsKey(node) || node.IsRetired)
@@ -1531,18 +1601,24 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 retiredNode = previous;
             }
+            topologyVersion = _topologyVersion;
+            topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
+                .Select(static master => Endpoint(master)).Append(Endpoint(node)).Distinct().ToArray();
+            topologyAuthoritative = HasCompleteTopology();
         }
 
         if (retiredNode is not null)
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        TopologyChanged?.Invoke();
+        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
     }
 
-    private void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
+    internal void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
+        long topologyVersion;
+        RespireEndpoint[] topologyEndpoints;
         lock (_nodesGate)
         {
             if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
@@ -1551,18 +1627,23 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
 
             PublishSlotLocked(slot, null, ++_topologyVersion);
+            topologyVersion = _topologyVersion;
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {
                 retiredNode = node;
             }
+            // Clearing one cached owner proves nothing about other primaries. Publish the
+            // remaining known set as non-authoritative so healthy routes are kept.
+            topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
+                .Select(static master => Endpoint(master)).Distinct().ToArray();
         }
 
         if (retiredNode is not null)
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        TopologyChanged?.Invoke();
+        TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, false);
     }
 
     // Every slot publication carries its discovery-order fence under _nodesGate.
@@ -1651,7 +1732,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var node = refreshedSlots[slot];
             if (_slotVersions[slot] <= expectedVersion)
             {
-                topologyChanged |= !ReferenceEquals(_slots[slot], node);
+                topologyChanged |= !ReferenceEquals(Volatile.Read(ref _slots[slot]), node);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.
                 PublishSlotLocked(slot, node, _slotVersions[slot]);
@@ -1662,6 +1743,23 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (node is not null)
             {
                 masterSlotCounts[Array.IndexOf(masters, node)]++;
+            }
+        }
+        if (!complete)
+        {
+            // An incomplete slot map cannot prove that an omitted primary has left the
+            // cluster, so keep prior primaries as active identities (with no slots) until full
+            // discovery instead of retiring their transports. They are not published to
+            // TopologyChanged, which lists only slot owners; see ApplyTopology.
+            var retainedMasters = new List<RespireConnectionMultiplexer>(masters);
+            foreach (var prior in Volatile.Read(ref _masters))
+            {
+                if (activeNodes.Add(prior)) retainedMasters.Add(prior);
+            }
+            if (retainedMasters.Count != masters.Length)
+            {
+                Array.Resize(ref masterSlotCounts, retainedMasters.Count);
+                masters = [.. retainedMasters];
             }
         }
         _masterSlotCounts = masterSlotCounts;

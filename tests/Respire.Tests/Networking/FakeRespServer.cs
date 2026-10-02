@@ -171,6 +171,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
+    public void CloseConnection(int connectionId)
+    {
+        Socket socket;
+        lock (_receivedCommands) socket = _clientSockets[connectionId];
+        socket.LingerState = new LingerOption(true, 0);
+        socket.Close();
+    }
+
     private async Task RunAsync(int maxConnections)
     {
         var connections = new List<Task>(maxConnections);

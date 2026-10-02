@@ -36,14 +36,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespProtocol.Resp3)
             throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
         ArgumentNullException.ThrowIfNull(names);
-        foreach (var name in names)
-        {
-            if (!name.IsNotification || core.Cluster is null) continue;
-            if (name.NotificationDatabase is not null and not 0)
-                throw new ArgumentException("Redis Cluster notifications support only database 0.", nameof(names));
-            throw new NotSupportedException("Notification routing across Redis Cluster primaries is not supported yet.");
-        }
-
+        if (core.Cluster is not null && names.Any(static name => name.IsNotification)
+            && names.Any(static name => !name.IsNotification))
+            throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(names));
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
@@ -91,6 +86,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (core.Cluster is not null && subscription.Names.Any(static name => name.IsNotification))
+            {
+                if (subscription.Names.Any(static name => !name.IsNotification))
+                    throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(subscription));
+                await ActivateClusterNotificationsAsync(subscription, cancellationToken).ConfigureAwait(false);
+                return;
+            }
             connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             lock (_gate)
@@ -150,6 +152,23 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         await controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            RespireEndpoint[]? endpoints;
+            lock (_gate) endpoints = _notificationSubscriptions.TryGetValue(subscription, out var state)
+                ? state.Coverage.ToArray() : null;
+            if (endpoints is not null)
+            {
+                foreach (var endpoint in endpoints)
+                {
+                    ClusterNotificationNode? node;
+                    lock (_gate) _notificationNodes.TryGetValue(endpoint, out node);
+                    if (node is not null)
+                        await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+                }
+                RespireEndpoint? recoveredEndpoint;
+                lock (_gate) recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
+                if (recoveredEndpoint is { } clearedEndpoint) core.ClearClusterSubscriptionState(clearedEndpoint);
+                return;
+            }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
         }
         finally
@@ -270,8 +289,22 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
     }
 
-    internal void LogGapHandlerFailure(Exception error)
-        => core.Logger?.LogWarning(error, "Subscription delivery-gap handler threw");
+    internal void LogGapObserverFailure(Exception error)
+        => TryLogWarning(error, "Subscription delivery-gap observer threw");
+
+    // Logging providers must not interrupt delivery, cleanup or recovery, so their failures
+    // are swallowed. Out-of-memory is not, because nothing after it is reliable.
+    private void TryLogDebug(Exception error, string message)
+    {
+        try { core.Logger?.LogDebug(error, message); }
+        catch (Exception logError) when (logError is not OutOfMemoryException) { }
+    }
+
+    private void TryLogWarning(Exception error, string message, params object?[] args)
+    {
+        try { core.Logger?.LogWarning(error, message, args); }
+        catch (Exception logError) when (logError is not OutOfMemoryException) { }
+    }
 
     private async Task ObserveAbandonedConnectionAsync(Task disposal)
     {
@@ -286,13 +319,27 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
     }
 
-    private void InterruptPublishedConnection(List<Task> interruptedDisposals)
+    private void InterruptPublishedConnection(
+        List<Task> interruptedDisposals, HashSet<RespireConnection> interrupted)
     {
         InterruptPrimaryConnections(interruptedDisposals);
         var connection = Volatile.Read(ref _connection);
         if (connection is not null && DetachConnection(connection) is { } disposal)
         {
             interruptedDisposals.Add(disposal);
+        }
+
+        RespireConnection[] notificationConnections;
+        lock (_gate)
+            notificationConnections = _notificationNodes.Values
+                .Select(static node => node.Connection).Where(static candidate => candidate is not null)
+                .Select(static candidate => candidate!).ToArray();
+        foreach (var notificationConnection in notificationConnections)
+        {
+            if (!interrupted.Add(notificationConnection)) continue;
+            // Observe the fault here: the guarded close loop may see this same disposal fail,
+            // and the final WhenAll must not rethrow it and skip the remaining cleanup.
+            interruptedDisposals.Add(ObserveAbandonedConnectionAsync(notificationConnection.DisposeAsync().AsTask()));
         }
     }
 
@@ -728,7 +775,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         // reconnect can publish a replacement after the first snapshot, so keep detaching every
         // connection that appears until the gate is ours.
         List<Task> interruptedDisposals = [];
-        InterruptPublishedConnection(interruptedDisposals);
+        HashSet<RespireConnection> interruptedNotificationConnections = [];
+        InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
         var controlGateAcquired = false;
         var shardedControlGateAcquired = false;
         while (!controlGateAcquired || !shardedControlGateAcquired)
@@ -739,15 +787,16 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                 shardedControlGateAcquired = await _shardedControlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
             if (!controlGateAcquired || !shardedControlGateAcquired)
             {
-                InterruptPublishedConnection(interruptedDisposals);
+                InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
             }
         }
 
         try
         {
-            InterruptPublishedConnection(interruptedDisposals);
+            InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
 
             List<RespireSubscription> subscriptions = [];
+            RespireConnection[] notificationConnections;
             lock (_gate)
             {
                 _interrupted.Clear();
@@ -760,6 +809,26 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
                     routes.Clear();
                 }
+                subscriptions.AddRange(_notificationSubscriptions.Keys);
+                _notificationSubscriptions.Clear();
+                foreach (var node in _notificationNodes.Values)
+                {
+                    lock (node.Gate)
+                    {
+                        node.Retired = true;
+                        Interlocked.Increment(ref node.Epoch);
+                    }
+                }
+                notificationConnections = _notificationNodes.Values
+                    .Select(static node => node.Connection).Where(static connection => connection is not null)
+                    .Select(static connection => connection!).ToArray();
+                _notificationNodes.Clear();
+            }
+
+            foreach (var connection in notificationConnections)
+            {
+                try { await connection.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error) { TryLogDebug(error, "Closing a cluster notification connection failed"); }
             }
 
             foreach (var subscription in subscriptions)
@@ -773,7 +842,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             await _connectionGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                InterruptPublishedConnection(interruptedDisposals);
+                InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
                 await Task.WhenAll(interruptedDisposals).ConfigureAwait(false);
             }
             finally

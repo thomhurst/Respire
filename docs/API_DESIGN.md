@@ -350,7 +350,9 @@ standard keyspace/keyevent and Redis 8.8 subkey layouts. Descriptors preserve su
 kind, database, physical-key slot, and all-primary versus key-owner routing scope. Unknown
 event names remain lossless. Physical prefixes are explicit; no subscription changes server
 configuration. Standalone delivery uses the ordinary bounded subscription lifecycle. Cluster
-fan-out remains #298 and currently fails explicitly. See the keyspace-notifications guide.
+notifications use one dedicated connection per required primary, with an acknowledgement barrier
+and endpoint-specific recovery. See the keyspace-notifications guide for ordering and failover
+limits.
 
 
 Subscriptions are async streams. Dispose the subscription to unsubscribe. Cancelling an

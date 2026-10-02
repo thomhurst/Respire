@@ -105,7 +105,7 @@ cannot use `SubKeySpaceEvent`. Older Redis versions can acknowledge reserved cha
 but do not generate subkey notifications; subscription success is not feature detection.
 See the [Redis subkey format specification](https://redis.io/docs/latest/develop/pubsub/subkeyspace-notifications/).
 
-## Delivery, pressure, and Cluster
+## Delivery, pressure, and Redis Cluster
 
 Subscription return is an acknowledgement barrier. Enumeration uses the existing bounded
 Pub/Sub buffer and `RespireSubscriptionOptions`; drops update `DroppedMessages`, delivery-gap
@@ -116,12 +116,49 @@ Redis notifications have at-most-once delivery. Reconnect cannot replay missed e
 expiry events report actual deletion rather than an exact TTL deadline. Use a durable log
 when replay is required. [Redis delivery semantics](https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/)
 
-Cluster notification delivery remains tracked by [#298](https://github.com/thomhurst/Respire/issues/298).
-Descriptors retain `RoutingScope`, `RoutingSlot`, and `NotificationDatabase` for that layer.
-Currently Cluster subscriptions using a notification descriptor fail before network I/O;
-nonzero notification databases are invalid. This prevents silently subscribing to only one
-arbitrary primary. Every primary needs its own notification configuration and coverage.
-Ordinary application Pub/Sub remains unchanged.
+Redis Cluster ordinary `SUBSCRIBE` and `PSUBSCRIBE` channels are cluster-wide through the
+cluster bus. Keyspace and subkey notifications are node-specific. Respire therefore keeps
+ordinary application Pub/Sub on its existing single logical subscription and uses dedicated
+Pub/Sub connections for notification descriptors:
+
+- Exact-key descriptors subscribe only on the current primary that owns the key's slot.
+- Prefix, pattern, keyevent, and subkeyevent descriptors subscribe on every current primary.
+- Connections are shared by notification routes that use the same primary. One logical
+  subscription does not unsubscribe another route's channel.
+- `SubscribeAsync` returns only after every required primary acknowledges its route. For a
+  cluster-wide descriptor it first reloads the slot map with one `CLUSTER SLOTS` call, so a
+  primary added or promoted since the last discovery is included. If activation fails or is
+  cancelled, Respire removes its routes and closes connections whose server-side subscription
+  state is uncertain.
+- A primary added by topology discovery is acknowledged before an old primary's route is
+  removed. Exact-key subscriptions move when slot ownership changes.
+- A failure on one primary reconnects that primary's notification connection. Delivery from
+  healthy primaries continues. `ConnectionStateChanged` reports endpoint-specific reconnect
+  state; `Connected` for an endpoint follows acknowledgement of its current notification routes.
+- `ReconnectPolicy.MaxAttempts` bounds both per-primary reconnects and the attempts to subscribe
+  a primary that topology discovery adds. Each failing primary gets the full attempt budget. When
+  the limit is reached, every subscription with a route on that primary completes with
+  `ReconnectExhausted`, including a cluster-wide subscription whose other primaries are healthy,
+  because it would otherwise silently miss that primary's events. Its routes on other primaries
+  are released. Topology reconciliation does not retry an exhausted primary. A later
+  `SubscribeAsync` that needs it tries to connect again, and the primary is also forgotten once
+  it leaves the discovered topology. An exhausted primary stays `Disconnected` until then, even
+  if a topology retry for it was still pending. A subscription rejected by a reachable primary (for example
+  `NOPERM`), or one that fails on a connection other subscriptions still use, ends only that
+  subscription.
+- When a primary rejects one route of a multi-channel subscription during replay, the replayed
+  routes still report a `Reconnect` delivery gap at once. The rejected route reports its own gap
+  when topology reconciliation restores it.
+
+Every primary must have the needed `notify-keyspace-events` flags configured by the deployment.
+Respire does not read or change this setting. Redis can acknowledge a subscription while emitting
+no events when notification flags are disabled.
+
+Each primary preserves its own message order. A merged subscription has no total order across
+primaries. Redis Pub/Sub is at-most-once: messages emitted during a disconnect are lost. Slot
+moves, promotions, or topology changes can also expose a short gap or duplicate event because
+Redis provides no event IDs or replay. The existing bounded buffer, overflow policy,
+`DroppedMessages`, and `respire.pubsub.messages.dropped` metric apply to the merged stream.
 
 Notifications are application events, separate from Respire's
 [`CLIENT TRACKING` response cache](../fundamentals/client-side-caching.md). They do not

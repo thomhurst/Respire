@@ -155,6 +155,28 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task DisposeAsync_DisconnectsRetainedClusterNotificationEndpoint()
+    {
+        var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        var endpoint = new RespireEndpoint("retained-primary", 7000);
+        var changes = new List<RespireConnectionStateChange>();
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        core.ConnectionStateChanged += change =>
+        {
+            changes.Add(change);
+            if (change.Endpoint == endpoint && change.State == RespireConnectionState.Reconnecting)
+                reconnecting.TrySetResult();
+        };
+        core.NotifyClusterSubscriptionStateChanged(new(endpoint, RespireConnectionState.Reconnecting, null));
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await core.DisposeAsync();
+
+        await Assert.That(changes.Any(change =>
+            change.Endpoint == endpoint && change.State == RespireConnectionState.Disconnected)).IsTrue();
+    }
+
+    [Test]
     public async Task DisposeEvent_ObservesClientAsDisconnected()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);

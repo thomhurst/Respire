@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -387,7 +388,9 @@ public class HashFieldLeaseWireTests
             {
                 await client.PingAsync().AsTask().WaitAsync(promotionTimeout.Token);
             }
-            catch (RespireConnectionException) when (!promotionTimeout.IsCancellationRequested)
+            catch (Exception error) when (
+                error is RespireConnectionException or RespireConnectionRetiredException
+                && !promotionTimeout.IsCancellationRequested)
             {
                 await Task.Delay(10, promotionTimeout.Token);
             }
