@@ -10,12 +10,14 @@ namespace Respire.Internal;
 /// routes incoming messages to subscription buffers. If the connection dies, reconnects with
 /// backoff and resubscribes everything that is still subscribed. Ordered markers report delivery gaps.
 /// </summary>
-internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? timeProvider = null) : IAsyncDisposable
+internal sealed partial class SubscriptionHub : IAsyncDisposable
 {
-    private readonly TimeProvider _recoveryClock = timeProvider ?? TimeProvider.System;
+    private readonly ClientCore core;
+    private readonly TimeProvider _recoveryClock;
     private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
 
-    private readonly object _gate = new();
+    private readonly ClusterNotificationCoordinator _clusterNotifications = new();
+    private readonly object _gate;
     private readonly object _reconnectStateGate = new();
     private readonly Queue<(RespireConnectionStateChange Change, bool ClusterSharded)> _pendingReconnectStates = [];
     private readonly ByteRouteDictionary<List<RespireSubscription>>[] _routes =
@@ -26,6 +28,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     private RespireConnection? _connection;
     private long _reconnectGeneration;
     private long _connectionEpoch;
+
+    internal SubscriptionHub(ClientCore core, TimeProvider? timeProvider = null)
+    {
+        this.core = core;
+        _recoveryClock = timeProvider ?? TimeProvider.System;
+        _gate = _clusterNotifications.Gate;
+    }
     private readonly Dictionary<RespireSubscription, Dictionary<RespireChannel, DateTimeOffset>> _interrupted = [];
     private bool _publishingReconnectState;
     private volatile bool _disposed;
@@ -153,14 +162,14 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         try
         {
             RespireEndpoint[]? endpoints;
-            lock (_gate) endpoints = _notificationSubscriptions.TryGetValue(subscription, out var state)
+            lock (_gate) endpoints = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)
                 ? state.Coverage.ToArray() : null;
             if (endpoints is not null)
             {
                 foreach (var endpoint in endpoints)
                 {
                     ClusterNotificationNode? node;
-                    lock (_gate) _notificationNodes.TryGetValue(endpoint, out node);
+                    lock (_gate) _clusterNotifications.Nodes.TryGetValue(endpoint, out node);
                     if (node is not null)
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
                 }
@@ -331,7 +340,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
         RespireConnection[] notificationConnections;
         lock (_gate)
-            notificationConnections = _notificationNodes.Values
+            notificationConnections = _clusterNotifications.Nodes.Values
                 .Select(static node => node.Connection).Where(static candidate => candidate is not null)
                 .Select(static candidate => candidate!).ToArray();
         foreach (var notificationConnection in notificationConnections)
@@ -809,9 +818,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
                     routes.Clear();
                 }
-                subscriptions.AddRange(_notificationSubscriptions.Keys);
-                _notificationSubscriptions.Clear();
-                foreach (var node in _notificationNodes.Values)
+                subscriptions.AddRange(_clusterNotifications.Subscriptions.Keys);
+                _clusterNotifications.Subscriptions.Clear();
+                foreach (var node in _clusterNotifications.Nodes.Values)
                 {
                     lock (node.Gate)
                     {
@@ -819,10 +828,10 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                         Interlocked.Increment(ref node.Epoch);
                     }
                 }
-                notificationConnections = _notificationNodes.Values
+                notificationConnections = _clusterNotifications.Nodes.Values
                     .Select(static node => node.Connection).Where(static connection => connection is not null)
                     .Select(static connection => connection!).ToArray();
-                _notificationNodes.Clear();
+                _clusterNotifications.Nodes.Clear();
             }
 
             foreach (var connection in notificationConnections)
