@@ -618,7 +618,7 @@ public class ClusterTopologyRefreshTests
 
         using var flightCancellation = new CancellationTokenSource();
         var flight = router.SharedRefreshCoordinator.JoinReadOnly(ClusterHash.GetSlot("key"),
-            new RespireEndpoint("127.0.0.1", seed.Port), flightCancellation, discoveryLease: null).Flight;
+            new RespireEndpoint("127.0.0.1", seed.Port), () => (flightCancellation, (IDisposable?)null)).Flight;
 
         router.SignalTopologyRefresh(force: true);
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
@@ -649,10 +649,18 @@ public class ClusterTopologyRefreshTests
         });
         var router = client.Core.Cluster!;
         using var flightCancellation = new CancellationTokenSource();
-        var flight = router.SharedRefreshCoordinator.JoinReadOnly(0, new RespireEndpoint("127.0.0.1", 1),
-            flightCancellation, discoveryLease: null).Flight;
-        // Model another joined caller when checking last-waiter cancellation.
-        if (waiters == 2) flight.Waiters++;
+        var source = new RespireEndpoint("127.0.0.1", 1);
+        var firstJoin = router.SharedRefreshCoordinator.JoinReadOnly(0, source,
+            () => (flightCancellation, (IDisposable?)null));
+        var flight = firstJoin.Flight;
+        if (waiters == 2)
+        {
+            var secondJoin = router.SharedRefreshCoordinator.JoinReadOnly(0, source,
+                () => throw new InvalidOperationException("An existing flight must not create another cancellation source."));
+            await Assert.That(secondJoin.Started).IsFalse();
+            await Assert.That(secondJoin.Flight).IsSameReferenceAs(flight);
+            await Assert.That(flight.Waiters).IsEqualTo(2);
+        }
         var round = new ClusterRouter.DiscoveryRound(router, policy);
         using var caller = new CancellationTokenSource();
         await caller.CancelAsync();
@@ -673,6 +681,12 @@ public class ClusterTopologyRefreshTests
         round.RecordCommandFailure(canceled, discoveryPending: true, callerToken: caller.Token);
         await Assert.That(round.TerminalError).IsNull();
         round.Finish();
+
+        if (!expectAbandoned)
+        {
+            router.SharedRefreshCoordinator.Complete(flight, result: true, failure: null);
+            await Assert.That(router.SharedRefreshCoordinator.ReleaseWaiter(flight)).IsNull();
+        }
     }
 
     [Test]

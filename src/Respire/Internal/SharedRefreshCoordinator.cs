@@ -52,13 +52,17 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
     internal readonly record struct Join(RefreshFlight Flight, bool Started, bool NeedsOwnSlotRecovery);
 
     internal Join JoinReadOnly(int slot, RespireEndpoint source,
-        CancellationTokenSource cancellation, IDisposable? discoveryLease)
+        Func<(CancellationTokenSource Cancellation, IDisposable? DiscoveryLease)> createResources)
     {
+        ArgumentNullException.ThrowIfNull(createResources);
         lock (_gate)
         {
             var started = _current is null;
             if (started)
+            {
+                var (cancellation, discoveryLease) = createResources();
                 _current = RefreshFlight.ForReadOnly(slot, source, cancellation, discoveryLease);
+            }
             var flight = _current!;
             flight.Waiters++;
             return new Join(flight, started, !started && !flight.Repairs(slot, source));

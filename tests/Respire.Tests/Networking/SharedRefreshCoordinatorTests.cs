@@ -12,14 +12,23 @@ public class SharedRefreshCoordinatorTests
         var coordinator = new SharedRefreshCoordinator(TimeProvider.System, TimeSpan.FromSeconds(5));
         var source = new RespireEndpoint("127.0.0.1", 6379);
         using var cancellation = new CancellationTokenSource();
-        using var unusedCancellation = new CancellationTokenSource();
-        var first = coordinator.JoinReadOnly(12, source, cancellation, discoveryLease: null);
-        var second = coordinator.JoinReadOnly(12, source, unusedCancellation, discoveryLease: null);
+        var resourceFactoryCalls = 0;
+        var first = coordinator.JoinReadOnly(12, source, () =>
+        {
+            resourceFactoryCalls++;
+            return (cancellation, (IDisposable?)null);
+        });
+        var second = coordinator.JoinReadOnly(12, source, () =>
+        {
+            resourceFactoryCalls++;
+            throw new InvalidOperationException("Joining an active flight must not create starter resources.");
+        });
 
         await Assert.That(first.Started).IsTrue();
         await Assert.That(second.Started).IsFalse();
         await Assert.That(second.Flight).IsSameReferenceAs(first.Flight);
         await Assert.That(second.NeedsOwnSlotRecovery).IsFalse();
+        await Assert.That(resourceFactoryCalls).IsEqualTo(1);
         await Assert.That(first.Flight.Waiters).IsEqualTo(2);
         await Assert.That(coordinator.ReleaseWaiter(first.Flight)).IsNull();
         await Assert.That(coordinator.IsPublished(first.Flight)).IsTrue();

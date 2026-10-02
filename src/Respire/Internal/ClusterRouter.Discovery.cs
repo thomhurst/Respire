@@ -37,15 +37,17 @@ internal sealed partial class ClusterRouter
     private ReadOnlyRefreshJoin JoinReadOnlyRefresh(
         RespireServerException rejection, RespireConnection source, int slot, DiscoveryRound? discovery)
     {
-        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-        var lease = discovery?.Hold();
         var join = _sharedRefreshCoordinator.JoinReadOnly(slot,
-            new RespireEndpoint(source.Host, source.Port), cancellation, lease);
-        if (!join.Started)
-        {
-            cancellation.Dispose();
-            lease?.Dispose();
-        }
+            new RespireEndpoint(source.Host, source.Port), () =>
+            {
+                var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
+                try { return (cancellation, discovery?.Hold()); }
+                catch
+                {
+                    cancellation.Dispose();
+                    throw;
+                }
+            });
         if (join.Started)
         {
             _ = CompleteSharedRefreshAsync(join.Flight, () => RunReadOnlyRefreshAsync(
