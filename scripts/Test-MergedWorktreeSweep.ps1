@@ -64,6 +64,7 @@ switch ($LockName) {
     Invoke-TestGit -C $repo config user.email 'sweep@example.invalid'
     Invoke-TestGit -C $repo config extensions.worktreeConfig true
     Set-Content -LiteralPath (Join-Path $repo 'source.txt') -Value original
+    Set-Content -LiteralPath (Join-Path $repo '.gitignore') -Value 'bin/'
     Invoke-TestGit -C $repo add .
     Invoke-TestGit -C $repo commit -m fixture
     $main = & $gitExecutable -C $repo rev-parse HEAD
@@ -101,9 +102,64 @@ switch ($LockName) {
     $preserved += $unregistered
     $released = New-Checkout 'pr-123-released'
     Invoke-TestGit -C $released config --worktree agent.lockName released
-    Push-Location $repo
-    try { & $sweep -StaleDays 1 } finally { Pop-Location }
+    New-Item -ItemType Directory -Path (Join-Path $released 'bin') | Out-Null
+    Set-Content -LiteralPath (Join-Path $released 'bin/generated.dll') -Value generated
+    $raceAfterStatus = New-Checkout 'pr-123-after-status'
+    $raceBeforeRemoval = New-Checkout 'pr-123-before-removal'
+    $raceAfterFailure = New-Checkout 'pr-123-after-failure'
+    $orphan = Join-Path $worktreeRoot 'pr-123-orphan'
+    New-Item -ItemType Directory -Path $orphan | Out-Null
+    Set-Content -LiteralPath (Join-Path $orphan '.git') -Value "gitdir: $(Join-Path $repo '.git/worktrees/missing-gitdir')"
+    Set-Content -LiteralPath (Join-Path $orphan 'source.txt') -Value 'The deleted registration used the explicit held lock, not pr-123.'
+    $preserved += @($raceAfterStatus, $raceBeforeRemoval, $raceAfterFailure, $orphan)
+    $fixtures = Join-Path $testRoot 'fixtures.json'
+    @{ Merged = $global:sweepTestMerged; Open = $global:sweepTestOpen; Association = $global:sweepTestAssociation
+        AfterStatus = $raceAfterStatus; BeforeRemoval = $raceBeforeRemoval; AfterFailure = $raceAfterFailure } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $fixtures
+    $runner = Join-Path $testRoot 'run-sweep.ps1'
+    @'
+param($Sweep, $Repo, $GitExecutable, $Fixtures)
+$data = Get-Content -LiteralPath $Fixtures -Raw | ConvertFrom-Json
+function global:git {
+    if ($args -contains 'fetch') { $global:LASTEXITCODE = 0; return }
+    if ($args -contains 'remove' -and $args -contains 'worktree') {
+        $target = $args[-1]
+        if (($target -replace '\\', '/') -eq ($data.BeforeRemoval -replace '\\', '/')) {
+            Set-Content -LiteralPath (Join-Path $target 'source.txt') -Value 'Written just before Git removal.'
+        }
+        if (($target -replace '\\', '/') -eq ($data.AfterFailure -replace '\\', '/')) {
+            Set-Content -LiteralPath (Join-Path $target 'new-source.txt') -Value 'Written during failed Git removal.'
+            $global:LASTEXITCODE = 1
+            return
+        }
+    }
+    $output = & $GitExecutable @args
+    $code = $LASTEXITCODE
+    if ($args -contains 'status' -and ($args[1] -replace '\\', '/') -eq ($data.AfterStatus -replace '\\', '/')) {
+        Set-Content -LiteralPath (Join-Path $args[1] 'new-source.txt') -Value 'Written after status was read.'
+    }
+    $global:LASTEXITCODE = $code
+    $output
+}
+function global:gh {
+    $global:LASTEXITCODE = 0
+    if ($args[0] -eq 'repo') { return 'fixture/repo' }
+    if ($args[0] -eq 'api') { return ConvertTo-Json -InputObject @($data.Association) -Compress }
+    if ($args -contains 'merged') { return ConvertTo-Json -InputObject @($data.Merged) -Compress }
+    if ($args -contains 'open') { return ConvertTo-Json -InputObject @($data.Open) -Compress }
+    throw "Unexpected gh arguments: $args"
+}
+Set-Location -LiteralPath $Repo
+& $Sweep -StaleDays 1
+'@ | Set-Content -LiteralPath $runner
+    & pwsh -NoProfile -File $runner $sweep $repo $gitExecutable $fixtures
+    Assert ($LASTEXITCODE -eq 0) 'Sweep child process failed.'
     foreach ($path in $preserved) { Assert (Test-Path -LiteralPath $path) "Unsafe removal: $path" }
+    foreach ($path in @($raceAfterStatus, $raceAfterFailure)) {
+        Assert (Test-Path -LiteralPath (Join-Path $path 'new-source.txt')) "New source was lost: $path"
+    }
+    Assert ((Get-Content -LiteralPath (Join-Path $raceBeforeRemoval 'source.txt')) -eq 'Written just before Git removal.') 'Tracked edit was lost.'
+    Assert (Test-Path -LiteralPath (Join-Path $orphan 'source.txt')) 'Orphan source was lost.'
     Assert (-not (Test-Path -LiteralPath $safe)) 'Exact completed PR tip was not removed.'
     Assert (-not (Test-Path -LiteralPath $released)) 'Released completed snapshot was not removed.'
     . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')

@@ -8,15 +8,14 @@
 # A branch/path name, old commit date, or deleted upstream never proves that the
 # current tip is disposable. Unpublished follow-up commits must survive.
 #
-# ORPHANED DIRECTORIES — the other half of the pile-up:
+# ORPHANED DIRECTORIES — report for manual recovery:
 #   A failed `worktree remove` followed by `worktree prune` leaves a directory whose
 #   .git file points at a gitdir that no longer exists. Such dirs are invisible to
 #   `git worktree list`, so the sweep also scans the directories where worktrees are
-#   known to live and reaps any dir that provably WAS a worktree of this repo. A dangling
-#   .git file is direct proof. Git can remove that marker before filesystem cleanup fails,
-#   so a markerless legacy dir is also eligible only when it lives directly under the
-#   canonical <main>-worktrees root, is named pr-<merged-number>-*, and has no meaningful
-#   file newer than the PR merge. Artifact/cache dirs and post-merge work are preserved.
+#   known to live. A dangling .git file identifies this repository but cannot recover an
+#   explicit agent.lockName from the lost registration. Preserve these directories even
+#   when a lock inferred from their name is free. Markerless legacy remnants are also
+#   retained; names and timestamps cannot prove that no agent owns their remaining files.
 #
 # Guards (never delete work):
 #   - skip the main checkout and anything inside it (.claude/worktrees is harness-managed)
@@ -61,36 +60,16 @@ function Test-HasMeaningfulFileNewerThan {
     return $false
 }
 
-function Remove-OrphanedDirectory {
+function Preserve-OrphanedDirectory {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Reason
     )
 
-    $leaf = Split-Path $Path -Leaf
-    if ($leaf -notmatch '^((?:pr|issue)-\d+)(?:-|$)') {
-        Write-Host "sweep: preserving orphan with unknown lock identity: $Path"
-        return $false
-    }
-    $blocker = Get-AgentLockBlocker -Repo $mainRepo -LockName $Matches[1]
-    if ($blocker) {
-        Write-Host "sweep: preserving orphan $Path ($blocker)"
-        return $false
-    }
-
-    if ($WhatIf) {
-        Write-Host "sweep: WOULD remove orphaned dir $Path ($Reason)"
-        return $false
-    }
-
-    Remove-Item -LiteralPath ('\\?\' + ($Path -replace '/', '\')) -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $Path) {
-        Write-Host "sweep: WARNING could not fully remove orphaned dir $Path"
-        return $false
-    }
-
-    Write-Host "sweep: removed orphaned dir $Path"
-    return $true
+    # The lost Git registration may have held an explicit agent.lockName unrelated to
+    # the directory name. Neither a free inferred lock nor timestamps prove ownership.
+    Write-Host "sweep: preserving orphan for manual recovery; original lock identity is unavailable: $Path ($Reason)"
+    return $false
 }
 
 # "Exit 0 always" is load-bearing: a sweep failure must never kill an otherwise-healthy
@@ -240,11 +219,11 @@ try {
             $marker = Join-Path $dir.FullName '.git'
             if (Test-Path -LiteralPath $marker -PathType Leaf) {
                 $gitdir = ((Get-Content -LiteralPath $marker -TotalCount 1) -replace '^gitdir:\s*', '') -replace '\\', '/'
-                # Only reap dirs that provably WERE worktrees of THIS repo and whose
+                # Only report dirs that provably WERE worktrees of THIS repo and whose
                 # registration is gone. A live marker (gitdir exists) is someone else's.
                 if ($gitdir -notlike "$mainNorm/.git/worktrees/*") { continue }
                 if (Test-Path -LiteralPath $gitdir) { continue }
-                if (Remove-OrphanedDirectory -Path $dir.FullName -Reason "dangling gitdir: $gitdir") { $orphansRemoved++ }
+                [void](Preserve-OrphanedDirectory -Path $dir.FullName -Reason "dangling gitdir: $gitdir")
                 continue
             }
 
@@ -263,7 +242,7 @@ try {
                 Write-Host "sweep: preserving markerless merged-PR dir with files newer than merge: $($dir.FullName)"
                 continue
             }
-            if (Remove-OrphanedDirectory -Path $dir.FullName -Reason "markerless remnant of merged PR #$pathPr") { $orphansRemoved++ }
+            [void](Preserve-OrphanedDirectory -Path $dir.FullName -Reason "markerless remnant of merged PR #$pathPr")
         }
     }
 

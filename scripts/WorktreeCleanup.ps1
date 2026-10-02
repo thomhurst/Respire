@@ -5,9 +5,8 @@
 # Removal policy (one place, both callers):
 #   - PRESERVE tracked changes and untracked/ignored files outside known generated paths.
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
-#   - Long-path safe: git's own delete now works because core.longpaths=true is set
-#     system-wide; the `\\?\` extended-length Remove-Item is kept as a fallback for
-#     environments where that config is missing.
+#   - Git performs the final dirty/lock checks. Failed removal preserves the directory;
+#     recursive filesystem deletion must never bypass Git's refusal.
 
 function New-OrdinalStringMap {
     [CmdletBinding()]
@@ -233,6 +232,18 @@ function Get-WorktreeOwnershipBlocker {
     return $null
 }
 
+function Get-WorktreeStatusBlocker {
+    param([Parameter(Mandatory)][string]$Worktree)
+    $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
+    if ($LASTEXITCODE -ne 0) { return 'could not inspect worktree status' }
+    $work = @($status | Where-Object {
+        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
+        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
+    })
+    if ($work.Count -gt 0) { return "uncommitted work: $($work -join ', ')" }
+    return $null
+}
+
 function Remove-MergedWorktree {
     [CmdletBinding()]
     param(
@@ -267,18 +278,9 @@ function Remove-MergedWorktree {
     }
 
     # Preserve source and unknown ignored files; only known generated output is disposable.
-    $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Preserving worktree $Label : $Worktree (could not inspect worktree status)"
-        return
-    }
-    $work = @($status | Where-Object {
-        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
-        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
-    })
-    if ($work.Count -gt 0) {
-        Write-Host "Preserving dirty worktree $Label : $Worktree (uncommitted work)"
-        foreach ($entry in $work) { Write-Host "  $entry" }
+    $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
         return
     }
 
@@ -292,32 +294,17 @@ function Remove-MergedWorktree {
         return
     }
 
-    # Primary path: let git remove it (force clears untracked artifacts; tracked is clean).
-    git -C $Repo worktree remove --force $Worktree 2>$null
-
-    # Fallback for long-path failures (only if core.longpaths is somehow off).
-    if (Test-Path -LiteralPath $Worktree) {
-        # Git may have refused removal because ownership changed. Never bypass that
-        # refusal with recursive filesystem deletion.
-        $blocker = Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree
-        $head = git -C $Worktree rev-parse HEAD 2>$null
-        if ($blocker -or $LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead) {
-            Write-Host "Preserving worktree $Label : $Worktree (could not confirm HEAD and ownership after failed removal)"
-            return
-        }
-        # Avoid recursing through a package-manager junction if one exists in a docs
-        # worktree. Leave it for manual cleanup instead of risking deletion outside
-        # the worktree.
-        $junction = Get-ChildItem -LiteralPath $Worktree -Directory -Recurse -Force -Filter node_modules -ErrorAction SilentlyContinue |
-            Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 } |
-            Select-Object -First 1
-        if ($junction) {
-            Write-Host "WARNING: worktree $Label requires manual removal -- detach the node_modules junction at $($junction.FullName) first, then re-run cleanup: $Worktree"
-            return
-        }
-        # \\?\ disables Win32 path normalization, so forward slashes (git's output
-        # format) are NOT translated — convert to backslashes or the delete no-ops.
-        Remove-Item -LiteralPath ('\\?\' + ($Worktree -replace '/', '\')) -Recurse -Force -ErrorAction SilentlyContinue
+    $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
+        return
+    }
+    # Do not force removal: Git must reject source written after the final inspection.
+    # Ignored generated artifacts can still be removed by Git's ordinary cleanup.
+    git -C $Repo worktree remove $Worktree 2>$null
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $Worktree)) {
+        Write-Host "WARNING: preserving worktree after Git removal failed $Label : $Worktree"
+        return
     }
 
     git -C $Repo worktree prune
