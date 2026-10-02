@@ -49,6 +49,33 @@ between selection and rent, including retirement cancellation during the handsha
 ends at successful rent; it never replays application commands or WATCH state. The returned pool
 stays with its lease through return or disposal. Caller cancellation and client disposal stop retries.
 
+`DedicatedLeaseAcquisition` owns this rental loop for standalone, Sentinel, and Cluster
+callers. Route state is a constrained value type: standalone/Sentinel selection uses
+`ClientCore`, while Cluster retains its slot/read/ASK route and lazily creates one discovery
+scope after the first retirement. Returning the same stopped pool terminates with the original
+failure. WATCH and durability batches use these same entry points; durability retains its
+fresh-connection requirement. Corrective fences that deliberately pin a captured server do
+not follow topology replacements.
+
+The original cancellation token, including an upload's acquisition deadline, passes unchanged
+through every rental and reselection. `DedicatedConnectionPool.Recovery` still owns transient
+connection retries within a rental; pool lifetime cancellation ends that recovery before the
+outer loop selects a replacement. Discovery accounting does not reset at each pool change.
+
+The shared scenario matrix is covered by these deterministic wire tests:
+
+| Scenario | Standalone / Sentinel | Cluster |
+| --- | --- | --- |
+| Rental after publication, fresh or idle lease | `MovingReplacesUploadPoolAndDrainsAcceptedUpload` | `RetiredPoolSelectionRetriesBeforeRentAndKeepsItsOwner` |
+| Retirement during handshake | `MovingRetriesDedicatedHandshakeRetiredBeforeDispatch` | `DedicatedHandshakeRetriesOnlyRetirement` |
+| Publication before old-pool retirement | `SameEndpointPublicationRevalidatesUploadBeforePoolRetirement` | `AskUploadRevalidatesMovingPoolBeforeOldPoolStartsStopping` |
+| Explicit disposal during drain | `DisposeAbortsUploadWhileMovedPoolIsRetiring` | `DisposeAbortsUploadWhileMovedPoolIsRetiring` |
+| WATCH and durability ownership | `PromotionDoesNotMoveAnExistingWatchedTransaction`, `NewBatchUsesThePromotedGenerationAndDurabilityKeepsOneSocket` | Cluster WATCH and batch durability suites |
+
+`DedicatedLeaseAcquisitionTests` additionally covers same-pool rejection, cancellation during
+selection, cancellation before idle rental, disposed owners, and allocation-free warmed rentals
+for both route-state implementations with positive allocation controls.
+
 ## Correction ownership
 
 Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before completing

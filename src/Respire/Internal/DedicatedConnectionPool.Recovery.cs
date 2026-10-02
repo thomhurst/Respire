@@ -15,6 +15,8 @@ internal sealed partial class DedicatedConnectionPool
     {
         // Each rent owns its budget. The initial on-demand connection is immediate and
         // does not consume a replacement attempt, just like initial multiplexer setup.
+        // Pool lifetime cancellation ends this endpoint's recovery. DedicatedLeaseAcquisition
+        // then owns topology reselection without resetting the caller's acquisition deadline.
         var attempt = 0;
         var episode = 0L;
         try
