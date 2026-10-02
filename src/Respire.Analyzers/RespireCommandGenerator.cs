@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -313,18 +314,19 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
     {
         var catalog = compilation.GetTypeByMetadataName("Respire.RespireCommands");
         if (catalog is null) return null;
-        var normalizedName = NormalizeCommandName(name);
-        return FindCatalogCommand(catalog, normalizedName);
+        return FindCatalogCommand(catalog, name);
     }
 
-    private static IFieldSymbol? FindCatalogCommand(INamedTypeSymbol type, string normalizedName)
+    private static IFieldSymbol? FindCatalogCommand(INamedTypeSymbol type, string commandName)
     {
+        var normalizedName = NormalizeCommandName(commandName);
         foreach (var member in type.GetMembers())
         {
             if (member is IFieldSymbol field && field.Type.ToDisplayString() == "Respire.RespireCommand"
-                && NormalizeCommandName(field.Name) == normalizedName)
+                && NormalizeCommandName(field.Name) == normalizedName
+                && string.Equals(GetCatalogCommandName(field), commandName, StringComparison.OrdinalIgnoreCase))
                 return field;
-            if (member is INamedTypeSymbol nested && FindCatalogCommand(nested, normalizedName) is { } found)
+            if (member is INamedTypeSymbol nested && FindCatalogCommand(nested, commandName) is { } found)
                 return found;
         }
         return null;
@@ -332,6 +334,21 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
 
     private static string NormalizeCommandName(string name)
         => new(name.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+
+    private static string? GetCatalogCommandName(IFieldSymbol field)
+    {
+        var documentation = field.GetDocumentationCommentXml();
+        if (string.IsNullOrEmpty(documentation)) return null;
+        try
+        {
+            return XDocument.Parse(documentation).Descendants("summary").FirstOrDefault()?
+                .Descendants("c").FirstOrDefault()?.Value;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
 
     private static string ArrayCreation(ITypeSymbol element, string length)
     {

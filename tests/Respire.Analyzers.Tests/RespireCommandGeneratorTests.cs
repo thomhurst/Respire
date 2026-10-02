@@ -106,6 +106,19 @@ public class RespireCommandGeneratorTests
     }
 
     [Test]
+    [Arguments("GET DEL")]
+    [Arguments("JSON GET")]
+    [Arguments("CLIENT GET NAME")]
+    public async Task CatalogResolutionPreservesCommandTokenBoundaries(string name)
+    {
+        var (generated, diagnostics) = Generate(Preamble +
+            $"namespace Demo {{ [RespireCommands] public interface IModule {{ [RespireCommand(\"{name}\")] ValueTask<RespireResult> Read(); }} }}");
+
+        await Assert.That(diagnostics.Any(diagnostic => diagnostic.Id == "RESP003")).IsTrue();
+        await Assert.That(generated).IsEqualTo("");
+    }
+
+    [Test]
     public async Task NullableObliviousDeclarationsCompileWithoutWarnings()
     {
         var (generated, diagnostics) = Generate("""
@@ -157,9 +170,12 @@ public class RespireCommandGeneratorTests
 
     private static CSharpCompilation CreateCompilation(string source, CSharpParseOptions parseOptions)
     {
+        var respirePath = typeof(RespireCommand).Assembly.Location;
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(RespireCommand).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(path => MetadataReference.CreateFromFile(path));
+        references = references.Append(MetadataReference.CreateFromFile(respirePath,
+            documentation: XmlDocumentationProvider.CreateFromFile(Path.ChangeExtension(respirePath, ".xml"))));
         return CSharpCompilation.Create("GeneratedConsumer", [CSharpSyntaxTree.ParseText(source, parseOptions)], references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
     }
