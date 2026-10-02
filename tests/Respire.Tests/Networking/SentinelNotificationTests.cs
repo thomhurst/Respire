@@ -273,15 +273,17 @@ public class SentinelNotificationTests
     {
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var second = new RespireEndpoint("10.0.1.2", 26379);
+        var third = new RespireEndpoint("10.0.1.3", 26379);
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
         coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
         coalescer.TakePending();
-        coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("switch", NewPrimary, ReportingSentinel: third), targetIsCurrent: false);
 
         var next = coalescer.TakePending(activeFailed: false)!.Value;
         await Assert.That(next.MustRediscover).IsTrue();
-        await Assert.That(next.AdditionalReportingSentinels).IsEquivalentTo([second]);
+        await Assert.That(next.ReportingSentinel).IsEqualTo(second);
+        await Assert.That(next.AdditionalReportingSentinels).IsEquivalentTo([third]);
     }
 
     [Test]

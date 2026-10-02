@@ -208,6 +208,19 @@ internal sealed class SentinelNotificationCoalescer
             foreach (var endpoint in additional) yield return endpoint;
     }
 
+    private static SentinelHint PrioritizeReportingSentinels(
+        SentinelHint hint,
+        IEnumerable<RespireEndpoint> prioritized)
+    {
+        var reporters = prioritized.Concat(EnumerateReportingSentinels(hint))
+            .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
+        return hint with
+        {
+            ReportingSentinel = reporters[0],
+            AdditionalReportingSentinels = reporters.Length < 2 ? null : reporters[1..],
+        };
+    }
+
     /// <summary>Takes the pending hint and makes it active. Returns null when nothing is pending.</summary>
     /// <param name="activeFailed">
     /// Whether the active attempt failed. Its hint is then merged into the next one and marked
@@ -230,8 +243,17 @@ internal sealed class SentinelNotificationCoalescer
         {
             if (activeFailed)
                 next = Merge(activeHint, in next) with { MustRediscover = true };
-            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 })
-                next = Merge(activeHint, in next);
+            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
+            {
+                var unqueried = activeHint with
+                {
+                    ReportingSentinel = unqueriedReporters[0],
+                    AdditionalReportingSentinels = unqueriedReporters.Length == 1
+                        ? null : unqueriedReporters[1..],
+                };
+                next = Merge(unqueried, in next);
+                next = PrioritizeReportingSentinels(next, unqueriedReporters);
+            }
         }
         _pending = null;
         Active = next;

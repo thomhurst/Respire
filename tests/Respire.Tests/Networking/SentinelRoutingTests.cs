@@ -468,6 +468,33 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task MonitorReconnectCapturesFreshRearmAfterEarlierHealthyPublication()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+
+        var router = client.Core.Sentinel!;
+        var previousEpoch = router.CurrentMonitorRearm();
+        var monitorCommand = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
+            $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {promoted.Port}");
+        await WaitForEndpointAsync(client, promoted.Port);
+
+        await Assert.That(previousEpoch.IsCompleted).IsTrue();
+        var reconnectEpoch = router.CurrentMonitorRearm();
+        await Assert.That(ReferenceEquals(reconnectEpoch, previousEpoch)).IsFalse();
+        await Assert.That(reconnectEpoch.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task ExhaustedMonitorResumesAfterTheNextPublication()
     {
         await using var original = Primary();
