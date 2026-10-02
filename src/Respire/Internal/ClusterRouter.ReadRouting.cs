@@ -159,12 +159,15 @@ internal sealed partial class ClusterRouter
         }
         var routes = GetKnownReplicas(slot);
         if (routes is null || !routes.Nodes.Contains(node))
-            throw new RespireConnectionException("The Redis Cluster node that issued this cursor left the slot's read topology.");
+            throw CursorReadTopologyChanged();
         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
         if (!ReferenceEquals(GetKnownReplicas(slot), routes) || !routes.Nodes.Contains(node))
-            throw new RespireConnectionException("The Redis Cluster node that issued this cursor left the slot's read topology.");
+            throw CursorReadTopologyChanged();
         return node.GetConnection(slot);
     }
+
+    private static RespireConnectionException CursorReadTopologyChanged()
+        => new("The Redis Cluster node that issued this cursor left the slot's read topology.");
 
     // Shared by every caller that joins the refresh, so it is not bound to any one caller's
     // cancellation. It stops on router disposal or after one connect plus one command timeout.
@@ -182,8 +185,13 @@ internal sealed partial class ClusterRouter
                 await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
                 if (GetKnownReplicas(slot) is not null) return;
             }
+            var masters = Volatile.Read(ref _masters);
+            // A connected seed can survive a failed initial CLUSTER SLOTS query without any
+            // known masters. EnsureConnectedAsync deliberately does not query it again.
+            if (masters.Length == 0 && Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
+                masters = [seed];
             var candidates = replicas.Where(static node => node.IsConnected && !node.IsRetired)
-                .Concat(Volatile.Read(ref _masters)).Distinct().ToArray();
+                .Concat(masters).Distinct().ToArray();
             var version = CaptureTopologyVersion();
             var refreshRound = new ReplicaRefreshRound(slot, GetKnownSlotOwner(slot));
             // Each known candidate gets the shared deadline. Parallel probes prevent stalled

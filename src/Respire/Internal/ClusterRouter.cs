@@ -1766,8 +1766,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             PublishSlotLocked(slot, node, ++_topologyVersion);
             // MOVED provides no replica coverage. Keep discovery scoped to this slot until a
             // topology reply establishes a range; partial replies cannot satisfy other slots.
-            Volatile.Write(ref _replicasBySlot[slot],
-                new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval));
+            // Redundant corrections must retain this slot's in-flight refresh and throttle.
+            // A changed owner starts fresh discovery; published coverage removes this entry.
+            var replicaRoutes = ReferenceEquals(previous, node)
+                ? _unknownReplicaRoutes.GetOrAdd(slot, static (_, interval) => new ClusterReplicaSet([], interval),
+                    _options.ReplicaRouteRevalidationInterval)
+                : new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval);
+            _unknownReplicaRoutes[slot] = replicaRoutes;
+            Volatile.Write(ref _replicasBySlot[slot], replicaRoutes);
             if (ReferenceEquals(previous, node))
             {
                 return;

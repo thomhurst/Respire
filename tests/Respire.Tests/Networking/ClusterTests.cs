@@ -472,6 +472,63 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_ConnectedSeedRecoversFailedInitialTopology()
+    {
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, _) => "-ERR topology unavailable\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? ClusterTopology(primary.Port, replica.Port) : null;
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        await Assert.That(await reads.Strings.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReadFrom_RedundantMovedPreservesRefreshCoordination()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", 6379)],
+        });
+        var router = client.Core.Cluster!;
+        var owner = router.GetOrCreateNode(new("127.0.0.1", 6379));
+        var slot = ClusterHash.GetSlot("key");
+        router.SetSlotOwner(slot, owner);
+        var routes = ReplicaRoutes(client)[slot]!;
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = routes.JoinOrStartRefresh(() => completion.Task)!;
+        try
+        {
+            router.SetSlotOwner(slot, owner);
+            var current = ReplicaRoutes(client)[slot]!;
+            await Assert.That(current).IsSameReferenceAs(routes);
+            await Assert.That(current.JoinOrStartRefresh(() => throw new InvalidOperationException("Duplicate refresh")))
+                .IsSameReferenceAs(refresh);
+            completion.SetResult();
+            await refresh;
+            router.SetSlotOwner(slot, owner);
+            await Assert.That(ReplicaRoutes(client)[slot]).IsSameReferenceAs(routes);
+        }
+        finally
+        {
+            completion.TrySetResult();
+            await refresh;
+        }
+    }
+
+    [Test]
     public async Task ReadFrom_ConcurrentLazyReadsShareInitialDiscovery()
     {
         await using var replica = new FakeRespServer(64, FakeRespServer.OkReply)
