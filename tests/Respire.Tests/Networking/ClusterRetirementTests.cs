@@ -1825,6 +1825,243 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamRouteCannotValidateHalfPublishedSlotOwner(bool captureVersion)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", server.Port), "old", 1);
+        var connection = await router.GetConnectionAsync(42, CancellationToken.None, discovery: null);
+        var replacement = router.GetOrCreateNode(new("replacement.invalid", 6379));
+        var gate = typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!;
+        var versions = (long[])typeof(ClusterRouter).GetField("_slotVersions", Private)!.GetValue(router)!;
+        var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool readerReachedSnapshot;
+        lock (gate)
+        {
+            // Pause PublishSlotLocked between its version and owner writes.
+            var version = router.CaptureSlotVersion(42) with { RedirectVersion = versions[42] + 1 };
+            Volatile.Write(ref versions[42], version.RedirectVersion);
+            var reader = new Thread(() =>
+            {
+                try
+                {
+                    var captured = captureVersion ? router.CaptureSlotVersion(42) : version;
+                    result.TrySetResult(router.IsDedicatedStreamRouteCurrent(42, captured, connection));
+                }
+                catch (Exception error) { result.TrySetException(error); }
+            }) { IsBackground = true };
+            reader.Start();
+            // Wait for a real result or lock contention, rather than relying on a sleep.
+            readerReachedSnapshot = SpinWait.SpinUntil(() => result.Task.IsCompleted
+                || (reader.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit);
+            router.SetSlotOwner(42, replacement);
+        }
+        await Assert.That(readerReachedSnapshot).IsTrue();
+        await Assert.That(await result.Task.WaitAsync(Limit)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task AskUploadRevalidatesSlotAfterSourceReadAndAsking(bool changeDuringRead, bool discovery)
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => !changeDuringRead && command == "ASKING",
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SET ")
+                ? System.Text.Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{oldTarget.Port}\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
+        // Keep the ASK target alive after this upload's slot changes.
+        router.SetSlotOwner((slot + 1) % 16384, oldNode);
+        var next = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
+        using var timeout = new CancellationTokenSource(Limit);
+        using var source = new ReplayReadStream(() =>
+        {
+            if (changeDuringRead) ChangeOwner();
+        });
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+        if (!changeDuringRead)
+        {
+            while (!oldTarget.ReceivedCommands.Contains("ASKING"))
+            {
+                if (upload.IsCompleted) await upload;
+                await Task.Delay(5, timeout.Token);
+            }
+            ChangeOwner();
+            await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
+        }
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(oldNode.IsRetired).IsFalse();
+        await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+
+        void ChangeOwner()
+        {
+            if (!discovery) { router.SetSlotOwner(slot, next); return; }
+            var ranges = new List<ClusterTopologyRange>
+            {
+                new(slot, slot, new("127.0.0.1", replacement.Port), "replacement", []),
+                new((slot + 1) % 16384, (slot + 1) % 16384, new("127.0.0.1", oldTarget.Port), "ask", []),
+            };
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
+            router.ApplyTopology(ranges, version, 2L);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AskUploadRevalidatesSlotChangedDuringTargetAcquisition(bool discovery)
+    {
+        var slot = ClusterHash.GetSlot("key");
+        var hello = "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdHandshake = 1;
+        await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
+            SuppressReply = command =>
+            {
+                if (command != "HELLO 3" || Volatile.Read(ref holdHandshake) == 0) return false;
+                connecting.TrySetResult();
+                return true;
+            },
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello
+                : command.StartsWith("SET ", StringComparison.Ordinal)
+                    ? System.Text.Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{oldTarget.Port}\r\n")
+                    : FakeRespServer.OkReply,
+        };
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
+        // Keep the obsolete ASK target alive so retirement alone cannot reject it.
+        router.SetSlotOwner((slot + 1) % 16384, oldNode);
+        using var timeout = new CancellationTokenSource(Limit);
+        using var source = new MemoryStream("payload"u8.ToArray());
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+        await connecting.Task.WaitAsync(timeout.Token);
+        if (discovery)
+        {
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
+            router.ApplyTopology([
+                new(slot, slot, new("127.0.0.1", replacement.Port), "replacement", []),
+                new((slot + 1) % 16384, (slot + 1) % 16384, new("127.0.0.1", oldTarget.Port), "ask", []),
+            ], version, 2L);
+        }
+        else
+            router.SetSlotOwner(slot, router.GetOrCreateNode(new("127.0.0.1", replacement.Port)));
+        Volatile.Write(ref holdHandshake, 0);
+        await oldTarget.SendRawAsync(hello, oldTarget.ReceivedConnectionIds[^1]);
+
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(oldNode.IsRetired).IsFalse();
+        await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AskUploadRevalidatesMovingPoolBeforeOldPoolStartsStopping(bool changeDuringRead)
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => !changeDuringRead && command == "ASKING",
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SET ")
+                ? System.Text.Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{oldTarget.Port}\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
+        var oldPool = router.GetDedicatedPool(new("127.0.0.1", oldTarget.Port));
+        var version = router.CaptureSlotVersion(slot);
+        using var timeout = new CancellationTokenSource(Limit);
+        using var source = new ReplayReadStream(() => { if (changeDuringRead) PublishReplacement(); });
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+        if (!changeDuringRead)
+        {
+            while (!oldTarget.ReceivedCommands.Contains("ASKING"))
+            {
+                if (upload.IsCompleted) await upload;
+                await Task.Delay(5, timeout.Token);
+            }
+            PublishReplacement();
+            await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
+        }
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(router.CaptureSlotVersion(slot)).IsEqualTo(version);
+        await Assert.That(oldPool.IsStopping).IsFalse();
+        await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).Contains("ASKING");
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+
+        void PublishReplacement()
+        {
+            // Hold the exact interval after MOVING publishes the endpoint and pool, before
+            // RetirePoolAsync marks the old pool stopping. Both pools remain router-owned.
+            var field = typeof(RespireConnectionMultiplexer).GetField("_activeEndpoint", Private)!;
+            var endpoint = Activator.CreateInstance(field.FieldType, "127.0.0.1", replacement.Port);
+            var pool = new DedicatedConnectionPool("127.0.0.1", replacement.Port,
+                client.Core.Options.ToConnectionOptions(), NullLogger.Instance);
+            lock (typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!)
+            {
+                field.SetValue(oldNode, endpoint);
+                var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)
+                    typeof(ClusterRouter).GetField("_dedicatedPools", Private)!.GetValue(router)!;
+                pools[oldNode] = pool;
+                ((HashSet<DedicatedConnectionPool>)typeof(ClusterRouter).GetField("_ownedPools", Private)!
+                    .GetValue(router)!).Add(pool);
+            }
+        }
+    }
+
+    private sealed class ReplayReadStream(Action onReplay) : MemoryStream("payload"u8.ToArray())
+    {
+        private int _reads;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (++_reads == 2) onReplay();
+            return base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Test]
     public async Task StreamedSetRetiredDuringFirstChunkResendsWholePayloadOnReplacement()
     {
         // Larger than one chunk, so the retry must replay the restored first chunk and then keep
@@ -1856,6 +2093,85 @@ public class ClusterRetirementTests
         await Assert.That(System.Text.Encoding.ASCII.GetString(arguments[0])).IsEqualTo("SET");
         await Assert.That(arguments[2].AsSpan().SequenceEqual(payload)).IsTrue();
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
+    public async Task StreamedSetSlotChangeFlushesCacheWhileOldOwnerKeepsOtherSlots()
+    {
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        oldServer.ReplyOverride = replacementServer.ReplyOverride = (_, command) => command == "HELLO 3"
+            ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            ClientSideCache = new(),
+            Endpoints = { new("127.0.0.1", oldServer.Port) },
+        });
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
+        var old = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+        var source = new PausingStream(new byte[32], pauseAt: 16);
+        var upload = client.Strings.SetAsync("key", source, 32, cancellationToken: timeout.Token).AsTask();
+        await source.Paused.Task.WaitAsync(timeout.Token);
+        var cache = client.Core.ClientCache!;
+        RespireKey cachedKey = "cached";
+        var read = cache.BeginRead(in cachedKey);
+        var value = RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in read, in value, allowInsert: true);
+        var flushes = cache.GetStatistics().ContinuityFlushes;
+        var replacement = router.GetOrCreateNode(new("127.0.0.1", replacementServer.Port));
+        router.SetSlotOwner(ClusterHash.GetSlot("key"), replacement);
+        await Assert.That(old.Multiplexer!.IsRetired).IsFalse();
+        await Assert.That(cache.Count).IsEqualTo(1);
+        source.Resume.TrySetResult();
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.GetStatistics().ContinuityFlushes).IsGreaterThan(flushes);
+    }
+
+    [Test]
+    public async Task StreamedSetRetirementPreservesTheOriginalUploadDeadline()
+    {
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new("127.0.0.1", oldServer.Port) },
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
+        using var source = new RetiringUploadStream(new byte[RespireConnection.StreamChunkSize + 1],
+            () => Publish(router, new("127.0.0.1", replacementServer.Port), "new", 2));
+
+        // Each read fits one timeout, but together they exceed it. The first read changes routes
+        // before the header; its known prefix is restored without resetting the overall deadline.
+        await Assert.That(async () => await client.Strings.SetAsync("key", source, source.Length)
+            .AsTask().WaitAsync(Limit)).Throws<RespireTimeoutException>();
+        await Assert.That(oldServer.ReceivedCommands.Any(command => command.StartsWith("SET", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    private sealed class RetiringUploadStream(byte[] payload, Action retire) : MemoryStream(payload)
+    {
+        private bool _firstRead = true;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(650), cancellationToken);
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            if (_firstRead)
+            {
+                _firstRead = false;
+                retire();
+            }
+            return read;
+        }
     }
 
     private sealed class PausingStream(byte[] payload, int pauseAt) : Stream

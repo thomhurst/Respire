@@ -11,7 +11,7 @@ internal sealed partial class DedicatedConnectionPool
     private bool _publishingRecovery;
 
     private async Task<RespireConnection> ConnectWithRecoveryAsync(
-        RespireReconnectPolicy policy, CancellationToken cancellationToken)
+        RespireReconnectPolicy policy, RespireConnectionOptions connectionOptions, CancellationToken cancellationToken)
     {
         // Each rent owns its budget. The initial on-demand connection is immediate and
         // does not consume a replacement attempt, just like initial multiplexer setup.
@@ -26,7 +26,7 @@ internal sealed partial class DedicatedConnectionPool
                 try
                 {
                     var connection = await RespireConnection.ConnectAsync(
-                        host, port, options, logger, cancellationToken).ConfigureAwait(false);
+                        host, port, connectionOptions, logger, cancellationToken).ConfigureAwait(false);
                     if (attempt != 0)
                         QueueRecovery(RespireConnectionState.Connected, null, attempt, episode);
                     return connection;

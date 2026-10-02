@@ -1,26 +1,50 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Respire.Infrastructure;
 using Respire.Networking;
 
 namespace Respire.Internal;
 
+internal enum DedicatedLeaseKind { Ordinary, Streaming }
+
 /// <summary>
 /// A small pool of dedicated (non-multiplexed) connections for commands that occupy a
-/// connection for their whole duration: BLPOP-style blocking waits and blocking stream reads.
+/// connection for their whole duration: BLPOP-style blocking waits, blocking stream reads, and
+/// streamed uploads whose source or socket can stall while writing a frame.
 /// Multiplexed connections must never run these — one blocking command would stall every
 /// pipelined command behind it — so they rent from here instead. Connections are created on
 /// demand and a few idle ones are kept for reuse. Rented connections are tracked so client
 /// disposal can abort a command blocked server-side (even a BLPOP with an infinite wait).
 /// </summary>
+/// <remarks>
+/// A renter owns its lease until returning or discarding it. Retirement rejects new rentals and
+/// drains accepted leases; disposal aborts every owned connection, including closing entries.
+/// Failed application sends discard their leases. The router may retry an upload before its
+/// header is accepted, preserving the consumed prefix and original deadline. After acceptance,
+/// only an explicit server redirect permits replay, and only when the source is replayable.
+/// Streaming leases negotiate maintenance independently of ordinary blocking/correction leases;
+/// both kinds share the idle-capacity bound and the connection ownership ledger.
+/// </remarks>
 internal sealed partial class DedicatedConnectionPool(
     string host, int port, RespireConnectionOptions options, ILogger? logger,
-    Action<RespireConnectionStateChange>? stateChanged = null) : IAsyncDisposable
+    Action<RespireConnectionStateChange>? stateChanged = null,
+    Action<RespireConnection>? streamingConnectionCreated = null) : IAsyncDisposable
 {
     private const int MaxIdle = 4;
+    internal RespireEndpoint Endpoint => new(host, port);
+
+    // Identity changes on every MOVING publication, including a handoff to the same address.
+    internal RespireConnectionMultiplexer? MovingOwner { get; init; }
+    internal object? MovingPublication { get; init; }
+    internal bool IsMovingPublicationCurrent => MovingOwner is null
+        || ReferenceEquals(MovingPublication, MovingOwner.MovingPublication);
 
     // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
     // back into the router or invoke user callbacks while holding this gate.
     private readonly object _gate = new();
-    private readonly Stack<Entry> _idle = new(MaxIdle);
+    private readonly List<Entry> _idle = new(MaxIdle);
+    private readonly RespireConnectionOptions _ordinaryOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled
+        ? options : options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled };
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
     private readonly Dictionary<RespireConnection, Entry> _connections = [];
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -51,23 +75,30 @@ internal sealed partial class DedicatedConnectionPool(
 
     private enum State { Idle, Rented, Closing }
 
-    private sealed class Entry(RespireConnection connection)
+    private sealed class Entry(RespireConnection connection, DedicatedLeaseKind kind)
     {
         internal readonly RespireConnection Connection = connection;
+        internal readonly DedicatedLeaseKind Kind = kind;
         internal State State = State.Rented;
         internal TaskCompletionSource? Closed;
     }
 
     public async ValueTask<RespireConnection> RentAsync(
-        CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true)
+        CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true,
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
     {
+        // Maintenance negotiation is connection state. Keep these leases separate from blocking
+        // and corrective leases, while retaining one ownership/drain ledger and idle bound.
+        var useStreamingMaintenance = kind == DedicatedLeaseKind.Streaming && options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled;
+        var connectionOptions = useStreamingMaintenance ? options : _ordinaryOptions;
+        var compatibleKind = useStreamingMaintenance ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         while (true)
         {
             Entry stale;
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_stopping, this);
-                if (reuseIdle && _idle.TryPop(out var entry))
+                if (reuseIdle && TryTakeIdle(compatibleKind, out var entry))
                 {
                     if (entry.Connection.IsConnected)
                     {
@@ -97,10 +128,10 @@ internal sealed partial class DedicatedConnectionPool(
             {
                 // Corrective fences own their retry/deadline rules and must not inherit an
                 // application acquisition limit. Healthy idle rentals never enter this path.
-                connection = options.ReconnectPolicy is { } policy && armHandshakeDeadline
-                    ? await ConnectWithRecoveryAsync(policy, connectCancellation.Token).ConfigureAwait(false)
+                connection = connectionOptions.ReconnectPolicy is { } policy && armHandshakeDeadline
+                    ? await ConnectWithRecoveryAsync(policy, connectionOptions, connectCancellation.Token).ConfigureAwait(false)
                     : await RespireConnection.ConnectAsync(
-                        host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+                        host, port, connectionOptions, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, connectCancellation.Token))
@@ -108,12 +139,28 @@ internal sealed partial class DedicatedConnectionPool(
                 // Unwrap only our own lifetime link, preserving independent retirement cancellation.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
-            var entry = new Entry(connection);
+            var entry = new Entry(connection, compatibleKind);
+            bool accepted;
             lock (_gate)
             {
                 _connections.Add(connection, entry);
-                if (!_stopping) return connection;
-                BeginCloseLocked(entry);
+                accepted = !_stopping;
+                if (!accepted) BeginCloseLocked(entry);
+            }
+            if (accepted)
+            {
+                try
+                {
+                    // Observers may publish a handoff and retire this pool. Never call them
+                    // under the ownership gate; the borrower still owns any returned lease.
+                    if (useStreamingMaintenance) streamingConnectionCreated?.Invoke(connection);
+                    return connection;
+                }
+                catch
+                {
+                    await DiscardAsync(connection).ConfigureAwait(false);
+                    throw;
+                }
             }
             await CloseAsync(entry).ConfigureAwait(false);
             throw new ObjectDisposedException(nameof(DedicatedConnectionPool));
@@ -128,22 +175,58 @@ internal sealed partial class DedicatedConnectionPool(
         }
     }
 
+    // Called under _gate. The bounded list acts as a stack for each compatible lease kind.
+    private bool TryTakeIdle(DedicatedLeaseKind kind, out Entry entry)
+    {
+        for (var index = _idle.Count - 1; index >= 0; index--)
+        {
+            if (_idle[index].Kind != kind) continue;
+            entry = _idle[index];
+            _idle.RemoveAt(index);
+            return true;
+        }
+        entry = null!;
+        return false;
+    }
+
     /// <summary>Returns a healthy connection for reuse; anything else (or overflow) is closed.</summary>
     public void Return(RespireConnection connection)
     {
-        Entry entry;
+        Debug.Assert(!connection.IsStreamingWriteActive, "A streaming send must release its write path before pool return.");
+        Entry? closing = null;
         lock (_gate)
         {
-            if (!_connections.TryGetValue(connection, out entry!) || entry.State != State.Rented) return;
-            if (!_stopping && connection.IsConnected && _idle.Count < MaxIdle)
+            if (!_connections.TryGetValue(connection, out var entry) || entry.State != State.Rented) return;
+            if (!_stopping && connection.IsConnected)
             {
-                entry.State = State.Idle;
-                _idle.Push(entry);
-                return;
+                if (_idle.Count == MaxIdle)
+                {
+                    var sameKind = 0;
+                    foreach (var idle in _idle) if (idle.Kind == entry.Kind) sameKind++;
+                    // A lone kind may use all four slots. Under mixed demand, each can reclaim
+                    // half by evicting the other kind's oldest idle entry, avoiding reconnect churn.
+                    if (sameKind < MaxIdle / 2)
+                    {
+                        var other = 0;
+                        while (other < _idle.Count && _idle[other].Kind == entry.Kind) other++;
+                        Debug.Assert(other < _idle.Count,
+                            "A full pool below this kind's reserved share must contain another lease kind.");
+                        closing = _idle[other];
+                        _idle.RemoveAt(other);
+                        BeginCloseLocked(closing);
+                    }
+                }
+                if (_idle.Count < MaxIdle)
+                {
+                    entry.State = State.Idle;
+                    _idle.Add(entry);
+                }
+                else closing = entry;
             }
-            BeginCloseLocked(entry);
+            else closing = entry;
+            if (ReferenceEquals(closing, entry)) BeginCloseLocked(entry);
         }
-        _ = CloseAsync(entry);
+        if (closing is not null) _ = CloseAsync(closing);
     }
 
     /// <summary>Removes a failed or abandoned lease and waits for its cleanup.</summary>

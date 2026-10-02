@@ -161,11 +161,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
-    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> frame)
+    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> frame, CancellationToken cancellationToken = default)
     {
         while (!frame.IsEmpty)
         {
-            var sent = await socket.SendAsync(frame, SocketFlags.None);
+            var sent = await socket.SendAsync(frame, SocketFlags.None, cancellationToken);
             if (sent == 0) throw new IOException("Socket closed during raw frame send.");
             frame = frame[sent..];
         }
@@ -250,7 +250,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                         // before recording, so an injected frame cannot overtake them.
                         foreach (var reply in pendingReplies)
                         {
-                            await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                            await SendAllAsync(socket, reply, _cts.Token);
                         }
 
                         pendingReplies.Clear();
@@ -291,7 +291,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     {
                         foreach (var reply in pendingReplies)
                         {
-                            await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                            await SendAllAsync(socket, reply, _cts.Token);
                         }
                     }
                     catch (SocketException error) when (!_cts.IsCancellationRequested

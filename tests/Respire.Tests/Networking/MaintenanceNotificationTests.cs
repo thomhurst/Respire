@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Text;
@@ -222,6 +223,527 @@ public class MaintenanceNotificationTests
         using var result = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
         await Assert.That(result.AsString()).IsEqualTo("PONG");
         await Assert.That(connection.HasMaintenanceWindow).IsEqualTo(!completed);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedOnlyClientFollowsMovingReceivedOnUploadConnection(bool duringHandshake)
+    {
+        await using var target = Server(maxConnections: 8);
+        await using var source = Server(duringHandshake ? FakeRespServer.OkReply.Concat(Moving(1, target.Port)).ToArray() : null,
+            maxConnections: 8);
+        var targetReply = target.ReplyOverride;
+        target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? FakeRespServer.OkReply : targetReply!(connection, command);
+        await using var client = RespireClient.Create(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
+        await client.Strings.SetAsync("first", new ReadOnlySequence<byte>("one"u8.ToArray()), cancellationToken: timeout.Token);
+        if (!duringHandshake)
+        {
+            await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
+            var index = source.ReceivedCommands.ToList().IndexOf("SET first one");
+            await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[index]);
+        }
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        await Assert.That(await client.Strings.SetAsync("second", new ReadOnlySequence<byte>("two"u8.ToArray()),
+            cancellationToken: timeout.Token)).IsTrue();
+        await Assert.That(target.ReceivedCommands).Contains("SET second two");
+        await Assert.That(source.ReceivedCommands).DoesNotContain("SET second two");
+    }
+
+    [Test]
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("cluster", false)]
+    [Arguments("cluster", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    public async Task SameEndpointMovingReplacesIdleUploadPool(string mode, bool omitTarget)
+    {
+        await using var server = Server(maxConnections: 12);
+        ConfigureMaintenanceRouting(server);
+        await using var sentinel = MaintenanceSentinel(server.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pool = await MaintenancePoolAsync(client, "upload");
+        var old = await pool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        pool.Return(old);
+        var multiplexed = mode == "cluster"
+            ? await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot("upload"), timeout.Token, discovery: null)
+            : client.Core.Multiplexer.GetConnection();
+        var wireId = server.ReceivedConnectionIds[0];
+        await server.SendRawAsync(omitTarget ? ">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray() : Moving(1, server.Port), wireId);
+        while (multiplexed.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+        var replacement = await MaintenancePoolAsync(client, "upload");
+        await Assert.That(ReferenceEquals(pool, replacement)).IsFalse();
+        await Assert.That(pool.IsMovingPublicationCurrent).IsFalse();
+        await Assert.That(replacement.IsMovingPublicationCurrent).IsTrue();
+        var lease = await replacement.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        try { await Assert.That(ReferenceEquals(old, lease)).IsFalse(); }
+        finally { replacement.Return(lease); }
+    }
+
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task SameEndpointPublicationRevalidatesUploadBeforePoolRetirement(string mode)
+    {
+        await using var server = Server(maxConnections: 12);
+        ConfigureMaintenanceRouting(server);
+        var reply = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply : reply(id, command);
+        await using var sentinel = MaintenanceSentinel(server.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pool = await MaintenancePoolAsync(client, "upload");
+        await using var payload = new PausedFirstReadStream();
+        var upload = client.Strings.SetAsync("upload", payload, payload.Length, cancellationToken: timeout.Token).AsTask();
+        await payload.Started.Task.WaitAsync(timeout.Token);
+        var oldWireId = server.ReceivedConnectionIds[^1];
+
+        // Hold the interval between publication and the pool-refresh callback. Address and
+        // old pool remain unchanged; only the publication identity can reject this lease.
+        var field = typeof(RespireConnectionMultiplexer).GetField("_activeEndpoint",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        field.SetValue(pool.MovingOwner, Activator.CreateInstance(field.FieldType, "127.0.0.1", server.Port));
+        await Assert.That(pool.IsStopping).IsFalse();
+        payload.Resume.TrySetResult();
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        var commands = server.ReceivedCommands;
+        var ids = server.ReceivedConnectionIds;
+        var setIndex = Array.FindIndex(commands.ToArray(), command => command == "SET upload payload");
+        await Assert.That(setIndex).IsGreaterThanOrEqualTo(0);
+        await Assert.That(ids[setIndex]).IsNotEqualTo(oldWireId);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedTelemetryUsesEndpointAfterMoving(bool streaming)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
+            : command.StartsWith("BLPOP ") ? "_\r\n"u8.ToArray() : targetReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name is "SET" or "BLPOP"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = started.Enqueue,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        if (streaming)
+            await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray()), cancellationToken: timeout.Token);
+        else
+            _ = await client.Lists.LeftPopAsync("queue", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token);
+
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(started.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(started.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(target.ReceivedCommands).Contains(streaming ? "SET upload value" : "BLPOP queue 1");
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task DurabilityTelemetryUsesEndpointAfterMoving(bool aof, bool acquisitionFails)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
+            : command.StartsWith("WAIT ") ? ":1\r\n"u8.ToArray()
+            : command.StartsWith("WAITAOF ") ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : targetReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        if (acquisitionFails) target.SuppressReply = command => command == "HELLO 3";
+
+        var name = aof ? "WAITAOF SET" : "WAIT SET";
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == name
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = started.Enqueue,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var batch = client.CreateBatch();
+        _ = batch.Set("first", "value");
+        _ = batch.Set("second", "value");
+        if (acquisitionFails)
+            await Assert.That(Execute).Throws<RespireException>();
+        else
+            await Execute();
+
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(started.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(started.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(stopped.Single().Status == ActivityStatusCode.Error).IsEqualTo(acquisitionFails);
+
+        async Task Execute()
+        {
+            if (aof) _ = await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1), timeout.Token);
+            else _ = await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1), timeout.Token);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DedicatedAcquisitionFailureRecordsOneActivityForIntendedEndpoint()
+    {
+        await using var server = Server(maxConnections: 4);
+        server.SuppressReply = command => command == "HELLO 3";
+        await using var client = RespireClient.Create(Options(server) with { ConnectTimeout = TimeSpan.FromMilliseconds(100) });
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await Assert.That(async () => await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray())))
+            .Throws<Exception>();
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single().Status).IsEqualTo(ActivityStatusCode.Error);
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(server.Port);
+    }
+
+    [Test]
+    public async Task StandaloneUploadAcceptsMixedCaseHost()
+    {
+        await using var server = Server(maxConnections: 4);
+        var options = Options(server);
+        options.Endpoints.Clear();
+        options.Endpoints.Add(new("LoCaLhOsT", server.Port));
+        await using var client = RespireClient.Create(options);
+        await Assert.That(await client.Strings.SetAsync("mixed-case", new ReadOnlySequence<byte>("value"u8.ToArray()))).IsTrue();
+        await Assert.That(server.ReceivedCommands).Contains("SET mixed-case value");
+    }
+
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task DisposeAbortsUploadWhileMovedPoolIsRetiring(string mode)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        source.SuppressReply = command => command.StartsWith("SET ");
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = await MaintenancePoolAsync(client, "pending");
+        var upload = client.Strings.SetAsync("pending", new ReadOnlySequence<byte>("value"u8.ToArray()),
+            cancellationToken: timeout.Token).AsTask();
+        while (!source.ReceivedCommands.Contains("SET pending value")) await Task.Delay(5, timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        await client.DisposeAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(async () => await upload.WaitAsync(timeout.Token)).Throws<RespireConnectionException>();
+        await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(originalPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task MovingReroutesUploadPausedBeforeHeader(string mode)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var targetReply = target.ReplyOverride;
+        target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? FakeRespServer.OkReply : targetReply!(connection, command);
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = await MaintenancePoolAsync(client, "moved-upload");
+        var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = activity => { if (activity.OperationName == "SET") started.Enqueue(activity); },
+            ActivityStopped = activity => { if (activity.OperationName == "SET") stopped.Enqueue(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var payload = new PausedFirstReadStream();
+        var upload = client.Strings.SetAsync("moved-upload", payload, payload.Length,
+            cancellationToken: timeout.Token).AsTask();
+        await payload.Started.Task.WaitAsync(timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        payload.Resume.TrySetResult();
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+        await Assert.That(target.ReceivedCommands).Contains("SET moved-upload payload");
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single()).IsSameReferenceAs(started.Single());
+        await Assert.That(stopped.Single().GetTagItem("server.address")).IsEqualTo("127.0.0.1");
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(target.Port);
+    }
+
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task ReroutedUploadAcquisitionReportsMaintenanceRelaxedTimeout(string mode)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        var relaxed = TimeSpan.FromSeconds(3);
+        var stallAcquisition = false;
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            MaintenanceRelaxedTimeout = relaxed,
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (Volatile.Read(ref stallAcquisition)) await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                try { await socket.ConnectAsync(host, port, token); }
+                catch { socket.Dispose(); throw; }
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = await MaintenancePoolAsync(client, "moved-upload");
+        var lease = await originalPool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        await source.SendRawAsync(Start("MIGRATING", 1), source.ReceivedConnectionIds.Last());
+        await WaitForMaintenance(lease);
+        originalPool.Return(lease);
+
+        await using var payload = new PausedFirstReadStream();
+        var upload = client.Strings.SetAsync("moved-upload", payload, payload.Length,
+            cancellationToken: timeout.Token).AsTask();
+        await payload.Started.Task.WaitAsync(timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        // The command connection has completed handoff. Stall only the replacement upload lease.
+        Volatile.Write(ref stallAcquisition, true);
+        payload.Resume.TrySetResult();
+
+        var error = await Assert.That(async () => await upload.WaitAsync(timeout.Token))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Timeout).IsEqualTo(relaxed);
+        await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+    }
+
+    private static void ConfigureMaintenanceRouting(FakeRespServer server)
+    {
+        var original = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command switch
+        {
+            "ROLE" => "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray(),
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            _ => original(id, command),
+        };
+    }
+
+    private static FakeRespServer MaintenanceSentinel(int port) => new(8, FakeRespServer.OkReply)
+    {
+        ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n")
+            : "*0\r\n"u8.ToArray(),
+    };
+
+    private static RespireOptions MaintenanceRoutingOptions(FakeRespServer source, FakeRespServer sentinel, string mode)
+    {
+        var options = Options(source) with { UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null };
+        if (mode == "sentinel")
+        {
+            options.Endpoints.Clear();
+            options.Endpoints.Add(new("127.0.0.1", sentinel.Port));
+        }
+        return options;
+    }
+
+    private static ValueTask<DedicatedConnectionPool> MaintenancePoolAsync(RespireClient client, string key)
+        => client.Core.Cluster is { } cluster
+            ? cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot(key), CancellationToken.None, discovery: null)
+            : client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+
+    private sealed class PausedFirstReadStream() : MemoryStream("payload"u8.ToArray())
+    {
+        public override bool CanSeek => false;
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Resume.Task.WaitAsync(cancellationToken);
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MovingKeepsCorrectionFenceOnOriginalEndpoint(bool retainOriginalConnection)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        var sourceReply = source.ReplyOverride;
+        source.ReplyOverride = (connection, command) => command.StartsWith("CLIENT KILL ")
+            ? ":1\r\n"u8.ToArray() : sourceReply!(connection, command);
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        var original = client.Core.Multiplexer.GetConnection();
+        Task<RespValue>? pending = null;
+        if (retainOriginalConnection)
+        {
+            source.SuppressReply = command => command == "PING";
+            pending = original.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask();
+            while (!source.ReceivedCommands.Contains("PING")) await Task.Delay(5, timeout.Token);
+        }
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        var fence = client.FenceCorrectionConnectionAsync(new(new("127.0.0.1", source.Port), 42,
+            Connection: retainOriginalConnection ? original : null), timeout.Token).AsTask();
+        await fence.WaitAsync(timeout.Token);
+        if (pending is not null)
+            await Assert.That(async () => { using var reply = await pending.WaitAsync(timeout.Token); })
+                .Throws<RespireConnectionException>();
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL ID 42"))).IsTrue();
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL "))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MovingRetriesDedicatedHandshakeRetiredBeforeDispatch(bool streaming)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.SuppressReply = command =>
+        {
+            if (command != "HELLO 3") return false;
+            handshake.TrySetResult();
+            return true;
+        };
+        var rental = client.Core.RentDedicatedConnectionAsync(originalPool, timeout.Token,
+            kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).AsTask();
+        await handshake.Task.WaitAsync(timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        var (owner, lease) = await rental.WaitAsync(timeout.Token);
+        await Assert.That(ReferenceEquals(owner, client.Core.DedicatedPool)).IsTrue();
+        await Assert.That(lease.Port).IsEqualTo(target.Port);
+        owner.Return(lease);
+        await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var error = await Assert.That(async () => await client.Core.RentDedicatedConnectionAsync(originalPool, cancelled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancelled.Token);
+    }
+
+    [Test]
+    [Arguments("standalone", false, false)]
+    [Arguments("standalone", true, true)]
+    [Arguments("cluster", false, false)]
+    [Arguments("cluster", true, true)]
+    [Arguments("sentinel", false, false)]
+    [Arguments("sentinel", true, true)]
+    public async Task MovingReplacesUploadPoolAndDrainsAcceptedUpload(string mode, bool reuseIdle, bool fromUpload)
+    {
+        await using var source = Server(maxConnections: 8);
+        await using var target = Server(maxConnections: 8);
+        var targetReply = target.ReplyOverride;
+        target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? FakeRespServer.OkReply : targetReply!(connection, command);
+        source.SuppressReply = command => command.StartsWith("SET ");
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+        var selected = client.Core.Multiplexer.GetConnection();
+        var originalPool = await MaintenancePoolAsync(client, "old-upload");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var upload = client.Strings.SetAsync("old-upload", new ReadOnlySequence<byte>("old"u8.ToArray()),
+            cancellationToken: timeout.Token).AsTask();
+        while (!source.ReceivedCommands.Contains("SET old-upload old")) await Task.Delay(5, timeout.Token);
+        var index = source.ReceivedCommands.ToList().IndexOf("SET old-upload old");
+        var uploadConnection = source.ReceivedConnectionIds[index];
+        await source.SendRawAsync(Moving(1, target.Port), fromUpload ? uploadConnection : source.ReceivedConnectionIds[0]);
+        await WaitForRetirement(selected);
+        // Reproduce selection before publication followed by rental after retirement.
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        await Assert.That(originalPool.IsStopping).IsTrue();
+        var (owner, lease) = client.Core.Cluster is { } cluster
+            ? await cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("old-upload"), timeout.Token,
+                discovery: null, reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming)
+            : await client.Core.RentDedicatedConnectionAsync(originalPool, timeout.Token,
+                reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming);
+        await Assert.That(ReferenceEquals(owner, await MaintenancePoolAsync(client, "old-upload"))).IsTrue();
+        await Assert.That(lease.Port).IsEqualTo(target.Port);
+        owner.Return(lease);
+        await Assert.That(await client.Strings.SetAsync("new-upload", new ReadOnlySequence<byte>("new"u8.ToArray()),
+            cancellationToken: timeout.Token)).IsTrue();
+        await Assert.That(originalPool.IsStopping).IsTrue();
+        await Assert.That(ReferenceEquals(originalPool, await MaintenancePoolAsync(client, "old-upload"))).IsFalse();
+        await Assert.That(target.ReceivedCommands).Contains("SET new-upload new");
+        await Assert.That(upload.IsCompleted).IsFalse();
+        await source.SendRawAsync(FakeRespServer.OkReply, uploadConnection);
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET new-upload "))).IsFalse();
     }
 
     [Test]
@@ -1188,6 +1710,99 @@ public class MaintenanceNotificationTests
         await server.SendRawAsync(Finish("FAILED_OVER", 1));
         await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireConnectionException>();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClientUploadLeaseUsesMaintenanceAndKeepsBlockingLeasesSeparate(bool cluster)
+    {
+        await using var server = Server(maxConnections: 5);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            _ => FakeRespServer.OkReply,
+        };
+        await using var client = RespireClient.Create(Options(server) with
+        {
+            UseCluster = cluster,
+            CommandTimeout = TimeSpan.FromMilliseconds(150),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+        });
+        var pool = cluster
+            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, CancellationToken.None, discovery: null)
+            : await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var blocking = await pool.RentAsync(CancellationToken.None);
+        pool.Return(blocking);
+        var connection = await pool.RentAsync(CancellationToken.None, kind: DedicatedLeaseKind.Streaming);
+        await Assert.That(ReferenceEquals(blocking, connection)).IsFalse();
+        await server.SendRawAsync(Start("MIGRATING", 1), server.ReceivedConnectionIds[^1]);
+        await WaitForMaintenance(connection);
+        pool.Return(connection);
+
+        var pipe = new System.IO.Pipelines.Pipe();
+        await using var source = pipe.Reader.AsStream();
+        try
+        {
+            var upload = client.Strings.SetAsync("key", source, 4).AsTask();
+            await pipe.Writer.WriteAsync("da"u8.ToArray());
+            await Task.Delay(400);
+            await Assert.That(upload.IsCompleted).IsFalse();
+            await pipe.Writer.WriteAsync("ta"u8.ToArray());
+            await Assert.That(await upload.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+            var nextBlocking = await pool.RentAsync(CancellationToken.None);
+            await Assert.That(ReferenceEquals(blocking, nextBlocking)).IsTrue();
+            pool.Return(nextBlocking);
+        }
+        finally { await pipe.Writer.CompleteAsync(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MaintenanceLeaseKindCanRetainAllFourIdleConnections(bool streaming)
+    {
+        await using var server = Server(maxConnections: 8);
+        await using var client = RespireClient.Create(Options(server));
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var kind = streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
+        var connections = new RespireConnection[4];
+        for (var index = 0; index < connections.Length; index++)
+            connections[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
+        foreach (var connection in connections) pool.Return(connection);
+        var reused = new RespireConnection[4];
+        for (var index = 0; index < reused.Length; index++)
+        {
+            reused[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
+            await Assert.That(ReferenceEquals(reused[index], connections[3 - index])).IsTrue();
+        }
+        foreach (var connection in reused) pool.Return(connection);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MaintenanceLeaseKindsShareIdleCapacityWhenOneKindFillsThePool(bool streamingFirst)
+    {
+        await using var server = Server(maxConnections: 8);
+        server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(Options(server));
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var first = new RespireConnection[4];
+        for (var index = 0; index < first.Length; index++)
+            first[index] = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+        foreach (var connection in first) pool.Return(connection);
+        var other = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
+        pool.Return(other);
+        var reused = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
+        await Assert.That(ReferenceEquals(reused, other)).IsTrue();
+        pool.Return(reused);
+        var retained = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+        await Assert.That(ReferenceEquals(retained, first[3])).IsTrue();
+        pool.Return(retained);
     }
 
     [Test]

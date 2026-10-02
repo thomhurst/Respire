@@ -2318,7 +2318,7 @@ public class ClusterTests
         const string key = "streamed-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 10, 11, 12, 13, 14, 15 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new MemoryStream(payload) { Position = 1 };
@@ -2335,7 +2335,7 @@ public class ClusterTests
     {
         const string key = "reset-failure-key";
         var slot = ClusterHash.GetSlot(key);
-        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new ResetFailingMemoryStream([1, 2, 3]);
@@ -2353,8 +2353,8 @@ public class ClusterTests
         const string key = "multi-hop-stream-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 4, 8, 12, 16 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply);
-        await using var middle = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var middle = new FakeRespServer(2, FakeRespServer.OkReply);
         middle.ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
             ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n")
             : null;
@@ -2384,17 +2384,18 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task AskRedirect_ReadFailureDoesNotConsumeAskingStateOrCloseConnection()
+    public async Task AskRedirect_ReadFailureDiscardsLeaseWithoutConsumingAskingState()
     {
         const string key = "asking-read-failure-key";
         var slot = ClusterHash.GetSlot(key);
-        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
-        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask, maxConnections: 3);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new ThrowOnceStream([1, 2, 3]);
 
         await Assert.That(async () => await client.Strings.SetAsync(key, stream, 3))
             .Throws<IOException>();
+        await seed.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEmpty();
         await Assert.That(await client.Strings.SetAsync(key, stream, 3)).IsTrue();
 
@@ -2409,7 +2410,7 @@ public class ClusterTests
         const string key = "sequence-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 2, 4, 6, 8 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
         await using var client = await CreateClusterClientAsync(seed);
 
@@ -2425,7 +2426,7 @@ public class ClusterTests
         const string key = "asking-stream-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 3, 5, 7, 9 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new MemoryStream(payload);
@@ -2444,7 +2445,7 @@ public class ClusterTests
         const string key = "asking-sequence-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 2, 3, 5, 7 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
         await using var client = await CreateClusterClientAsync(seed);
 
@@ -2461,7 +2462,7 @@ public class ClusterTests
         const string key = "nonseekable-key";
         var slot = ClusterHash.GetSlot(key);
         var payload = new byte[] { 1, 3, 5, 7 };
-        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new NonSeekableMemoryStream(payload);
@@ -4161,9 +4162,9 @@ public class ClusterTests
     private static byte[] ScanMetadataReply(string value)
         => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
-    private static FakeRespServer CreateRedirectingSeed(int slot, FakeRespServer target, string code)
+    private static FakeRespServer CreateRedirectingSeed(int slot, FakeRespServer target, string code, int maxConnections = 2)
     {
-        var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var seed = new FakeRespServer(maxConnections, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*1\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
         var redirect = Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");

@@ -91,8 +91,9 @@ public partial interface IStringCommands
     /// stream with fewer remaining bytes is rejected before anything is sent. Respire reads the first
     /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early
     /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
-    /// without affecting the connection. The source has still been read, so the call is not
-    /// retryable with the same stream. On a cluster client, if the node loses its slots during that
+    /// without sending a command header. The client discards the rented upload connection;
+    /// multiplexed connections are unaffected. The source has still been read, so retry with a
+    /// fresh or rewound source. On a cluster client, if the node loses its slots during that
     /// first read, the held chunk is sent to the new owner only when each completed read reported
     /// its byte count. A canceled or faulted read with an unknown byte count fails instead of retrying
     /// a potentially shifted payload. A failure after the
@@ -107,21 +108,22 @@ public partial interface IStringCommands
     /// stream returns.
     /// </para>
     /// <para>
-    /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
-    /// wait for the complete frame, so a slow source (for example a network stream) delays
-    /// unrelated traffic. Use a separate client for slow sources.
+    /// <b>The upload uses a dedicated pooled connection.</b> A slow source does not delay commands
+    /// sent through the client's multiplexed connections.
     /// </para>
     /// <para>
-    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the header
+    /// <b><paramref name="cancellationToken"/> closes the upload connection mid-upload.</b> Once the header
     /// is queued, cancellation, a source read failure or a timeout before the complete
     /// RESP frame has been written to the socket closes the connection to preserve framing, even if
-    /// the frame terminator is already
-    /// queued. That fails every other command pipelined on the connection. After the frame is
-    /// written, cancellation only abandons the reply wait and the command may still execute.
+    /// the frame terminator is already queued. Commands sent through the client's multiplexed
+    /// connections are unaffected. After the frame is
+    /// written, cancellation abandons the reply wait and the command may still execute. The
+    /// client still discards the cancelled upload's lease rather than returning it to the idle pool.
     /// </para>
     /// <para>
     /// The command timeout covers the whole upload, including every source read and socket write.
-    /// Respire does not retry a streamed write once its header is sent. Cluster <c>MOVED</c>/<c>ASK</c>
+    /// Respire does not replay a streamed write after a transport failure once its header is sent.
+    /// Explicit Cluster <c>MOVED</c>/<c>ASK</c>
     /// redirects are followed when the source is a seekable stream or an in-memory sequence; a
     /// non-seekable stream returns the redirect to the caller because its source cannot be replayed.
     /// For a seekable stream, the position when this method is called is the replay point.

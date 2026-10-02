@@ -25,12 +25,13 @@ await redis.Strings.SetAsync("archive", file, file.Length);
 ```
 
 The stream overload requires an exact, non-negative byte length. Respire reads no more than
-that length, leaves the stream open, and does not seek it; any surplus bytes stay unread in the
+that length and leaves the stream open. Normal streaming does not seek it; any surplus bytes stay unread in the
 stream. A seekable stream with fewer remaining bytes than the declared length is rejected with
 `ArgumentOutOfRangeException` before anything is sent; any other source that ends early throws
 `EndOfStreamException`. Respire reads the first chunk (up to 32 KiB) before it sends anything, so a
-source that fails, ends, is cancelled or times out within that chunk throws without affecting the
-connection. The stream has still been read, so retry with a fresh or rewound source. On a cluster
+source that fails, ends, is cancelled or times out within that chunk throws without sending a command
+header. The client discards the rented upload connection; multiplexed connections are unaffected.
+The stream has still been read, so retry with a fresh or rewound source. On a cluster
 client, if the node loses its slots while that first chunk is being read, Respire keeps the chunk
 and sends the upload to the new owner without reading those bytes again when every completed read
 reported its byte count. A canceled or faulted read with an unknown byte count fails instead of
@@ -40,24 +41,40 @@ the write buffer in 32 KiB chunks without combining them first; keep its memory 
 returned task completes. Both overloads always take the streaming path, which costs a few small
 allocations per call, so use the ordinary `SetAsync` overloads for small values.
 
-Respire holds that connection's write path for the complete RESP frame. This causes head-of-line
-blocking: every later command on that physical connection waits for the upload, and may exceed its
-`CommandTimeout`. Use a separate client or connection for bulk uploads and slow sources. Once the
-header is queued, cancellation, a read failure or a timeout before the complete frame has been
-written to the socket closes the connection to prevent later bytes from being parsed as another command.
-That also fails other commands pipelined on it, even when only the frame terminator was still
-waiting to be written. Prefer seekable or in-memory sources. `CommandTimeout` covers the whole
-upload, including every source read and socket write, so raise it (or pass a longer-lived
-cancellation token with a `null` timeout) for payloads that take longer than the timeout to
-transmit. If the connection closes while Respire is reading the source, the call fails with
+Respire sends each upload through a dedicated pooled connection. Uploads and blocking commands
+share a pool owner, but active rentals have no fixed connection limit: when no compatible idle
+connection exists, the client opens another connection instead of waiting for a free lease.
+The pool retains at most four idle connections in total. Bound concurrent uploads in your application
+when you need to limit Redis connections. Maintenance-enabled upload connections negotiate the
+configured notifications and are kept separate from ordinary blocking leases.
+Both lease kinds share the four-connection idle limit. Either kind can use all four slots when
+the other kind has no idle connections. When the pool is full, a returning lease can reclaim
+up to half the slots from the other kind, so neither kind continually reconnects under mixed demand.
+
+After a standalone, Cluster, or Sentinel `MOVING` handoff publishes a replacement endpoint, new uploads use a new pool
+for that endpoint. The old pool stops accepting rentals and drains uploads already in progress.
+
+With Sentinel, an upload already assigned to a primary drains through its original connection
+during failover. New uploads use the newly discovered primary. An interrupted upload is not
+automatically replayed on the new primary, because the old primary may already have accepted it.
+
+A slow source does not block
+commands sent through the client's multiplexed connections. Once the header is queued, cancellation,
+a read failure or a timeout before the complete frame has been written closes only the upload
+connection to preserve RESP framing. Prefer seekable or in-memory sources. `CommandTimeout` covers
+the whole upload, including every source read and socket write, so raise it (or set it to `null`)
+for payloads that take longer than the timeout to transmit. If the upload connection closes while
+Respire is reading the source, the call fails with
 `RespireConnectionException` instead of waiting for the source. After the complete frame has been
 written to the socket, cancellation only cancels the wait for its reply, and Redis may still apply
-the write.
+the write. In either case, Respire discards the cancelled upload's rented connection instead of
+returning it to the idle pool, so a later upload cannot consume its abandoned reply.
 
-A streamed write is not retried once its header is sent. In a cluster, `MOVED` and `ASK` replies
-are returned to the caller as server errors instead of being followed: a stream source cannot be
-replayed, and the redirect path cannot prefix a streamed frame with `ASKING`. Transport failures are returned to the caller too; after a transport
-failure, Redis may or may not have applied the write.
+After a transport failure once the header is sent, Respire does not replay the write: Redis may
+or may not have applied it. Explicit Cluster `MOVED` and `ASK` replies reject the attempted command.
+Respire follows those redirects for seekable streams and unchanged `ReadOnlySequence<byte>` sources,
+replaying a seekable stream from its original position and sending `ASKING` when required.
+Non-seekable streams return the redirect to the caller because their consumed bytes cannot be replayed.
 
 Conditional writes use `SetWhen`:
 

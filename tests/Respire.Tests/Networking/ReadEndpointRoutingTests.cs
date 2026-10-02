@@ -1258,6 +1258,7 @@ public class ReadEndpointRoutingTests
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10),
             // Keep command timeout above the 300 ms retired-stream idle limit below.
+            // Discovery must settle under parallel CI load before testing stream retirement.
             CommandTimeout = TimeSpan.FromSeconds(2),
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
@@ -1276,7 +1277,8 @@ public class ReadEndpointRoutingTests
 
             Volatile.Write(ref replicaPorts, available.Select(server => server.Port).ToArray());
             await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-            await Task.Delay(TimeSpan.FromMilliseconds(400));
+            // Outlast the one-second retirement grace while the consumer still owns the stream.
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
             await Assert.That(serving.PeerClosed.IsCompleted).IsFalse();
 
             if (generation == 0) await stream.DisposeAsync();

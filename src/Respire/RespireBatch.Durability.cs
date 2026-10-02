@@ -96,10 +96,8 @@ public sealed partial class RespireBatch
 
         _sent = true;
         var telemetryOperation = operation;
-        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
-        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
-            operation, _ops, static op => op.Operation,
-            core.Endpoint, core.Options.Database, out telemetryOperation) : default;
+        var started = RespireTelemetry.CaptureStartTimestamp();
+        RespireTelemetry.OperationScope telemetry = default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;
         Exception? operationError = null;
@@ -114,11 +112,10 @@ public sealed partial class RespireBatch
                 (pool, connection) = await router.RentDedicatedConnectionAsync(
                     pool, slot, cancellationToken, discovery: null, reuseIdle: false).ConfigureAwait(false);
             else
-                connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
-            if (core.Sentinel is not null)
-                telemetry = RespireTelemetry.StartBatchOperation(
-                    operation, _ops, static op => op.Operation,
-                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, reuseIdle: false).ConfigureAwait(false);
+            telemetry = RespireTelemetry.StartBatchOperation(
+                operation, _ops, static op => op.Operation,
+                connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
             for (var index = 0; index < _ops.Count; index++)
@@ -162,7 +159,9 @@ public sealed partial class RespireBatch
             {
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
-                        core.Options.Database, sentinelStarted, operationError);
+                        core.Options.Database, started, operationError,
+                        endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
+                            ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
                 telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
                     batchSize: _ops.Count == 1 ? null : _ops.Count);
             }

@@ -30,6 +30,7 @@ internal sealed partial class ClusterRouter
         {
             if (_retiringNodes.ContainsKey(node)) continue;
             _dedicatedPools.Remove(node, out var pool);
+            if (_dedicatedMovingHandlers.Remove(node, out var movingHandler)) node.MovingHandoffPublished -= movingHandler;
             _redirectVersions.Remove(node);
             if (_nodeStateHandlers.Remove(node, out var handler)) node.SlotStateChanged -= handler;
             _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler);
@@ -145,7 +146,8 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            _logger?.LogWarning(error, "A retired Cluster pool reported a cleanup failure");
+            try { _logger?.LogWarning(error, "A retired Cluster pool reported a cleanup failure"); }
+            catch { /* Background retirement remains observed even if logging fails. */ }
         }
     }
 

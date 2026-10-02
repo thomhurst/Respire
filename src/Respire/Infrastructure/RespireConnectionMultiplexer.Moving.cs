@@ -39,6 +39,25 @@ internal sealed partial class RespireConnectionMultiplexer
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
+    internal RespireEndpoint ActiveConnectionEndpoint
+    {
+        get
+        {
+            var endpoint = Volatile.Read(ref _activeEndpoint);
+            return new(endpoint.Host, endpoint.Port);
+        }
+    }
+
+    internal object MovingPublication => Volatile.Read(ref _activeEndpoint);
+
+    internal (RespireEndpoint Endpoint, object Publication) CaptureMovingPublication()
+    {
+        var endpoint = Volatile.Read(ref _activeEndpoint);
+        return (new(endpoint.Host, endpoint.Port), endpoint);
+    }
+
+    internal event Action? MovingHandoffPublished;
+
     internal MovingAnnouncement CaptureMovingAnnouncement(int slot, RespireConnection connection,
         MaintenanceNotification notification)
         => new(notification,
@@ -59,7 +78,24 @@ internal sealed partial class RespireConnectionMultiplexer
         if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
     }
 
-    private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection, MovingAnnouncement announcement)
+    internal void QueueDedicatedMovingHandoff(RespireConnection connection, MovingAnnouncement announcement,
+        Func<bool> isCurrent)
+    {
+        // Dedicated uploads can be the only sockets a lazy client has opened. Their push
+        // must drive the same handoff coordinator without joining the multiplexed write path.
+        var epoch = _moving.HandoffEpoch;
+        var current = isCurrent();
+        bool startWorker;
+        lock (_moving.Gate)
+        {
+            startWorker = QueueMovingHandoffUnderLock(-1, connection, announcement,
+                current && _moving.HandoffEpoch - epoch <= 1);
+        }
+        if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
+    }
+
+    private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection, MovingAnnouncement announcement,
+        bool? dedicatedCurrent = null)
     {
         var notification = announcement.Notification;
         // The socket must have been published when it parsed the push. A reconnect that replaced
@@ -72,7 +108,7 @@ internal sealed partial class RespireConnectionMultiplexer
         var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
         var deadline = announcement.ReceivedAt + (long)grace.TotalMilliseconds;
         var result = _moving.Queue(IsOperational,
-            _moving.IsCurrent(announcement.PublicationGeneration, connection.MovingPublicationGeneration, announcement.HandoffEpoch),
+            dedicatedCurrent ?? _moving.IsCurrent(announcement.PublicationGeneration, connection.MovingPublicationGeneration, announcement.HandoffEpoch),
             connection.LastQueuedMovingSequence, connection.PeerKey, notification.SequenceId,
             notification.Target ?? new RespireEndpoint(Host, Port), deadline, Environment.TickCount64,
             _stopConnecting.Token);
@@ -250,7 +286,8 @@ internal sealed partial class RespireConnectionMultiplexer
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
         catch (Exception error) { _logger?.LogDebug(error, "MOVING retirement cache fence observer failed"); }
 
-        // Metrics listeners can run user code, so publish outside the lifecycle locks.
+        // Notify other connection owners and metrics listeners outside the lifecycle locks.
+        MovingHandoffPublished?.Invoke();
         if (cacheEvictions is { } removed)
         {
             try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }

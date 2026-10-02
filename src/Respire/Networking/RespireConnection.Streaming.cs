@@ -12,6 +12,11 @@ namespace Respire.Networking;
 // frame reaches the socket aborts the connection, so no other bytes can follow a partial frame.
 internal sealed partial class RespireConnection
 {
+    internal bool IsStreamingWriteActive
+    {
+        get { lock (_writeGate) return _streamingActive; }
+    }
+
     /// <summary>
     /// Payload bytes copied into the write buffer per flush. Bounds write-buffer growth for any
     /// payload size; the docs describe uploads as being sent in chunks of this size.
@@ -59,21 +64,23 @@ internal sealed partial class RespireConnection
     }
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
-        in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline)
+        in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
+        Func<bool>? validateStreamingRoute)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
-            ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline)
+            ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
+                validateStreamingRoute: validateStreamingRoute)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
         in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
-        CommandDeadline commandDeadline)
-        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking);
+        CommandDeadline commandDeadline, Func<bool>? validateStreamingRoute = null)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking, validateStreamingRoute);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        RawCommand? prelude = null)
+        RawCommand? prelude = null, Func<bool>? validateStreamingRoute = null)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -151,13 +158,14 @@ internal sealed partial class RespireConnection
                     throw;
                 }
             }
-
             // A source that ignored the token can complete its read after the caller, the deadline
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
             // the wire yet, so fail here instead of queueing an expired header that a later wait
             // would have to abort the connection for.
             timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
+            if (validateStreamingRoute is not null && !validateStreamingRoute())
+                throw new RespireConnectionRetiredException(Host, Port);
 
             if (prelude is { } prefix)
             {
@@ -179,6 +187,8 @@ internal sealed partial class RespireConnection
                 // Check again before the SET header is queued so that write cannot start late.
                 timeoutCancellation?.ThrowIfDue();
                 effectiveCancellation.ThrowIfCancellationRequested();
+                if (validateStreamingRoute is not null && !validateStreamingRoute())
+                    throw new RespireConnectionRetiredException(Host, Port);
             }
 
             // Retirement (local or cluster generation) rejects the upload until its header is
@@ -194,6 +204,10 @@ internal sealed partial class RespireConnection
 
             await WriteStreamedPayloadAsync(command, payloadReader, firstChunk, effectiveCancellation)
                 .ConfigureAwait(false);
+            // The final fill and socket write can finish before a delayed timer callback runs.
+            // Recheck the absolute deadline before completing the frame and accepting a reply.
+            timeoutCancellation?.ThrowIfDue();
+            effectiveCancellation.ThrowIfCancellationRequested();
 
             var finalWrite = AppendStreamingEnd(command, source, requestWriteStart, out startedBatch);
             phase = StreamedSetPhase.ResponseQueued;

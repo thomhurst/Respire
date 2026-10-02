@@ -19,11 +19,189 @@ public sealed class StreamedSetTests
 {
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
 
+    [Test]
+    public async Task AskRouteRetirementBeforeTheHeaderRestoresTheSourcePrefix()
+    {
+        await using var oldTarget = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command == "ASKING",
+        };
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", oldTarget.Port,
+            new() { Protocol = RespProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var source = new MemoryStream("data"u8.ToArray());
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+        var routeCurrent = true;
+        var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
+            CommandDeadline.After(10_000), () => Volatile.Read(ref routeCurrent)).AsTask();
+        while (!oldTarget.ReceivedCommands.Contains("ASKING"))
+        {
+            if (pending.IsCompleted) await pending;
+            await Task.Delay(5, timeout.Token);
+        }
+        Volatile.Write(ref routeCurrent, false);
+        await oldTarget.SendRawAsync(FakeRespServer.OkReply);
+        await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireConnectionRetiredException>();
+        await Assert.That(oldTarget.ReceivedCommands).IsEquivalentTo(["ASKING"]);
+        await Assert.That(connection.IsConnected).IsFalse();
+        await using var next = await RespireConnection.ConnectAsync("127.0.0.1", replacement.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        using var reply = await next.SendCheckedAsync(in command, timeout.Token, commandName: "SET");
+        await Assert.That(reply.IsError).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key data"]);
+    }
+
+    [Test]
+    public async Task StreamedSetInvalidatesCachedValue()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command == "HELLO 3"
+            ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ClientSideCache = new(),
+            ThreadPoolMonitoring = false,
+        });
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "cached";
+        var read = cache.BeginRead(in key);
+        using var value = RespValue.BulkString("old"u8.ToArray());
+        cache.CompleteRead(in read, in value, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        using var source = new MemoryStream("new"u8.ToArray());
+        await Assert.That(await client.Strings.SetAsync(key, source, source.Length)).IsTrue();
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("cluster-discovery", false)]
+    [Arguments("cluster-discovery", true)]
+    [Arguments("cluster-rent", false)]
+    [Arguments("cluster-rent", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    public async Task UploadAcquisitionObservesDeadlineAndCallerCancellation(string mode, bool cancelCaller)
+    {
+        await using var server = new FakeRespServer(5, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n")
+            : FakeRespServer.OkReply;
+        var stall = mode != "cluster-rent";
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            UseCluster = mode.StartsWith("cluster"),
+            SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (Volatile.Read(ref stall))
+                {
+                    connecting.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try { await socket.ConnectAsync(host, port, token); }
+                catch { socket.Dispose(); throw; }
+                return new NetworkStream(socket, ownsSocket: true);
+            },
+        });
+        if (mode == "cluster-rent")
+        {
+            await client.PingAsync();
+            Volatile.Write(ref stall, true);
+        }
+        using var cancellation = new CancellationTokenSource();
+        await using var source = new MemoryStream("data"u8.ToArray());
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: cancellation.Token).AsTask();
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await upload.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await upload.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        }
+        await Assert.That(source.Position).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+    }
+
     private static byte[] PatternedPayload(int length)
     {
         var payload = new byte[length];
         for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
         return payload;
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledUploadDiscardsDedicatedConnectionBeforeNextUpload(bool midFrame)
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+            if (command.StartsWith("SET first ", StringComparison.Ordinal)) firstReceived.TrySetResult();
+            else secondReceived.TrySetResult();
+            return true;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token);
+        var connection = await pool.RentAsync(timeout.Token, kind: Respire.Internal.DedicatedLeaseKind.Streaming);
+        using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
+        pool.Return(connection);
+        using var cancellation = new CancellationTokenSource();
+        using var source = new PartialThenBlockedStream(new byte[RespireConnection.StreamChunkSize + 1],
+            RespireConnection.StreamChunkSize, RespireConnection.StreamChunkSize);
+        var first = midFrame
+            ? client.Strings.SetAsync("first", source, source.Length, cancellationToken: cancellation.Token).AsTask()
+            : client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
+                cancellationToken: cancellation.Token).AsTask();
+        if (midFrame)
+        {
+            await source.Paused.Task.WaitAsync(timeout.Token);
+            await Assert.That(connection.IsStreamingWriteActive).IsTrue();
+        }
+        else
+        {
+            await firstReceived.Task.WaitAsync(timeout.Token);
+            while (connection.IsStreamingWriteActive) await Task.Delay(1, timeout.Token);
+        }
+        cancellation.Cancel();
+        await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+
+        var second = client.Strings.SetAsync("second", new ReadOnlySequence<byte>(new byte[] { 2 }),
+            cancellationToken: timeout.Token).AsTask();
+        await secondReceived.Task.WaitAsync(timeout.Token);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+        await Assert.That(second.IsCompleted).IsFalse();
+        // The second command owns a fresh socket; the abandoned reply cannot reach it.
+        await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[^1]);
+        await Assert.That(await second.WaitAsync(timeout.Token)).IsTrue();
     }
 
     [Test]
@@ -69,6 +247,62 @@ public sealed class StreamedSetTests
         await Assert.That(await client.Strings.SetAsync("sequence", sequence)).IsTrue();
         await Assert.That(server.ValueLength).IsEqualTo(5);
         await Assert.That(server.SmallValue).IsEquivalentTo(new byte[] { 1, 2, 3, 4, 5 });
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledStreamedSetDoesNotBlockOrAbortMultiplexedCommands(bool useCluster)
+    {
+        var pong = "+PONG\r\n"u8.ToArray();
+        FakeRespServer? server = null;
+        await using var ownedServer = server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "PING" => pong,
+                "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                    $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server!.Port}\r\n"),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            UseCluster = useCluster,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        const int length = RespireConnection.StreamChunkSize + 1;
+        using var cancellation = new CancellationTokenSource();
+        var source = new PartialThenBlockedStream(new byte[length], RespireConnection.StreamChunkSize,
+            RespireConnection.StreamChunkSize);
+        var upload = client.Strings.SetAsync("stalled", source, length, cancellationToken: cancellation.Token).AsTask();
+        await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch
+        {
+            cancellation.Cancel();
+            try { await upload; }
+            catch (Exception) { }
+            throw;
+        }
+
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await upload).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var expectedCommands = useCluster
+            ? new[] { "CLUSTER SLOTS", "PING", "PING" }
+            : new[] { "PING", "PING" };
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(expectedCommands);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
     }
 
     [Test]
@@ -478,7 +712,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task EarlyEndOfStreamWithinFirstChunkLeavesConnectionOpen()
+    public async Task EarlyEndOfStreamWithinFirstChunkDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -494,8 +728,8 @@ public sealed class StreamedSetTests
         var source = new GeneratedStream(50);
         await Assert.That(async () => await client.Strings.SetAsync("partial", source, 100))
             .Throws<EndOfStreamException>();
+        await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await client.PingAsync();
-        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
@@ -716,7 +950,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task CancellationDuringFirstChunkReadLeavesConnectionOpen()
+    public async Task CancellationDuringFirstChunkReadDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -736,8 +970,8 @@ public sealed class StreamedSetTests
         var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
 
+        await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await client.PingAsync();
-        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
@@ -820,7 +1054,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task ConcurrentCommandWaitsUntilStreamedFrameCompletes()
+    public async Task ConcurrentCommandRunsWhileStreamedSetIsStalled()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -835,13 +1069,12 @@ public sealed class StreamedSetTests
         var set = client.Strings.SetAsync("ordered", source, 4).AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var ping = client.PingAsync().AsTask();
-        await Task.Delay(100);
-        await Assert.That(server.Commands.Contains("PING")).IsFalse();
+        await ping.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.Commands).IsEquivalentTo(["PING"]);
 
         source.ContinueReading.TrySetResult();
         await Assert.That(await set).IsTrue();
-        await ping;
-        await Assert.That(server.Commands.TakeLast(2).SequenceEqual(new[] { "SET", "PING" })).IsTrue();
+        await Assert.That(server.Commands).IsEquivalentTo(["PING", "SET"]);
     }
 
     [Test]
@@ -916,8 +1149,7 @@ public sealed class StreamedSetTests
         var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
-        // The stalled read was the first chunk, so no header was queued and the connection survives.
-        await Assert.That(client.IsConnected).IsTrue();
+        // The timeout leaves the dedicated upload lease healthy; ordinary traffic stays available.
         await client.PingAsync();
 
         // Finish the ignored read so its rented buffer can be returned safely.
@@ -1005,7 +1237,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader(bool routeRetires)
     {
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
@@ -1018,7 +1252,8 @@ public sealed class StreamedSetTests
         var source = new SynchronouslyBlockingStream(TimeSpan.FromMilliseconds(500));
         var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, SetWhen.Always);
 
-        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET")
+        var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET",
+                    validateStreamingRoute: () => !routeRetires)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
@@ -1899,6 +2134,7 @@ public sealed class StreamedSetTests
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _runner;
+        private readonly ConcurrentBag<Task> _connections = [];
         private readonly ConcurrentQueue<string> _commands = new();
         private readonly TaskCompletionSource _connectionClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private byte[]? _smallValue;
@@ -1918,61 +2154,79 @@ public sealed class StreamedSetTests
         {
             try
             {
-                using var socket = await _listener.AcceptSocketAsync(_stop.Token);
-                await using var stream = new NetworkStream(socket, ownsSocket: false);
                 while (!_stop.IsCancellationRequested)
                 {
-                    var marker = await ReadByteAsync(stream, _stop.Token);
-                    if (marker < 0)
+                    var socket = await _listener.AcceptSocketAsync(_stop.Token);
+                    _connections.Add(HandleConnectionAsync(socket));
+                }
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+            catch (SocketException) when (_stop.IsCancellationRequested) { }
+
+            await Task.WhenAll(_connections.ToArray());
+        }
+
+        private async Task HandleConnectionAsync(Socket socket)
+        {
+            try
+            {
+                using (socket)
+                await using (var stream = new NetworkStream(socket, ownsSocket: false))
+                {
+                    while (!_stop.IsCancellationRequested)
                     {
-                        _connectionClosed.TrySetResult();
-                        return;
-                    }
-                    if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
-                    var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
-                    string? command = null;
-                    for (var index = 0; index < count; index++)
-                    {
-                        if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
-                        var length = int.Parse(await ReadLineAsync(stream, _stop.Token));
-                        if (index == 0)
+                        var marker = await ReadByteAsync(stream, _stop.Token);
+                        if (marker < 0)
                         {
-                            var name = new byte[length];
-                            await stream.ReadExactlyAsync(name, _stop.Token);
-                            command = Encoding.ASCII.GetString(name);
+                            _connectionClosed.TrySetResult();
+                            return;
                         }
-                        else if (command == "SET" && index == 2)
+                        if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
+                        var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
+                        string? command = null;
+                        for (var index = 0; index < count; index++)
                         {
-                            ValueLength = length;
-                            if (length <= 1024) _smallValue = new byte[length];
-                            var scratch = new byte[16 * 1024];
-                            var consumed = 0;
-                            while (consumed < length)
+                            if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
+                            var length = int.Parse(await ReadLineAsync(stream, _stop.Token));
+                            if (index == 0)
                             {
-                                var read = Math.Min(scratch.Length, length - consumed);
-                                await stream.ReadExactlyAsync(scratch.AsMemory(0, read), _stop.Token);
-                                if (_smallValue is not null) scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
-                                if (_smallValue is null)
-                                    for (var i = 0; i < read; i++)
-                                        if (scratch[i] != (byte)((consumed + i) % 251))
-                                            throw new InvalidDataException("Stream payload bytes changed during transmission.");
-                                consumed += read;
+                                var name = new byte[length];
+                                await stream.ReadExactlyAsync(name, _stop.Token);
+                                command = Encoding.ASCII.GetString(name);
                             }
-                        }
-                        else
-                        {
-                            var argument = new byte[length];
-                            await stream.ReadExactlyAsync(argument, _stop.Token);
+                            else if (command == "SET" && index == 2)
+                            {
+                                ValueLength = length;
+                                if (length <= 1024) _smallValue = new byte[length];
+                                var scratch = new byte[16 * 1024];
+                                var consumed = 0;
+                                while (consumed < length)
+                                {
+                                    var read = Math.Min(scratch.Length, length - consumed);
+                                    await stream.ReadExactlyAsync(scratch.AsMemory(0, read), _stop.Token);
+                                    if (_smallValue is not null) scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
+                                    if (_smallValue is null)
+                                        for (var i = 0; i < read; i++)
+                                            if (scratch[i] != (byte)((consumed + i) % 251))
+                                                throw new InvalidDataException("Stream payload bytes changed during transmission.");
+                                    consumed += read;
+                                }
+                            }
+                            else
+                            {
+                                var argument = new byte[length];
+                                await stream.ReadExactlyAsync(argument, _stop.Token);
+                            }
+
+                            var crlf = new byte[2];
+                            await stream.ReadExactlyAsync(crlf, _stop.Token);
+                            if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
                         }
 
-                        var crlf = new byte[2];
-                        await stream.ReadExactlyAsync(crlf, _stop.Token);
-                        if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
+                        _commands.Enqueue(command ?? "");
+                        var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
+                        await stream.WriteAsync(reply, _stop.Token);
                     }
-
-                    _commands.Enqueue(command ?? "");
-                    var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
-                    await stream.WriteAsync(reply, _stop.Token);
                 }
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or SocketException)
