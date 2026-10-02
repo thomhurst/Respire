@@ -6,6 +6,10 @@ namespace Respire.Commands;
 /// <summary>Explicit key layouts shared by immediate and deferred raw execution.</summary>
 internal static class RawCommandKeyLayouts
 {
+    internal enum MutationKind : byte
+    {
+        Unknown, ReadOnly, LayoutKeys, FirstArgument, SecondArgument, IndirectKeys,
+    }
     internal readonly record struct KeyRouting(bool Known, int Index)
     {
         internal const int NoKeyIndex = -1;
@@ -20,15 +24,39 @@ internal static class RawCommandKeyLayouts
         AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
     // Prefixable marks layouts that name every key position, so key-prefixed views may rewrite them.
-    private readonly record struct Definition(LayoutKind Kind, bool Deferred, bool Prefixable = false);
+    private readonly record struct Definition(LayoutKind Kind, bool Deferred, MutationKind Mutation, bool Prefixable = false);
 
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
     // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
     internal static IEnumerable<string> DeferredOperations => Layouts.Where(pair => pair.Value.Deferred).Select(pair => pair.Key);
-    // Test-only enumeration lets cache tests check that every single-key cache mutation has a layout
-    // that names one written key (the first key, or the destination of a counted merge).
-    internal static IEnumerable<(string Operation, bool NamesOneWrittenKey)> AllLayouts
-        => Layouts.Select(pair => (pair.Key, pair.Value.Kind is LayoutKind.First or LayoutKind.CountedWithDestination));
+    internal static IEnumerable<(string Operation, MutationKind Mutation)> MutationClassifications
+        => Layouts.Select(pair => (pair.Key, pair.Value.Mutation));
+
+    internal static MutationKind GetMutationKind(string operation)
+        => Layouts.TryGetValue(operation, out var definition) ? definition.Mutation : MutationKind.Unknown;
+
+    private static Definition CreateDefinition(string operation, LayoutKind kind, bool deferred, bool prefixable = false)
+    {
+        // Provider metadata owns read/write classification; this table owns which arguments are written.
+        // Sample writes can update compaction destinations absent from the argument list. Never infer them.
+        var mutation = operation switch
+        {
+            "TS.ADD" or "TS.INCRBY" or "TS.DECRBY" or "TS.DEL" or "TS.MADD" => MutationKind.IndirectKeys,
+            "TS.CREATE" or "TS.ALTER" => MutationKind.LayoutKeys,
+            "COPY" or "BITOP" => MutationKind.SecondArgument,
+            "SDIFFSTORE" or "SINTERSTORE" or "SUNIONSTORE" or "PFMERGE" or "ZRANGESTORE" or "GEOSEARCHSTORE"
+                or "ZDIFFSTORE" or "ZINTERSTORE" or "ZUNIONSTORE" or "CMS.MERGE" or "TDIGEST.MERGE"
+                => MutationKind.FirstArgument,
+            _ => RespireCommands.GetCacheMutation(operation) switch
+            {
+                RespireCacheMutation.ReadOnly => MutationKind.ReadOnly,
+                RespireCacheMutation.Mutation or RespireCacheMutation.SingleKey or RespireCacheMutation.MultiKey
+                    when kind is not (LayoutKind.Migrate or LayoutKind.StreamGroupRead) => MutationKind.LayoutKeys,
+                _ => MutationKind.Unknown,
+            },
+        };
+        return new(kind, deferred, mutation, prefixable);
+    }
 
     private static FrozenDictionary<string, Definition> CreateLayouts()
     {
@@ -111,15 +139,15 @@ internal static class RawCommandKeyLayouts
 
         void Add(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: true));
+            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: true));
         }
         void AddImmediate(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false));
+            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: false));
         }
         void AddPrefixable(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false, Prefixable: true));
+            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: false, prefixable: true));
         }
     }
 
@@ -157,12 +185,28 @@ internal static class RawCommandKeyLayouts
     /// return <see langword="false"/> so the caller falls back to a full-cache fence.
     /// </summary>
     internal static bool TryGetMutationLayout(
-        string operation, in ClientCacheCommandKey args, out KeyLayout layout)
+        string operation, in ClientCacheCommandKey args, out KeyLayout layout, bool includeReadKeys = false)
     {
         layout = default;
         if (!Layouts.TryGetValue(operation, out var definition)) return false;
+        if (definition.Mutation is MutationKind.Unknown or MutationKind.IndirectKeys) return false;
+        if (!TryGetArgumentLayout(definition.Kind, in args, out layout)) return false;
+        // An explicit MultiKey policy intentionally fences every declared key, including sources.
+        if (includeReadKeys) return true;
+        // Validate the full argument shape before projecting only the written destination.
+        layout = definition.Mutation switch
+        {
+            MutationKind.FirstArgument => new(0, 0, Extra: 0),
+            MutationKind.SecondArgument => new(0, 0, Extra: 1),
+            _ => layout,
+        };
+        return true;
+    }
+
+    private static bool TryGetArgumentLayout(LayoutKind kind, in ClientCacheCommandKey args, out KeyLayout layout)
+    {
         var length = args.ArgumentCount;
-        switch (definition.Kind)
+        switch (kind)
         {
             case LayoutKind.None:
                 layout = new(0, 0);
@@ -171,13 +215,7 @@ internal static class RawCommandKeyLayouts
                 layout = new(0, 1);
                 return length > 0;
             case LayoutKind.FirstTwo:
-                // COPY writes its second key; range and geo stores write their first key.
-                layout = operation switch
-                {
-                    "COPY" => new(0, 0, Extra: 1),
-                    "ZRANGESTORE" or "GEOSEARCHSTORE" => new(0, 0, Extra: 0),
-                    _ => new(0, 2),
-                };
+                layout = new(0, 2);
                 return length >= 2;
             case LayoutKind.AfterFirst:
                 if (length == 1 && args.GetArgument(0).EqualsAsciiIgnoreCase("HELP"))
@@ -193,10 +231,9 @@ internal static class RawCommandKeyLayouts
             case LayoutKind.All:
             case LayoutKind.Pairs:
             case LayoutKind.Triples:
-                return TryShape(definition.Kind, length, out layout);
+                return TryShape(kind, length, out layout);
             case LayoutKind.BitOp:
-                // BITOP reads source keys but changes only its destination.
-                layout = new(0, 0, Extra: 1);
+                layout = new(1, length - 1);
                 return length >= 3;
             case LayoutKind.Counted:
                 return TryCountedArguments(args, length, 0, allowZero: false, stride: 1, out layout);
