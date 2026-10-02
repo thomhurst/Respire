@@ -2451,6 +2451,8 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    // Learn the new owner before touching the caller-owned stream. A broken seek
+                    // must not leave later commands pinned to the stale slot owner.
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
