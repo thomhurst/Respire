@@ -531,8 +531,6 @@ public class SentinelRoutingTests
         await WaitForEndpointAsync(client, promoted.Port);
 
         await Assert.That(previousEpoch.IsCompleted).IsTrue();
-        var episodeEpoch = router.RefreshMonitorRearm(previousEpoch);
-        await Assert.That(ReferenceEquals(episodeEpoch, previousEpoch)).IsTrue();
         var reconnectEpoch = router.CurrentMonitorRearm();
         await Assert.That(ReferenceEquals(reconnectEpoch, previousEpoch)).IsFalse();
         await Assert.That(reconnectEpoch.IsCompleted).IsFalse();

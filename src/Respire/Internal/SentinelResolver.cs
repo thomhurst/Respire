@@ -95,7 +95,8 @@ internal static class SentinelResolver
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
-        RespireEndpoint? preferredSentinel = null)
+        RespireEndpoint? preferredSentinel = null,
+        RespireEndpoint? previouslyValidatedPrimary = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -153,6 +154,17 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (index == 0 && preferredSentinel is { } reporter
+                    && RespireEndpointComparer.Instance.Equals(endpoint, reporter)
+                    && previouslyValidatedPrimary is { } previous
+                    && sentinelEndpoints.Count > 1
+                    && RespireEndpointComparer.Instance.Equals(primary, previous))
+                {
+                    logger?.LogWarning(
+                        "Sentinel {Sentinel} reported previously validated primary {Primary}; checking another Sentinel",
+                        reporter, primary);
+                    continue;
+                }
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },

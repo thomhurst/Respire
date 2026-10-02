@@ -57,10 +57,14 @@ internal sealed class SentinelNotificationCoalescer
         {
             // Duplicates coalesce. A fault report must still outlive the active attempt, because
             // that attempt may have queried Sentinel before the fault happened, or may fail.
-            if (hint.MustRediscover)
+            var knownReporters = (Active is { } activeHintForReporter ? EnumerateReportingSentinels(activeHintForReporter) : [])
+                .Concat(_pending is { } pendingReporters ? EnumerateReportingSentinels(pendingReporters) : [])
+                .ToHashSet(SentinelDiscoveryState.EndpointComparer.Instance);
+            var newReporter = EnumerateReportingSentinels(hint).Any(reporter => !knownReporters.Contains(reporter));
+            if (hint.MustRediscover || newReporter)
                 _pending = _pending is { } pending
-                    ? Merge(pending, in hint) with { MustRediscover = true }
-                    : Active is { } active ? Merge(active, in hint) with { MustRediscover = true } : hint;
+                    ? Merge(pending, in hint) with { MustRediscover = pending.MustRediscover || hint.MustRediscover }
+                    : Active is { } active ? Merge(active, in hint) with { MustRediscover = active.MustRediscover || hint.MustRediscover } : hint;
             return false;
         }
         if (!hint.MustRediscover && targetIsCurrent) return false;
@@ -133,8 +137,8 @@ internal sealed class SentinelNotificationCoalescer
             if (hint.Target is { } reportedTarget && comparer.Equals(survivingTarget, reportedTarget))
                 reportingSentinel = hint.ReportingSentinel
                     ?? (previousTargetMatches ? previous.ReportingSentinel : null);
-        else if (previousTargetMatches)
-            reportingSentinel = previous.ReportingSentinel;
+            else if (previousTargetMatches)
+                reportingSentinel = previous.ReportingSentinel;
         }
         var reporters = EnumerateReportingSentinels(previous).Concat(EnumerateReportingSentinels(hint))
             .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
@@ -242,7 +246,14 @@ internal sealed class SentinelNotificationCoalescer
         if (Active is { } activeHint)
         {
             if (activeFailed)
+            {
+                var unqueriedReporters = EnumerateReportingSentinels(next)
+                    .Where(reporter => activeHint.ReportingSentinel is not { } activeReporter
+                        || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
+                if (unqueriedReporters.Length > 0)
+                    next = PrioritizeReportingSentinels(next, unqueriedReporters);
+            }
             else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
             {
                 var unqueried = activeHint with

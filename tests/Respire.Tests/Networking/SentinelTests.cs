@@ -712,6 +712,32 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task DiscoverySkipsPreviouslyValidatedPrimaryFromPreferredReporter()
+    {
+        await using var reporter = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
+        await using var healthy = new FakeRespServer(PrimaryReply(6380), "*0\r\n"u8.ToArray());
+        var reporterEndpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
+        var healthyEndpoint = new RespireEndpoint("127.0.0.1", healthy.Port);
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [reporterEndpoint, healthyEndpoint],
+            SentinelPrimaryName = "mymaster",
+        };
+
+        var resolved = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint),
+            CancellationToken.None,
+            new SentinelDiscoveryState([reporterEndpoint, healthyEndpoint]),
+            reporterEndpoint,
+            new RespireEndpoint("127.0.0.1", 6379));
+
+        await Assert.That(resolved).IsEqualTo(new RespireEndpoint("127.0.0.1", 6380));
+        await Assert.That(reporter.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
+        await Assert.That(healthy.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Create_DoesNotContactSentinelBeforeFirstOperation()
     {
         await using var client = RespireClient.Create(new RespireOptions

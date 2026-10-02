@@ -137,7 +137,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 : ConnectGenerationAsync;
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
-                notificationHint?.ReportingSentinel).ConfigureAwait(false);
+                notificationHint?.ReportingSentinel,
+                forceDiscovery ? previous?.Endpoint : null).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -308,13 +309,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint,
-                    () => Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)))));
+                    () => Volatile.Write(ref rearm, CurrentMonitorRearm())));
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
                 // A publication that completed this reconnect epoch is now reflected by the
                 // recovered subscription. Use the fresh epoch for any later disconnect.
-                Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)));
+                Volatile.Write(ref rearm, CurrentMonitorRearm());
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
@@ -383,16 +384,6 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal Task CurrentMonitorRearm()
     {
         lock (_gate) return _monitorRearm.Task;
-    }
-
-    internal Task RefreshMonitorRearm(Task reconnectEpoch)
-    {
-        lock (_gate)
-        {
-            // A publication can complete the old epoch after the socket closes but before
-            // SubscriptionHub reports the reconnect episode. Keep that signal through exhaustion.
-            return reconnectEpoch.IsCompleted ? reconnectEpoch : _monitorRearm.Task;
-        }
     }
 
     private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)

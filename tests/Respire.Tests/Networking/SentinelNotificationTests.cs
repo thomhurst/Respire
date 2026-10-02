@@ -406,6 +406,21 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task DuplicateSwitchFromAnotherSentinelRetainsReporter()
+    {
+        var first = new RespireEndpoint("10.0.0.11", 26379);
+        var second = new RespireEndpoint("10.0.0.12", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("switch", NewPrimary, OldPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(new SentinelHint("switch", NewPrimary, OldPrimary, ReportingSentinel: second), false);
+
+        var pending = coalescer.TakePending(activeFailed: true);
+
+        await Assert.That(pending!.Value.ReportingSentinel).IsEqualTo(second);
+        await Assert.That(pending.Value.MustRediscover).IsTrue();
+    }
+
+    [Test]
     public async Task CompleteClearsActiveAndPendingHints()
     {
         var coalescer = new SentinelNotificationCoalescer();
