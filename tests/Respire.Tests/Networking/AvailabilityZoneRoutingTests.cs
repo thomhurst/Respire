@@ -305,6 +305,34 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    public async Task ZoneObservationSeesNewMembershipAndLiveCounterValues()
+    {
+        const string zone = "telemetry-snapshot-membership";
+        long observed = -1;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Name == "respire.read.availability_zone") meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.availability_zone" && Equals(tag.Value, zone)) observed = value;
+        });
+        listener.Start();
+        listener.RecordObservableInstruments();
+        await Assert.That(observed).IsEqualTo(-1L);
+        var counter = AvailabilityZoneTelemetry.ForZone(zone);
+        counter.Increment();
+        listener.RecordObservableInstruments();
+        await Assert.That(observed).IsEqualTo(1L);
+        await Assert.That(AvailabilityZoneTelemetry.ForZone(zone)).IsSameReferenceAs(counter);
+        counter.Increment();
+        listener.RecordObservableInstruments();
+        await Assert.That(observed).IsEqualTo(2L);
+    }
+
+    [Test]
     public async Task ZoneLookupAclErrorDoesNotPreventResp2Connection()
     {
         await using var server = Node("primary", null, false);
@@ -675,6 +703,129 @@ public class AvailabilityZoneRoutingTests
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
         }
         else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(true, 0)]
+    [Arguments(true, 1)]
+    [Arguments(true, 2)]
+    [Arguments(false, 0)]
+    [Arguments(false, 1)]
+    [Arguments(false, 2)]
+    public async Task ClusterRetirementMaintainsZoneAfterAskOrRoleFallback(bool asking, int mode)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var replica = Node("replica", "local", true);
+        await using var importing = Node("importing", "local", false);
+        ConfigureTopology(primary, asking ? [] : [replica]);
+        var target = importing;
+        var key = Enumerable.Range(0, 100).Select(index => $"retirement-zone-{index}")
+            .First(value => ClusterHash.GetSlot(value) % 2 == 1);
+        var slot = ClusterHash.GetSlot(key);
+        var replicaReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("GET ")
+            ? "-LOADING replica unavailable\r\n"u8.ToArray() : replicaReply(id, command);
+        if (asking)
+        {
+            var primaryReply = primary.ReplyOverride!;
+            primary.ReplyOverride = (id, command) => command.StartsWith("GET ")
+                ? Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n") : primaryReply(id, command);
+        }
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command switch
+        {
+            "INFO SERVER" => Bulk($"availability_zone:{(id % 2 == 1 ? "remote" : "local")}\r\n"),
+            _ when command.StartsWith("GET ") => Bulk(id % 2 == 1 ? "remote-socket" : "local-socket"),
+            _ => targetReply(id, command),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+        var router = client.Core.Cluster!;
+        var source = router.GetKnownSlotOwner(slot)!.GetConnection(slot);
+        var selected = await router.GetRedirectConnectionAsync(
+            new RespireServerException($"ASK {slot} 127.0.0.1:{target.Port}"),
+            source, CancellationToken.None, slot, null, "local");
+        await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
+        await Assert.That(selected.Multiplexer!.GetConnection(slot).AvailabilityZone).IsEqualTo("remote");
+        var retired = 0;
+        Task retirement = Task.CompletedTask;
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.OperationName == "GET" && activity.GetTagItem("server.port") is int port
+                    && port == (asking ? target.Port : primary.Port)
+                    && (asking ? primary : replica).ReceivedCommands.Any(command => command.StartsWith("GET "))
+                    && Interlocked.CompareExchange(ref retired, 1, 0) == 0)
+                {
+                    // A replica refresh can discard the prewarmed redirect node. Retire the
+                    // generation actually selected now, immediately before application admission.
+                    var current = asking ? router.GetOrCreateNode(new("127.0.0.1", target.Port), observe: false, redirect: true)
+                        : router.GetKnownSlotOwner(slot)!;
+                    router.ApplyTopology([new(0, 16383, new("127.0.0.1", asking ? primary.Port : target.Port),
+                        asking ? "primary" : "promoted", [])], router.TopologyVersion, long.MaxValue);
+                    retirement = current.RetireAsync();
+                }
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        if (mode == 1)
+        {
+            using var batch = client.CreateBatch();
+            var result = batch.Strings.GetString(key);
+            await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(await result).IsEqualTo("local-socket");
+        }
+        else if (mode == 2)
+        {
+            await using var stream = await client.Strings.GetStreamAsync(key);
+            using var reader = new StreamReader(stream!);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
+        }
+        else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        await Assert.That(retired).IsEqualTo(1);
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+        if (asking) await Assert.That(router.GetKnownSlotOwner(slot)!.Port).IsEqualTo(primary.Port);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplicaFallbackRetirementKeepsZoneAndNeverReturnsPrimary(bool replacementAvailable)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var previous = Node("previous", "local", true);
+        await using var replacement = Node("replacement", "remote", true);
+        ConfigureTopology(primary, previous);
+        var original = replacement.ReplyOverride!;
+        replacement.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+        var router = client.Core.Cluster!;
+        var old = await router.GetOtherRoleReadConnectionAsync(1, RespireReadFrom.AzAffinityReplicasAndPrimary, false,
+            new RespireServerException("LOADING unavailable"), CancellationToken.None, null);
+        router.ApplyTopology([new(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
+        {
+            Replicas = replacementAvailable ? [new(new("127.0.0.1", replacement.Port), "replacement", [])] : [],
+        }], router.TopologyVersion, long.MaxValue);
+        await Assert.That(old.Multiplexer!.IsRetired).IsTrue();
+        if (replacementAvailable)
+        {
+            var current = await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
+                CancellationToken.None, null, "local");
+            await Assert.That(current.Port).IsEqualTo(replacement.Port);
+            await Assert.That(current.AvailabilityZone).IsEqualTo("local");
+            await Assert.That(current.Multiplexer!.Options.ReadOnly).IsTrue();
+        }
+        else
+            await Assert.That(async () => await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
+                CancellationToken.None, null, "local")).Throws<RespireConnectionException>();
     }
 
     [Test]

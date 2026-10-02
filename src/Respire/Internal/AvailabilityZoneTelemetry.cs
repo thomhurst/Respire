@@ -8,6 +8,7 @@ internal static class AvailabilityZoneTelemetry
 {
     private static readonly object Gate = new();
     private static readonly Dictionary<string, Counter> Zones = new(StringComparer.Ordinal);
+    private static KeyValuePair<string, Counter>[] _snapshot = [];
     private static readonly Counter Unknown = new();
     private static readonly Counter Other = new();
     private const int MaximumZones = 64;
@@ -32,14 +33,16 @@ internal static class AvailabilityZoneTelemetry
             if (Zones.Count == MaximumZones) return Other;
             counter = new();
             Zones.Add(zone, counter);
+            // Zone discovery is infrequent and bounded. Publish immutable membership once;
+            // collectors read the live counters without locking or copying the dictionary.
+            Volatile.Write(ref _snapshot, Zones.ToArray());
             return counter;
         }
     }
 
     private static IEnumerable<Measurement<long>> Observe()
     {
-        KeyValuePair<string, Counter>[] zones;
-        lock (Gate) zones = Zones.ToArray();
+        var zones = Volatile.Read(ref _snapshot);
         foreach (var pair in zones)
             yield return new(pair.Value.Value,
                 new KeyValuePair<string, object?>("server.availability_zone", pair.Key),

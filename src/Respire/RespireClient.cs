@@ -2036,8 +2036,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                     onRedirect?.Invoke();
                     continue;
@@ -2522,7 +2522,7 @@ public sealed partial class RespireClient : IRespireClient
                 if (cursorContinuation) throw initialRetirement;
                 cluster.RecordRejection(ref discovery, connection, initialRetirement);
                 discoveryPending = true;
-                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 discoveryPending = false;
             }
             var switchedRole = false;
@@ -2589,8 +2589,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3164,8 +3164,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)

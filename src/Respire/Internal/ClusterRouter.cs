@@ -507,18 +507,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
     internal ValueTask<RespireConnection> GetReplacementConnectionAsync(
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
-        DiscoveryRound? discovery)
+        DiscoveryRound? discovery, string? preferredZone = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (endpointSource is null && discovery is null && _options.ReconnectPolicy is not null
+        if (endpointSource is null && discovery is null && preferredZone is null && _options.ReconnectPolicy is not null
             && TryGetReadyConnection(slot, requireIdentity) is { } ready) return new(ready);
-        return GetReplacementWithDiscoveryAsync(endpointSource, slot, requireIdentity, cancellationToken, discovery);
+        return GetReplacementWithDiscoveryAsync(endpointSource, slot, requireIdentity, cancellationToken, discovery, preferredZone);
     }
 
     private async ValueTask<RespireConnection> GetReplacementWithDiscoveryAsync(
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
-        DiscoveryRound? discovery)
+        DiscoveryRound? discovery, string? preferredZone)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -539,6 +539,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                         connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
                     }
                     node = connection.Multiplexer;
+                    if (preferredZone is not null && node is not null)
+                        connection = node.GetConnectionForZone(preferredZone, slot);
                     return requireIdentity is { } required
                         ? await EnableCorrectionOrderingAsync(connection, required, cancellationToken, observe: endpointSource is null)
                             .ConfigureAwait(false)

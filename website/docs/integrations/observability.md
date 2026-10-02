@@ -34,7 +34,8 @@ Individually submitted batch reads count; composite transactions do not.
 All read policies count, including `Primary` and `Replica`; affinity is not required.
 
 Missing zone metadata uses `respire.availability_zone.status=unknown` without a zone tag.
-The process retains counters for at most 64 distinct zone names. Additional names share
+The process retains counters for at most 64 distinct zone names; all clients share this
+process-wide budget. Additional names share
 `respire.availability_zone.status=overflow`, also without a zone tag. Totals survive
 connection disposal. The first 64 names retain their counters for the process lifetime;
 names are never evicted, so later names continue to use overflow even after old connections

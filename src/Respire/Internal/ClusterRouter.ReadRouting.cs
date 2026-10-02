@@ -31,10 +31,17 @@ internal sealed partial class ClusterRouter
 
     /// <summary>Selects a replacement after retirement, keeping the primary path's retry loop.</summary>
     internal ValueTask<RespireConnection> GetReadReplacementConnectionAsync(
-        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
-        => readFrom == RespireReadFrom.Primary || slot is null
-            ? GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery)
-            : GetReadConnectionWithPolicyAsync(slot.Value, readFrom, cancellationToken, discovery);
+        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        string? preferredZone = null)
+    {
+        if (readFrom == RespireReadFrom.Primary || slot is null)
+            return GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery, preferredZone);
+        // Role fallback pins replicas, but retains the original client's zone ranking.
+        // Use replica selection directly so retirement cannot switch back to the primary.
+        if (readFrom == RespireReadFrom.Replica && preferredZone is not null)
+            return GetReplicaConnectionAsync(slot.Value, cancellationToken, lastError: null, discovery, RespireReadFrom.AzAffinity);
+        return GetReadConnectionWithPolicyAsync(slot.Value, readFrom, cancellationToken, discovery);
+    }
 
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(
         int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
