@@ -357,9 +357,7 @@ public class ReconnectPolicyTests
 
         // A caller can observe an old dead socket, then request recovery after a replacement
         // has published. Invoke that stale request directly to make the interleaving deterministic.
-        typeof(Respire.Infrastructure.RespireConnectionMultiplexer)
-            .GetMethod("ScheduleReconnect", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .Invoke(multiplexer, [0]);
+        multiplexer.ScheduleReconnect(0);
 
         await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
         await Assert.That(multiplexer.GetConnection()).IsSameReferenceAs(current);

@@ -895,7 +895,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
         => GetConnection().SendTransactionAsync(serializedCommands, commandCount, cancellationToken);
 
-    private void ScheduleReconnect(int slot)
+    internal void ScheduleReconnect(int slot)
     {
         if (_options.Generation?.IsRetired == true) return;
         var connection = Volatile.Read(ref _connections[slot]);
