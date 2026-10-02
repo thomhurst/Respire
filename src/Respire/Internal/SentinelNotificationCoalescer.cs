@@ -180,6 +180,7 @@ internal sealed class SentinelNotificationCoalescer
     /// Whether the active attempt failed. Its hint is then merged into the next one and marked
     /// must-rediscover, so a newer hint of a different kind cannot silently drop the failed one.
     /// </param>
+    /// <param name="validatedPrimary">The primary validated by a successful active attempt, if any.</param>
     internal SentinelHint? TakePending(bool activeFailed = false, RespireEndpoint? validatedPrimary = null)
     {
         if (_pending is not { } next)
