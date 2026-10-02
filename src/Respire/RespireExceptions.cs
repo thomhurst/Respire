@@ -199,7 +199,7 @@ public static class RespireErrorCodes
 }
 
 /// <summary>
-/// A command did not complete within <see cref="RespireOptions.CommandTimeout"/>. Commands
+/// A command exceeded its response or function propagation timeout budget. Commands
 /// already enqueued may still execute on the server. Inspect <see cref="Diagnostics"/> for
 /// timeouts during connection acquisition or while waiting for queue capacity.
 /// </summary>
@@ -216,17 +216,28 @@ public sealed class RespireTimeoutException : RespireException
 
     internal RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
         RespireTimeoutDiagnostics diagnostics)
-        : base(CreateMessage(commandName, timeout, diagnostics), innerException!)
+        : this(commandName, timeout, innerException, diagnostics, CreateMessage(commandName, timeout, diagnostics)) { }
+
+    private RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
+        RespireTimeoutDiagnostics diagnostics, string message)
+        : base(message, innerException!)
     {
         CommandName = commandName;
         Timeout = timeout;
         Diagnostics = diagnostics;
     }
 
-    /// <summary>The Redis command whose response timed out.</summary>
+    internal static RespireTimeoutException FunctionPropagation(string commandName, TimeSpan timeout, Exception error)
+        => new(commandName, timeout, error, RespireTimeoutDiagnostics.Unavailable,
+            $"Replica function propagation for {commandName} did not complete within {timeout.TotalMilliseconds:0}ms. " +
+            "Missing-function retries are capped at five seconds, or a shorter RespireOptions.CommandTimeout. " +
+            "Disabling or increasing CommandTimeout cannot extend the five-second ceiling. " +
+            "Check library replication and replica health.");
+
+    /// <summary>The Redis command whose response or function propagation wait timed out.</summary>
     public string CommandName { get; }
 
-    /// <summary>The response timeout that elapsed.</summary>
+    /// <summary>The response or function propagation timeout budget that elapsed.</summary>
     public TimeSpan Timeout { get; }
 
     /// <summary>A snapshot captured on the timeout path; unavailable connection fields are null.</summary>

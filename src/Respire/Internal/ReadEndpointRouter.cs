@@ -143,8 +143,17 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         RespireReadFrom readFrom, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        var selection = await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
-        return selection.Connection;
+        try
+        {
+            var selection = await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
+            return selection.Connection;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Replica validation links this token with router lifetime. Preserve the caller's
+            // identity at the acquisition boundary instead of leaking that internal token.
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     /// <summary>

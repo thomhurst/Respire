@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Respire.Commands;
@@ -67,6 +68,7 @@ public interface IFunctionCommands
 
 internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 {
+    private static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(5);
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
     {
@@ -106,38 +108,70 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             var reply = readFrom == RespireReadFrom.Primary
                 ? await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false)
                 : await RetryUntilFunctionAvailableAsync(function.Operation, command, cancellationToken,
-                    client.Core.Options.CommandTimeout).ConfigureAwait(false);
+                    client.Core.Options.CommandTimeout, error).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
     }
 
-    private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan? timeout)
-        where TCommand : struct, IRespCommand
+    private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync(
+        string operation, BatchScriptCommand command, CancellationToken cancellationToken, TimeSpan? timeout,
+        RespireServerException lastMissingFunction)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (timeout is { } configuredTimeout) deadline.CancelAfter(configuredTimeout);
+        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < FunctionPropagationLimit
+            ? configuredTimeout : FunctionPropagationLimit;
+        var started = Stopwatch.GetTimestamp();
+        using var admission = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        admission.CancelAfter(propagationTimeout);
         var delay = TimeSpan.FromMilliseconds(25);
         try
         {
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
+                    throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
                 try
                 {
-                    return await client.SendAsync(operation, command, deadline.Token).ConfigureAwait(false);
+                    var retry = new FunctionRetryCommand(command, operation, started, propagationTimeout,
+                        lastMissingFunction, cancellationToken);
+                    return await client.SendAsync(operation, retry, admission.Token).ConfigureAwait(false);
                 }
-                catch (RespireServerException error) when (IsFunctionNotFound(error)
-                    && !deadline.IsCancellationRequested)
+                catch (RespireServerException error) when (IsFunctionNotFound(error))
                 {
-                    await Task.Delay(delay, deadline.Token).ConfigureAwait(false);
-                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
+                    lastMissingFunction = error;
                 }
+                var remaining = propagationTimeout - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) continue;
+                await Task.Delay(delay < remaining ? delay : remaining, admission.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
             }
         }
-        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
-            && deadline.IsCancellationRequested && timeout.HasValue)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException(operation, timeout.Value, error);
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException error) when (error.CancellationToken == admission.Token
+            && admission.IsCancellationRequested)
+        {
+            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+        }
+    }
+
+    private readonly struct FunctionRetryCommand(BatchScriptCommand command, string operation, long started,
+        TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => command.ReadKind;
+        public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+        public void Write(ref RespWriter writer) => command.Write(ref writer);
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => callerToken;
+
+        public void ValidateAdmission()
+        {
+            callerToken.ThrowIfCancellationRequested();
+            // Check the clock at publication as well as using a timer for parked acquisition.
+            // A delayed timer callback must never admit an expired retry.
+            if (Stopwatch.GetElapsedTime(started) >= budget)
+                throw RespireTimeoutException.FunctionPropagation(operation, budget, lastMissingFunction);
         }
     }
 

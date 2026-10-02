@@ -1286,7 +1286,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             ClampDeadline(source, commandDeadline);
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
             ScheduleFlush(startedBatch);
             return source.Task;
         }
@@ -1483,6 +1483,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // buffered and nothing awaiting a reply. With responses still in flight the
                 // flush loop is already cycling, and stealing the producer thread for the
                 // send costs more than the dispatch it saves.
+                command.ValidateAdmission();
                 startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
                 _activeBuffer.Append(frame);
                 if (_responseTimeout is not null)
@@ -1561,6 +1562,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 var writer = new RespWriter(_activeBuffer);
                 command.Write(ref writer);
+                command.ValidateAdmission();
             }
             catch
             {
@@ -1700,7 +1702,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, commandName, armCommandDeadline, rerouted).ConfigureAwait(false);
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
@@ -2802,6 +2804,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public void OnAccepted() => _command.OnAccepted();
+        public void ValidateAdmission() => _command.ValidateAdmission();
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
+            => _command.GetResponseCancellationToken(admissionToken);
 
         public ReadCommandKind ReadKind => _command.ReadKind;
         public int CursorArgumentIndex => _command.CursorArgumentIndex;

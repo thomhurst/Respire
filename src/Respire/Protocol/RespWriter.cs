@@ -140,6 +140,12 @@ internal interface IRespCommand
 
     void OnAccepted() { }
 
+    /// <summary>Checks admission immediately before the frame and response slot are published.</summary>
+    void ValidateAdmission() { }
+
+    /// <summary>Separates a pre-submission budget from cancellation of an accepted response.</summary>
+    CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
+
     ReadCommandKind ReadKind { get; }
 
     int CursorArgumentIndex => -1;

@@ -119,19 +119,17 @@ public class FunctionClusterTests
         using var cancellation = new CancellationTokenSource();
         var pending = client.WithReadFrom(RespireReadFrom.Replica).Functions
             .ExecuteIntegerAsync(function, ["{foo}:key"], cancellationToken: cancellation.Token).AsTask();
-        if (disabled)
+        try
         {
-            // Exceed the former hard-coded ten-second fallback, then stop via the caller.
-            await Task.Delay(TimeSpan.FromSeconds(11));
-            await Assert.That(pending.IsCompleted).IsFalse();
-            cancellation.Cancel();
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-                .Throws<OperationCanceledException>();
-        }
-        else
-        {
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<RespireTimeoutException>();
+            await Assert.That(error!.Timeout).IsEqualTo(disabled ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(100));
+            await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsFalse();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await pending; } catch (OperationCanceledException) { } catch (RespireTimeoutException) { }
         }
     }
 

@@ -551,8 +551,16 @@ Read views bypass client-side cache reads to avoid mixing primary-tracked cache 
 replica disconnect does not flush the client-side cache. A read-only function that reports
 `Function not found` on a replica causes the registered library to be checked or reloaded on the
 primary, then retried under the original read policy until replication makes it available.
-`CommandTimeout` bounds this propagation wait; `null` disables that cap, leaving caller
-cancellation available to stop the wait.
+The missing-function retry loop has a five-second budget. A shorter `CommandTimeout` reduces
+that budget; `null` does not disable it. The budget covers route acquisition and waiting
+for connection capacity, with a final check before enqueueing. No new attempt is enqueued
+after the budget expires. An attempt already admitted to its connection retains its normal `CommandTimeout` and caller
+cancellation, so a function that exists can finish executing after the retry budget expires.
+If that attempt returns `Function not found` after expiry, no further retry is sent.
+Exhausting the retry budget throws
+`RespireTimeoutException` for the function call. Caller cancellation stops the wait with
+`OperationCanceledException`. Retries preserve the original read policy, so `Replica` never
+falls back to the primary.
 Replica connection health is reported through `ConnectionStateChanged` with the replica's
 endpoint.
 
@@ -585,7 +593,13 @@ routes, and partial replies preserve uncovered slot ranges.
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.
 
-Likewise, a `RespireTimeoutException` means the response did not arrive within `CommandTimeout`. Treat writes as potentially executed and design retries around operation idempotency.
+A `RespireTimeoutException` can report an expired command-response budget or replica function
+propagation budget. For response timeouts, treat writes as potentially executed and design
+retries around operation idempotency. Function propagation expiry has a distinct message:
+responses may have arrived, but the function remained unavailable on the selected replica.
+Check library replication and replica health. Increasing or disabling `CommandTimeout` cannot
+extend the five-second propagation ceiling. The exception's `Timeout` property reports the
+budget that expired, which can be shorter than the configured response timeout.
 
 `RespireTimeoutException.Diagnostics` captures the command stage, physical endpoint and
 process-local connection ID, outstanding reply count and serialized bytes, bytes waiting to
