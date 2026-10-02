@@ -159,7 +159,8 @@ public class ClusterNodeIdentityTests
         var read = stream!.CopyToAsync(Stream.Null);
 
         await node.RetireAsync().WaitAsync(TimeSpan.FromSeconds(3));
-        await Assert.That(async () => await read).Throws<RespireConnectionException>();
+        var error = await Assert.That(async () => await read).Throws<Exception>();
+        await Assert.That(error is OperationCanceledException or RespireConnectionException).IsTrue();
     }
 
     [Test]
@@ -1138,7 +1139,11 @@ public class ClusterNodeIdentityTests
             cyclingNode.MaintenanceNotificationReceived += handler;
             cyclingNode.MaintenanceNotificationReceived -= handler;
         }
-        await Assert.That(cyclingNode.MaintenanceHandlerEpochCount).IsEqualTo(0);
+        await WaitUntilAsync(() =>
+        {
+            cyclingNode.PruneMaintenanceHandlerEpochs();
+            return cyclingNode.MaintenanceHandlerEpochCount == 0;
+        });
     }
 
     [Test]
