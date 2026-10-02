@@ -14,7 +14,9 @@ internal sealed partial class ClusterRouter
     // Process-wide within ClusterDiscovery so events from different clients cannot share an
     // episode ID when an observer aggregates them without retaining the client instance.
     private static long _nextDiscoveryEpisode;
-    internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
+    private readonly TimeProvider _discoveryClock;
+    private readonly SharedRefreshCoordinator _sharedRefreshCoordinator;
+    internal SharedRefreshCoordinator SharedRefreshCoordinator => _sharedRefreshCoordinator;
     // A redirect-driven refresh reuses a refresh that succeeded within the same window as the
     // MOVED debounce: both express "do not repeat discovery for one burst of redirects".
     private static readonly TimeSpan TopologyRefreshCoalescingWindow = ClusterTopologyRefreshScheduler.MovedDebounce;
@@ -26,93 +28,36 @@ internal sealed partial class ClusterRouter
     private readonly object _topologyRefreshWorkerGate = new();
     private Task? _topologyRefreshWorker;
     private int _topologyRefreshStarted;
-    private readonly object _sharedRefreshGate = new();
-    // READONLY recovery and topology refresh share one flight so overlapping triggers do not
-    // launch independent discovery loops. A flight is unpublished, under this gate, before its
-    // task completes, so a caller that resumes from that task always finds the slot free.
-    private RefreshFlight? _sharedRefresh;
-    private long _lastTopologyRefreshTimestamp;
-    private bool _hasTopologyRefreshTimestamp;
-
-    internal enum RefreshFlightKind
-    {
-        /// <summary>Full topology discovery. A partial <c>CLUSTER SLOTS</c> map updates the slots it
-        /// covers and keeps the current owners of the rest.</summary>
-        Topology,
-        /// <summary>Repairs the owner of one slot after a <c>READONLY</c> rejection.</summary>
-        ReadOnly,
-    }
-
-    /// <summary>One physical refresh shared by every caller that joins it.</summary>
-    /// <remarks>Waiters, <see cref="Completed"/> and <see cref="Abandoned"/> are guarded by
-    /// <c>_sharedRefreshGate</c>. A READONLY flight is cancelled when its last waiter leaves;
-    /// a topology flight runs until it finishes or the router is disposed.</remarks>
-    internal sealed class RefreshFlight
-    {
-        private RefreshFlight(RefreshFlightKind kind, int slot, RespireEndpoint source,
-            CancellationTokenSource? cancellation, IDisposable? discoveryLease)
-        {
-            Kind = kind;
-            Slot = slot;
-            Source = source;
-            Cancellation = cancellation;
-            DiscoveryLease = discoveryLease;
-        }
-
-        internal static RefreshFlight ForTopology() => new(RefreshFlightKind.Topology, -1, default, null, null);
-
-        internal static RefreshFlight ForReadOnly(int slot, RespireEndpoint source,
-            CancellationTokenSource cancellation, IDisposable? discoveryLease)
-            => new(RefreshFlightKind.ReadOnly, slot, source, cancellation, discoveryLease);
-
-        internal RefreshFlightKind Kind { get; }
-        internal int Slot { get; }
-        internal RespireEndpoint Source { get; }
-        internal CancellationTokenSource? Cancellation { get; }
-        internal IDisposable? DiscoveryLease { get; }
-        internal TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal Task<bool> Task => Completion.Task;
-        internal int Waiters;
-        internal bool Completed;
-        internal bool Abandoned;
-
-        internal bool Repairs(int slot, RespireConnection source)
-            => Kind == RefreshFlightKind.ReadOnly && Slot == slot && Source.Port == source.Port
-                && string.Equals(Source.Host, source.Host, StringComparison.OrdinalIgnoreCase);
-    }
-
     /// <summary>A READONLY caller's view of the shared flight it started or joined.</summary>
     /// <param name="Flight">The flight to await through <see cref="AwaitSharedRefreshAsync"/>.</param>
     /// <param name="NeedsOwnSlotRecovery">True when the flight was started by someone else for a
     /// different slot, source or for full discovery, so it may leave this caller's slot stale.</param>
-    private readonly record struct ReadOnlyRefreshJoin(RefreshFlight Flight, bool NeedsOwnSlotRecovery);
+    private readonly record struct ReadOnlyRefreshJoin(SharedRefreshCoordinator.RefreshFlight Flight, bool NeedsOwnSlotRecovery);
 
     private ReadOnlyRefreshJoin JoinReadOnlyRefresh(
         RespireServerException rejection, RespireConnection source, int slot, DiscoveryRound? discovery)
     {
-        RefreshFlight flight;
-        var started = false;
-        lock (_sharedRefreshGate)
-        {
-            if (_sharedRefresh is null)
+        var join = _sharedRefreshCoordinator.JoinReadOnly(slot,
+            new RespireEndpoint(source.Host, source.Port), () =>
             {
-                _sharedRefresh = RefreshFlight.ForReadOnly(slot, new RespireEndpoint(source.Host, source.Port),
-                    CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token), discovery?.Hold());
-                started = true;
-            }
-            flight = _sharedRefresh;
-            flight.Waiters++;
-        }
-        if (started)
+                var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
+                try { return (cancellation, discovery?.Hold()); }
+                catch
+                {
+                    cancellation.Dispose();
+                    throw;
+                }
+            });
+        if (join.Started)
         {
-            _ = CompleteSharedRefreshAsync(flight, () => RunReadOnlyRefreshAsync(
-                rejection, source, slot, flight.Cancellation!.Token, discovery));
+            _ = CompleteSharedRefreshAsync(join.Flight, () => RunReadOnlyRefreshAsync(
+                rejection, source, slot, join.Flight.Cancellation!.Token, discovery));
         }
-        return new ReadOnlyRefreshJoin(flight, !started && !flight.Repairs(slot, source));
+        return new ReadOnlyRefreshJoin(join.Flight, join.NeedsOwnSlotRecovery);
     }
 
     private async Task<bool> AwaitSharedRefreshAsync(
-        RefreshFlight flight, CancellationToken waiterToken, DiscoveryRound? discovery)
+        SharedRefreshCoordinator.RefreshFlight flight, CancellationToken waiterToken, DiscoveryRound? discovery)
     {
         var canceled = false;
         try
@@ -128,53 +73,24 @@ internal sealed partial class ClusterRouter
         }
         finally
         {
-            ReleaseWaiter(flight);
+            var cancellation = _sharedRefreshCoordinator.ReleaseWaiter(flight);
+            try { cancellation?.Cancel(); }
+            catch (ObjectDisposedException) { }
             // The flight owns this discovery round while its cancellation unwinds, even when this
             // was the last waiter. The caller must not mutate the round concurrently.
-            if (canceled && flight.Kind == RefreshFlightKind.ReadOnly)
+            if (canceled && flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.ReadOnly)
                 discovery?.LeftSharedReadOnlyFlight();
         }
     }
 
-    private void ReleaseWaiter(RefreshFlight flight)
-    {
-        lock (_sharedRefreshGate)
-        {
-            if (flight.Waiters > 0) flight.Waiters--;
-            if (flight.Kind != RefreshFlightKind.ReadOnly || flight.Completed || flight.Waiters != 0) return;
-            flight.Abandoned = true;
-            if (ReferenceEquals(_sharedRefresh, flight)) _sharedRefresh = null;
-        }
-        try { flight.Cancellation?.Cancel(); }
-        catch (ObjectDisposedException) { }
-    }
-
-    private async Task CompleteSharedRefreshAsync(RefreshFlight flight, Func<Task<bool>> work)
+    private async Task CompleteSharedRefreshAsync(SharedRefreshCoordinator.RefreshFlight flight, Func<Task<bool>> work)
     {
         var result = false;
         Exception? failure = null;
         try { result = await work().ConfigureAwait(false); }
         catch (Exception error) { failure = error; }
 
-        // Unpublish once, before completing the task. A topology request that waited behind a
-        // READONLY flight then starts its own full refresh without polling for the slot.
-        lock (_sharedRefreshGate)
-        {
-            flight.Completed = true;
-            if (ReferenceEquals(_sharedRefresh, flight)) _sharedRefresh = null;
-            // Only a full refresh proves the whole map is current. A READONLY repair must not
-            // suppress a topology refresh requested right after it.
-            if (failure is null && result && flight.Kind == RefreshFlightKind.Topology)
-            {
-                _lastTopologyRefreshTimestamp = _topologyRefreshClock.GetTimestamp();
-                _hasTopologyRefreshTimestamp = true;
-            }
-        }
-
-        if (failure is null) flight.Completion.TrySetResult(result);
-        else flight.Completion.TrySetException(failure);
-        flight.Cancellation?.Dispose();
-        flight.DiscoveryLease?.Dispose();
+        _sharedRefreshCoordinator.Complete(flight, result, failure);
     }
 
     private async Task<bool> RunReadOnlyRefreshAsync(
@@ -208,24 +124,11 @@ internal sealed partial class ClusterRouter
     {
         while (true)
         {
-            RefreshFlight flight;
-            var started = false;
-            lock (_sharedRefreshGate)
-            {
-                if (allowRecentSuccessfulResult && _sharedRefresh is null && _hasTopologyRefreshTimestamp
-                    && _topologyRefreshClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TopologyRefreshCoalescingWindow)
-                    return TopologyRefreshOutcome.ReusedRecent;
-                if (_sharedRefresh is null)
-                {
-                    _sharedRefresh = RefreshFlight.ForTopology();
-                    started = true;
-                }
-                flight = _sharedRefresh;
-                flight.Waiters++;
-            }
+            if (!_sharedRefreshCoordinator.JoinTopology(allowRecentSuccessfulResult, out var flight, out var started))
+                return TopologyRefreshOutcome.ReusedRecent;
 
             if (started) _ = CompleteSharedRefreshAsync(flight, RunTopologyRefreshAsync);
-            if (flight.Kind == RefreshFlightKind.Topology)
+            if (flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.Topology)
             {
                 return await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false)
                     ? TopologyRefreshOutcome.Refreshed
@@ -706,7 +609,7 @@ internal sealed partial class ClusterRouter
         private async ValueTask WaitAsync(TimeSpan delay, CancellationToken callerToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, owner._stopDiscovery.Token);
-            try { await Task.Delay(delay, owner.DiscoveryClock, linked.Token).ConfigureAwait(false); }
+            try { await Task.Delay(delay, owner._discoveryClock, linked.Token).ConfigureAwait(false); }
             catch (OperationCanceledException error) when (callerToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException(error.Message, error, callerToken);
