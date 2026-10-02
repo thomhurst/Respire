@@ -70,7 +70,24 @@ internal sealed partial class RespireConnectionMultiplexer
         if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
     }
 
-    private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection, MovingAnnouncement announcement)
+    internal void QueueDedicatedMovingHandoff(RespireConnection connection, MovingAnnouncement announcement,
+        Func<bool> isCurrent)
+    {
+        // Dedicated uploads can be the only sockets a lazy client has opened. Their push
+        // must drive the same handoff coordinator without joining the multiplexed write path.
+        var epoch = _moving.HandoffEpoch;
+        var current = isCurrent();
+        bool startWorker;
+        lock (_moving.Gate)
+        {
+            startWorker = QueueMovingHandoffUnderLock(-1, connection, announcement,
+                current && _moving.HandoffEpoch - epoch <= 1);
+        }
+        if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
+    }
+
+    private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection, MovingAnnouncement announcement,
+        bool? dedicatedCurrent = null)
     {
         var notification = announcement.Notification;
         // The socket must have been published when it parsed the push. A reconnect that replaced
@@ -83,7 +100,7 @@ internal sealed partial class RespireConnectionMultiplexer
         var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
         var deadline = announcement.ReceivedAt + (long)grace.TotalMilliseconds;
         var result = _moving.Queue(IsOperational,
-            _moving.IsCurrent(announcement.PublicationGeneration, connection.MovingPublicationGeneration, announcement.HandoffEpoch),
+            dedicatedCurrent ?? _moving.IsCurrent(announcement.PublicationGeneration, connection.MovingPublicationGeneration, announcement.HandoffEpoch),
             connection.LastQueuedMovingSequence, connection.PeerKey, notification.SequenceId,
             notification.Target ?? new RespireEndpoint(Host, Port), deadline, Environment.TickCount64,
             _stopConnecting.Token);

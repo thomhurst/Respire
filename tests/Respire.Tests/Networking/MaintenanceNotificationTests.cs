@@ -226,6 +226,67 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedOnlyClientFollowsMovingReceivedOnUploadConnection(bool duringHandshake)
+    {
+        await using var target = Server(maxConnections: 8);
+        await using var source = Server(duringHandshake ? FakeRespServer.OkReply.Concat(Moving(1, target.Port)).ToArray() : null,
+            maxConnections: 8);
+        var targetReply = target.ReplyOverride;
+        target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? FakeRespServer.OkReply : targetReply!(connection, command);
+        await using var client = RespireClient.Create(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
+        await client.Strings.SetAsync("first", new ReadOnlySequence<byte>("one"u8.ToArray()), cancellationToken: timeout.Token);
+        if (!duringHandshake)
+        {
+            await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
+            var index = source.ReceivedCommands.ToList().IndexOf("SET first one");
+            await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[index]);
+        }
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        await Assert.That(await client.Strings.SetAsync("second", new ReadOnlySequence<byte>("two"u8.ToArray()),
+            cancellationToken: timeout.Token)).IsTrue();
+        await Assert.That(target.ReceivedCommands).Contains("SET second two");
+        await Assert.That(source.ReceivedCommands).DoesNotContain("SET second two");
+    }
+
+    [Test]
+    public async Task StandaloneUploadAcceptsMixedCaseHost()
+    {
+        await using var server = Server(maxConnections: 4);
+        var options = Options(server);
+        options.Endpoints.Clear();
+        options.Endpoints.Add(new("LoCaLhOsT", server.Port));
+        await using var client = RespireClient.Create(options);
+        await Assert.That(await client.Strings.SetAsync("mixed-case", new ReadOnlySequence<byte>("value"u8.ToArray()))).IsTrue();
+        await Assert.That(server.ReceivedCommands).Contains("SET mixed-case value");
+    }
+
+    [Test]
+    public async Task DisposeAbortsUploadWhileMovedPoolIsRetiring()
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        source.SuppressReply = command => command.StartsWith("SET ");
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = client.Core.DedicatedPool;
+        var upload = client.Strings.SetAsync("pending", new ReadOnlySequence<byte>("value"u8.ToArray()),
+            cancellationToken: timeout.Token).AsTask();
+        while (!source.ReceivedCommands.Contains("SET pending value")) await Task.Delay(5, timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        await client.DisposeAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(async () => await upload.WaitAsync(timeout.Token)).Throws<RespireConnectionException>();
+        await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
+        await Assert.That(originalPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task MovingReroutesUploadPausedBeforeHeader()
     {
         await using var source = Server(maxConnections: 4);

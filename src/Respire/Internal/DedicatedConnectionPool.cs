@@ -16,7 +16,8 @@ internal enum DedicatedLeaseKind { Ordinary, Streaming }
 /// </summary>
 internal sealed partial class DedicatedConnectionPool(
     string host, int port, RespireConnectionOptions options, ILogger? logger,
-    Action<RespireConnectionStateChange>? stateChanged = null) : IAsyncDisposable
+    Action<RespireConnectionStateChange>? stateChanged = null,
+    Action<RespireConnection>? streamingConnectionCreated = null) : IAsyncDisposable
 {
     private const int MaxIdle = 4;
 
@@ -121,11 +122,27 @@ internal sealed partial class DedicatedConnectionPool(
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
             var entry = new Entry(connection, compatibleKind);
+            bool accepted;
             lock (_gate)
             {
                 _connections.Add(connection, entry);
-                if (!_stopping) return connection;
-                BeginCloseLocked(entry);
+                accepted = !_stopping;
+                if (!accepted) BeginCloseLocked(entry);
+            }
+            if (accepted)
+            {
+                try
+                {
+                    // Observers may publish a handoff and retire this pool. Never call them
+                    // under the ownership gate; the borrower still owns any returned lease.
+                    if (useStreamingMaintenance) streamingConnectionCreated?.Invoke(connection);
+                    return connection;
+                }
+                catch
+                {
+                    await DiscardAsync(connection).ConfigureAwait(false);
+                    throw;
+                }
             }
             await CloseAsync(entry).ConfigureAwait(false);
             throw new ObjectDisposedException(nameof(DedicatedConnectionPool));

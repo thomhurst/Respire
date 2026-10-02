@@ -75,8 +75,7 @@ internal sealed class ClientCore : IAsyncDisposable
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
-        _dedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged);
+        _dedicatedPool = CreateStandaloneDedicatedPool(endpoint);
         _dedicatedEndpoint = endpoint;
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
@@ -180,8 +179,7 @@ internal sealed class ClientCore : IAsyncDisposable
             var endpoint = _multiplexer.ActiveConnectionEndpoint;
             if (endpoint == _dedicatedEndpoint) return;
             previous = _dedicatedPool;
-            var replacement = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
-                Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged);
+            var replacement = CreateStandaloneDedicatedPool(endpoint);
             (_serverPools ??= []).Add(previous);
             _dedicatedEndpoint = endpoint;
             Volatile.Write(ref _dedicatedPool, replacement);
@@ -189,6 +187,24 @@ internal sealed class ClientCore : IAsyncDisposable
         // Keep borrowed uploads and blocking calls alive, while rejecting new rentals on the
         // old endpoint. Client disposal retains ownership until the final borrower returns.
         _ = RetireMovedDedicatedPoolAsync(previous);
+    }
+
+    private DedicatedConnectionPool CreateStandaloneDedicatedPool(RespireEndpoint endpoint)
+    {
+        DedicatedConnectionPool? pool = null;
+        pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
+            Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged,
+            connection =>
+            {
+                if (Cluster is not null || Sentinel is not null) return;
+                void OnMoving(MovingAnnouncement announcement)
+                    => _multiplexer.QueueDedicatedMovingHandoff(connection, announcement,
+                        () => !Disposed && ReferenceEquals(pool, DedicatedPool) && !pool!.IsStopping);
+                connection.MovingNotification += OnMoving;
+                // A server may send MOVING alongside the maintenance opt-in acknowledgement.
+                if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
+            });
+        return pool;
     }
 
     private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)

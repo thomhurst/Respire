@@ -441,6 +441,57 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task RetriedStreamedSetCompletesOneTelemetryScope()
+    {
+        var rejectWrites = false;
+        await using var oldPrimary = Primary((_, command) =>
+            command == "SET trigger value" && Volatile.Read(ref rejectWrites)
+                ? "-READONLY replica\r\n"u8.ToArray() : null);
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var started = new ConcurrentQueue<Activity>();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStarted = started.Enqueue,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var source = new PausedTelemetryStream();
+        var pending = client.Strings.SetAsync("upload", source, source.Length).AsTask();
+        await source.Started.Task.WaitAsync(Limit);
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        await client.Core.EnsureConnectedAsync(CancellationToken.None).AsTask().WaitAsync(Limit);
+        source.Resume.TrySetResult();
+        await Assert.That(await pending.WaitAsync(Limit)).IsTrue();
+        // One logical upload and the READONLY trigger each start and stop exactly one activity.
+        await Assert.That(started.Count).IsEqualTo(2);
+        await Assert.That(stopped.Count).IsEqualTo(2);
+        await Assert.That(oldPrimary.ReceivedCommands).DoesNotContain("SET upload payload");
+        await Assert.That(promoted.ReceivedCommands).Contains("SET upload payload");
+    }
+
+    private sealed class PausedTelemetryStream() : MemoryStream("payload"u8.ToArray())
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Resume.Task.WaitAsync(cancellationToken);
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Test]
     public async Task AcceptedStreamedSetDrainsThroughItsOriginalPoolAfterPromotion()
     {
         var rejectWrites = false;

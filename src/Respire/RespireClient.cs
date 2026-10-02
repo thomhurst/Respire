@@ -3402,17 +3402,6 @@ public sealed partial class RespireClient : IRespireClient
                 RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
     }
 
-    private static async ValueTask ReleaseFailedDedicatedConnectionAsync(
-        DedicatedConnectionPool pool, RespireConnection connection, DedicatedSendPolicy policy)
-    {
-        // FailStreamedSetAsync aborts every incomplete-frame phase, including cancellation
-        // after the header. SendStreamedSetAsync clears _streamingActive in its finally before
-        // control reaches here. A connected socket therefore has no partial frame: either no
-        // header was sent or the receive loop can drain the completed frame's abandoned reply.
-        if (policy == DedicatedSendPolicy.Streaming && connection.IsConnected) pool.Return(connection);
-        else await pool.DiscardAsync(connection).ConfigureAwait(false);
-    }
-
     /// <summary>
     /// Sends commands that occupy their connection on a dedicated pooled connection. Blocking
     /// commands omit the command timeout; streamed uploads keep it, so neither stalls multiplexed
@@ -3449,6 +3438,7 @@ public sealed partial class RespireClient : IRespireClient
                 core.Endpoint,
                 core.Options.Database,
                 storedProcedureName: storedProcedureName) : default;
+            var telemetryStarted = core.Sentinel is null;
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
@@ -3465,9 +3455,12 @@ public sealed partial class RespireClient : IRespireClient
                     (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken,
                         kind: policy == DedicatedSendPolicy.Streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
-                    if (core.Sentinel is not null)
+                    if (!telemetryStarted)
+                    {
                         telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                             core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
+                        telemetryStarted = true;
+                    }
                     try
                     {
                         response = policy == DedicatedSendPolicy.Streaming
@@ -3515,7 +3508,7 @@ public sealed partial class RespireClient : IRespireClient
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    await ReleaseFailedDedicatedConnectionAsync(pool!, connection, policy).ConfigureAwait(false);
+                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;
@@ -3734,7 +3727,7 @@ public sealed partial class RespireClient : IRespireClient
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
-                        await ReleaseFailedDedicatedConnectionAsync(pool, connection, policy).ConfigureAwait(false);
+                        await pool.DiscardAsync(connection).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;

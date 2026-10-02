@@ -148,9 +148,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task CancelledReplyIsDrainedBeforeDedicatedConnectionReuse()
+    public async Task CancelledReplyDiscardsDedicatedConnectionBeforeNextUpload()
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -179,13 +179,14 @@ public sealed class StreamedSetTests
             await Task.Delay(1, timeout.Token);
         cancellation.Cancel();
         await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+        await Assert.That(connection.IsConnected).IsFalse();
 
         var second = client.Strings.SetAsync("second", new ReadOnlySequence<byte>(new byte[] { 2 }),
             cancellationToken: timeout.Token).AsTask();
         await secondReceived.Task.WaitAsync(timeout.Token);
-        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
-        // Distinct replies prove the abandoned first response cannot satisfy the second SET.
-        await server.SendRawAsync("-ERR abandoned first reply\r\n+OK\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+        // The second command owns a fresh socket; the abandoned reply cannot reach it.
+        await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[^1]);
         await Assert.That(await second.WaitAsync(timeout.Token)).IsTrue();
     }
 
@@ -697,7 +698,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task EarlyEndOfStreamWithinFirstChunkLeavesConnectionOpen()
+    public async Task EarlyEndOfStreamWithinFirstChunkDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -713,8 +714,8 @@ public sealed class StreamedSetTests
         var source = new GeneratedStream(50);
         await Assert.That(async () => await client.Strings.SetAsync("partial", source, 100))
             .Throws<EndOfStreamException>();
+        await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await client.PingAsync();
-        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
@@ -935,7 +936,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task CancellationDuringFirstChunkReadLeavesConnectionOpen()
+    public async Task CancellationDuringFirstChunkReadDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -955,8 +956,8 @@ public sealed class StreamedSetTests
         var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
 
+        await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await client.PingAsync();
-        await Assert.That(server.ConnectionClosed.IsCompleted).IsFalse();
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
