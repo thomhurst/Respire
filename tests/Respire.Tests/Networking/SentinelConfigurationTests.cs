@@ -22,7 +22,7 @@ public class SentinelConfigurationTests
             Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
-        var hint = new SentinelHint("confirmation", target, target);
+        var hint = SentinelHintBuilder.Create("confirmation", target, target);
         var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
             (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint), CancellationToken.None,
             previouslyValidatedPrimary: target, preferredTarget: target, notificationHint: hint);
@@ -51,8 +51,8 @@ public class SentinelConfigurationTests
             Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", reporter.Port)],
         };
-        var hint = SentinelNotificationCoalescer.Merge(new SentinelHint("a-b", second, first),
-            new SentinelHint("b-a", first, second));
+        var hint = SentinelNotificationCoalescer.Merge(SentinelHintBuilder.Create("a-b", second, first),
+            SentinelHintBuilder.Create("b-a", first, second));
         await Assert.That(hint.Target).IsNull();
         var validated = new List<RespireEndpoint>();
         var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _, _) =>
@@ -95,7 +95,7 @@ public class SentinelConfigurationTests
             SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", fresh.Port)],
         };
-        var hint = new SentinelHint("switch", target, resolvedAlias ? previous : source,
+        var hint = SentinelHintBuilder.Create("switch", target, resolvedAlias ? previous : source,
             OldPrimaryAddresses: resolvedAlias ? [source.Host] : null);
         var validated = new List<RespireEndpoint>();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));

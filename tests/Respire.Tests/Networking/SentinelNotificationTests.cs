@@ -16,7 +16,7 @@ public class SentinelNotificationTests
     [Arguments(true)]
     public async Task SwitchEvidenceRejectsAnnouncedAndResolvedSourceAliases(bool resolved)
     {
-        var hint = new SentinelHint("switch", NewPrimary,
+        var hint = SentinelHintBuilder.Create("switch", NewPrimary,
             resolved ? new("old.internal", OldPrimary.Port) : OldPrimary,
             OldPrimaryAddresses: resolved ? [OldPrimary.Host] : null);
         await Assert.That(SentinelResolver.MatchesSwitchSource(OldPrimary, in hint)).IsTrue();
@@ -28,7 +28,7 @@ public class SentinelNotificationTests
     [Arguments("::ffff:192.0.2.1", "192.0.2.1")]
     public async Task CoalescedSourceAliasesUseCanonicalAddresses(string candidate, string resolved)
     {
-        var hint = new SentinelHint("switch", NewPrimary, OldPrimary,
+        var hint = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary,
             AdditionalSources: [new(new("other.internal", 6379), [resolved])]);
         await Assert.That(SentinelResolver.MatchesSwitchSource(new(candidate, 6379), in hint)).IsTrue();
         await Assert.That(SentinelResolver.MatchesSwitchSource(new(candidate, 6380), in hint)).IsFalse();
@@ -68,7 +68,7 @@ public class SentinelNotificationTests
     public async Task RandomMergeOrdersPreserveSourceAddressesAndEveryReporter()
     {
         var random = new Random(678);
-        var hints = Enumerable.Range(1, 12).Select(index => new SentinelHint($"hint-{index}",
+        var hints = Enumerable.Range(1, 12).Select(index => SentinelHintBuilder.Create($"hint-{index}",
             NewPrimary, new($"source-{index}", 6379), MustRediscover: true,
             OldPrimaryAddresses: [$"10.0.0.{index}"], ReportingSentinel: new($"sentinel-{index}", 26379))).ToArray();
         for (var attempt = 0; attempt < 128; attempt++)
@@ -106,7 +106,7 @@ public class SentinelNotificationTests
             var coalescer = new SentinelNotificationCoalescer();
             var offered = new HashSet<RespireEndpoint>();
             var discovered = new HashSet<RespireEndpoint>();
-            var resolution = coalescer.BeginSourceResolution(new SentinelHint("lookup"));
+            var resolution = coalescer.BeginSourceResolution(SentinelHintBuilder.Create("lookup"));
             try
             {
                 for (var step = 0; step < 64; step++)
@@ -115,7 +115,7 @@ public class SentinelNotificationTests
                     {
                         var source = new RespireEndpoint($"source-{run}-{step}", 6379);
                         offered.Add(source);
-                        coalescer.Offer(new SentinelHint($"hint-{step}", OldPrimary: source, MustRediscover: true), false);
+                        coalescer.Offer(SentinelHintBuilder.Create($"hint-{step}", OldPrimary: source, MustRediscover: true), false);
                     }
                     else
                     {
@@ -151,7 +151,7 @@ public class SentinelNotificationTests
             if (left.MustRediscover || right.MustRediscover) await Assert.That(forward.MustRediscover).IsTrue();
         }
 
-        SentinelHint CreateHint() => new("property", endpoints[random.Next(endpoints.Length)],
+        SentinelHint CreateHint() => SentinelHintBuilder.Create("property", endpoints[random.Next(endpoints.Length)],
             endpoints[random.Next(endpoints.Length)], random.Next(2) == 0,
             OldPrimaryAddresses: [$"192.0.2.{random.Next(4) + 1}"],
             ReportingSentinel: endpoints[random.Next(endpoints.Length)]);
@@ -218,7 +218,7 @@ public class SentinelNotificationTests
     public async Task FirstHintStartsWorkerAndDuplicateCoalesces()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        var hint = new SentinelHint("switch", NewPrimary, OldPrimary);
+        var hint = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
 
         await Assert.That(coalescer.Offer(in hint, targetIsCurrent: false)).IsTrue();
         await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
@@ -230,7 +230,7 @@ public class SentinelNotificationTests
     public async Task DuplicateFaultHintOutlivesTheActiveAttempt()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        var down = new SentinelHint("master-down", MustRediscover: true);
+        var down = SentinelHintBuilder.Create("master-down", MustRediscover: true);
         coalescer.Offer(in down, targetIsCurrent: false);
 
         await Assert.That(coalescer.Offer(in down, targetIsCurrent: false)).IsFalse();
@@ -245,17 +245,17 @@ public class SentinelNotificationTests
     {
         var coalescer = new SentinelNotificationCoalescer();
 
-        await Assert.That(coalescer.Offer(new SentinelHint("switch", NewPrimary), targetIsCurrent: true)).IsFalse();
+        await Assert.That(coalescer.Offer(SentinelHintBuilder.Create("switch", NewPrimary), targetIsCurrent: true)).IsFalse();
         await Assert.That(coalescer.ActiveKey).IsNull();
-        await Assert.That(coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: true)).IsTrue();
+        await Assert.That(coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), targetIsCurrent: true)).IsTrue();
     }
 
     [Test]
     public async Task CurrentTargetSwitchRemainsPendingDuringUntargetedDiscovery()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), false);
-        var hint = new SentinelHint("switch", NewPrimary, OldPrimary,
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), false);
+        var hint = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary,
             ReportingSentinel: new("127.0.0.1", 26380));
 
         await Assert.That(coalescer.Offer(in hint, targetIsCurrent: true)).IsFalse();
@@ -267,11 +267,11 @@ public class SentinelNotificationTests
     public async Task LaterDownHintCannotEraseAPendingSwitch()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false);
-        var pendingSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(SentinelHintBuilder.Create("first"), targetIsCurrent: false);
+        var pendingSwitch = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
         coalescer.Offer(in pendingSwitch, targetIsCurrent: false);
 
-        coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("master-down", MustRediscover: true), targetIsCurrent: false);
 
         await AssertHintEvidence(coalescer.Pending!.Value, pendingSwitch with { MustRediscover = true });
     }
@@ -279,8 +279,8 @@ public class SentinelNotificationTests
     [Test]
     public async Task SwitchReplacesPendingDownAndKeepsTheFault()
     {
-        var pendingDown = new SentinelHint("master-down", MustRediscover: true);
-        var later = new SentinelHint("switch", OldPrimary: OldPrimary);
+        var pendingDown = SentinelHintBuilder.Create("master-down", MustRediscover: true);
+        var later = SentinelHintBuilder.Create("switch", OldPrimary: OldPrimary);
 
         var merged = SentinelNotificationCoalescer.Merge(pendingDown, in later);
 
@@ -290,8 +290,8 @@ public class SentinelNotificationTests
     [Test]
     public async Task UntargetedSwitchKeepsTheEarlierTargetAndRequiresFreshDiscovery()
     {
-        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
-        var later = new SentinelHint("b", OldPrimary: new RespireEndpoint("10.0.0.9", 6379));
+        var pending = SentinelHintBuilder.Create("a", NewPrimary, OldPrimary);
+        var later = SentinelHintBuilder.Create("b", OldPrimary: new RespireEndpoint("10.0.0.9", 6379));
 
         var merged = SentinelNotificationCoalescer.Merge(pending, in later);
 
@@ -307,10 +307,10 @@ public class SentinelNotificationTests
         // A→B→C. B→C is pending when another Sentinel's delayed A→B copy arrives.
         var c = new RespireEndpoint("10.0.0.3", 6381);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-c", c, NewPrimary), targetIsCurrent: false);
 
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
 
         // B may still report ROLE master briefly, so the target shortcut must not consume C's hint.
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
@@ -324,9 +324,9 @@ public class SentinelNotificationTests
         var sentinelForC = new RespireEndpoint("10.0.1.3", 26379);
         var sentinelForB = new RespireEndpoint("10.0.1.2", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary, ReportingSentinel: sentinelForC), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: sentinelForB), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-c", c, NewPrimary, ReportingSentinel: sentinelForC), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: sentinelForB), targetIsCurrent: false);
 
         var pending = coalescer.Pending!.Value;
         await Assert.That(pending.Target).IsEqualTo(c);
@@ -341,9 +341,9 @@ public class SentinelNotificationTests
         var bToAReporter = new RespireEndpoint("10.0.1.1", 26379);
         var delayedReporter = new RespireEndpoint("10.0.1.2", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary, ReportingSentinel: bToAReporter), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, a, ReportingSentinel: delayedReporter), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-a", a, NewPrimary, ReportingSentinel: bToAReporter), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b-delayed", NewPrimary, a, ReportingSentinel: delayedReporter), targetIsCurrent: false);
 
         var pending = coalescer.Pending!.Value;
         await Assert.That(pending.MustRediscover).IsTrue();
@@ -362,9 +362,9 @@ public class SentinelNotificationTests
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var delayed = new RespireEndpoint("10.0.1.2", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), false);
-        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
-        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
         var recovery = coalescer.TakePending()!.Value;
         await Assert.That(recovery.ReportingSentinel).IsEqualTo(first);
 
@@ -385,11 +385,11 @@ public class SentinelNotificationTests
         var delayed = new RespireEndpoint("10.0.1.2", 26379);
         var currentReporter = new RespireEndpoint("10.0.1.3", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), false);
-        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
-        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-a", OldPrimary, NewPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b-delayed", NewPrimary, OldPrimary, ReportingSentinel: delayed), false);
         coalescer.TakePending();
-        var fresh = new SentinelHint("gap", MustRediscover: true, ReportingSentinel: currentReporter);
+        var fresh = SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: currentReporter);
         coalescer.Offer(in fresh, false);
 
         var next = coalescer.TakePending(activeFailed: false)!.Value;
@@ -411,7 +411,7 @@ public class SentinelNotificationTests
         var ambiguous = new RespireEndpoint("ambiguous.internal", 6379);
         var stale = new RespireEndpoint("192.0.2.9", 6379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("switch", [primary],
+        coalescer.Offer(SentinelHintBuilder.Create("switch", [primary],
             [new(numeric, null), new(otherPort, null), new(ambiguous, ["192.0.2.1", "192.0.2.9"]), new(stale, null)],
             [first, delayed], true), false);
 
@@ -429,9 +429,9 @@ public class SentinelNotificationTests
         var reporterForB = new RespireEndpoint("10.0.1.2", 26379);
         var reporterForA = new RespireEndpoint("10.0.1.1", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: reporterForB), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("c-to-a", OldPrimary, third, ReportingSentinel: reporterForA), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: reporterForB), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("c-to-a", OldPrimary, third, ReportingSentinel: reporterForA), targetIsCurrent: false);
 
         var merged = coalescer.Pending!.Value;
 
@@ -444,11 +444,11 @@ public class SentinelNotificationTests
     public async Task PendingSwitchRetainsSourceAddressesResolvedBeforeItBecomesActive()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-c", new("10.0.0.3", 6381), NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-c", new("10.0.0.3", 6381), NewPrimary), targetIsCurrent: false);
 
         coalescer.RetainResolvedOldPrimaryAddresses(NewPrimary, ["192.0.2.2"]);
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
         var pending = coalescer.TakePending();
 
         await Assert.That(pending!.Value.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
@@ -460,9 +460,9 @@ public class SentinelNotificationTests
     {
         var c = new RespireEndpoint("10.0.0.3", 6381);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-c", c, NewPrimary), targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(c);
         await Assert.That(coalescer.Pending!.Value.Targets).IsEquivalentTo([NewPrimary, c]);
@@ -472,10 +472,10 @@ public class SentinelNotificationTests
     public async Task CoalescedFailbackDoesNotInferChronologyFromSwitchEdges()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary), targetIsCurrent: false);
         var a = new RespireEndpoint("10.0.0.1", 6379);
-        coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-a", a, NewPrimary), targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
         await Assert.That(coalescer.Pending!.Value.Target).IsNull();
@@ -486,10 +486,10 @@ public class SentinelNotificationTests
     [Test]
     public async Task RepeatedActiveSwitchAfterInterveningSwitchRemainsPending()
     {
-        var aToB = new SentinelHint("a-to-b", NewPrimary, OldPrimary);
+        var aToB = SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary);
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(in aToB, targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("b-to-a", OldPrimary, NewPrimary), targetIsCurrent: false);
         coalescer.Offer(in aToB, targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
@@ -503,8 +503,8 @@ public class SentinelNotificationTests
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var second = new RespireEndpoint("10.0.1.2", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
 
         var catchUp = coalescer.TakePending();
 
@@ -522,10 +522,10 @@ public class SentinelNotificationTests
         var second = new RespireEndpoint("10.0.1.2", 26379);
         var third = new RespireEndpoint("10.0.1.3", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
         coalescer.TakePending();
-        coalescer.Offer(new SentinelHint("switch", NewPrimary, ReportingSentinel: third), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("switch", NewPrimary, ReportingSentinel: third), targetIsCurrent: false);
 
         var next = coalescer.TakePending(activeFailed: false)!.Value;
         await Assert.That(next.MustRediscover).IsTrue();
@@ -539,12 +539,12 @@ public class SentinelNotificationTests
         var c = new RespireEndpoint("10.0.0.3", 6381);
         SentinelHint[] hints =
         [
-            new("a-to-b", NewPrimary, OldPrimary),
-            new("b-to-c", c, NewPrimary),
+            SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary),
+            SentinelHintBuilder.Create("b-to-c", c, NewPrimary),
             // Built as the router builds them: a switch without a parsed target must rediscover.
-            new("untargeted-switch", OldPrimary: OldPrimary, MustRediscover: true),
-            new("master-down", MustRediscover: true),
-            new("gap", MustRediscover: true),
+            SentinelHintBuilder.Create("untargeted-switch", OldPrimary: OldPrimary, MustRediscover: true),
+            SentinelHintBuilder.Create("master-down", MustRediscover: true),
+            SentinelHintBuilder.Create("gap", MustRediscover: true),
         ];
         var orderings = 0;
         foreach (var subset in Subsets(hints.Length))
@@ -553,7 +553,7 @@ public class SentinelNotificationTests
             orderings++;
             var offered = order.Select(index => hints[index]).ToArray();
             var coalescer = new SentinelNotificationCoalescer();
-            coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+            coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
             foreach (var hint in offered) coalescer.Offer(in hint, targetIsCurrent: false);
             var pending = coalescer.Pending!.Value;
             var label = string.Join(" > ", offered.Select(hint => hint.Key));
@@ -591,8 +591,8 @@ public class SentinelNotificationTests
     [Test]
     public async Task MatchingPendingAndLaterTargetsDoNotForceRediscovery()
     {
-        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
-        var later = new SentinelHint("b", NewPrimary, new RespireEndpoint("10.0.0.9", 6379));
+        var pending = SentinelHintBuilder.Create("a", NewPrimary, OldPrimary);
+        var later = SentinelHintBuilder.Create("b", NewPrimary, new RespireEndpoint("10.0.0.9", 6379));
 
         var merged = SentinelNotificationCoalescer.Merge(pending, in later);
 
@@ -602,8 +602,8 @@ public class SentinelNotificationTests
     [Test]
     public async Task LaterSwitchAwayFromThePendingTargetDoesNotInheritIt()
     {
-        var pending = new SentinelHint("a", NewPrimary, OldPrimary);
-        var later = new SentinelHint("b", OldPrimary: NewPrimary);
+        var pending = SentinelHintBuilder.Create("a", NewPrimary, OldPrimary);
+        var later = SentinelHintBuilder.Create("b", OldPrimary: NewPrimary);
 
         var merged = SentinelNotificationCoalescer.Merge(pending, in later);
 
@@ -616,9 +616,9 @@ public class SentinelNotificationTests
     public async Task FailedActiveSwitchSurvivesANewerPendingHint()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        var failedSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        var failedSwitch = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
         coalescer.Offer(in failedSwitch, targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("master-down", MustRediscover: true), targetIsCurrent: false);
 
         var next = coalescer.TakePending(activeFailed: true);
 
@@ -631,8 +631,8 @@ public class SentinelNotificationTests
     public async Task FailedActiveHintMakesANewerTargetedHintRediscover()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
-        var laterSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), targetIsCurrent: false);
+        var laterSwitch = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
         coalescer.Offer(in laterSwitch, targetIsCurrent: false);
 
         var next = coalescer.TakePending(activeFailed: true);
@@ -647,8 +647,8 @@ public class SentinelNotificationTests
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var second = new RespireEndpoint("10.0.1.2", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), false);
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: first), false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true, ReportingSentinel: second), false);
 
         var replacement = coalescer.TakePending(activeFailed: true)!.Value;
         var afterSuccess = coalescer.TakePending(activeFailed: false);
@@ -662,8 +662,8 @@ public class SentinelNotificationTests
     public async Task SuccessfulActiveHintLeavesTheNewerHintUnchanged()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
-        var laterSwitch = new SentinelHint("switch", NewPrimary, OldPrimary);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), targetIsCurrent: false);
+        var laterSwitch = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
         coalescer.Offer(in laterSwitch, targetIsCurrent: false);
 
         await Assert.That(coalescer.TakePending()).IsEqualTo(laterSwitch);
@@ -675,8 +675,8 @@ public class SentinelNotificationTests
         var first = new RespireEndpoint("10.0.0.11", 26379);
         var second = new RespireEndpoint("10.0.0.12", 26379);
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("switch", NewPrimary, OldPrimary, ReportingSentinel: first), false);
-        coalescer.Offer(new SentinelHint("switch", NewPrimary, OldPrimary, ReportingSentinel: second), false);
+        coalescer.Offer(SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary, ReportingSentinel: first), false);
+        coalescer.Offer(SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary, ReportingSentinel: second), false);
 
         var pending = coalescer.TakePending(activeFailed: true);
 
@@ -688,14 +688,14 @@ public class SentinelNotificationTests
     public async Task CompleteClearsActiveAndPendingHints()
     {
         var coalescer = new SentinelNotificationCoalescer();
-        coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false);
-        coalescer.Offer(new SentinelHint("second"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("first"), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("second"), targetIsCurrent: false);
 
         coalescer.Complete();
 
         await Assert.That(coalescer.ActiveKey).IsNull();
         await Assert.That(coalescer.Pending).IsNull();
-        await Assert.That(coalescer.Offer(new SentinelHint("first"), targetIsCurrent: false)).IsTrue();
+        await Assert.That(coalescer.Offer(SentinelHintBuilder.Create("first"), targetIsCurrent: false)).IsTrue();
     }
 
     [Test]

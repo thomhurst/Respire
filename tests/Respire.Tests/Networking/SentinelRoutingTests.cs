@@ -129,7 +129,7 @@ public class SentinelRoutingTests
             reporter.ReplyOverride = (id, command) => command == query
                 ? "-ERR reporter unavailable\r\n"u8.ToArray() : reply(id, command);
         }
-        var hint = new SentinelHint("backoff-reporters", new("127.0.0.1", promoted.Port),
+        var hint = SentinelHintBuilder.Create("backoff-reporters", new("127.0.0.1", promoted.Port),
             new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", first.Port));
         router.QueueNotificationRediscovery(hint);
         await ReadFenceTimerAsync(clock, retryDelay);
@@ -155,7 +155,7 @@ public class SentinelRoutingTests
         var watch = Stopwatch.StartNew();
         for (var index = 0; index < 8; index++)
         {
-            router.QueueNotificationRediscovery(new SentinelHint($"fault-{index}", MustRediscover: true,
+            router.QueueNotificationRediscovery(SentinelHintBuilder.Create($"fault-{index}", MustRediscover: true,
                 ReportingSentinel: new("127.0.0.1", sentinel.Port)));
             if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
         }
@@ -238,7 +238,7 @@ public class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref port, promoted.Port);
         var router = client.Core.Sentinel!;
-        router.QueueNotificationRediscovery(new SentinelHint("gap-acl", MustRediscover: true,
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("gap-acl", MustRediscover: true,
             ReportingSentinel: new("127.0.0.1", sentinel.Port)));
         await WaitForEndpointAsync(client, promoted.Port);
         await Assert.That(promoted.ReceivedCommands.Contains("ROLE")).IsTrue();
@@ -261,7 +261,7 @@ public class SentinelRoutingTests
                 candidates.Add(candidate.PrimaryEndpoint.Port);
                 if (candidate.PrimaryEndpoint.Port == promotedPort) throw new RespireConnectionException("Transient promotion failure");
                 return ValueTask.FromResult(candidate.PrimaryEndpoint.Port);
-            }, CancellationToken.None, state, notificationHint: new SentinelHint("gap", MustRediscover: true)))
+            }, CancellationToken.None, state, notificationHint: SentinelHintBuilder.Create("gap", MustRediscover: true)))
             .Throws<RespireConnectionException>();
         await Assert.That(candidates).IsEquivalentTo([promotedPort]);
         // A later attempt may confirm the observed generation once its transport recovers.
@@ -290,7 +290,7 @@ public class SentinelRoutingTests
         var original = router.Current!;
         var protection = typeof(SentinelRouter).GetMethod("IsAnnouncedTarget",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-        var confirmation = new SentinelHint("confirmed-alias", new("127.0.0.1", primary.Port), original.Endpoint);
+        var confirmation = SentinelHintBuilder.Create("confirmed-alias", new("127.0.0.1", primary.Port), original.Endpoint);
         await Assert.That((bool)protection.Invoke(null, [original, confirmation])!).IsTrue();
         Volatile.Write(ref host, "127.0.0.1");
         var numeric = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
@@ -332,7 +332,7 @@ public class SentinelRoutingTests
         await using var client = RespireClient.Create(Options(26379));
         await using var current = new SentinelRouter.Generation(client.Core.Sentinel!, client.Core,
             Options(26379) with { Endpoints = [new("2001:db8::1", 6379)] });
-        var hint = new SentinelHint("failback", new("2001:0db8:0:0:0:0:0:1", 6379), current.Endpoint);
+        var hint = SentinelHintBuilder.Create("failback", new("2001:0db8:0:0:0:0:0:1", 6379), current.Endpoint);
         var method = typeof(SentinelRouter).GetMethod("IsAnnouncedTarget",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
         await Assert.That((bool)method.Invoke(null, [current, hint])!).IsTrue();
@@ -373,14 +373,14 @@ public class SentinelRoutingTests
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
         var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter).GetField("_coalescer",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
-        var hint = new SentinelHint("b-to-c", new("192.0.2.2", 6379), new("source.invalid", primary.Port));
+        var hint = SentinelHintBuilder.Create("b-to-c", new("192.0.2.2", 6379), new("source.invalid", primary.Port));
         coalescer.Offer(in hint, false);
         var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var pending = (Task)resolve.Invoke(router, [hint, arrived, CancellationToken.None, null])!;
-        if (failback) coalescer.Offer(new SentinelHint("c-to-b", current.Endpoint, hint.Target), true);
+        if (failback) coalescer.Offer(SentinelHintBuilder.Create("c-to-b", current.Endpoint, hint.Target), true);
         addresses.SetResult([IPAddress.Loopback]);
         await pending.WaitAsync(Limit);
         await Assert.That(current.IsRetired).IsEqualTo(!failback);
@@ -644,7 +644,7 @@ public class SentinelRoutingTests
         var clock = new FenceClock();
         router.Clock = clock;
         Volatile.Write(ref port, promoted.Port);
-        router.QueueNotificationRediscovery(new SentinelHint("switch-retry",
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("switch-retry",
             new("127.0.0.1", promoted.Port), new("127.0.0.1", original.Port),
             ReportingSentinel: new("127.0.0.1", sentinel.Port)));
 
@@ -702,7 +702,7 @@ public class SentinelRoutingTests
         first.SuppressReply = command => command == query;
         Volatile.Write(ref firstPort, intermediate.Port);
         Volatile.Write(ref secondPort, laterPromotion ? latest.Port : original.Port);
-        var hint = new SentinelHint("reconcile",
+        var hint = SentinelHintBuilder.Create("reconcile",
             Target: switchHint ? new("127.0.0.1", intermediate.Port) : null,
             OldPrimary: switchHint ? new("127.0.0.1", original.Port) : null,
             MustRediscover: !switchHint, ReportingSentinel: new("127.0.0.1", first.Port));
@@ -742,11 +742,11 @@ public class SentinelRoutingTests
         var queries = first.ReceivedCommands.Count(command => command == query);
         first.SuppressReply = command => command == query;
         Volatile.Write(ref firstPort, stale.Port);
-        router.QueueNotificationRediscovery(new SentinelHint("gap", MustRediscover: true,
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("gap", MustRediscover: true,
             ReportingSentinel: new("127.0.0.1", first.Port)));
         await WaitForCommandCountAsync(first, query, queries + 1);
         var queryIndex = first.ReceivedCommands.ToList().FindLastIndex(command => command == query);
-        router.QueueNotificationRediscovery(new SentinelHint("confirmed-current",
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("confirmed-current",
             new("127.0.0.1", current.Port), new("127.0.0.1", stale.Port),
             ReportingSentinel: new("127.0.0.1", second.Port)));
         var worker = router.NotificationRediscovery!;
@@ -793,10 +793,10 @@ public class SentinelRoutingTests
         await WaitForCommandCountAsync(first, query, queries + 1);
         var queryIndex = first.ReceivedCommands.ToList().FindLastIndex(command => command == query);
         Volatile.Write(ref secondPort, stale.Port);
-        var confirmation = new SentinelHint("b-to-a",
+        var confirmation = SentinelHintBuilder.Create("b-to-a",
             new("127.0.0.1", current.Port), new("127.0.0.1", stale.Port),
             ReportingSentinel: new("127.0.0.1", first.Port));
-        var delayed = new SentinelHint("a-to-b-delayed",
+        var delayed = SentinelHintBuilder.Create("a-to-b-delayed",
             new("127.0.0.1", stale.Port), new("127.0.0.1", current.Port),
             ReportingSentinel: new("127.0.0.1", second.Port));
         router.QueueNotificationRediscovery(staleReporterFirst ? delayed : confirmation);
@@ -822,7 +822,7 @@ public class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         Volatile.Write(ref port, latest.Port);
         var current = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
-        var hint = new SentinelHint("old-switch", new("127.0.0.1", target.Port),
+        var hint = SentinelHintBuilder.Create("old-switch", new("127.0.0.1", target.Port),
             new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", sentinel.Port));
         var confirmed = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true, notificationHint: hint);
         await Assert.That(ReferenceEquals(confirmed, current)).IsTrue();
@@ -1024,7 +1024,7 @@ public class SentinelRoutingTests
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
-        var hint = new SentinelHint("switch", new RespireEndpoint("127.0.0.1", 6381), new RespireEndpoint("127.0.0.1", 6380));
+        var hint = SentinelHintBuilder.Create("switch", new RespireEndpoint("127.0.0.1", 6381), new RespireEndpoint("127.0.0.1", 6380));
         var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
             .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(router)!;
@@ -1048,7 +1048,7 @@ public class SentinelRoutingTests
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
         var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
-        var hint = new SentinelHint("switch-out", new("127.0.0.1", 6380), current.Endpoint);
+        var hint = SentinelHintBuilder.Create("switch-out", new("127.0.0.1", 6380), current.Endpoint);
         var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
             .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(router)!;
@@ -1056,7 +1056,7 @@ public class SentinelRoutingTests
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
-        var failback = new SentinelHint("switch-back", current.Endpoint, new("127.0.0.1", 6380), MustRediscover: true);
+        var failback = SentinelHintBuilder.Create("switch-back", current.Endpoint, new("127.0.0.1", 6380), MustRediscover: true);
         if (failbackArrives) coalescer.Offer(in failback, targetIsCurrent: true);
         if (discoveryCompleted) coalescer.Complete();
         addresses.SetResult([IPAddress.Loopback]);
@@ -1079,7 +1079,7 @@ public class SentinelRoutingTests
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
         var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
-        var hint = new SentinelHint("switch", new("127.0.0.1", 6380), current.Endpoint);
+        var hint = SentinelHintBuilder.Create("switch", new("127.0.0.1", 6380), current.Endpoint);
         var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
             .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(router)!;
@@ -1088,7 +1088,7 @@ public class SentinelRoutingTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
         coalescer.Complete();
-        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), targetIsCurrent: false);
+        coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), targetIsCurrent: false);
         if (discoveryCompleted) coalescer.Complete();
         addresses.SetResult([IPAddress.Loopback]);
         await pending.WaitAsync(Limit);
@@ -1106,7 +1106,7 @@ public class SentinelRoutingTests
         typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
         router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
-        var hint = new SentinelHint("switch", new("127.0.0.1", 6380), current.Endpoint);
+        var hint = SentinelHintBuilder.Create("switch", new("127.0.0.1", 6380), current.Endpoint);
         var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
             .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(router)!;
@@ -1328,11 +1328,11 @@ public class SentinelRoutingTests
         Volatile.Write(ref port, unavailable.Port);
 
         var router = client.Core.Sentinel!;
-        router.QueueNotificationRediscovery(new SentinelHint("initial-hint", MustRediscover: true));
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("initial-hint", MustRediscover: true));
         await WaitForCommandCountAsync(unavailable, "ROLE", 1);
-        router.QueueNotificationRediscovery(new SentinelHint("pending-hint-1", MustRediscover: true));
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("pending-hint-1", MustRediscover: true));
         await WaitForCommandCountAsync(unavailable, "ROLE", 2);
-        router.QueueNotificationRediscovery(new SentinelHint("pending-hint-2", MustRediscover: true));
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("pending-hint-2", MustRediscover: true));
 
         var rediscovery = router.NotificationRediscovery;
         await Assert.That(rediscovery).IsNotNull();
@@ -1404,7 +1404,7 @@ public class SentinelRoutingTests
         };
         Volatile.Write(ref freshPort, promoted.Port);
         Volatile.Write(ref stalePort, promoted.Port);
-        router.QueueNotificationRediscovery(new SentinelHint("switch", new("127.0.0.1", promoted.Port),
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("switch", new("127.0.0.1", promoted.Port),
             new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", fresh.Port),
             AdditionalReportingSentinels: [new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)]));
         var worker = router.NotificationRediscovery!;
@@ -1506,7 +1506,7 @@ public class SentinelRoutingTests
         };
         await using var client = RespireClient.Create(Options(sentinel.Port));
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
-        await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var current = router.Current!;
         await Assert.That(current.Endpoint.Host).IsEqualTo("localhost");
@@ -1737,7 +1737,7 @@ public class SentinelRoutingTests
             | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
 
         // The switch was parsed from the old generation before current was published.
-        router.QueueNotificationRediscovery(new SentinelHint("stale-switch", OldPrimary: old.Endpoint));
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("stale-switch", OldPrimary: old.Endpoint));
 
         await Assert.That(current.IsRetired).IsFalse();
     }

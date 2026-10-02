@@ -20,17 +20,6 @@ internal readonly record struct SentinelHint(
     internal static SentinelHint FromGap(RespireEndpoint reporter)
         => new("gap", [], [], [reporter], true);
 
-    // Synthetic evidence constructor for tests. Production wire events use the named factories.
-    internal SentinelHint(string Key, RespireEndpoint? Target = null, RespireEndpoint? OldPrimary = null,
-        bool MustRediscover = false, string[]? OldPrimaryAddresses = null,
-        SentinelSwitchSource[]? AdditionalSources = null, RespireEndpoint? ReportingSentinel = null,
-        RespireEndpoint[]? AdditionalTargets = null, RespireEndpoint[]? AdditionalReportingSentinels = null)
-        : this(Key,
-            [.. Target is { } target ? new[] { target } : [], .. AdditionalTargets ?? []],
-            [.. OldPrimary is { } source ? new[] { new SentinelSwitchSource(source, OldPrimaryAddresses) } : [], .. AdditionalSources ?? []],
-            [.. ReportingSentinel is { } reporter ? new[] { reporter } : [], .. AdditionalReportingSentinels ?? []],
-            MustRediscover || OldPrimary is not null && Target is null) { }
-
     // Only one unambiguous target can satisfy the router's target-is-current shortcut.
     internal RespireEndpoint? Target
     {
@@ -60,6 +49,8 @@ internal readonly record struct SentinelHint(
 /// <summary>
 /// Coalesces failover hints for the single notification rediscovery worker. At most one hint is
 /// active (being discovered) and at most one is pending (waiting for the active attempt to end).
+/// Hints never authorize a new primary: only rediscovery and successful ROLE validation can
+/// publish one. This type accumulates evidence and does not own or publish primary generations.
 /// </summary>
 /// <remarks>Not thread-safe. The router calls every member while holding its gate.</remarks>
 internal sealed class SentinelNotificationCoalescer
