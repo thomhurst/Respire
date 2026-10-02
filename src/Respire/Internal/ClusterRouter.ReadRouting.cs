@@ -10,6 +10,8 @@ namespace Respire.Internal;
 /// </summary>
 internal sealed partial class ClusterRouter
 {
+    private long _replicaRefreshWarningNotBefore;
+
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
     {
@@ -87,6 +89,7 @@ internal sealed partial class ClusterRouter
                         if (node.IsRetired) continue;
                         // A healthy read never redirects, so old routes are revalidated in the
                         // background. A failover that promoted this replica then retires it.
+                        // RefreshReplicaRoutesAsync catches and logs every refresh failure.
                         if (routes.IsDueForRevalidation)
                         {
                             _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
@@ -110,7 +113,10 @@ internal sealed partial class ClusterRouter
         }
 
         var detail = attempted == 0 ? "no replica available" : "no healthy replica";
-        throw new RespireConnectionException($"Redis Cluster slot {slot} has {detail} for read routing.", lastError!);
+        var message = $"Redis Cluster slot {slot} has {detail} for read routing.";
+        throw lastError is null
+            ? new RespireConnectionException(message)
+            : new RespireConnectionException(message, lastError);
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
@@ -138,13 +144,34 @@ internal sealed partial class ClusterRouter
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
             timeout.CancelAfter(_options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout));
-            _ = await TryRefreshSlotThroughKnownMastersAsync(
+            // A connected replica may be the only reachable node after its primary fails.
+            // Query it first so a failed primary cannot consume the shared refresh deadline.
+            foreach (var replica in GetKnownReplicas(slot)?.Nodes ?? [])
+            {
+                if (replica.IsConnected && !replica.IsRetired
+                    && await TryRefreshTopologyAsync(replica, timeout.Token, discovery: null).ConfigureAwait(false))
+                    return;
+            }
+            if (Volatile.Read(ref _masters).Length == 0)
+                await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
+            var owner = await TryRefreshSlotThroughKnownMastersAsync(
                 slot, failedOwner: null, cancellationToken: timeout.Token, discovery: null).ConfigureAwait(false);
+            if (owner is null) LogReplicaRefreshFailure(slot, error: null);
         }
         catch (Exception error)
         {
-            _logger?.LogDebug(error, "Replica route refresh for Redis Cluster slot {Slot} failed", slot);
+            if (!_stopDiscovery.IsCancellationRequested) LogReplicaRefreshFailure(slot, error);
         }
+    }
+
+    private void LogReplicaRefreshFailure(int slot, Exception? error)
+    {
+        // One warning per router per interval, including concurrent first-use refreshes.
+        var now = Environment.TickCount64;
+        var next = Volatile.Read(ref _replicaRefreshWarningNotBefore);
+        if (now < next || Interlocked.CompareExchange(ref _replicaRefreshWarningNotBefore,
+                now + ClusterReplicaSet.RefreshIntervalMilliseconds, next) != next) return;
+        _logger?.LogWarning(error, "Replica route refresh for Redis Cluster slot {Slot} failed", slot);
     }
 
     /// <summary>
@@ -196,6 +223,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception candidateError) when (IsReadCandidateFailure(candidateError, cancellationToken))
         {
+            // The server rejection explains why the read failed; retain it if fallback is unreachable.
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
             throw;
         }

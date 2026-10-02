@@ -276,10 +276,11 @@ public sealed partial class RespireClient : IRespireClient
     private RespireReadFrom EffectiveReadFrom => _readFrom;
     internal RespireReadFrom GetBatchReadFromPolicy() => EffectiveReadFrom;
 
-    internal RespireReadFrom GetReadFromForCommand(string operation, bool allowReadFrom = true)
+    internal RespireReadFrom GetReadFromForCommand<TCommand>(in TCommand command, bool allowReadFrom = true)
+        where TCommand : struct, IRespCommand
     {
         var policy = EffectiveReadFrom;
-        return allowReadFrom && policy != RespireReadFrom.Primary && ReadOnlyCommandMetadata.IsReadOnly(operation)
+        return allowReadFrom && policy != RespireReadFrom.Primary && command.ReadKind != ReadCommandKind.None
             ? policy
             : RespireReadFrom.Primary;
     }
@@ -396,13 +397,13 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, flags, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -448,14 +449,14 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
                 operation, prefixedArguments, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None)
             : ValueTask.FromException(prefixError);
     }
 
@@ -2008,7 +2009,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var readFrom = GetReadFromForCommand(operation);
+        var readFrom = GetReadFromForCommand(in command);
         ClusterRouter.DiscoveryRound? discovery = null;
         // Keep the budget across sends; successful selection does not imply the final route accepts the command.
         var discoveryPending = false;
@@ -2484,7 +2485,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var readFrom = readFromOverride ?? GetReadFromForCommand(operation, allowReadFrom);
+        var readFrom = readFromOverride ?? GetReadFromForCommand(in command, allowReadFrom);
         var cursorContinuation = command.ReadKind == ReadCommandKind.CursorRead
             && (cursorAffinity?.IsPinned == true || CursorCommandMetadata.IsCursorContinuation(in command));
         ClusterRouter.DiscoveryRound? discovery = null;
@@ -3111,7 +3112,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var readFrom = GetReadFromForCommand(operation);
+        var readFrom = GetReadFromForCommand(in command);
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
@@ -3365,7 +3366,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        var readFrom = GetReadFromForCommand(operation, allowReadFrom);
+        var readFrom = GetReadFromForCommand(in command, allowReadFrom);
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try

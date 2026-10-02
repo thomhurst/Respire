@@ -527,8 +527,8 @@ first and falls back to a replica when it cannot connect; `Replica` requires a h
 `ReplicaPreferred` chooses a replica first and falls back to the primary. The two preferred
 policies also retry a read once on the other role when the chosen node replies `LOADING`,
 `MASTERDOWN`, or `CLUSTERDOWN`; reads are idempotent, so the retry is safe. Other server errors
-are returned unchanged, and the strict policies never switch roles. Batches do not perform this
-retry. `RespireCommandFlags.NoRedirect` does not disable it, because that flag only surfaces
+are returned unchanged, and the strict policies never switch roles. All-read batch groups perform
+the same one-time retry per rejected operation, preserving completion order. `RespireCommandFlags.NoRedirect` does not disable it, because that flag only surfaces
 `MOVED` and `ASK`. A reply from an `ASK` target never switches roles, because only the importing
 node is authoritative during a slot migration. Policy applies only to
 commands whose generated Redis metadata marks them read-only and that have a routable key. Writes,

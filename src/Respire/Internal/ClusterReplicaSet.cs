@@ -24,13 +24,17 @@ internal sealed class ClusterReplicaSet
     /// <summary>Minimum interval between topology refreshes started from one replica set.</summary>
     internal const long RefreshIntervalMilliseconds = 1_000;
 
+    private readonly Func<long>? _clock;
+    private long Now => _clock?.Invoke() ?? Environment.TickCount64;
+
     private int _cursor;
     private long _refreshNotBefore;
     private long _revalidateAt;
     private Task? _refresh;
 
-    internal ClusterReplicaSet(RespireConnectionMultiplexer[] nodes, TimeSpan revalidationInterval)
+    internal ClusterReplicaSet(RespireConnectionMultiplexer[] nodes, TimeSpan revalidationInterval, Func<long>? clock = null)
     {
+        _clock = clock;
         Nodes = nodes;
         MarkValidated(revalidationInterval);
     }
@@ -38,11 +42,11 @@ internal sealed class ClusterReplicaSet
     internal RespireConnectionMultiplexer[] Nodes { get; }
 
     /// <summary>True once the routes are older than the revalidation interval.</summary>
-    internal bool IsDueForRevalidation => Environment.TickCount64 >= Volatile.Read(ref _revalidateAt);
+    internal bool IsDueForRevalidation => Now >= Volatile.Read(ref _revalidateAt);
 
     /// <summary>Records that a topology refresh has just confirmed these routes.</summary>
     internal void MarkValidated(TimeSpan revalidationInterval)
-        => Volatile.Write(ref _revalidateAt, Environment.TickCount64 + (long)revalidationInterval.TotalMilliseconds);
+        => Volatile.Write(ref _revalidateAt, Now + (long)revalidationInterval.TotalMilliseconds);
 
     /// <summary>True once any caller has started a topology refresh through this set.</summary>
     internal bool HasStartedRefresh => Volatile.Read(ref _refresh) is not null;
@@ -65,7 +69,7 @@ internal sealed class ClusterReplicaSet
         {
             var current = Volatile.Read(ref _refresh);
             if (current is { IsCompleted: false }) return current;
-            var now = Environment.TickCount64;
+            var now = Now;
             if (now < Volatile.Read(ref _refreshNotBefore)) return null;
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             if (!ReferenceEquals(Interlocked.CompareExchange(ref _refresh, completion.Task, current), current))

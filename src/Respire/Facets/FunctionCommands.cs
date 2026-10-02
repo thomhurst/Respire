@@ -91,6 +91,8 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             try
             {
                 var currentGeneration = Volatile.Read(ref reload.Generation);
+                // A matching library without this function cannot be repaired by replication.
+                // Preserve Redis's original not-found error instead of entering propagation polling.
                 if (!await EnsureLibraryAsync(library, function.Name, cancellationToken).ConfigureAwait(false))
                     throw;
                 // Revalidate this function even when another caller refreshed the library.
@@ -100,7 +102,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             finally { gate.Release(); }
             // Redis reserves this reply for a missing function. A primary retry stays bounded;
             // replica reads wait only for replication of the registered library.
-            var readFrom = client.GetReadFromForCommand(function.Operation);
+            var readFrom = client.GetReadFromForCommand(in command);
             var reply = readFrom == RespireReadFrom.Primary
                 ? await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false)
                 : await RetryUntilFunctionAvailableAsync(function.Operation, command, cancellationToken,

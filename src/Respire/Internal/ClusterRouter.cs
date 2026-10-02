@@ -1524,7 +1524,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var refreshedReplicas = new ClusterReplicaSet?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)
             {
-                var replicaNodes = range.Replicas.Select(_identities.GetOrCreateReplica).ToArray();
+                var replicaNodes = range.Replicas
+                    .Where(replica => !RespireEndpointComparer.Instance.Equals(replica.Endpoint, range.Preferred))
+                    .Select(_identities.GetOrCreateReplica).Distinct().ToArray();
                 // Unchanged routes keep their set, preserving its cursor and refresh throttle,
                 // and this refresh has just confirmed them.
                 ClusterReplicaSet replicaSet;
@@ -1925,7 +1927,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var node = refreshedSlots[slot];
             if (_slotVersions[slot] <= expectedVersion)
             {
-                topologyChanged |= !ReferenceEquals(_slots[slot], node);
                 topologyChanged |= !SameReplicaRoutes(_replicasBySlot[slot], refreshedReplicas[slot]);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.

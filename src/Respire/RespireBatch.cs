@@ -516,9 +516,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public override bool IsCompleted => pending.IsCompleted;
 
-        public override bool IsReadOnly => command is DynamicCommand dynamicCommand
-            ? dynamicCommand.IsReadOnly
-            : ReadOnlyCommandMetadata.IsReadOnly(Operation);
+        public override bool IsReadOnly => command.ReadKind != ReadCommandKind.None;
 
         public override void Fail(Exception error) => pending.Fail(error);
 
@@ -549,6 +547,16 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
                     value = await client.ResumeRetiredClusterSendAsync(
                         Operation, command, connection, error, readFrom, cancellationToken).ConfigureAwait(false);
+                }
+                catch (RespireServerException error) when (command.TryGetClusterSlot(out var readSlot)
+                    && ClusterRouter.CanFallBackToOtherRole(error, readFrom, readSlot,
+                        ClusterRouter.IsReplicaConnection(connection)))
+                {
+                    // Complete each operation in queue order; retry only its rejected read.
+                    var fallback = await client.Core.Cluster!.GetOtherRoleReadConnectionAsync(
+                        readSlot, readFrom, error, cancellationToken, discovery: null).ConfigureAwait(false);
+                    value = await client.SendOnConnectionAsync(Operation, fallback, command, cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
                     ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
