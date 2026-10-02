@@ -155,17 +155,17 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (index == 0 && preferredSentinel is { } reporter
-                    && RespireEndpointComparer.Instance.Equals(endpoint, reporter)
-                    && previouslyValidatedPrimary is { } previous
-                    && sentinelEndpoints.Count > 1
+                // A transient target failure does not invalidate the switch evidence. Every
+                // Sentinel must avoid the prior primary while that evidence contradicts it.
+                // A different reported primary may represent a later promotion and remains eligible.
+                if (previouslyValidatedPrimary is { } previous
                     && RespireEndpointComparer.Instance.Equals(primary, previous)
                     && preferredTarget is { } target
                     && !RespireEndpointComparer.Instance.Equals(target, previous))
                 {
                     logger?.LogWarning(
-                        "Sentinel {Sentinel} reported previously validated primary {Primary}; checking another Sentinel",
-                        reporter, primary);
+                        "Sentinel {Sentinel} reported previously validated primary {Primary}, contradicting switch target {Target}",
+                        endpoint, primary, target);
                     continue;
                 }
                 var primaryOptions = options with

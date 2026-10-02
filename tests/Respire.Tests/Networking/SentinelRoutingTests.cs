@@ -248,6 +248,44 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task SwitchRetryRejectsOriginalPrimaryAfterTransientTargetFailure()
+    {
+        await using var original = Primary();
+        var targetReady = false;
+        await using var promoted = Primary((_, command) => command == "ROLE" && !Volatile.Read(ref targetReady)
+            ? "*0\r\n"u8.ToArray() : null);
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var retryDelay = TimeSpan.FromSeconds(1);
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0 },
+        });
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var clock = new FenceClock();
+        router.Clock = clock;
+        Volatile.Write(ref port, promoted.Port);
+        router.QueueNotificationRediscovery(new SentinelHint("switch-retry",
+            new("127.0.0.1", promoted.Port), new("127.0.0.1", original.Port),
+            ReportingSentinel: new("127.0.0.1", sentinel.Port)));
+
+        var firstRetry = await ReadFenceTimerAsync(clock, retryDelay);
+        // The target failed ROLE validation. A stale reply still naming the source must not
+        // publish a replacement, even when that source continues to answer ROLE master.
+        Volatile.Write(ref port, original.Port);
+        firstRetry.Fire();
+        var secondRetry = await ReadFenceTimerAsync(clock, retryDelay);
+        await Assert.That(router.Current!.IsRetired).IsTrue();
+
+        Volatile.Write(ref targetReady, true);
+        Volatile.Write(ref port, promoted.Port);
+        secondRetry.Fire();
+        await WaitForEndpointAsync(client, promoted.Port);
+    }
+
+    [Test]
     public async Task RepeatedMasterDownDuringRediscoveryTriggersAnotherDiscovery()
     {
         await using var original = Primary();
