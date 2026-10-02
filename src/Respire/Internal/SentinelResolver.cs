@@ -339,31 +339,7 @@ internal static class SentinelResolver
                     logger?.LogDebug(error, "Optional Sentinel peer discovery failed at {Host}:{Port}", sentinel.Host, sentinel.Port);
                 }
             }
-            if (reply.IsError)
-            {
-                throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME");
-            }
-
-            if (reply.IsNull)
-            {
-                throw new RespireConnectionException(
-                    $"Redis Sentinel service '{serviceName}' was not found on {sentinel}.");
-            }
-
-            var parts = reply.AsArray();
-            if (parts.Length < 2)
-            {
-                throw new RespireProtocolException(
-                    $"Redis Sentinel returned {parts.Length} fields for service '{serviceName}', expected host and port.");
-            }
-
-            var host = parts[0].AsString();
-            var portText = parts[1].AsString();
-            if (!TryParseEndpoint(host, portText, out var primary))
-            {
-                throw new RespireProtocolException(
-                    $"Redis Sentinel returned an invalid host or port for service '{serviceName}'.");
-            }
+            var primary = ParsePrimaryAddress(in reply, sentinel, serviceName);
 
             // Correlate the address with its epoch. If failover changes it between commands,
             // retry discovery instead of assigning metadata to a different primary.
@@ -386,12 +362,53 @@ internal static class SentinelResolver
             }
             if (configuredPrimary is { } snapshot && !RespireEndpointComparer.Instance.Equals(primary, snapshot))
                 throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
+            if (configurationEpoch is not null)
+            {
+                // During promotion, MASTER can expose the new epoch with the old address
+                // while GET-MASTER-ADDR-BY-NAME already returns the promoted replica.
+                // Bracket metadata with address reads before remembering its epoch.
+                using var confirmation = await connection.SendAsync(
+                    new Cmd1(Verbs.SentinelGetMasterAddressByName, serviceName), cancellationToken).ConfigureAwait(false);
+                var confirmed = ParsePrimaryAddress(in confirmation, sentinel, serviceName);
+                if (!RespireEndpointComparer.Instance.Equals(primary, confirmed))
+                    throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
+            }
             return (primary, configurationEpoch);
         }
         finally
         {
             reply.Dispose();
         }
+    }
+
+    private static RespireEndpoint ParsePrimaryAddress(in RespValue reply, RespireEndpoint sentinel, string serviceName)
+    {
+        if (reply.IsError)
+        {
+            throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME");
+        }
+
+        if (reply.IsNull)
+        {
+            throw new RespireConnectionException(
+                $"Redis Sentinel service '{serviceName}' was not found on {sentinel}.");
+        }
+
+        var parts = reply.AsArray();
+        if (parts.Length < 2)
+        {
+            throw new RespireProtocolException(
+                $"Redis Sentinel returned {parts.Length} fields for service '{serviceName}', expected host and port.");
+        }
+
+        var host = parts[0].AsString();
+        var portText = parts[1].AsString();
+        if (!TryParseEndpoint(host, portText, out var primary))
+        {
+            throw new RespireProtocolException(
+                $"Redis Sentinel returned an invalid host or port for service '{serviceName}'.");
+        }
+        return primary;
     }
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)

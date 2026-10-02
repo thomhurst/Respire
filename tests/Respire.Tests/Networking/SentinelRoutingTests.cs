@@ -15,6 +15,36 @@ namespace Respire.Tests.Networking;
 public class SentinelRoutingTests
 {
     [Test]
+    public async Task PromotionDuringConfigurationReadDoesNotAssignNewEpochToOldPrimary()
+    {
+        const int originalPort = 7001, promotedPort = 7002;
+        var currentPort = originalPort;
+        await using var sentinel = Sentinel(() => currentPort, () => 6);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) =>
+        {
+            if (command != "SENTINEL MASTER mymaster") return reply(id, command);
+            var snapshotPort = currentPort;
+            currentPort = promotedPort;
+            return ConfigurationReply(snapshotPort, 6);
+        };
+        var state = new SentinelDiscoveryState([new("127.0.0.1", sentinel.Port)]);
+        state.AcceptConfiguration(new("127.0.0.1", originalPort), 5);
+        var candidates = new List<int>();
+        await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(Options(sentinel.Port),
+            (candidate, _) =>
+            {
+                candidates.Add(candidate.PrimaryEndpoint.Port);
+                throw new RespireConnectionException("Old primary is unavailable");
+            }, CancellationToken.None, state)).Throws<RespireConnectionException>();
+        await Assert.That(candidates).IsEmpty();
+
+        var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(sentinel.Port),
+            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+        await Assert.That(recovered).IsEqualTo(promotedPort);
+    }
+
+    [Test]
     public async Task DeliveryGapCanDiscoverPromotionWhenConfigurationCommandIsDenied()
     {
         await using var original = Primary();
@@ -508,7 +538,7 @@ public class SentinelRoutingTests
         await WaitForEndpointAsync(client, recovered.Port);
         await Task.Delay(100);
         await Assert.That(sentinel.ReceivedCommands.Count(command => command == discovery))
-            .IsEqualTo(initialDiscoveries + 1);
+            .IsEqualTo(initialDiscoveries + 2);
     }
 
     [Test]
@@ -1025,9 +1055,11 @@ public class SentinelRoutingTests
         port = middle.Port;
         var firstQuery = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command == discovery);
         await sentinel.SendRawAsync(AddressReply(middle.Port), sentinel.ReceivedConnectionIds[firstQuery]);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+        await sentinel.SendRawAsync(AddressReply(middle.Port), sentinel.ReceivedConnectionIds[firstQuery]);
         await WaitForEndpointAsync(client, middle.Port);
         var middleGeneration = router.Current!;
-        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 2);
+        await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 3);
 
         releaseResolution.TrySetResult([IPAddress.Loopback]);
         using var middleRetirement = new CancellationTokenSource(Limit);
@@ -1400,7 +1432,7 @@ public class SentinelRoutingTests
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(original.IsRetired).IsTrue();
         await Assert.That(client.Core.Sentinel.Current).IsNotSameReferenceAs(original);
-        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(3);
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(6);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "ROLE", "INCR ambiguous", "ROLE", "SET next value"]);
     }
 
@@ -1421,7 +1453,7 @@ public class SentinelRoutingTests
         await Task.WhenAll(Enumerable.Range(0, 16)
             .Select(index => client.SetAsync($"key:{index}", "value").AsTask())).WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
-        var discoveryCount = sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"));
+        var discoveryCount = sentinel.ReceivedCommands.Count(command => command == "SENTINEL MASTER mymaster");
         await Assert.That(discoveryCount).IsGreaterThanOrEqualTo(2);
         await Assert.That(discoveryCount).IsLessThanOrEqualTo(rediscovery ? 3 : 2);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(discoveryCount);
@@ -2590,6 +2622,7 @@ public class SentinelRoutingTests
         var execution = ExecuteAsync();
         await queried.Task.WaitAsync(Limit);
         var releaseTime = DateTime.UtcNow;
+        sentinel.SuppressReply = null;
         await sentinel.SendRawAsync(AddressReply(primary.Port));
         await execution.WaitAsync(Limit);
         await Assert.That(measurements.Count).IsEqualTo(1);

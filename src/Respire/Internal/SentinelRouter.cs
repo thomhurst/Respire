@@ -26,7 +26,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         ? [new RespireEndpoint("localhost", 26379)] : core.Options.Endpoints);
     private readonly HashSet<Generation> _owned = [];
     private readonly HashSet<DedicatedConnectionPool> _correctionPools = [];
-    // Keyed like discovery itself. Discovery never forgets an endpoint, so entries are never removed.
+    // Keyed like discovery itself: configured seeds plus at most 64 learned endpoints. Discovery
+    // never forgets an endpoint, so removing a completed entry would only recreate it next pass.
+    // Aging learned endpoints and cancelling their monitors together is tracked in #695.
     private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private readonly SentinelNotificationCoalescer _coalescer = new(); // Guarded by _gate.
     private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(core.Options.SentinelPrimaryName ?? "");
@@ -274,15 +276,22 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             while (!_lifetime.IsCancellationRequested)
             {
                 var endpoints = _discovery.Snapshot(out var changed);
+                List<(RespireEndpoint Endpoint, Exception? Error)>? restarted = null;
                 lock (_gate)
                 {
                     if (_disposed) return;
                     foreach (var endpoint in endpoints)
                     {
                         if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.IsCompleted) continue;
+                        if (monitor is not null)
+                            (restarted ??= []).Add((endpoint, monitor.Exception));
                         _notificationMonitors[endpoint] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
                     }
                 }
+                if (restarted is not null)
+                    foreach (var restart in restarted)
+                        SafeLog(restart, static (logger, state) => logger.LogWarning(state.Error,
+                            "Restarting an unexpectedly completed Sentinel event monitor at {Endpoint}", state.Endpoint));
                 // Wake as soon as discovery learns a Sentinel; no periodic polling of the endpoint set.
                 try
                 {
@@ -314,9 +323,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
-                // A publication that completed this reconnect epoch is now reflected by the
-                // recovered subscription. Use the fresh epoch for any later disconnect.
-                Volatile.Write(ref rearm, CurrentMonitorRearm());
+                // The close callback captures the current epoch for each reconnect episode.
+                // Do not overwrite it here: the socket may already have closed and a publication
+                // may already have completed that captured epoch before this continuation runs.
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
