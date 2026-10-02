@@ -520,8 +520,10 @@ temporary topology connections once Nearest sampling is active, so a stalled `CL
 reply does not block the primary's data connection. Shared discovery still coalesces requests and
 applies the existing refresh throttles and topology version checks.
 Each uncovered Cluster slot keeps its own background waiter, so a partial reply for another
-slot does not suppress its discovery. If cached Sentinel candidates all fail, selection joins
-a pending or due refresh and retries newly published endpoints before reporting failure.
+slot does not suppress its discovery. If cached Sentinel or Cluster candidates all fail, selection
+joins a pending or due refresh and retries once before reporting failure. This retry includes
+endpoints that recovered without changing address. A concurrent topology publication also gets
+one retry when it replaces every captured candidate, under the original sampling budget.
 Healthy cached candidates continue serving reads while that refresh runs.
 
 PING round-trip time includes local connection queues, server scheduling, and network delay.

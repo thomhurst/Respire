@@ -37,6 +37,11 @@ internal static class NearestReadSelection
 }
 
 /// <summary>Rotated minimum selection with allocation-free warm samples and bounded pending probes.</summary>
+/// <remarks>
+/// This type owns the common enumeration, sampling order, tie-breaking and minimum selection.
+/// Routers retain connection acquisition and publication checks: configured/Sentinel replicas
+/// require ROLE/link validation, while Cluster candidates require current slot membership.
+/// </remarks>
 internal struct NearestReadSelection<T>
 {
     private T _selected;

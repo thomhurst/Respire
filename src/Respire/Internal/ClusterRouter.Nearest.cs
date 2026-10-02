@@ -11,7 +11,7 @@ internal sealed partial class ClusterRouter
 
     private async ValueTask<RespireConnection> GetNearestReadConnectionAsync(
         int slot, CancellationToken cancellationToken, DiscoveryRound? discovery, bool retry = true,
-        long? samplingDeadline = null)
+        long? samplingDeadline = null, Exception? previousFailure = null)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -21,7 +21,7 @@ internal sealed partial class ClusterRouter
             throw new ObjectDisposedException(nameof(ClusterRouter));
         }
         RespireConnection? primary = null;
-        Exception? lastError = null;
+        Exception? lastError = previousFailure;
         var owner = GetKnownSlotOwner(slot);
         if (owner is null || sampler.CanConnect(owner))
         {
@@ -102,8 +102,17 @@ internal sealed partial class ClusterRouter
                     _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
                 return selected;
             }
-            if (retry) return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
-                samplingDeadline: deadline).ConfigureAwait(false);
+        }
+        if (retry)
+        {
+            // A concurrent publication may remove every captured candidate before queueing.
+            // Retry that publication directly; otherwise join the range's throttled refresh,
+            // which can learn a replacement through another still-healthy master.
+            if (ReferenceEquals(owner, GetKnownSlotOwner(slot)) && ReferenceEquals(routes, GetKnownReplicas(slot))
+                && routes?.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot)) is { } refresh)
+                await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
+                samplingDeadline: deadline, previousFailure: lastError).ConfigureAwait(false);
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));

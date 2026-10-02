@@ -421,15 +421,18 @@ public class NearestReadRoutingTests
             await Task.Delay(1, timeout.Token);
         var secondQuery = primary.ReceivedCommands.ToList().FindLastIndex(command => command == "CLUSTER SLOTS");
         await primary.SendRawAsync(SlotReply(primary.Port, 1, 1, replica.Port), primary.ReceivedConnectionIds[secondQuery]);
-        while (!router.GetReplicas().Any(node => node.Endpoint.Port == replica.Port))
+        // The discovery inventory is published before the per-slot routes. Wait for the
+        // membership used by selection, not the earlier inventory notification.
+        while (KnownReplicaRoutes(router, 1)?.Nodes.Any(node => node.Port == replica.Port) != true)
             await Task.Delay(1, timeout.Token);
         await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(replica.Port);
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task SentinelRefreshRescuesExhaustedCandidatesWithoutDelayingHealthyReplica(bool oldUnavailable)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SentinelRefreshRescuesExhaustedCandidatesWithoutDelayingHealthyReplica(bool oldUnavailable, bool sameEndpoints)
     {
         await using var primary = Server("primary");
         await using var old = Server("old");
@@ -446,11 +449,12 @@ public class NearestReadRoutingTests
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(CancellationToken.None);
         router.SentinelRefreshInterval = TimeSpan.Zero;
-        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L), () => 0);
+        long now = 0;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L), () => Volatile.Read(ref now));
         router.NearestLatency.ConnectionFailed(client.Core.Multiplexer);
         old.ReplyOverride = (_, command) => oldUnavailable && command == "ROLE"
             ? "-LOADING stale replica\r\n"u8.ToArray() : Reply(command, "old");
-        replicaPort = replacement.Port;
+        replicaPort = sameEndpoints ? old.Port : replacement.Port;
         sentinel.SuppressReply = command =>
         {
             if (!command.StartsWith("SENTINEL REPLICAS ")) return false;
@@ -462,9 +466,103 @@ public class NearestReadRoutingTests
         if (!oldUnavailable)
             await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("old");
         var query = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command.StartsWith("SENTINEL REPLICAS "));
+        // The same primary becomes eligible again during discovery, without an address change.
+        if (sameEndpoints) Volatile.Write(ref now, 2_000);
         sentinel.SuppressReply = null;
-        await sentinel.SendRawAsync(SentinelReplicaReply(replacement.Port), sentinel.ReceivedConnectionIds[query]);
-        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(oldUnavailable ? "replacement" : "old");
+        await sentinel.SendRawAsync(SentinelReplicaReply(replicaPort), sentinel.ReceivedConnectionIds[query]);
+        var expected = oldUnavailable ? "replacement" : "old";
+        if (sameEndpoints) expected = "primary";
+        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task ExhaustedClusterCandidatesJoinRefreshThroughAnotherMaster()
+    {
+        await using var primary = Server("primary");
+        await using var old = Server("old");
+        await using var replacement = Server("replacement");
+        await using var otherMaster = Server("primary");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, old.Port) : Reply(command, "primary");
+        otherMaster.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 8191, replacement.Port) : Reply(command, "primary");
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null, ReplicaRouteRevalidationInterval = TimeSpan.Zero,
+        });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(1)!;
+        router.SetSlotOwner(8192, router.GetOrCreateNode(new("127.0.0.1", otherMaster.Port)));
+        await KnownReplicaRoutes(router, 1)!.Nodes[0].RetireAsync();
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L), () => 0);
+        router.NearestLatency.ConnectionFailed(owner);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? "-ERR old owner unavailable\r\n"u8.ToArray() : Reply(command, "primary");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+        await Assert.That(selected.Port).IsEqualTo(replacement.Port);
+        await Assert.That(otherMaster.ReceivedCommands).Contains("CLUSTER SLOTS");
+    }
+
+    [Test]
+    public async Task ClusterPublicationBeforeQueueingAnyCandidateRetriesNewOwner()
+    {
+        await using var primary = Server("primary");
+        await using var replacement = Server("primary");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null,
+        });
+        var router = client.Core.Cluster!;
+        var replacementNode = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
+        // Any advisory discovery after the redirect must describe the replacement too;
+        // this test isolates publication during selection, not conflicting server views.
+        foreach (var server in new[] { primary, replacement })
+            server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+                ? SlotReply(replacement.Port, 0, 16383) : Reply(command, "primary");
+        Task? retirement = null;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
+        {
+            if (connection.Port == primary.Port)
+            {
+                router.SetSlotOwner(1, replacementNode);
+                retirement = connection.RetireAsync();
+            }
+            return ValueTask.FromResult(10L);
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+            await Assert.That(selected.Port).IsEqualTo(replacement.Port);
+        }
+        finally { if (retirement is not null) await retirement.WaitAsync(timeout.Token); }
+    }
+
+    private static ClusterReplicaSet? KnownReplicaRoutes(ClusterRouter router, int slot)
+        => (ClusterReplicaSet?)typeof(ClusterRouter).GetMethod("GetKnownReplicas",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(router, [slot]);
+
+    [Test]
+    public async Task CooldownRetryRetainsTheOriginalConnectionFailure()
+    {
+        using var unavailable = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        unavailable.Start();
+        var port = ((System.Net.IPEndPoint)unavailable.LocalEndpoint).Port;
+        unavailable.Stop();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            Endpoints = [new("127.0.0.1", port)],
+            ReplicaEndpoints = [new("127.0.0.1", port)],
+        });
+        var failure = await Assert.That(async () =>
+            await client.WithReadFrom(RespireReadFrom.Nearest).GetStringAsync("key"))
+            .Throws<RespireConnectionException>();
+        await Assert.That(failure!.InnerException).IsNotNull();
+        await Assert.That(failure.InnerException is InvalidOperationException).IsFalse();
     }
 
     [Test]

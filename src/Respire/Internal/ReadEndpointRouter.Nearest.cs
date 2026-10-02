@@ -10,7 +10,7 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null)
+        long? samplingDeadline = null, Exception? previousFailure = null)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -20,7 +20,7 @@ internal sealed partial class ReadEndpointRouter
             ThrowIfDisposed();
         }
         Selection? primary = null;
-        Exception? lastError = null;
+        Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
         if (sampler.CanConnect(primaryCandidate))
         {
@@ -86,8 +86,7 @@ internal sealed partial class ReadEndpointRouter
             if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
                 best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);
         }
-        var hadCandidate = best.TryGet(out var selected);
-        if (hadCandidate)
+        if (best.TryGet(out var selected))
         {
             if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
                     ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
@@ -96,13 +95,14 @@ internal sealed partial class ReadEndpointRouter
         if (retry && Core.Sentinel is { } sentinel)
         {
             // A healthy cached candidate never waits for discovery. Once all candidates fail,
-            // join a pending/due refresh and try a newly published endpoint set before failing.
+            // join a pending/due refresh before the one bounded retry. The same endpoint can
+            // recover during that wait, so unchanged addresses do not suppress reselection.
             try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
             catch (Exception error) when (IsNearestCandidateFailure(error, cancellationToken)) { lastError = error; }
         }
-        if (retry && (hadCandidate || !SameEndpoints(endpoints, Volatile.Read(ref _replicas))
-            || !ReferenceEquals(primaryCandidate, Core.Multiplexer)))
-            return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline).ConfigureAwait(false);
+        if (retry)
+            return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
+                previousFailure: lastError).ConfigureAwait(false);
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }
