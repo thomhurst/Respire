@@ -314,7 +314,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 attempt = 0;
                 // A publication that completed this reconnect epoch is now reflected by the
                 // recovered subscription. Use the fresh epoch for any later disconnect.
-                Volatile.Write(ref rearm, CurrentMonitorRearm());
+                Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)));
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
@@ -465,7 +465,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // +odown text carries changing quorum counts; key master-down hints by service so
                 // repeated reports of one outage coalesce while discovery is active.
-                QueueNotificationRediscovery(new SentinelHint(_masterDownKey, MustRediscover: true));
+                QueueNotificationRediscovery(new SentinelHint(_masterDownKey, MustRediscover: true,
+                    ReportingSentinel: sentinel));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);

@@ -124,6 +124,48 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task MasterDownNotificationQueriesReportingSentinelFirst()
+    {
+        await using var stalePrimary = Primary();
+        await using var promotedPrimary = Primary();
+        await using var firstSentinel = Sentinel(() => stalePrimary.Port);
+        var reportingPort = stalePrimary.Port;
+        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort));
+        var options = Options(firstSentinel.Port) with
+        {
+            Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
+        };
+        await using var client = RespireClient.Create(options);
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+        await WaitForCommandAsync(firstSentinel, "SUBSCRIBE +sdown");
+        await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
+        var router = client.Core.Sentinel!;
+        using (var monitorTimeout = new CancellationTokenSource(Limit))
+            while (router.SuccessfulMonitorSubscriptions < 2) await Task.Delay(5, monitorTimeout.Token);
+        while (router.NotificationRediscovery is { } initialRediscovery)
+            await initialRediscovery.WaitAsync(Limit);
+
+        var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var firstDiscoveryCount = firstSentinel.ReceivedCommands.Count(command => command == discovery);
+        var reportingDiscoveryCount = reportingSentinel.ReceivedCommands.Count(command => command == discovery);
+        var monitorCommand = reportingSentinel.ReceivedCommands.ToList().FindIndex(command =>
+            command.StartsWith("SUBSCRIBE +sdown", StringComparison.Ordinal));
+        var monitorConnection = reportingSentinel.ReceivedConnectionIds[monitorCommand];
+        Volatile.Write(ref reportingPort, promotedPrimary.Port);
+        await SendSentinelMessageAsync(reportingSentinel, monitorConnection, "+sdown",
+            $"master mymaster 127.0.0.1 {stalePrimary.Port}");
+
+        using var timeout = new CancellationTokenSource(Limit);
+        while (client.Endpoint.Port != promotedPrimary.Port)
+            await Task.Delay(5, timeout.Token);
+
+        await Assert.That(reportingSentinel.ReceivedCommands.Count(command => command == discovery))
+            .IsGreaterThan(reportingDiscoveryCount);
+        await Assert.That(firstSentinel.ReceivedCommands.Count(command => command == discovery))
+            .IsEqualTo(firstDiscoveryCount);
+    }
+
+    [Test]
     public async Task DownEventDuringSwitchRediscoveryTriggersAnotherDiscovery()
     {
         await using var original = Primary();
