@@ -81,7 +81,7 @@ jobs:
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert len(benchmarks) == 4, f"Expected both operations with 1 and 2 connections: {report}"
+                  assert len(benchmarks) == 6, f"Expected all transport operations with 1 and 2 connections: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
