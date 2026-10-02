@@ -43,7 +43,7 @@ Timestamps are checked before anything is sent. Writes take a non-negative milli
 
 ## Client-side cache
 
-When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `DecrementByAsync`, `DeleteRangeAsync`, or `MultiAddAsync` call flushes the local cache. A write can also update compaction destination series, and the command does not identify every destination. The flush keeps cached reads correct when compaction rules are configured; high-volume ingestion therefore gets no cache reuse between these writes. `CreateRuleAsync` and `DeleteRuleAsync` fence their source and destination keys.
+When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `DecrementByAsync`, `DeleteRangeAsync`, or `MultiAddAsync` call flushes the local cache. A write can also update compaction destination series, and the command does not identify every destination. The flush keeps cached reads correct when compaction rules are configured; high-volume ingestion therefore gets no cache reuse between these writes. [Issue #689 tracks deriving invalidation from command key layouts](https://github.com/thomhurst/Respire/issues/689). `CreateRuleAsync` and `DeleteRuleAsync` fence their source and destination keys.
 
 ## Reads
 
