@@ -433,10 +433,23 @@ internal sealed partial class RespireConnection
 
             // Read into the alternate pooled chunk while the socket drains this chunk.
             var nextChunk = reader.ReadChunkAsync(cancellationToken).AsTask();
-            await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                ObserveStreamReadFailure(nextChunk);
+                throw;
+            }
             chunk = await nextChunk.ConfigureAwait(false);
         }
     }
+
+    private static void ObserveStreamReadFailure(Task read)
+        => _ = read.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
         => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",

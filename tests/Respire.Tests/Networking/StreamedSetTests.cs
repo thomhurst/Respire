@@ -193,28 +193,36 @@ public sealed class StreamedSetTests
         var command = new StreamedSetCommand((RespireValue)"overlap-cancel", source, length, default, SetWhen.Always);
         var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
 
-        await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
-        await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        cancellation.Cancel();
-        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<OperationCanceledException>();
-
-        var rented = new List<byte[]>();
         try
         {
-            for (var i = 0; i < 64; i++)
+            await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+
+            var rented = new List<byte[]>();
+            try
             {
-                var buffer = ArrayPool<byte>.Shared.Rent(source.CapturedBufferLength);
-                rented.Add(buffer);
-                await Assert.That(ReferenceEquals(buffer, source.CapturedBuffer)).IsFalse();
+                for (var i = 0; i < 64; i++)
+                {
+                    var buffer = ArrayPool<byte>.Shared.Rent(source.CapturedBufferLength);
+                    rented.Add(buffer);
+                    await Assert.That(ReferenceEquals(buffer, source.CapturedBuffer)).IsFalse();
+                }
+            }
+            finally
+            {
+                foreach (var buffer in rented) ArrayPool<byte>.Shared.Return(buffer);
             }
         }
         finally
         {
-            foreach (var buffer in rented) ArrayPool<byte>.Shared.Return(buffer);
+            source.ContinueReading.TrySetResult();
+            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch { }
         }
 
-        source.ContinueReading.TrySetResult();
         await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -231,24 +239,25 @@ public sealed class StreamedSetTests
 
         var fillingChunk = Task.Run(async () =>
             await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!);
-        await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var pendingBuffer = (byte[])readerType.GetField("_alternateChunk", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(reader)!;
-
-        ((IDisposable)reader).Dispose();
-        var probe = ArrayPool<byte>.Shared.Rent(RespireConnection.StreamChunkSize);
+        byte[]? pendingBuffer = null;
+        byte[]? probe = null;
         try
         {
+            await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            pendingBuffer = (byte[])readerType.GetField("_alternateChunk", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(reader)!;
+            ((IDisposable)reader).Dispose();
+            probe = ArrayPool<byte>.Shared.Rent(RespireConnection.StreamChunkSize);
             await Assert.That(ReferenceEquals(probe, pendingBuffer)).IsFalse();
+            await Assert.That(pendingBuffer[0]).IsEqualTo((byte)'b');
         }
         finally
         {
             source.ContinueThirdRead.TrySetResult();
+            ((IDisposable)reader).Dispose();
             await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
-            ArrayPool<byte>.Shared.Return(probe);
+            if (probe is not null) ArrayPool<byte>.Shared.Return(probe);
         }
-
-        await Assert.That(pendingBuffer[1]).IsEqualTo((byte)'c');
     }
 
     [Test]
