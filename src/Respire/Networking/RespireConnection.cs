@@ -902,7 +902,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         Action<Exception?>? onFrameCompleted = null)
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(command,
-            new BulkStreamPendingResponseSource(commandName, hasPrefixReply: false, onFrameCompleted),
+            new BulkStreamPendingResponseSource(commandName, hasPrefixReply: false, onFrameCompleted,
+                cancellationToken, OnBulkStreamLifetimeCancelled),
             discardRepliesBefore: 0, retainRepliesBefore: false, cancellationToken);
 
     /// <summary>Atomically sends a checked prefix and a streaming command, as required for ASK redirects.</summary>
@@ -916,7 +917,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(
             new PrefixedCommand<TPrefix, TCommand>(prefix, command),
-            new BulkStreamPendingResponseSource(commandName, hasPrefixReply: true, onFrameCompleted),
+            new BulkStreamPendingResponseSource(commandName, hasPrefixReply: true, onFrameCompleted,
+                cancellationToken, OnBulkStreamLifetimeCancelled),
             discardRepliesBefore: 1, retainRepliesBefore: true, cancellationToken);
 
     private ValueTask<Stream?> SendBulkStreamCoreAsync<TCommand>(
@@ -940,7 +942,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source, discardRepliesBefore + 2);
             return target.SendBulkStreamCoreAsync(command,
-                new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
+                new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
+                    source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
                 discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted);
         }
         catch
@@ -959,6 +962,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return SendBulkStreamSlowAsync(command, source, discardRepliesBefore,
             retainRepliesBefore, cancellationToken, commandDeadline);
+    }
+
+    private void OnBulkStreamLifetimeCancelled()
+    {
+        if (Volatile.Read(ref _retired) && ShouldAbortAbandonedBulkStream())
+            Abort(new RespireConnectionRetiredException(Host, Port));
+    }
+
+    private bool ShouldAbortAbandonedBulkStream()
+    {
+        lock (_writeGate)
+        {
+            return Volatile.Read(ref _activeBulkStreamSource) is { IsPayloadAborted: true }
+                && _inflight.Count == 0
+                && _activeBuffer.Count == 0
+                && !Volatile.Read(ref _sending);
+        }
     }
 
 #if NET
@@ -984,7 +1004,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             // The capacity wait reclaimed the unadmitted source; the target needs a fresh one.
             return await target.SendBulkStreamCoreAsync(command,
-                new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted),
+                new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
+                    source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
                 discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted).ConfigureAwait(false);
         }
 
@@ -2287,6 +2308,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int payloadLength)
     {
         var payload = source.BeginPayload();
+        if (source.IsPayloadAborted)
+        {
+            payload = null;
+        }
         Exception? failure = null;
         var remaining = payloadLength;
 
@@ -2332,7 +2357,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     var destination = payload.GetMemory(Math.Min(4096, remaining));
                     var target = destination[..Math.Min(destination.Length, remaining)];
                     received = await ReceiveAsync(target).ConfigureAwait(false);
-                    if (received > 0)
+                    if (source.IsPayloadAborted)
+                    {
+                        payload = null;
+                    }
+                    else if (received > 0)
                     {
                         payload.Advance(received);
                     }
@@ -3039,16 +3068,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new RespireConnectionRetiredException(Host, Port);
     }
 
-    /// <summary>
-    /// True when a streamed bulk reply is still open and its consumer has not read bytes for at
-    /// least <paramref name="idle"/>. Socket reads can pause during pipe backpressure even while
-    /// a slow consumer is making progress, so retirement tracks reads from the returned stream.
-    /// </summary>
-    internal bool HasStalledBulkStream(TimeSpan idle)
-    {
-        return Volatile.Read(ref _activeBulkStreamSource)?.HasStalledReader(idle) == true;
-    }
-
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
     internal Task RetireAsync()
     {
@@ -3064,6 +3083,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Stop refresh deadlines and provider work while accepted transport frames drain.
         _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
+        if (ShouldAbortAbandonedBulkStream())
+            Abort(new RespireConnectionRetiredException(Host, Port));
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
         return completion.Task;

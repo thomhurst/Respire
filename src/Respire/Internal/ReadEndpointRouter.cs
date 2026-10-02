@@ -58,17 +58,6 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
     /// <summary>Cursor affinity for scans and raw cursor commands.</summary>
     internal ReadCursorAffinity Cursors { get; } = new();
 
-    /// <summary>
-    /// How long a removed replica waits for a streamed reply that has stopped making progress
-    /// before closing. The larger of 30 seconds and <see cref="RespireOptions.CommandTimeout"/>.
-    /// </summary>
-    internal TimeSpan RetiredStreamIdleLimit { get; set; } =
-        core.Options.CommandTimeout is { } commandTimeout && commandTimeout > s_minRetiredStreamIdleLimit
-            ? commandTimeout : s_minRetiredStreamIdleLimit;
-
-    private static readonly TimeSpan s_minRetiredStreamIdleLimit = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan s_stalledStreamPoll = TimeSpan.FromSeconds(1);
-
     // Upper bound for the Sentinel retry delay during a discovery outage.
     private static readonly TimeSpan s_maxSentinelRetryDelay = TimeSpan.FromSeconds(30);
 
@@ -129,30 +118,9 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
             var timeout = core.Options.CommandTimeout;
             var grace = timeout is { } limit && limit < s_retirementGrace ? limit : s_retirementGrace;
             await Task.Delay(grace, _lifetime.Token).ConfigureAwait(false);
-            // Drain everything already accepted, including a streamed reply whose consumer reads
-            // slowly; each command is still bounded by its own timeout. A stream that makes no
-            // progress for RetiredStreamIdleLimit was abandoned (its full pipe pauses the receive
-            // loop), so the replica closes instead of staying open until client disposal.
-            var drain = entry.RetireAsync(_lifetime.Token);
-            while (!drain.IsCompleted)
-            {
-                var idleLimit = RetiredStreamIdleLimit;
-                var poll = idleLimit < s_stalledStreamPoll ? idleLimit : s_stalledStreamPoll;
-                await Task.WhenAny(drain, Task.Delay(poll, _lifetime.Token)).ConfigureAwait(false);
-                if (drain.IsCompleted || _lifetime.IsCancellationRequested || !entry.HasStalledBulkStream(idleLimit))
-                    continue;
-                try
-                {
-                    core.Logger?.LogDebug(
-                        "Closing removed read replica {Endpoint}: a streamed reply made no progress for {IdleLimit}",
-                        entry.Endpoint, idleLimit);
-                }
-                catch (Exception) { }
-                // Aborting the multiplexer fails the stalled stream and completes the drain.
-                await entry.DisposeAsync().ConfigureAwait(false);
-                break;
-            }
-            await drain.ConfigureAwait(false);
+            // Drain every accepted reply. A streamed read may pause indefinitely while the
+            // consumer remains responsible for disposing it or cancelling its lifetime token.
+            await entry.RetireAsync(_lifetime.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
         catch (Exception error)
@@ -462,10 +430,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
 
         internal void MarkFailed() => _health.MarkFailed();
 
-        /// <summary>True when an open streamed reply on this replica has made no progress for <paramref name="idle"/>.</summary>
-        internal bool HasStalledBulkStream(TimeSpan idle)
-            => Volatile.Read(ref _multiplexer)?.HasStalledBulkStream(idle) == true;
-
+        /// <summary>Acquires a current connection after validating its replication role.</summary>
         internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.

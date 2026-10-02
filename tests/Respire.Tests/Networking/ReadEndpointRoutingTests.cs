@@ -1189,7 +1189,6 @@ public class ReadEndpointRoutingTests
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
-        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromSeconds(30);
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
         await using var stream = await view.Strings.GetStreamAsync("big");
@@ -1200,6 +1199,8 @@ public class ReadEndpointRoutingTests
 
         Volatile.Write(ref replicaPorts, [other.Port]);
         await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
+        // A pause longer than the former idle cutoff must leave the retired stream usable.
+        await Task.Delay(TimeSpan.FromSeconds(31));
         int read;
         while ((read = await stream.ReadAsync(buffer)) > 0)
         {
@@ -1213,7 +1214,7 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
-    public async Task RemovedReplicaClosesWhenAStreamedReadStopsMakingProgress()
+    public async Task RepeatedReplicaRetirementWaitsForStreamDisposalOrCancellation()
     {
         const int payloadLength = 8 * 1024 * 1024;
         var frame = new byte[payloadLength + 32];
@@ -1254,29 +1255,27 @@ public class ReadEndpointRoutingTests
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
-        client.Core.ReadRouter.RetiredStreamIdleLimit = TimeSpan.FromMilliseconds(300);
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
-        // The caller reads one chunk, then abandons the stream without disposing it.
-        var stream = await view.Strings.GetStreamAsync("big");
         var buffer = new byte[64 * 1024];
-        var total = await stream!.ReadAsync(buffer);
-        var serving = first.ReceivedCommands.Contains("GET big") ? first : second;
-        var other = ReferenceEquals(serving, first) ? second : first;
-
-        Volatile.Write(ref replicaPorts, [other.Port]);
-        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-
-        // The stalled stream no longer holds the removed replica open until client disposal.
-        await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
-        try
+        var available = new List<FakeRespServer> { first, second };
+        for (var generation = 0; generation < 2; generation++)
         {
-            int read;
-            while ((read = await stream.ReadAsync(buffer)) > 0) total += read;
+            using var lifetime = new CancellationTokenSource();
+            await using var stream = await view.Strings.GetStreamAsync("big", lifetime.Token);
+            await stream!.ReadAtLeastAsync(buffer, 1, throwOnEndOfStream: true);
+            var serving = available.First(server => server.ReceivedCommands.Contains("GET big"));
+            available.Remove(serving);
+
+            Volatile.Write(ref replicaPorts, available.Select(server => server.Port).ToArray());
+            await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
+            await Task.Delay(TimeSpan.FromMilliseconds(400));
+            await Assert.That(serving.PeerClosed.IsCompleted).IsFalse();
+
+            if (generation == 0) await stream.DisposeAsync();
+            else lifetime.Cancel();
+            await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        catch (Exception) { }
-        await Assert.That(total).IsLessThan(payloadLength);
-        await stream.DisposeAsync();
     }
 
     [Test]
