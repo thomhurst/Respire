@@ -251,6 +251,19 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task CurrentTargetSwitchRemainsPendingDuringUntargetedDiscovery()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true), false);
+        var hint = new SentinelHint("switch", NewPrimary, OldPrimary,
+            ReportingSentinel: new("127.0.0.1", 26380));
+
+        await Assert.That(coalescer.Offer(in hint, targetIsCurrent: true)).IsFalse();
+        await Assert.That(coalescer.Pending.HasValue).IsTrue();
+        await AssertHintEvidence(coalescer.TakePending(validatedPrimary: OldPrimary)!.Value, hint);
+    }
+
+    [Test]
     public async Task LaterDownHintCannotEraseAPendingSwitch()
     {
         var coalescer = new SentinelNotificationCoalescer();

@@ -15,7 +15,6 @@ internal sealed partial class SentinelRouter
     // logs the stragglers. Publication and retirement recheck disposal under the gate.
     private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
     private const string SentinelMonitorReconnectScope = "sentinel-monitor";
-    private const string DeliveryGapKey = "gap";
 
     private static TimeSpan GetNotificationRetryDelay(RespireReconnectPolicy? policy, int attempt)
         => policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
@@ -229,19 +228,16 @@ internal sealed partial class SentinelRouter
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // +odown text carries changing quorum counts; key master-down hints by service so
                 // repeated reports of one outage coalesce while discovery is active.
-                QueueNotificationRediscovery(new SentinelHint(_masterDownKey, MustRediscover: true,
-                    ReportingSentinel: sentinel));
+                QueueNotificationRediscovery(SentinelHint.FromDown(_masterDownKey, sentinel));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // Queue immediately so slow DNS cannot hold up later one-shot notifications.
                 // Every Sentinel in the quorum announces the same parsed switch, so key on it.
-                var hint = new SentinelHint(sentinelEvent is { OldPrimary: { } from, NewPrimary: { } to }
+                var hint = SentinelHint.FromSwitchMaster(sentinelEvent is { OldPrimary: { } from, NewPrimary: { } to }
                         ? $"+switch-master:{from.Host}:{from.Port}>{to.Host}:{to.Port}"
                         : "+switch-master:" + message.Text,
-                    sentinelEvent.NewPrimary, sentinelEvent.OldPrimary,
-                    MustRediscover: sentinelEvent.NewPrimary is null,
-                    ReportingSentinel: sentinel);
+                    sentinelEvent.OldPrimary, sentinelEvent.NewPrimary, sentinel);
                 // Only the generation current when the event arrived can be its source. A later
                 // failover back to the same endpoint publishes a new generation that must survive.
                 lock (_gate)
@@ -364,8 +360,7 @@ internal sealed partial class SentinelRouter
             : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
-        QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true,
-            ReportingSentinel: sentinel));
+        QueueNotificationRediscovery(SentinelHint.FromGap(sentinel));
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)

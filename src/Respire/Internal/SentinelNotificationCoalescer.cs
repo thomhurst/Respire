@@ -1,5 +1,7 @@
 namespace Respire.Internal;
 
+// Endpoint identity uses EndpointComparer; Addresses are normalized DNS evidence for this
+// source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
 internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
 
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
@@ -7,7 +9,18 @@ internal readonly record struct SentinelHint(
     string Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
     RespireEndpoint[] Reporters, bool MustRediscover)
 {
-    // Convenience constructor for a single wire event and existing call sites.
+    internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
+        RespireEndpoint? target, RespireEndpoint reporter)
+        => new(key, target is { } to ? [to] : [],
+            source is { } from ? [new(from, null)] : [], [reporter], target is null);
+
+    internal static SentinelHint FromDown(string key, RespireEndpoint reporter)
+        => new(key, [], [], [reporter], true);
+
+    internal static SentinelHint FromGap(RespireEndpoint reporter)
+        => new("gap", [], [], [reporter], true);
+
+    // Synthetic evidence constructor for tests. Production wire events use the named factories.
     internal SentinelHint(string Key, RespireEndpoint? Target = null, RespireEndpoint? OldPrimary = null,
         bool MustRediscover = false, string[]? OldPrimaryAddresses = null,
         SentinelSwitchSource[]? AdditionalSources = null, RespireEndpoint? ReportingSentinel = null,
@@ -96,7 +109,8 @@ internal sealed class SentinelNotificationCoalescer
             return true;
         }
         var duplicate = ActiveKey == hint.Key || _pending?.Key == hint.Key;
-        if (!duplicate && !hint.MustRediscover && targetIsCurrent) return false;
+        // A discovery already in flight can publish a different primary. Preserve even a
+        // switch confirming Current so its source fence and reporter survive that result.
         var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint);
         if (duplicate && !needsAnotherPass && (_pending is null || _pending.Value.Key == hint.Key)) return false;
         var basis = _pending ?? (duplicate ? Active : null);
