@@ -3387,6 +3387,8 @@ public sealed partial class RespireClient : IRespireClient
             execution.RecordSerialized(Stopwatch.GetTimestamp());
         }
 
+        public ReadCommandKind ReadKind => command.ReadKind;
+
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
 
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
