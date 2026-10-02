@@ -1,54 +1,80 @@
-using Respire.Networking;
+using System.Buffers;
+using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
+using Respire.Networking;
 
 namespace Respire.Internal;
 
 internal static class ReadFallbackPolicy
 {
-    // Keep one candidate per health tier so retirement of the healthy fallback still
-    // permits a stale-serving replica. Equal-ranked candidates retain round-robin order.
+    // Retain every fallback until selection finishes: an earlier socket can retire while a
+    // later candidate is checked. One candidate stays inline; larger sets borrow pooled storage.
     internal struct ReplicaCandidates<T>
     {
-        private T _linked;
-        private T _unlinked;
-        private bool _hasLinked;
-        private bool _hasUnlinked;
-        private bool _unlinkedIsLocal;
+        private (T Value, int Rank) _first;
+        private (T Value, int Rank)[]? _overflow;
+        private int _count;
+        private int _rank;
+        private int _next;
 
         internal bool Offer(T candidate, bool local, bool linked, RespireReadFrom policy)
         {
-            if (linked)
+            var useZone = UsesAvailabilityZone(policy);
+            if (linked && (!useZone || local)) return true;
+            var rank = 2;
+            if (linked) rank = 0;
+            else if (useZone && local) rank = 1;
+            var ranked = (candidate, rank);
+            if (_count == 0) _first = ranked;
+            else
             {
-                if (!UsesAvailabilityZone(policy) || local) return true;
-                if (!_hasLinked) _linked = candidate;
-                _hasLinked = true;
+                if (_overflow is null)
+                {
+                    _overflow = ArrayPool<(T, int)>.Shared.Rent(4);
+                    _overflow[0] = _first;
+                }
+                else if (_count == _overflow.Length)
+                {
+                    var larger = ArrayPool<(T, int)>.Shared.Rent(_count * 2);
+                    _overflow.AsSpan(0, _count).CopyTo(larger);
+                    Return(_overflow);
+                    _overflow = larger;
+                }
+                _overflow[_count] = ranked;
             }
-            else if (!_hasUnlinked || UsesAvailabilityZone(policy) && local && !_unlinkedIsLocal)
-            {
-                _unlinked = candidate;
-                _hasUnlinked = true;
-                _unlinkedIsLocal = local;
-            }
+            _count++;
             return false;
         }
 
         internal bool TryTake(out T candidate)
         {
-            if (_hasLinked)
+            // Three stable passes retain health/zone priority and rotation within each tier.
+            while (_rank < 3)
             {
-                _hasLinked = false;
-                candidate = _linked;
-                return true;
-            }
-            if (_hasUnlinked)
-            {
-                _hasUnlinked = false;
-                candidate = _unlinked;
-                return true;
+                while (_next < _count)
+                {
+                    var ranked = _overflow is null ? _first : _overflow[_next];
+                    _next++;
+                    if (ranked.Rank != _rank) continue;
+                    candidate = ranked.Value;
+                    return true;
+                }
+                _rank++;
+                _next = 0;
             }
             candidate = default!;
             return false;
         }
+
+        internal void Dispose()
+        {
+            if (_overflow is not null) Return(_overflow);
+            this = default;
+        }
+
+        private static void Return((T, int)[] values)
+            => ArrayPool<(T, int)>.Shared.Return(values,
+                clearArray: RuntimeHelpers.IsReferenceOrContainsReferences<(T, int)>());
     }
 
     internal static bool ShouldProbeLocalPrimary(

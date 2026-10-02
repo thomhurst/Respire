@@ -13,12 +13,17 @@ public class AvailabilityZoneRoutingTests
 {
     [Test]
     [NotInParallel]
-    public async Task WarmZoneSelectionAndCounterAllocateNothing()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task WarmZoneSelectionAndCounterAllocateNothing(bool local)
     {
         await using var primary = Node("primary", "remote", false);
-        await using var replica = Node("replica", "local", true);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, RespireReadFrom.AzAffinity)
+        await using var replica = Node("replica", local ? "local" : "remote", true);
+        await using var second = Node("second", local ? "local" : "remote", true);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica, second], false, RespireReadFrom.AzAffinity)
             with { ReplicaRefreshInterval = TimeSpan.FromMinutes(5) });
+        // Warm both round-robin endpoints before asserting synchronous, allocation-free selection.
+        await client.GetStringAsync("key");
         await client.GetStringAsync("key");
         var router = client.Core.ReadRouter!;
         var counter = AvailabilityZoneTelemetry.ForZone("local");
@@ -99,6 +104,71 @@ public class AvailabilityZoneRoutingTests
         ConfigureTopology(primary, remote);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [remote], cluster, policy));
         await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    public async Task MixedZoneSocketsSelectTheLocalPhysicalConnection(bool cluster, bool mixedPrimary)
+    {
+        await using var primary = Node("primary", mixedPrimary ? "remote" : "local", false);
+        await using var replica = Node("replica", "remote", true);
+        ConfigureTopology(primary, replica);
+        var mixed = mixedPrimary ? primary : replica;
+        var original = mixed.ReplyOverride!;
+        mixed.ReplyOverride = (id, command) => command == "INFO SERVER"
+            ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n")
+            : command.StartsWith("GET ") ? Bulk(id % 2 == 0 ? "local-socket" : "remote-socket")
+            : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        for (var index = 0; index < 8; index++)
+            await Assert.That(await client.GetStringAsync($"{{zone-{index}}}:key")).IsEqualTo("local-socket");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetiredFallbackDoesNotHideAnotherValidatedReplica(bool laterProbeFails)
+    {
+        var disconnected = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$12\r\ndisconnected\r\n:0\r\n"u8.ToArray();
+        await using var primary = Node("primary", "remote", false);
+        await using var first = Node("first", "local", true);
+        await using var second = Node("second", "local", true);
+        await using var third = Node("third", "local", true);
+        foreach (var server in new[] { first, second, third })
+        {
+            var original = server.ReplyOverride!;
+            server.ReplyOverride = (id, command) => command == "ROLE" ? disconnected : original(id, command);
+        }
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocked = laterProbeFails ? third : second;
+        blocked.SuppressReply = command =>
+        {
+            if (command != "ROLE") return false;
+            reached.TrySetResult();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [first, second, third], false,
+            RespireReadFrom.AzAffinity));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var router = client.Core.ReadRouter;
+        var old = await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", first.Port)], timeout.Token,
+            RespireReadFrom.AzAffinity);
+        // The warm lookup increments rotation once; start the next lookup at first in either array.
+        RespireEndpoint[] endpoints = laterProbeFails
+            ? [new("127.0.0.1", second.Port), new("127.0.0.1", third.Port), new("127.0.0.1", first.Port)]
+            : [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
+        var selection = router.GetReplicaFromEndpointsAsync(endpoints, timeout.Token, RespireReadFrom.AzAffinity).AsTask();
+        await reached.Task.WaitAsync(timeout.Token);
+        first.CloseConnections();
+        while (old.Connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+        await blocked.SendRawAsync(laterProbeFails ? "-LOADING unavailable\r\n"u8.ToArray() : disconnected,
+            blocked.ReceivedConnectionIds[^1]);
+        var selected = await selection.WaitAsync(timeout.Token);
+        await Assert.That(selected.Connection.Port).IsEqualTo(second.Port);
     }
 
     [Test]

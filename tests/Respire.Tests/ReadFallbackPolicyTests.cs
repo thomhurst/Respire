@@ -11,18 +11,23 @@ public class ReadFallbackPolicyTests
     public async Task ReplicaCandidatesPreserveHealthZoneAndRotationOrder()
     {
         var candidates = new ReadFallbackPolicy.ReplicaCandidates<int>();
-        await Assert.That(candidates.Offer(1, local: false, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
-        await Assert.That(candidates.Offer(2, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
-        await Assert.That(candidates.Offer(3, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
-        await Assert.That(candidates.Offer(4, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
-        await Assert.That(candidates.Offer(5, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
-        await Assert.That(candidates.TryTake(out var linked)).IsTrue();
-        await Assert.That(linked).IsEqualTo(4);
-        await Assert.That(candidates.TryTake(out var unlinked)).IsTrue();
-        await Assert.That(unlinked).IsEqualTo(2);
-        await Assert.That(candidates.TryTake(out _)).IsFalse();
-        await Assert.That(candidates.Offer(6, local: true, linked: true, RespireReadFrom.AzAffinity)).IsTrue();
-        await Assert.That(candidates.Offer(7, local: false, linked: true, RespireReadFrom.Replica)).IsTrue();
+        try
+        {
+            await Assert.That(candidates.Offer(1, local: false, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+            await Assert.That(candidates.Offer(2, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+            await Assert.That(candidates.Offer(3, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
+            await Assert.That(candidates.Offer(4, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
+            await Assert.That(candidates.Offer(5, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
+            foreach (var expected in new[] { 4, 5, 2, 3, 1 })
+            {
+                await Assert.That(candidates.TryTake(out var candidate)).IsTrue();
+                await Assert.That(candidate).IsEqualTo(expected);
+            }
+            await Assert.That(candidates.TryTake(out _)).IsFalse();
+            await Assert.That(candidates.Offer(6, local: true, linked: true, RespireReadFrom.AzAffinity)).IsTrue();
+            await Assert.That(candidates.Offer(7, local: false, linked: true, RespireReadFrom.Replica)).IsTrue();
+        }
+        finally { candidates.Dispose(); }
     }
 
     [Test]

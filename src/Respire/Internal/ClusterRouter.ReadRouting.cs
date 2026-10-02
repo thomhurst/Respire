@@ -130,43 +130,50 @@ internal sealed partial class ClusterRouter
         var attempted = 0;
         Exception? lastError = null;
         var fallbacks = new ReadFallbackPolicy.ReplicaCandidates<RespireConnection>();
-        cancellationToken.ThrowIfCancellationRequested();
-        while (candidates.TryNext(out var node))
+        try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            attempted++;
-            try
+            while (candidates.TryNext(out var node))
             {
-                await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
-                if (node.IsRetired) continue;
-                // Healthy reads do not redirect; background revalidation discovers promotions.
-                // RefreshReplicaRoutesAsync catches and logs every refresh failure.
-                if (routes.IsDueForRevalidation)
-                    _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-                var connection = node.GetConnection(slot);
-                if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
-                    linked: true, readFrom))
-                    return (connection, lastError, attempted);
+                cancellationToken.ThrowIfCancellationRequested();
+                attempted++;
+                try
+                {
+                    await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
+                    if (node.IsRetired) continue;
+                    // Healthy reads do not redirect; background revalidation discovers promotions.
+                    // RefreshReplicaRoutesAsync catches and logs every refresh failure.
+                    if (routes.IsDueForRevalidation)
+                        _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+                    var connection = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) && _options.ClientAvailabilityZone is { } zone
+                        ? node.GetConnectionForZone(zone, slot) : node.GetConnection(slot);
+                    if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
+                        linked: true, readFrom))
+                        return (connection, lastError, attempted);
+                }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+                {
+                    lastError = error;
+                }
             }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+            if (ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, GetKnownSlotOwner(slot), _options.ClientAvailabilityZone))
             {
-                lastError = error;
+                try
+                {
+                    var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+                    if (primary.Multiplexer is { } owner && _options.ClientAvailabilityZone is { } zone)
+                        primary = owner.GetConnectionForZone(zone, slot);
+                    if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)) return (primary, lastError, attempted);
+                }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
             }
+            while (fallbacks.TryTake(out var fallback))
+                if (fallback.IsAcceptingCommands && fallback.Multiplexer is { IsRetired: false } owner
+                    && GetKnownReplicas(slot) is { } current && current.Nodes.Contains(owner))
+                    return (fallback, lastError, attempted);
+            return (null, lastError, attempted);
         }
-        if (ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, GetKnownSlotOwner(slot), _options.ClientAvailabilityZone))
-        {
-            try
-            {
-                var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
-                if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)) return (primary, lastError, attempted);
-            }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
-        }
-        while (fallbacks.TryTake(out var fallback))
-            if (fallback.IsAcceptingCommands && fallback.Multiplexer is { IsRetired: false } owner
-                && GetKnownReplicas(slot) is { } current && current.Nodes.Contains(owner))
-                return (fallback, lastError, attempted);
-        return (null, lastError, attempted);
+        finally { fallbacks.Dispose(); }
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
