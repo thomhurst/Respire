@@ -430,6 +430,13 @@ operations drain on their original sockets; ambiguous writes and existing WATCH 
 never replayed. Start a new watched transaction after a failover. Client disposal aborts
 outstanding work and joins owned connection cleanup.
 
+On RESP3 connections with maintenance notifications enabled, retirement freezes command
+admission before sending a PING barrier. If that barrier fails, accepted commands get their
+`CommandTimeout` allowance, extended through an active maintenance relaxation. When
+`CommandTimeout` is disabled, retirement uses a 30-second minimum grace, extended if the
+configured maintenance relaxation is longer. A streamed reply keeps the connection while its
+reader makes progress; retirement closes it after the same idle grace if the reader stalls.
+
 Client-side cached reads lose continuity on retirement. Cached MGET and opted-in partial HMGET
 reads discard all cached elements if the generation retires during lookup, then refetch the
 complete request from the validated primary. Subscriptions reconnect to the new

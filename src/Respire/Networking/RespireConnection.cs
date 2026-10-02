@@ -1250,7 +1250,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 in command, source, out startedBatch, discardRepliesBefore,
                 retainRepliesBefore: false, armCommandDeadline);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
+            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
         {
             ReclaimUnpublished(source);
             return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
@@ -1410,7 +1411,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         startedBatch = false;
         writeTask = null;
 
-        ThrowIfRetired();
+        ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
         // ring-full retry loop from re-serializing the frame on every attempt.
         if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
@@ -1443,7 +1444,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             lock (_writeGate)
             {
-                ThrowIfRetired();
+                ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
                 if (_dead)
                 {
                     throw ClosedBeforeEnqueue();
@@ -1519,7 +1520,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         writeTask = null;
         lock (_writeGate)
         {
-            ThrowIfRetired();
+            ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
             if (_dead)
             {
                 throw ClosedBeforeEnqueue();
@@ -1670,7 +1671,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     commandDeadline: commandDeadline)
                 .ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
+            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
         {
             return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline, rerouted).ConfigureAwait(false);
@@ -3062,10 +3064,35 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ThrowIfRetired()
+    private static bool IsMaintenanceDrainBarrier<TCommand>() where TCommand : struct, IRespCommand
+        => typeof(TCommand) == typeof(MaintenanceDrainBarrierCommand);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfRetired(bool allowRetired = false)
     {
-        if (Volatile.Read(ref _retired) || _generation?.IsRetired == true)
+        if (!allowRetired && (Volatile.Read(ref _retired) || _generation?.IsRetired == true))
             throw new RespireConnectionRetiredException(Host, Port);
+    }
+
+    /// <summary>Closes ordinary admission before the retirement barrier is queued.</summary>
+    internal void StopAcceptingCommands()
+    {
+        lock (_writeGate) Volatile.Write(ref _retired, true);
+        _retiredSignal.TrySetResult();
+        _credentialSession?.RequestStop();
+        _capacitySignal.Signal();
+        if (ShouldAbortAbandonedBulkStream())
+            Abort(new RespireConnectionRetiredException(Host, Port));
+    }
+
+    /// <summary>
+    /// True when a streamed bulk reply is still open and its consumer has not read bytes for at
+    /// least <paramref name="idle"/>. Socket reads can pause during pipe backpressure even while
+    /// a slow consumer is making progress, so retirement tracks reads from the returned stream.
+    /// </summary>
+    internal bool HasStalledBulkStream(TimeSpan idle)
+    {
+        return Volatile.Read(ref _activeBulkStreamSource)?.HasStalledReader(idle) == true;
     }
 
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
@@ -3079,12 +3106,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
-        _retiredSignal.TrySetResult();
-        // Stop refresh deadlines and provider work while accepted transport frames drain.
-        _credentialSession?.RequestStop();
-        _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
-        if (ShouldAbortAbandonedBulkStream())
-            Abort(new RespireConnectionRetiredException(Host, Port));
+        StopAcceptingCommands();
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
         return completion.Task;
@@ -3214,6 +3236,9 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Maximum grace for blocked retirement drains when no command timeout is configured.</summary>
+    public TimeSpan RetirementDrainFallbackTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Aborts the connection when responses are pending and no bytes arrive within this period.

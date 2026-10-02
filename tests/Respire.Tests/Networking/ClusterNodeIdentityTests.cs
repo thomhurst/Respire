@@ -42,6 +42,127 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    public async Task RetirementStopsLateSerializedCommandsBeforeTheMaintenanceBarrier()
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                "PING" => FakeRespServer.PongReply,
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var connection = node.GetConnection();
+        var enteredWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var send = Task.Run(async () =>
+        {
+            using var reply = await connection.SendAsync(new BlockedWriteCommand(enteredWrite, releaseWrite));
+        });
+        await enteredWrite.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var retirement = node.RetireAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+        releaseWrite.TrySetResult();
+
+        await Assert.That(async () => await send).ThrowsExactly<RespireConnectionRetiredException>();
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.ReceivedCommands.Contains("ECHO late")).IsFalse();
+    }
+
+    [Test]
+    public async Task RetirementBoundsDrainWhenCommandTimeoutIsDisabled()
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                _ => FakeRespServer.OkReply,
+            },
+            SuppressReply = static command => command is "PING" or "ECHO stuck",
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(150),
+            });
+        var connection = node.GetConnection();
+        var stuckCommand = new RawCommand("*2\r\n$4\r\nECHO\r\n$5\r\nstuck\r\n"u8.ToArray());
+        var stuckReply = connection.SendAsync(in stuckCommand).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Contains("ECHO stuck")) await Task.Delay(10, timeout.Token);
+
+        await node.RetireAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await Assert.That(async () => await stuckReply.WaitAsync(TimeSpan.FromSeconds(1)))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task RetirementAbortsBulkStreamAfterIdleGrace()
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                "GET key" => "$10\r\nhello"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+            SuppressReply = static command => command == "PING",
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(150),
+            });
+        var connection = node.GetConnection();
+        var command = new Cmd1(Verbs.Get, "key");
+        var stream = await connection.SendBulkStreamAsync(in command, commandName: "GET")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var read = stream!.CopyToAsync(Stream.Null);
+
+        await node.RetireAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await Assert.That(async () => await read).Throws<RespireConnectionException>();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task RetirementWaitsThroughMaintenanceRelaxedCommandDeadline(bool disableCommandTimeout)
@@ -2136,6 +2257,20 @@ public class ClusterNodeIdentityTests
             if (logLevel < LogLevel.Warning) return;
             LastWarning = formatter(state, exception);
             Interlocked.Increment(ref _warningCount);
+        }
+    }
+
+    private readonly struct BlockedWriteCommand(
+        TaskCompletionSource enteredWrite,
+        TaskCompletionSource releaseWrite) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
+        public void Write(ref RespWriter writer)
+        {
+            enteredWrite.TrySetResult();
+            releaseWrite.Task.GetAwaiter().GetResult();
+            writer.WriteRaw("*2\r\n$4\r\nECHO\r\n$4\r\nlate\r\n"u8);
         }
     }
 }

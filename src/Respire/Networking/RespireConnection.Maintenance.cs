@@ -9,8 +9,15 @@ internal sealed partial class RespireConnection
 {
     private static readonly RawCommand EnableMaintenance = new(
         "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
-    private static readonly RawCommand MaintenanceDrainBarrier = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
     private const string MaintenanceDrainCommandName = "RESP3 maintenance drain PING";
+
+    private readonly struct MaintenanceDrainBarrierCommand : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
+        public void Write(ref RespWriter writer)
+            => writer.WriteRaw("*1\r\n$4\r\nPING\r\n"u8);
+    }
 
     internal bool HasOtherIncompleteCommandThanMaintenanceBarrier
         => _inflight.HasOtherIncompleteCommand(MaintenanceDrainCommandName);
@@ -23,10 +30,14 @@ internal sealed partial class RespireConnection
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task WaitForActiveBulkStreamToCompleteAsync(CancellationToken cancellationToken)
+    internal async Task<bool> WaitForActiveBulkStreamToCompleteAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
     {
         while (HasActiveBulkStream)
+        {
+            if (HasStalledBulkStream(idleTimeout)) return false;
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+        }
+        return true;
     }
 
     private readonly RespireConnectionOptions? _maintenanceOptions;
@@ -101,7 +112,8 @@ internal sealed partial class RespireConnection
     internal async Task DrainPendingMaintenanceNotificationsAsync(CancellationToken cancellationToken)
     {
         if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled) return;
-        using var reply = await SendAsync(MaintenanceDrainBarrier, cancellationToken,
+        var barrier = new MaintenanceDrainBarrierCommand();
+        using var reply = await SendAsync(in barrier, cancellationToken,
             armCommandDeadline: false, commandName: MaintenanceDrainCommandName).ConfigureAwait(false);
     }
 

@@ -1287,14 +1287,15 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             await WaitForPublicationAsync().ConfigureAwait(false);
+            var connections = _connections.OfType<RespireConnection>().ToArray();
+            foreach (var connection in connections) connection.StopAcceptingCommands();
             // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
             // loop before the connection retirement drain closes sockets with empty command rings.
-            await Task.WhenAll(_connections.OfType<RespireConnection>()
-                .Select(DrainMaintenanceNotificationsBeforeRetirementAsync)).ConfigureAwait(false);
+            await Task.WhenAll(connections.Select(DrainMaintenanceNotificationsBeforeRetirementAsync))
+                .ConfigureAwait(false);
             lock (_maintenanceHandlersGate)
                 CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
-            await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
-                .ConfigureAwait(false);
+            await Task.WhenAll(connections.Select(connection => connection.RetireAsync())).ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
             Volatile.Write(ref _retirementDrained, true);
@@ -1321,19 +1322,15 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
         catch (Exception error)
         {
-            // The barrier may time out behind an accepted command. Let those callers finish or
-            // reach their own command deadlines before aborting the connection to release the
-            // barrier, which has no reply once its timeout has elapsed. Respect disabled command
-            // deadlines and include the longest configured maintenance relaxation when enabled.
+            // The barrier may time out behind accepted commands. Let callers finish through
+            // CommandTimeout or maintenance relaxation; use the explicit fallback when disabled.
+            // Then abort the connection to release the unanswered barrier.
             using var drainTimeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
-            if (_options.CommandTimeout is { } commandTimeout)
-            {
-                var relaxedCommandTimeout = _options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
-                    ? _options.MaintenanceRelaxedTimeout : commandTimeout;
-                var maximumCommandTimeout = relaxedCommandTimeout > commandTimeout
-                    ? relaxedCommandTimeout : commandTimeout;
-                drainTimeout.CancelAfter(maximumCommandTimeout);
-            }
+            var commandDrainTimeout = _options.CommandTimeout ?? _options.RetirementDrainFallbackTimeout;
+            if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+                && _options.MaintenanceRelaxedTimeout > commandDrainTimeout)
+                commandDrainTimeout = _options.MaintenanceRelaxedTimeout;
+            drainTimeout.CancelAfter(commandDrainTimeout);
             try
             {
                 await connection.WaitForOtherCommandsToCompleteAsync(drainTimeout.Token).ConfigureAwait(false);
@@ -1343,9 +1340,16 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 // Preserve accepted commands through their deadline, including maintenance relaxation.
             }
 
-            // A streamed reply has left the in-flight ring but remains accepted work. Its lifetime
-            // follows the caller's stream ownership and is not bounded by CommandTimeout.
-            await connection.WaitForActiveBulkStreamToCompleteAsync(_abortCancellation.Token).ConfigureAwait(false);
+            // A streamed reply has left the in-flight ring. Preserve it while the reader makes
+            // progress, then abort only after its idle grace expires.
+            var streamIdleTimeout = _options.RetirementDrainFallbackTimeout;
+            if (_options.CommandTimeout is { } streamCommandTimeout && streamCommandTimeout > streamIdleTimeout)
+                streamIdleTimeout = streamCommandTimeout;
+            if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+                && _options.MaintenanceRelaxedTimeout > streamIdleTimeout)
+                streamIdleTimeout = _options.MaintenanceRelaxedTimeout;
+            _ = await connection.WaitForActiveBulkStreamToCompleteAsync(streamIdleTimeout, _abortCancellation.Token)
+                .ConfigureAwait(false);
 
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception disposeError)
