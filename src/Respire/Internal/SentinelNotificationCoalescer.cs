@@ -112,11 +112,16 @@ internal sealed class SentinelNotificationCoalescer
         var targets = EnumerateTargets(previous).Concat(EnumerateTargets(hint))
             .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
         var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        var followsPendingSwitch = previous.Target is { } priorTarget
+            && hint.OldPrimary is { } announcedSource
+            && comparer.Equals(priorTarget, announcedSource);
         RespireEndpoint? selectedTarget = null;
-        // A failback can announce A as the newest target after A already appeared as an
-        // earlier switch source (A→B→A). Keep that newest announcement: MustRediscover ensures
-        // this target is freshly validated instead of letting the old A→B view end the worker.
-        if (merged.Target is { } candidate) selectedTarget = candidate;
+        // A sequential failback can announce an earlier source again (A→B→A). Keep that
+        // target only when its old-primary edge follows the pending target; a delayed A→B
+        // copy behind B→C must not replace C with B.
+        if (merged.Target is { } candidate && (!sourceEndpoints.Contains(candidate)
+            || followsPendingSwitch && hint.Target is { } announcedTarget && comparer.Equals(candidate, announcedTarget)))
+            selectedTarget = candidate;
         else if (previous.Target is { } priorCandidate && !sourceEndpoints.Contains(priorCandidate)) selectedTarget = priorCandidate;
         else selectedTarget = targets.Where(target => !sourceEndpoints.Contains(target))
             .Select(static target => (RespireEndpoint?)target).FirstOrDefault();
