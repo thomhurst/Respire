@@ -14,6 +14,41 @@ namespace Respire.Tests.Networking;
 
 public class ClusterTests
 {
+    [Test]
+    [Arguments("HSCAN")]
+    [Arguments("SSCAN")]
+    [Arguments("ZSCAN")]
+    public async Task ReadFrom_BatchedCursorPagesAreRejectedBeforeSending(string operation)
+    {
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray(),
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? ClusterTopology(primary.Port, replica.Port) : "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var descriptor = operation switch
+        {
+            "HSCAN" => RespireCommands.Hash.HSCAN,
+            "SSCAN" => RespireCommands.Set.SSCAN,
+            _ => RespireCommands.SortedSet.ZSCAN,
+        };
+        foreach (var cursor in new[] { "0", "7" })
+        {
+            using var batch = reads.CreateBatch();
+            await Assert.That(() => { _ = batch.Execute(descriptor, "key", cursor); }).ThrowsExactly<NotSupportedException>();
+            await Assert.That(batch.Count).IsEqualTo(0);
+        }
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith(operation))).IsFalse();
+    }
+
     private static RespireClient CreateLazyClusterClient() => RespireClient.Create(new RespireOptions
     {
         Protocol = RespProtocol.Resp2,
@@ -129,14 +164,21 @@ public class ClusterTests
         await Assert.That(await lowRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(await highRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+        var unknown = (System.Collections.Concurrent.ConcurrentDictionary<int, ClusterReplicaSet>)typeof(ClusterRouter)
+            .GetField("_unknownReplicaRoutes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(client.Core.Cluster)!;
+        await Assert.That(unknown.IsEmpty).IsTrue();
     }
 
     [Test]
-    public async Task ReadFrom_PartialReplicaCoverageContinuesToPrimary()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_PartialReplicaCoverageContinuesToPrimary(bool stalledReplica)
     {
         byte[]? partial = null;
         await using var oldReplica = new FakeRespServer(8, FakeRespServer.OkReply)
         {
+            SuppressReply = command => stalledReplica && command == "CLUSTER SLOTS",
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? partial
                 : command == "READONLY" ? FakeRespServer.OkReply : "$3\r\nold\r\n"u8.ToArray(),
         };
@@ -155,6 +197,7 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
+            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
         var key = Enumerable.Range(0, 100).Select(i => $"key:{i}").First(value => ClusterHash.GetSlot(value) >= 8192);
@@ -163,7 +206,9 @@ public class ClusterTests
         var routes = ReplicaRoutes(client)[ClusterHash.GetSlot(key)]!;
         Volatile.Write(ref topology, ClusterTopology(primary.Port, newReplica.Port));
         routes.MarkValidated(TimeSpan.Zero);
-        await reads.Strings.GetStringAsync(key);
+        // Selection schedules revalidation without sending a GET behind the deliberately
+        // suppressed topology response on the fake server's FIFO connection.
+        await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot(key), RespireReadFrom.Replica, CancellationToken.None);
         var refresh = routes.JoinOrStartRefresh(() => throw new InvalidOperationException("Read did not start refresh"));
         if (refresh is not null) await refresh.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
@@ -171,7 +216,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_MigrationReplicaCoverageDropsSourceRoutes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_MigrationReplicaCoverageDropsSourceRoutes(bool entireRange)
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
@@ -192,11 +239,17 @@ public class ClusterTests
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) => changed.TrySetResult();
         source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+            [new(sourceEndpoint, targetEndpoint, entireRange ? "0-16383" : "0")]));
         await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(targetEndpoint);
         await Assert.That(ReplicaRoutes(client)[0]).IsNull();
-        await Assert.That(ReplicaRoutes(client)[1]).IsSameReferenceAs(oldRoutes);
+        if (entireRange)
+        {
+            await router.WaitForRetirementAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(router.IsReplicaNode(replica)).IsFalse();
+            await Assert.That(replica.IsRetired).IsTrue();
+        }
+        else await Assert.That(ReplicaRoutes(client)[1]).IsSameReferenceAs(oldRoutes);
         await Assert.That(async () => await router.GetPinnedReadConnectionAsync(0, replica, CancellationToken.None))
             .ThrowsExactly<RespireConnectionException>();
     }
@@ -697,7 +750,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry(bool partial)
     {
         var key = "{moved}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -707,6 +762,9 @@ public class ClusterTests
         var targetReplies = new byte[][] { [] };
         await using var target = new FakeRespServer(targetReplies);
         targetReplies[0] = ClusterTopology(target.Port, newReplica.Port);
+        if (partial)
+            targetReplies[0] = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(targetReplies[0])
+                .Replace(":0\r\n:16383", $":{slot}\r\n:{slot}"));
         var moved = Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
         await using var oldReplica = new FakeRespServer(FakeRespServer.OkReply, moved);
         var primaryReplies = new byte[][] { [] };
@@ -719,8 +777,11 @@ public class ClusterTests
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
 
+        var otherSlot = (slot + 1) % ClusterHash.SlotCount;
+        var otherRoutes = ReplicaRoutes(client)[otherSlot];
         await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
             .Strings.GetStringAsync(key)).IsEqualTo("replicated");
+        if (partial) await Assert.That(ReplicaRoutes(client)[otherSlot]).IsSameReferenceAs(otherRoutes);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(oldReplica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);

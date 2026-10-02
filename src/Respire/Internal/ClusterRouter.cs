@@ -1327,7 +1327,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
         int slot,
         RespireConnectionMultiplexer? failedOwner,
-        CancellationToken cancellationToken, DiscoveryRound? discovery, bool keepUncoveredOwners = false)
+        CancellationToken cancellationToken, DiscoveryRound? discovery, bool keepUncoveredOwners = false,
+        TimeSpan? candidateTimeout = null)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1336,9 +1337,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // A failed owner can still own other slots. Spend fallback budget on a distinct
             // generation instead of immediately retrying the already rejected connection.
             if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
-            if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
-                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null)
-                .ConfigureAwait(false))
+            var refreshed = candidateTimeout is { } slice
+                ? await TryRefreshReplicaCandidateAsync(master, slot, cancellationToken, slice,
+                    expectedTopologyVersion, snapshotBatch).ConfigureAwait(false)
+                : await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
+                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null).ConfigureAwait(false);
+            if (!refreshed)
             {
                 continue;
             }
@@ -1951,6 +1955,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 masterSlotCounts[Array.IndexOf(masters, node)]++;
             }
         }
+        foreach (var (slot, _) in _unknownReplicaRoutes)
+            if (GetKnownReplicas(slot) is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
         if (!complete)
         {
             // An incomplete slot map cannot prove that an omitted primary has left the

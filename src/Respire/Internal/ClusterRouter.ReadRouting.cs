@@ -71,6 +71,7 @@ internal sealed partial class ClusterRouter
             var initial = _initialReplicaRoutes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (initial is not null) await initial.WaitAsync(cancellationToken).ConfigureAwait(false);
             routes = GetKnownReplicas(slot);
+            if (routes is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
         }
         if (routes is null)
         {
@@ -78,6 +79,7 @@ internal sealed partial class ClusterRouter
             var refresh = unknown.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             routes = GetKnownReplicas(slot);
+            if (routes is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
         }
 
         var attempted = 0;
@@ -166,14 +168,18 @@ internal sealed partial class ClusterRouter
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-            timeout.CancelAfter(_options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout));
+            var budget = _options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout);
+            timeout.CancelAfter(budget);
+            var replicas = GetKnownReplicas(slot)?.Nodes ?? [];
+            var candidates = replicas.Count(static node => node.IsConnected && !node.IsRetired)
+                + Volatile.Read(ref _masters).Length;
+            var candidateTimeout = TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, budget.Ticks / Math.Max(1, candidates)));
             // A connected replica may be the only reachable node after its primary fails.
             // Query it first so a failed primary cannot consume the shared refresh deadline.
-            foreach (var replica in GetKnownReplicas(slot)?.Nodes ?? [])
+            foreach (var replica in replicas)
             {
                 if (replica.IsConnected && !replica.IsRetired
-                    && await TryRefreshTopologyAsync(replica, timeout.Token, discovery: null,
-                        keepUncoveredOwners: true, requiredSlot: slot).ConfigureAwait(false))
+                    && await TryRefreshReplicaCandidateAsync(replica, slot, timeout.Token, candidateTimeout).ConfigureAwait(false))
                     return;
             }
             if (Volatile.Read(ref _masters).Length == 0)
@@ -183,12 +189,30 @@ internal sealed partial class ClusterRouter
             }
             var owner = await TryRefreshSlotThroughKnownMastersAsync(
                 slot, failedOwner: null, cancellationToken: timeout.Token, discovery: null,
-                keepUncoveredOwners: true).ConfigureAwait(false);
+                keepUncoveredOwners: true, candidateTimeout: candidateTimeout).ConfigureAwait(false);
             if (owner is null) LogReplicaRefreshFailure(slot, error: null);
         }
         catch (Exception error)
         {
             if (!_stopDiscovery.IsCancellationRequested) LogReplicaRefreshFailure(slot, error);
+        }
+    }
+
+    private async ValueTask<bool> TryRefreshReplicaCandidateAsync(
+        RespireConnectionMultiplexer node, int slot, CancellationToken cancellationToken, TimeSpan candidateTimeout,
+        long? expectedTopologyVersion = null, object? snapshotBatch = null)
+    {
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(candidateTimeout);
+        try
+        {
+            return await TryRefreshTopologyAsync(node, attempt.Token, discovery: null,
+                expectedTopologyVersion, snapshotBatch, keepUncoveredOwners: true, requiredSlot: slot).ConfigureAwait(false);
+        }
+        catch (Exception error) when (attempt.IsCancellationRequested && IsReadCandidateFailure(error, cancellationToken))
+        {
+            // This candidate spent its slice; later candidates still share the outer deadline.
+            return false;
         }
     }
 
@@ -282,10 +306,10 @@ internal sealed partial class ClusterRouter
     internal static RespireConnectionException CreateStrictReplicaAskException(RespireServerException error, int? slot)
         => new($"Redis Cluster slot {slot} is migrating and ASK redirects to a primary, so a Replica read cannot follow it.", error);
 
-    internal ValueTask<bool> RefreshTopologyFromAsync(
-        RespireConnection connection, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    private ValueTask<bool> RefreshTopologyFromAsync(
+        RespireConnection connection, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
         => connection.Multiplexer is { } node
-            ? TryRefreshTopologyAsync(node, cancellationToken, discovery)
+            ? TryRefreshTopologyAsync(node, cancellationToken, discovery, keepUncoveredOwners: true, requiredSlot: slot)
             : ValueTask.FromResult(false);
 
     internal async ValueTask<RespireConnection> SelectReadConnectionAfterRedirectAsync(
@@ -293,7 +317,7 @@ internal sealed partial class ClusterRouter
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (readFrom == RespireReadFrom.Primary || slot is not { } value) return redirected;
-        if (!await RefreshTopologyFromAsync(redirected, cancellationToken, discovery).ConfigureAwait(false))
+        if (!await RefreshTopologyFromAsync(redirected, value, cancellationToken, discovery).ConfigureAwait(false))
         {
             _logger?.LogWarning(
                 "Unable to refresh replica routes for Redis Cluster slot {Slot} from {Host}:{Port} after a redirect; {ReadFrom} read uses {Fallback}",
