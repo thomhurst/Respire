@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Commands;
@@ -95,6 +96,95 @@ public class ClusterTests
         await Assert.That(second).IsEqualTo("value");
         await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(2);
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MovedRedirect_ReplaysSeekableStreamFromOriginalPosition()
+    {
+        const string key = "streamed-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 10, 11, 12, 13, 14, 15 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new MemoryStream(payload) { Position = 1 };
+
+        await Assert.That(await client.Strings.SetAsync(key, stream, 4)).IsTrue();
+
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(1);
+        await Assert.That(target.ReceivedArguments[^1][2]).IsEquivalentTo(new byte[] { 11, 12, 13, 14 });
+        await Assert.That(stream.Position).IsEqualTo(5);
+    }
+
+    [Test]
+    public async Task MovedRedirect_ReplaysReadOnlySequencePayload()
+    {
+        const string key = "sequence-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 2, 4, 6, 8 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
+        await using var client = await CreateClusterClientAsync(seed);
+
+        await Assert.That(await client.Strings.SetAsync(key, new ReadOnlySequence<byte>(payload))).IsTrue();
+
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(1);
+        await Assert.That(target.ReceivedArguments[^1][2]).IsEquivalentTo(payload);
+    }
+
+    [Test]
+    public async Task AskRedirect_SendsAskingBeforeReplayableStream()
+    {
+        const string key = "asking-stream-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 3, 5, 7, 9 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new MemoryStream(payload);
+
+        await Assert.That(await client.Strings.SetAsync(key, stream, payload.Length)).IsTrue();
+
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands[1]).StartsWith($"SET {key}");
+        await Assert.That(target.ReceivedArguments[^1][2]).IsEquivalentTo(payload);
+        await Assert.That(stream.Position).IsEqualTo(payload.Length);
+    }
+
+    [Test]
+    public async Task AskRedirect_SendsAskingBeforeReadOnlySequencePayload()
+    {
+        const string key = "asking-sequence-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 2, 3, 5, 7 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
+        await using var client = await CreateClusterClientAsync(seed);
+
+        await Assert.That(await client.Strings.SetAsync(key, new ReadOnlySequence<byte>(payload))).IsTrue();
+
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands[1]).StartsWith($"SET {key}");
+        await Assert.That(target.ReceivedArguments[^1][2]).IsEquivalentTo(payload);
+    }
+
+    [Test]
+    public async Task MovedRedirect_DoesNotReplayNonSeekableStream()
+    {
+        const string key = "nonseekable-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 1, 3, 5, 7 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new NonSeekableMemoryStream(payload);
+
+        var error = await Assert.That(async () => await client.Strings.SetAsync(key, stream, payload.Length))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.Moved);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+        await Assert.That(stream.BytesRead).IsEqualTo(payload.Length);
     }
 
     [Test]
@@ -1782,6 +1872,62 @@ public class ClusterTests
 
     private static byte[] ScanMetadataReply(string value)
         => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
+
+    private static FakeRespServer CreateRedirectingSeed(int slot, FakeRespServer target, string code)
+    {
+        var seed = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*1\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
+        var redirect = Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");
+        seed.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => topology,
+            _ when command.StartsWith("SET ", StringComparison.Ordinal) => redirect,
+            _ => null,
+        };
+        return seed;
+    }
+
+    private static ValueTask<RespireClient> CreateClusterClientAsync(FakeRespServer seed)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+    private sealed class NonSeekableMemoryStream(byte[] value) : Stream
+    {
+        private int _offset;
+        internal int BytesRead => _offset;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Math.Min(buffer.Length, value.Length - _offset);
+            value.AsMemory(_offset, count).CopyTo(buffer);
+            _offset += count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var copied = Math.Min(count, value.Length - _offset);
+            value.AsSpan(_offset, copied).CopyTo(buffer.AsSpan(offset));
+            _offset += copied;
+            return copied;
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)
         where TCommand : struct, IRespCommand

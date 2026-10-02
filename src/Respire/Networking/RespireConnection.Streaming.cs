@@ -23,6 +23,12 @@ internal sealed partial class RespireConnection
         /// <summary>Nothing written: the request and the caller's source are untouched and retryable.</summary>
         NotStarted,
 
+        /// <summary>ASKING may be on the wire without the SET that consumes its one-shot state.</summary>
+        AskingQueued,
+
+        /// <summary>ASKING succeeded; abort if SET cannot follow on this same connection.</summary>
+        AskingAccepted,
+
         /// <summary>
         /// Reading the first chunk of a stream source before the header is queued. Nothing is on the
         /// wire, so a failure (including early EOF) reclaims the request without closing the
@@ -60,8 +66,14 @@ internal sealed partial class RespireConnection
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
+    internal ValueTask<RespValue> SendAskingStreamedSetAsync(
+        in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
+        CommandDeadline commandDeadline)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking);
+
     private async ValueTask<RespValue> SendStreamedSetAsync(
-        StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
+        StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
+        RawCommand? prelude = null)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -99,6 +111,7 @@ internal sealed partial class RespireConnection
 
         var phase = StreamedSetPhase.NotStarted;
         var ownsWritePath = false;
+        var askingAccepted = false;
         StreamPayloadReader? payloadReader = null;
         ReadOnlyMemory<byte> firstChunk = default;
         try
@@ -119,6 +132,25 @@ internal sealed partial class RespireConnection
                 effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
+            if (prelude is { } prefix)
+            {
+                phase = StreamedSetPhase.AskingQueued;
+                try
+                {
+                    using var askingResponse = await AppendStreamingPreludeAsync(
+                        prefix, effectiveCancellation, deadline).ConfigureAwait(false);
+                }
+                catch (RespireServerException)
+                {
+                    // The rejected prelude did not arm ASKING on this connection.
+                    phase = StreamedSetPhase.NotStarted;
+                    throw;
+                }
+
+                askingAccepted = true;
+                phase = StreamedSetPhase.AskingAccepted;
+            }
+
             if (command.SourceStream is { } stream && command.Length > 0)
             {
                 // Read the first chunk before the header goes out. A source that fails, is
@@ -128,6 +160,10 @@ internal sealed partial class RespireConnection
                 payloadReader = new StreamPayloadReader(stream, command.Length);
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
+            }
+            else if (askingAccepted)
+            {
+                phase = StreamedSetPhase.AskingAccepted;
             }
 
             // A source that ignored the token can complete its read after the caller, the deadline
@@ -219,7 +255,7 @@ internal sealed partial class RespireConnection
             }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
-            await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException)
+            await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException, askingAccepted)
                 .ConfigureAwait(false);
             if (translated is null) throw;
             throw translated;
@@ -236,6 +272,56 @@ internal sealed partial class RespireConnection
             _streamingGate.Release();
         }
 
+        return await source.Task.ConfigureAwait(false);
+    }
+
+    private async ValueTask<RespValue> AppendStreamingPreludeAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
+        where TCommand : struct, IRespCommand
+    {
+        var source = _sourcePool.Rent(throwOnError: true, commandName: "ASKING");
+        bool startedBatch;
+        try
+        {
+            lock (_writeGate)
+            {
+                ThrowIfStreamingUnavailable(rejectRetired: true);
+                if (_inflight.Capacity - _inflight.Count <= 0)
+                    throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
+
+                var start = _activeBuffer.Count;
+                startedBatch = start == 0 && _inflight.Count == 0;
+                try
+                {
+                    var writer = new RespWriter(_activeBuffer);
+                    command.Write(ref writer);
+                }
+                catch
+                {
+                    _activeBuffer.TruncateTo(start);
+                    throw;
+                }
+
+                var writeStart = StampWritePosition(source, _activeBuffer.Count - start);
+                StampDeadline(source, armCommandDeadline: true);
+                ClampDeadline(source, deadline);
+                if (!_inflight.TryEnqueue(source, _enqueuedBytes))
+                {
+                    _activeBuffer.TruncateTo(start);
+                    Volatile.Write(ref _enqueuedBytes, writeStart);
+                    throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
+                }
+                if (_responseTimeout is not null) _activeReplyCount++;
+            }
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -293,9 +379,11 @@ internal sealed partial class RespireConnection
     }
 
     private async ValueTask FailStreamedSetAsync(
-        PendingResponseSource source, StreamedSetPhase phase, Exception error, bool timedOut)
+        PendingResponseSource source, StreamedSetPhase phase, Exception error, bool timedOut,
+        bool askingAccepted)
     {
-        if (phase is StreamedSetPhase.HeaderQueued or StreamedSetPhase.ResponseQueued)
+        if (askingAccepted || phase is StreamedSetPhase.AskingQueued
+            or StreamedSetPhase.HeaderQueued or StreamedSetPhase.ResponseQueued)
         {
             // Abort is a no-op when the connection is already dead.
             Abort(new RespireConnectionException(timedOut

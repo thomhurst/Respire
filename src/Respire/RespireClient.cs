@@ -2139,7 +2139,9 @@ public sealed partial class RespireClient : IRespireClient
                 cluster,
                 command,
                 cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is IStreamingRespCommand);
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect)
+                    || command is IStreamingRespCommand
+                        && command is not IReplayableStreamingRespCommand { CanReplay: true });
         }
         else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
@@ -2448,6 +2450,8 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    if (command is IReplayableStreamingRespCommand replayable)
+                        replayable.ResetSourceForReplay();
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
