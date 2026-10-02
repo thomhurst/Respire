@@ -186,11 +186,58 @@ function Select-MergeCleanupWorktree {
     return $null
 }
 
+function Get-AgentLockBlocker {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$LockName
+    )
+    # Repo is the primary checkout, never the potentially stale worktree copy.
+    $agentLocks = Join-Path $Repo 'scripts/AgentLocks.ps1'
+    if (-not (Test-Path -LiteralPath $agentLocks -PathType Leaf)) { return 'canonical lock script is unavailable' }
+    $state = @(& pwsh -NoProfile -File $agentLocks status -LockName $LockName -OwnerId worktree-cleanup-observer 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $state.Count -ne 1 -or $state[0] -ne 'FREE') {
+        return "Redis lock '$LockName' is held or could not be checked"
+    }
+    return $null
+}
+
+function Get-WorktreeOwnershipBlocker {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree
+    )
+
+    $gitDirectory = git -C $Worktree rev-parse --absolute-git-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory) { return 'could not inspect Git worktree ownership' }
+    if (Test-Path -LiteralPath (Join-Path $gitDirectory 'locked')) { return 'Git worktree is locked' }
+
+    $lockNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $enabled = git -C $Worktree config --local --bool --get extensions.worktreeConfig 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree configuration' }
+    if ($enabled -eq 'true') {
+        $marker = git -C $Worktree config --worktree --get agent.lockName 2>$null
+        if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect ownership marker' }
+        if ($marker) { [void]$lockNames.Add($marker.Trim()) }
+    }
+    # Also cover the short interval between checkout creation and marker registration.
+    $branch = git -C $Worktree symbolic-ref --quiet --short HEAD 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree branch' }
+    foreach ($identity in @((Split-Path $Worktree -Leaf), $branch)) {
+        if ($identity -match '(?:^|/)((?:pr|issue)-\d+)(?:$|[-/])') { [void]$lockNames.Add($Matches[1]) }
+    }
+    foreach ($lockName in $lockNames) {
+        $blocker = Get-AgentLockBlocker -Repo $Repo -LockName $lockName
+        if ($blocker) { return $blocker }
+    }
+    return $null
+}
+
 function Remove-MergedWorktree {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Repo,       # a checkout that is NOT the one being removed (main)
         [Parameter(Mandatory)][string]$Worktree,   # path to remove
+        [string]$ExpectedHead,                    # tip independently verified as completed by the caller
         [string]$Label = '',                       # e.g. "#1234" for log lines
         [switch]$WhatIf
     )
@@ -204,6 +251,17 @@ function Remove-MergedWorktree {
     # checkout even through a filesystem alias before any git or recursive delete.
     if (-not (Test-IsLinkedWorktree -Path $Worktree)) {
         Write-Host "WARNING: refusing to remove primary checkout or non-linked worktree $Label : $Worktree"
+        return
+    }
+
+    $head = git -C $Worktree rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $ExpectedHead -or $head -ne $ExpectedHead) {
+        Write-Host "Preserving worktree $Label : $Worktree (completed HEAD is missing or changed)"
+        return
+    }
+    $blocker = Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree
+    if ($blocker) {
+        Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
         return
     }
 
@@ -225,11 +283,27 @@ function Remove-MergedWorktree {
 
     if ($WhatIf) { Write-Host "sweep: WOULD remove $Worktree -- $Label"; return }
 
+    # Recheck after status inspection, which can take time in a large build tree.
+    $head = git -C $Worktree rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead -or
+        (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree)) {
+        Write-Host "Preserving worktree $Label : $Worktree (HEAD or ownership changed during inspection)"
+        return
+    }
+
     # Primary path: let git remove it (force clears untracked artifacts; tracked is clean).
     git -C $Repo worktree remove --force $Worktree 2>$null
 
     # Fallback for long-path failures (only if core.longpaths is somehow off).
     if (Test-Path -LiteralPath $Worktree) {
+        # Git may have refused removal because ownership changed. Never bypass that
+        # refusal with recursive filesystem deletion.
+        $blocker = Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree
+        $head = git -C $Worktree rev-parse HEAD 2>$null
+        if ($blocker -or $LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead) {
+            Write-Host "Preserving worktree $Label : $Worktree (could not confirm HEAD and ownership after failed removal)"
+            return
+        }
         # Avoid recursing through a package-manager junction if one exists in a docs
         # worktree. Leave it for manual cleanup instead of risking deletion outside
         # the worktree.

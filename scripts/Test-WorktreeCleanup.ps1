@@ -28,6 +28,10 @@ else {
 function global:git {
     $global:LASTEXITCODE = 0
     $script:gitCalled = $true
+    if ($args -contains 'rev-parse') {
+        if ($args -contains '--absolute-git-dir') { return (Join-Path $testRoot 'fake-gitdir') }
+        return 'completed-head'
+    }
     if ($args -contains 'remove') {
         $target = $args[-1]
         if ($target -eq $aliasRoot) {
@@ -124,7 +128,7 @@ try {
         throw 'Primary checkout was removed through an alias.'
     }
 
-    Remove-MergedWorktree -Repo $primaryRoot -Worktree $isolatedRoot -Label '#test'
+    Remove-MergedWorktree -Repo $primaryRoot -Worktree $isolatedRoot -ExpectedHead 'completed-head' -Label '#test'
 
     if (-not $script:gitCalled) {
         throw 'Normal isolated-worktree cleanup did not run git.'
@@ -136,7 +140,7 @@ try {
 
     if (-not $IsWindows) {
         $script:gitCalled = $false
-        Remove-MergedWorktree -Repo $casePrimaryRoot -Worktree $caseIsolatedRoot -Label '#case'
+        Remove-MergedWorktree -Repo $casePrimaryRoot -Worktree $caseIsolatedRoot -ExpectedHead 'completed-head' -Label '#case'
 
         if (-not $script:gitCalled -or (Test-Path -LiteralPath $caseIsolatedRoot)) {
             throw 'Case-distinct isolated worktree was incorrectly preserved.'

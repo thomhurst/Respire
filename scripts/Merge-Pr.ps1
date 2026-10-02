@@ -52,6 +52,8 @@ if ($LASTEXITCODE -ne 0) { Fail "Assert-PrGreen denied (exit $LASTEXITCODE). Not
 $headRef = gh pr view $Pr @repoArgs --json headRefName --jq '.headRefName' 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $headRef) { Fail "could not resolve head branch (exit $LASTEXITCODE)" }
 $headRef = $headRef.Trim()
+$mergedHead = gh pr view $Pr @repoArgs --json headRefOid --jq '.headRefOid' 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $mergedHead) { Fail 'could not resolve PR head for cleanup' }
 
 # Main worktree path — git removals/prunes must run from a checkout that is NOT the
 # one being removed; the first `worktree list` entry is always the main checkout.
@@ -120,7 +122,7 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
     git -C $mainRepo worktree prune
     exit 0
 } else {
-    Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -Label "#${Pr}"
+    Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}"
 
     # A dirty worktree is intentionally preserved. Its local and remote branches are
     # also preserved so uncommitted work retains an upstream recovery point.

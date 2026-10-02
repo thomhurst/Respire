@@ -1,31 +1,12 @@
 # Remove-MergedWorktrees.ps1
-# Safety-net sweep for the issue-pr-loop skill: removes every worktree whose branch
-# has already merged, regardless of who merged it (this loop, another agent, a human).
+# Safety-net sweep for completed worktrees, preserving active or unpublished work.
 #
-# SQUASH-SAFE DETECTION — this is the whole point:
-#   A squash (or rebase) merge rewrites history, so the branch tip is NOT an ancestor
-#   of main and `git merge-base --is-ancestor` reports "not merged". Ancestry is never
-#   used as a merge signal for branches. GitHub's own records are, in four tiers:
-#     1. merged-PR head branch name  (cheap, bulk: one `gh pr list` call)
-#     2. merged-PR head tip SHA      (same call: catches detached/renamed checkouts
-#                                     sitting exactly on a merged PR's tip)
-#     3. detached HEAD reachable from origin/main (local, free: a detached checkout of
-#                                     an old main commit — A/B baselines etc. Applied to
-#                                     DETACHED worktrees only; a branch is declared
-#                                     intent and needs positive PR evidence)
-#     4. canonical named identity    (matching pr-<N>-* path + pr-<N> branch for a
-#                                     merged PR; two independent local identifiers)
-#     5. commit→PR association       (`gh api repos/../commits/<sha>/pulls`, one call
-#                                     per still-unmatched worktree: survives squash
-#                                     merges, branch deletion, AND the 1000-PR list
-#                                     window aging out)
-#     6. canonical detached identity (pr-<N>-* path only after a successful association
-#                                     lookup proves the current tip has no open PR)
-#
-#   DELIBERATELY NOT a signal: a [gone] upstream branch. [gone] only means the remote
-#   ref was deleted — which also happens when a PR is CLOSED UNMERGED and its branch
-#   pruned. Treating [gone] as "merged" wrongly reaps unmerged work (verified: a closed-
-#   unmerged PR's worktree got flagged). Merged-PR state is the only trustworthy signal.
+# SQUASH-SAFE DETECTION:
+#   - Exact merged PR head SHA (including renamed or detached checkouts).
+#   - Detached/canonical merged-PR snapshots already reachable from origin/main.
+#   - Exact head SHA from a merged commit-to-PR association outside the bulk window.
+# A branch/path name, old commit date, or deleted upstream never proves that the
+# current tip is disposable. Unpublished follow-up commits must survive.
 #
 # ORPHANED DIRECTORIES — the other half of the pile-up:
 #   A failed `worktree remove` followed by `worktree prune` leaves a directory whose
@@ -39,11 +20,11 @@
 #
 # Guards (never delete work):
 #   - skip the main checkout and anything inside it (.claude/worktrees is harness-managed)
-#   - skip locked worktrees (an agent session may still own them)
+#   - skip Git-locked and Redis-owned worktrees, including same-owner locks
 #   - skip a branch/tip that has an OPEN PR (branch reused for active work)
 #   - PRESERVE any worktree with uncommitted tracked changes (shared helper)
 #   - worktrees with NO merge evidence are kept and listed; opt in to reaping old
-#     clean ones with -StaleDays <n>
+#     published snapshots with -StaleDays <n>
 #
 # Run it once per loop iteration (cheap: ~3 gh calls in bulk, plus one association
 # call per unmatched leftover — a set that shrinks to near-zero after the first run).
@@ -55,9 +36,8 @@
 param(
     [string]$Repo,
     [switch]$WhatIf,
-    # Opt-in: also remove CLEAN worktrees with no PR evidence at all (scratch / A-B
-    # checkouts, local-only fix branches) whose HEAD commit is older than this many
-    # days. 0 = off. Dirty worktrees are still preserved.
+    # Opt-in: also remove clean snapshots reachable from origin/main whose HEAD
+    # commit is older than this many days. Unpublished work is always preserved.
     [int]$StaleDays = 0
 )
 
@@ -87,6 +67,17 @@ function Remove-OrphanedDirectory {
         [Parameter(Mandatory)][string]$Reason
     )
 
+    $leaf = Split-Path $Path -Leaf
+    if ($leaf -notmatch '^((?:pr|issue)-\d+)(?:-|$)') {
+        Write-Host "sweep: preserving orphan with unknown lock identity: $Path"
+        return $false
+    }
+    $blocker = Get-AgentLockBlocker -Repo $mainRepo -LockName $Matches[1]
+    if ($blocker) {
+        Write-Host "sweep: preserving orphan $Path ($blocker)"
+        return $false
+    }
+
     if ($WhatIf) {
         Write-Host "sweep: WOULD remove orphaned dir $Path ($Reason)"
         return $false
@@ -107,25 +98,21 @@ function Remove-OrphanedDirectory {
 # failing, an unexpected gh output shape, a null string op) would exit non-zero. Wrap the
 # whole body so every such error is logged and swallowed.
 try {
-    # Authoritative merge signal: merged-PR head branches AND head tip SHAs (squash-safe).
-    # --limit 1000 covers any realistic leftover window for the NAME tier; anything older
-    # falls through to the per-commit association tier below.
-    $mergedNames = @{}; $mergedOids = @{}; $mergedPrByNumber = @{}; $openNames = @{}; $openOids = @{}
+    # Exact merged heads are squash-safe. Older PRs fall through to association lookup.
+    $mergedOids = @{}; $mergedPrByNumber = @{}; $openNames = @{}; $openOids = @{}
     $rawMerged = gh pr list @repoArgs --state merged --limit 1000 --json number,mergedAt,headRefName,headRefOid 2>$null
     if ($LASTEXITCODE -ne 0) { Warn "could not list merged PRs (exit $LASTEXITCODE) -- skipping sweep this round"; exit 0 }
     foreach ($p in (($rawMerged -join "`n") | ConvertFrom-Json)) {
-        if ($p.headRefName) { $mergedNames[$p.headRefName.Trim()] = $true }
         if ($p.headRefOid) { $mergedOids[$p.headRefOid.Trim()] = $true }
         if ($p.number) { $mergedPrByNumber[[int]$p.number] = $p }
     }
 
     # Open-PR head branches/tips: never remove a worktree that is actively in review.
     $rawOpen = gh pr list @repoArgs --state open --limit 1000 --json headRefName,headRefOid 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        foreach ($p in (($rawOpen -join "`n") | ConvertFrom-Json)) {
-            if ($p.headRefName) { $openNames[$p.headRefName.Trim()] = $true }
-            if ($p.headRefOid) { $openOids[$p.headRefOid.Trim()] = $true }
-        }
+    if ($LASTEXITCODE -ne 0) { Warn 'could not list open PRs -- skipping sweep this round'; exit 0 }
+    foreach ($p in (($rawOpen -join "`n") | ConvertFrom-Json)) {
+        if ($p.headRefName) { $openNames[$p.headRefName.Trim()] = $true }
+        if ($p.headRefOid) { $openOids[$p.headRefOid.Trim()] = $true }
     }
 
     # Repo slug for the per-commit association API (gh api takes no --repo flag).
@@ -165,72 +152,50 @@ try {
         if ($w.Locked) { Write-Host "sweep: skipping locked worktree (session may own it): $($w.Path)"; continue }
         if ($w.Branch -and $openNames.ContainsKey($w.Branch)) { continue }   # active open PR — keep
 
-        # Tier 1: worktree still sits on the merged PR's head branch.
+        $sha = git -C $w.Path rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $sha) { continue }
+        if ($openOids.ContainsKey($sha)) { continue }
+
         $why = $null
-        if ($w.Branch -and $mergedNames.ContainsKey($w.Branch)) { $why = "merged PR head branch '$($w.Branch)'" }
+        if ($mergedOids.ContainsKey($sha)) { $why = 'merged PR head tip SHA' }
 
-        $sha = $null
-        if (-not $why) {
-            $sha = git -C $w.Path rev-parse HEAD 2>$null
-            if ($LASTEXITCODE -ne 0) { $sha = $null }
-            if ($sha -and $openOids.ContainsKey($sha)) { continue }          # tip of an open PR — keep
-
-            # Tier 2: detached or renamed checkout sitting exactly on a merged PR's tip.
-            if ($sha -and $mergedOids.ContainsKey($sha)) { $why = 'merged PR head tip SHA' }
-        }
-
-        # Tier 3 (detached only): checkout of a commit already reachable from main —
-        # A/B baselines and gate parents. A named branch never qualifies here; it needs
-        # positive PR evidence so a freshly-cut work branch is never reaped.
-        if (-not $why -and $sha -and $w.Detached -and $mainTip) {
-            git -C $mainRepo merge-base --is-ancestor $sha $mainTip 2>$null
-            if ($LASTEXITCODE -eq 0) { $why = 'detached HEAD reachable from origin/main' }
-        }
-
-        # Tier 4: matching canonical path and branch identities safely recognize named
-        # review/rebase variants, including local-only commits that GitHub returns as 422.
         $pathPr = Get-PrNumberFromWorktreePath -Path $w.Path
-        if (-not $why -and $w.Branch -and $pathPr -and $mergedPrByNumber.ContainsKey($pathPr) -and
+        $canonicalMerged = $pathPr -and $mergedPrByNumber.ContainsKey($pathPr) -and
             (Test-IsCanonicalPrWorktree -Path $w.Path -WorktreeRoot $canonicalWorktreeRoot `
-                -Branch $w.Branch -PrNumber $pathPr)) {
-            $why = "canonical worktree identity for merged PR #$pathPr"
+                -Branch $w.Branch -Detached:$w.Detached -PrNumber $pathPr)
+        if (-not $why -and $mainTip -and ($w.Detached -or $canonicalMerged)) {
+            git -C $mainRepo merge-base --is-ancestor $sha $mainTip 2>$null
+            if ($LASTEXITCODE -eq 0) { $why = 'completed snapshot reachable from origin/main' }
         }
 
-        # Tier 5: GitHub's commit→PR association. Survives squash merges, branch
-        # deletion, and the 1000-PR list window. One API call, only for leftovers.
-        $associationChecked = $false
-        if (-not $why -and $sha -and $slug) {
+        # Association must identify this exact merged head. Merely naming an older
+        # merged PR cannot establish that a new local follow-up commit is published.
+        if (-not $why -and $slug) {
             $assocRaw = gh api "repos/$slug/commits/$sha/pulls" 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $associationChecked = $true
                 $assoc = if ($assocRaw) { @(($assocRaw -join "`n") | ConvertFrom-Json) } else { @() }
-                if (@($assoc | Where-Object { $_.state -eq 'open' }).Count -gt 0) { continue }   # commit belongs to an open PR — keep
-                if (@($assoc | Where-Object { $_.merged_at }).Count -gt 0) { $why = 'merged PR via commit association' }
+                if (@($assoc | Where-Object { $_.state -eq 'open' }).Count -gt 0) { continue }
+                if (@($assoc | Where-Object { $_.merged_at -and $_.head.sha -eq $sha }).Count -gt 0) {
+                    $why = 'merged PR head via commit association'
+                }
             }
         }
 
-        # Tier 6: detached review snapshots have no branch identity. Trust their canonical
-        # path only after GitHub successfully confirms the current tip has no open PR.
-        if (-not $why -and $w.Detached -and $associationChecked) {
-            if ($pathPr -and $mergedPrByNumber.ContainsKey($pathPr) -and
-                (Test-IsCanonicalPrWorktree -Path $w.Path -WorktreeRoot $canonicalWorktreeRoot `
-                    -Detached -PrNumber $pathPr)) {
-                $why = "canonical worktree identity for merged PR #$pathPr"
-            }
-        }
-
-        # Opt-in stale tier: no PR evidence anywhere (never-pushed scratch). Only age
-        # can justify removal, and only when the caller asked for it.
-        if (-not $why -and $StaleDays -gt 0 -and $sha) {
-            $commitEpoch = git -C $w.Path log -1 --format=%ct 2>$null
-            if ($LASTEXITCODE -eq 0 -and $commitEpoch -and (($nowEpoch - [long]$commitEpoch) -gt ($StaleDays * 86400L))) {
-                $why = "no PR evidence, HEAD commit older than $StaleDays day(s)"
+        # Age can select only already-published snapshots. It never authorizes
+        # deleting clean unpublished commits, even with explicit stale cleanup.
+        if (-not $why -and $StaleDays -gt 0 -and $mainTip) {
+            git -C $mainRepo merge-base --is-ancestor $sha $mainTip 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $commitEpoch = git -C $w.Path log -1 --format=%ct 2>$null
+                if ($LASTEXITCODE -eq 0 -and $commitEpoch -and (($nowEpoch - [long]$commitEpoch) -gt ($StaleDays * 86400L))) {
+                    $why = "published snapshot older than $StaleDays day(s)"
+                }
             }
         }
 
         if (-not $why) { $unmatched += $w; continue }
 
-        Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -Label "($why)" -WhatIf:$WhatIf
+        Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -Label "($why)" -WhatIf:$WhatIf
         if ($WhatIf) { continue }
         if (-not (Test-Path -LiteralPath $w.Path)) {
             $removed++
@@ -248,7 +213,7 @@ try {
             $label = if ($w.Branch) { "[$($w.Branch)]" } else { '(detached)' }
             Write-Host "sweep:   $($w.Path) $label"
         }
-        if ($StaleDays -eq 0) { Write-Host 'sweep: re-run with -StaleDays <n> to also remove clean ones older than n days.' }
+        if ($StaleDays -eq 0) { Write-Host 'sweep: re-run with -StaleDays <n> to also remove published snapshots older than n days.' }
     }
 
     # --- Orphaned directories: registration gone, directory left behind. -------------
