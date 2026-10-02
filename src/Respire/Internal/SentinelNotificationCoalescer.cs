@@ -101,20 +101,6 @@ internal sealed class SentinelNotificationCoalescer
             .Select(static group => (Endpoint: group.Key, Addresses: group.Select(static source => source.Addresses)
                 .FirstOrDefault(static addresses => addresses is not null)))
             .ToArray();
-        // Different monitors can deliver the same switch sequence out of order. If a delayed
-        // copy closes a cycle back onto an earlier source, retain the prior announced target and
-        // its reporter; retire the incoming target as a source instead of accepting its stale view.
-        if (hint.OldPrimary is { } transitionSource && previous.Target is { } priorPendingTarget
-            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(transitionSource, priorPendingTarget)
-            && hint.Target is { } transitionTarget)
-        {
-            var delayedFromAnotherMonitor = previous.ReportingSentinel is { } previousReporter
-                && hint.ReportingSentinel is { } hintReporter
-                && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(previousReporter, hintReporter);
-            var endpointToRelease = delayedFromAnotherMonitor ? priorPendingTarget : transitionTarget;
-            sources = sources.Where(source =>
-                !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpointToRelease)).ToArray();
-        }
         var selectedAddresses = merged.OldPrimary is { } selected
             ? sources.FirstOrDefault(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, selected)).Addresses
             : null;
@@ -131,6 +117,18 @@ internal sealed class SentinelNotificationCoalescer
         else if (previous.Target is { } priorCandidate && !sourceEndpoints.Contains(priorCandidate)) selectedTarget = priorCandidate;
         else selectedTarget = targets.Where(target => !sourceEndpoints.Contains(target))
             .Select(static target => (RespireEndpoint?)target).FirstOrDefault();
+        RespireEndpoint? reportingSentinel = null;
+        var previousTargetMatches = previous.Target is { } previousTargetForReporter
+            && selectedTarget is { } targetForReporter
+            && comparer.Equals(targetForReporter, previousTargetForReporter);
+        if (selectedTarget is { } survivingTarget)
+        {
+            if (hint.Target is { } reportedTarget && comparer.Equals(survivingTarget, reportedTarget))
+                reportingSentinel = hint.ReportingSentinel
+                    ?? (previousTargetMatches ? previous.ReportingSentinel : null);
+            else if (previousTargetMatches)
+                reportingSentinel = previous.ReportingSentinel;
+        }
         return merged with
         {
             Target = selectedTarget,
@@ -139,10 +137,7 @@ internal sealed class SentinelNotificationCoalescer
             AdditionalOldPrimaryAddresses = additionalSources.Length == 0 ? null
                 : additionalSources.Select(static source => source.Addresses).ToArray(),
             OldPrimaryAddresses = selectedAddresses,
-            ReportingSentinel = selectedTarget is { } survivingTarget && hint.Target is { } reportedTarget
-                && comparer.Equals(survivingTarget, reportedTarget)
-                    ? hint.ReportingSentinel ?? previous.ReportingSentinel
-                    : previous.ReportingSentinel,
+            ReportingSentinel = reportingSentinel,
             AdditionalTargets = targets.Where(target => selectedTarget is not { } primaryTarget
                 || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primaryTarget))
                 .Where(target => !sourceEndpoints.Contains(target))

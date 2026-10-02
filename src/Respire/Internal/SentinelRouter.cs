@@ -505,10 +505,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 // a failback can legitimately publish that address again. A changed endpoint
                 // is checked so a hostname alias is not lost across an in-flight handoff.
                 if (current is null || !ReferenceEquals(current, arrivedDuring)
-                    && SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)) return;
+                    && (SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)
+                        || IsCurrentPeer(current, arrivedDuring.Endpoint, addresses))) return;
                 if (!IsAnnouncedTarget(current, in hint)
                     && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
+                {
                     Invalidate(current!);
+                    QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
@@ -588,7 +592,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
         QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true,
-            ReportingSentinel: initialSubscription ? sentinel : (RespireEndpoint?)null));
+            ReportingSentinel: sentinel));
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)
@@ -701,8 +705,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 lock (_gate)
                 {
                     if (_coalescer.Pending is not null) continue;
-                    notification = _pendingNotification.Task;
                     _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    notification = _pendingNotification.Task;
                 }
                 try
                 {
@@ -915,12 +919,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     NotificationShutdownTimeout, tasks.Count(task => !task.IsCompleted)));
             }
             catch (Exception error) { disposeError = error; }
-            await _discoveryGate.WaitAsync().ConfigureAwait(false);
-            _discoveryGate.Release();
             Generation[] owned;
             DedicatedConnectionPool[] corrections;
-            // Safe after releasing the discovery gate: ConnectGenerationAsync rechecks _disposed
-            // under _gate before adding, so no generation can join _owned after this snapshot.
+            // No discovery-gate wait is needed: _disposed is set before this snapshot, and
+            // ConnectGenerationAsync checks it under _gate before adding an owned generation.
             lock (_gate)
             {
                 owned = _owned.ToArray();
