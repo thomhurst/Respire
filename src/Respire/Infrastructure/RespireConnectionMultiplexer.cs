@@ -170,12 +170,14 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void PruneMaintenanceHandlerEpochsLocked()
     {
-        var earliestCapture = ClusterSlotMutationClock.EarliestActiveCapture(this);
         var removable = 0;
-        while (removable < _maintenanceHandlerEpochs.Count
-               && _maintenanceHandlerEpochs[removable].End != long.MaxValue
-               && _maintenanceHandlerEpochs[removable].End <= earliestCapture)
+        while (removable < _maintenanceHandlerEpochs.Count)
+        {
+            var epoch = _maintenanceHandlerEpochs[removable];
+            if (epoch.End == long.MaxValue
+                || ClusterSlotMutationClock.HasActiveCapture(this, epoch.Start, epoch.End)) break;
             removable++;
+        }
         if (removable > 0) _maintenanceHandlerEpochs.RemoveRange(0, removable);
     }
 
@@ -1319,13 +1321,21 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
         catch (Exception error)
         {
-            // A barrier failure cannot keep graceful retirement open. RetireAsync below still
-            // drains accepted commands and closes the physical connection. Abort now because a
-            // timed-out PING may still occupy the command ring and block that drain.
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception disposeError)
+            // A timed-out barrier can sit behind a command already accepted by this connection.
+            // Preserve such commands; connection retirement below drains them and the barrier.
+            // Abort only when no other accepted command can be failed by that cleanup.
+            if (!connection.HasOtherPendingCommandThanMaintenanceBarrier)
             {
-                try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
+                try { await connection.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception disposeError)
+                {
+                    try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
+                    catch { /* Logging must not stop retirement. */ }
+                }
+            }
+            else
+            {
+                try { _logger?.LogDebug(error, "Maintenance drain barrier timed out behind accepted commands at {Host}:{Port}; preserving them for graceful retirement", Host, Port); }
                 catch { /* Logging must not stop retirement. */ }
             }
             try { _logger?.LogDebug(error, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", Host, Port); }

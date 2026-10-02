@@ -54,15 +54,24 @@ internal static class ClusterSlotMutationClock
         }
     }
 
-    internal static long EarliestActiveCapture(RespireConnectionMultiplexer multiplexer)
+    internal static bool HasActiveCapture(RespireConnectionMultiplexer multiplexer, long start, long end)
     {
         lock (s_gate)
         {
-            var earliest = s_globalCaptures.Count == 0 ? long.MaxValue : s_globalCaptures.Min;
-            if (s_multiplexerCaptures.TryGetValue(multiplexer, out var captures)
-                && captures.Count > 0 && captures.Min < earliest) earliest = captures.Min;
-            return earliest;
+            if (ContainsCaptureInRange(s_globalCaptures, start, end)) return true;
+            return s_multiplexerCaptures.TryGetValue(multiplexer, out var captures)
+                && ContainsCaptureInRange(captures, start, end);
         }
+    }
+
+    private static bool ContainsCaptureInRange(SortedSet<long> captures, long start, long end)
+    {
+        foreach (var capture in captures)
+        {
+            if (capture >= end) return false;
+            if (capture >= start) return true;
+        }
+        return false;
     }
 
     private static RespireConnectionMultiplexer[] EndCapture(long token, RespireConnectionMultiplexer? multiplexer)

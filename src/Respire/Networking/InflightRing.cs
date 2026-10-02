@@ -104,6 +104,19 @@ internal sealed class InflightRing
         return true;
     }
 
+    internal bool HasOtherPendingCommand(string commandName)
+    {
+        var head = Volatile.Read(ref _head);
+        var tail = Volatile.Read(ref _tail);
+        for (var position = head; position < tail; position++)
+        {
+            var source = Volatile.Read(ref _slots[position & _mask].Source);
+            if (source is not null && (ReferenceEquals(source, DiscardSentinel) || source.CommandName != commandName))
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Deadline-sweep only. Scans every published slot, timing out sources whose armed
     /// deadline has passed, and returns milliseconds until the earliest remaining armed
