@@ -42,6 +42,10 @@ try {
     Invoke-TestGit -C $repo add .
     Invoke-TestGit -C $repo commit -m fixture
     Push-Location $repo
+    . (Join-Path $PSScriptRoot 'MergedBranchCleanup.ps1')
+    $remote = Join-Path $testRoot 'remote.git'
+    Invoke-TestGit init --bare $remote
+    Invoke-TestGit -C $repo remote add origin $remote
 
     $path = New-Checkout clean
     Set-Content (Join-Path $path 'source.txt') 'unpublished commit'
@@ -67,6 +71,42 @@ try {
     Lock release -LockName $key
     Assert (-not (Test-Path $path)) 'Detached checkout survived release.'
     Assert ((& git -C $repo rev-parse "refs/heads/retained-worktrees/$head") -eq $head) 'Detached commit was lost.'
+
+    foreach ($kind in @('merged-clean', 'merged-advanced', 'merged-dirty', 'merged-origin-changed')) {
+        $path = New-Checkout $kind
+        $mergedHead = & git -C $path rev-parse HEAD
+        Invoke-TestGit -C $repo push origin "${kind}:refs/heads/$kind"
+        $key = Claim $kind $path
+        Set-MergedBranchCleanup -Worktree $path -Branch $kind -ExpectedHead $mergedHead -RemoteUrl $remote
+        if ($kind -eq 'merged-advanced') {
+            Set-Content -LiteralPath (Join-Path $path 'source.txt') -Value 'new remote work'
+            Invoke-TestGit -C $path commit -am 'advance remote tip'
+            Invoke-TestGit -C $repo push origin "${kind}:refs/heads/$kind"
+        }
+        if ($kind -eq 'merged-dirty') { Set-Content -LiteralPath (Join-Path $path 'source.txt') -Value 'pending source' }
+        if ($kind -eq 'merged-origin-changed') {
+            $otherRemote = Join-Path $testRoot 'other-remote.git'
+            Invoke-TestGit init --bare $otherRemote
+            Invoke-TestGit -C $repo remote set-url origin $otherRemote
+            Invoke-TestGit -C $repo push origin "${kind}:refs/heads/$kind"
+        }
+        $expectedRemoteHead = & git -C $repo rev-parse $kind
+        Lock release -LockName $key
+        $remoteHead = & git -C $repo ls-remote $remote "refs/heads/$kind"
+        Assert ($LASTEXITCODE -eq 0) 'Cannot inspect test remote.'
+        if ($kind -eq 'merged-clean') {
+            Assert (-not $remoteHead) 'Merged remote branch survived successful owner release.'
+        } else {
+            Assert ([bool]$remoteHead -and ($remoteHead -split '\s+')[0] -eq $expectedRemoteHead) 'Changed or retained remote branch was deleted or rewritten.'
+        }
+        Assert ((Test-Path -LiteralPath $path) -eq ($kind -eq 'merged-dirty')) 'Unexpected merged-checkout preservation.'
+        Invoke-TestGit -C $repo show-ref --verify "refs/heads/$kind"
+        if ($kind -eq 'merged-origin-changed') {
+            $otherHead = & git -C $repo ls-remote $otherRemote "refs/heads/$kind"
+            Assert ([bool]$otherHead) 'Deferred cleanup deleted a branch from a changed origin.'
+            Invoke-TestGit -C $repo remote set-url origin $remote
+        }
+    }
 
     foreach ($kind in @('tracked', 'untracked', 'ignored', 'locked', 'main', 'foreign', 'harness', 'reassigned')) {
         $path = switch ($kind) {

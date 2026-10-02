@@ -30,6 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
+. (Join-Path $PSScriptRoot 'MergedBranchCleanup.ps1')
 $repoArgs = @(); if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 function Fail([string]$msg) { [Console]::Error.WriteLine("MERGE ABORTED #${Pr} -- $msg"); exit 1 }
@@ -48,11 +49,12 @@ function Find-WorktreeForBranch([string]$RepoPath, [string]$Branch) {
 if ($LASTEXITCODE -ne 0) { Fail "Assert-PrGreen denied (exit $LASTEXITCODE). Not merging." }
 
 # Resolve the head branch before merging so post-merge cleanup can remove it.
-$headRef = gh pr view $Pr @repoArgs --json headRefName --jq '.headRefName' 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $headRef) { Fail "could not resolve head branch (exit $LASTEXITCODE)" }
-$headRef = $headRef.Trim()
-$mergedHead = gh pr view $Pr @repoArgs --json headRefOid --jq '.headRefOid' 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $mergedHead) { Fail 'could not resolve PR head for cleanup' }
+$head = gh pr view $Pr @repoArgs --json headRefName,headRefOid,isCrossRepository 2>$null | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $head.headRefName -or -not $head.headRefOid) { Fail 'could not resolve PR head for cleanup' }
+$headRef = $head.headRefName
+$mergedHead = $head.headRefOid
+$remoteUrl = @(git remote get-url --push --all origin 2>$null)
+$canDeleteRemote = $LASTEXITCODE -eq 0 -and $remoteUrl.Count -eq 1 -and $head.isCrossRepository -eq $false
 
 # Main worktree path — git removals/prunes must run from a checkout that is NOT the
 # one being removed; the first `worktree list` entry is always the main checkout.
@@ -128,6 +130,14 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
     # A dirty worktree is intentionally preserved. Its local and remote branches are
     # also preserved so uncommitted work retains an upstream recovery point.
     if (Test-Path -LiteralPath $cleanupWorktree) {
+        if ($canDeleteRemote) {
+            try {
+                Set-MergedBranchCleanup -Worktree $cleanupWorktree -Branch $headRef `
+                    -ExpectedHead $mergedHead -RemoteUrl $remoteUrl[0]
+            } catch {
+                Write-Host "WARNING: merged #${Pr}, but could not defer remote branch cleanup: $($_.Exception.Message)"
+            }
+        }
         Write-Host "Preserving branches for worktree #${Pr}: $cleanupWorktree"
         exit 0
     }
@@ -136,13 +146,8 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
 # Branch cleanup happens only after the checked-out worktree is gone. Cleanup is
 # best-effort: the PR is already merged, so failures must not be reported as a
 # merge abort or invite a dangerous retry of the merge operation.
-$remoteRef = "refs/heads/$headRef"
-git -C $mainRepo ls-remote --exit-code origin $remoteRef 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    git -C $mainRepo push "--force-with-lease=${remoteRef}:$mergedHead" origin ":$remoteRef" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "WARNING: merged #${Pr}, but could not delete remote branch '$headRef'"
-    }
+if ($canDeleteRemote) {
+    Remove-MergedRemoteBranch -Repo $mainRepo -Branch $headRef -ExpectedHead $mergedHead -RemoteUrl $remoteUrl[0]
 }
 
 # Keep local refs: another worktree may have checked out this same branch and SHA
