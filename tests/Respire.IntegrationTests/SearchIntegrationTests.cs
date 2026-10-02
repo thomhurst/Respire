@@ -18,9 +18,9 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = new RespireSearchClient(client);
         var index = NewIndex();
-        await CreateDocumentsAsync(client, search, index);
         try
         {
+            await CreateDocumentsAsync(client, search, index);
             var expression = RespireSearchQueryBuilder.And(
                 RespireSearchQueryBuilder.TextField("title", "redis"),
                 RespireSearchQueryBuilder.Tag("category", "cache|client"),
@@ -58,7 +58,7 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
             info.Attributes.Should().Contain(attribute => attribute.Identifier == "extra");
             (await search.ExplainAsync(index, expression)).Should().NotBeNullOrWhiteSpace();
         }
-        finally { await search.DropIndexAsync(index, deleteDocuments: true); }
+        finally { await DropIndexIfPresentAsync(search, index); }
     }
 
     [Test]
@@ -69,9 +69,9 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = new RespireSearchClient(client);
         var index = NewIndex();
-        await CreateDocumentsAsync(client, search, index);
         try
         {
+            await CreateDocumentsAsync(client, search, index);
             await search.Awaiting(s => s.SearchAsync(index + ":missing", new(All)).AsTask())
                 .Should().ThrowAsync<RespireServerException>();
             await search.Awaiting(s => s.SearchAsync(index, new(RespireSearchExpression.FromRaw("@year:[invalid]"))).AsTask())
@@ -103,7 +103,7 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
             info.DocumentCount.Should().Be(3);
             info.Attributes.Should().NotContain(attribute => attribute.Identifier == "canceled");
         }
-        finally { await search.DropIndexAsync(index, deleteDocuments: true); }
+        finally { await DropIndexIfPresentAsync(search, index); }
     }
 
     [Test, NotInParallel]
@@ -113,13 +113,14 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         var search = new RespireSearchClient(client);
         var index = NewIndex();
         var key = index + ":unrelated";
-        await client.SetAsync(key, "cached");
-        (await client.GetStringAsync(key)).Should().Be("cached");
-        var creationHits = client.ClientSideCache!.GetStatistics().Hits;
-        await CreateDocumentsAsync(client, search, index);
         var dropped = false;
         try
         {
+            await client.SetAsync(key, "cached");
+            (await client.GetStringAsync(key)).Should().Be("cached");
+            // Hits count served GET lookups; tracking pushes only invalidate entries.
+            var creationHits = client.ClientSideCache!.GetStatistics().Hits;
+            await CreateDocumentsAsync(client, search, index);
             (await client.GetStringAsync(key)).Should().Be("cached");
             client.ClientSideCache.GetStatistics().Hits.Should().Be(creationHits);
             Func<Task>[] reads =
@@ -155,14 +156,42 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         }
         finally
         {
-            if (!dropped) await search.DropIndexAsync(index, deleteDocuments: true);
-            await client.Keys.DeleteAsync(key);
+            try { if (!dropped) await DropIndexIfPresentAsync(search, index); }
+            finally { await client.Keys.DeleteAsync(key); }
+        }
+    }
+
+    [Test]
+    public async Task CleanupRemovesPartialSetupAndToleratesAnAbsentIndex()
+    {
+        await using var client = await ConnectAsync(3);
+        var search = new RespireSearchClient(client);
+        var index = NewIndex();
+        var wrongTypeKey = index + ":doc:2";
+        try
+        {
+            await client.SetAsync(wrongTypeKey, "not-a-hash");
+            Func<Task> setup = async () =>
+            {
+                try { await CreateDocumentsAsync(client, search, index); }
+                finally { await DropIndexIfPresentAsync(search, index); }
+            };
+            await setup.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
+            await search.Awaiting(s => s.GetIndexInfoAsync(index).AsTask()).Should().ThrowAsync<RespireServerException>();
+            (await client.Keys.ExistsAsync(index + ":doc:1")).Should().BeFalse();
+            await DropIndexIfPresentAsync(search, index);
+        }
+        finally
+        {
+            try { await DropIndexIfPresentAsync(search, index); }
+            finally { await client.Keys.DeleteAsync(wrongTypeKey); }
         }
     }
 
     private static async Task AssertCacheRetainedAsync(RespireClient client, string key, Func<Task> operation)
     {
         (await client.GetStringAsync(key)).Should().Be("cached");
+        // Search replies and background tracking pushes do not increment the GET hit count.
         var hits = client.ClientSideCache!.GetStatistics().Hits;
         await operation();
         (await client.GetStringAsync(key)).Should().Be("cached");
@@ -174,6 +203,16 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         { Protocol = (RespProtocol)protocol, ClientSideCache = cache ? new() : null });
 
     private static string NewIndex() => "search:" + Guid.NewGuid().ToString("N");
+
+    private static async Task DropIndexIfPresentAsync(RespireSearchClient search, string index)
+    {
+        try { await search.DropIndexAsync(index, deleteDocuments: true); }
+        catch (RespireServerException error) when (error.Message.Equals($"{index}: no such index", StringComparison.Ordinal)
+            || error.Message.Equals("Unknown Index name", StringComparison.OrdinalIgnoreCase))
+        {
+            // Setup can fail before CREATE succeeds. Do not replace that failure during cleanup.
+        }
+    }
 
     private static async Task CreateDocumentsAsync(RespireClient client, RespireSearchClient search, string index)
     {
