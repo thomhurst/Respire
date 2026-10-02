@@ -3,14 +3,18 @@ using Respire.Protocol;
 namespace Respire.Commands;
 
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
-internal readonly struct RawCommand(byte[] preEncoded) : IRespCommand
+internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {
+    public ReadCommandKind ReadKind => readKind;
+
     public void Write(ref RespWriter writer) => writer.WriteRaw(preEncoded);
 }
 
 /// <summary>HELLO 3 [AUTH username password] — RESP3 protocol negotiation.</summary>
 internal readonly struct HelloCommand(string? username, string? password) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         if (password is null)
@@ -28,6 +32,8 @@ internal readonly struct HelloCommand(string? username, string? password) : IRes
 /// <summary>AUTH [username] password — RESP2 authentication.</summary>
 internal readonly struct AuthCommand(string? username, string password) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         if (username is null)
@@ -47,6 +53,8 @@ internal readonly struct AuthCommand(string? username, string password) : IRespC
 /// <summary>CLIENT SETNAME name.</summary>
 internal readonly struct ClientSetNameCommand(string name) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteRaw("*3\r\n$6\r\nCLIENT\r\n$7\r\nSETNAME\r\n"u8);
@@ -67,6 +75,8 @@ internal readonly record struct ClientTrackingConfiguration
 /// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
 internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         if (configuration.Mode != RespireClientTrackingMode.Broadcast)
@@ -84,6 +94,8 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
 /// <summary>CLIENT CACHING YES.</summary>
 internal readonly struct ClientCachingCommand : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
         => writer.WriteRaw("*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8);
 }
@@ -91,6 +103,8 @@ internal readonly struct ClientCachingCommand : IRespCommand
 /// <summary>CLIENT ID.</summary>
 internal readonly struct ClientIdCommand : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
         => writer.WriteRaw("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8);
 }
@@ -98,6 +112,8 @@ internal readonly struct ClientIdCommand : IRespCommand
 /// <summary>CLIENT KILL ID id [SKIPME yes].</summary>
 internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         if (skipMe)
@@ -120,6 +136,8 @@ internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRe
 /// <summary>SELECT database.</summary>
 internal readonly struct SelectCommand(int database) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteRaw("*2\r\n$6\r\nSELECT\r\n"u8);

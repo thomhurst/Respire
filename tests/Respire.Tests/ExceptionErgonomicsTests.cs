@@ -89,4 +89,55 @@ public class ExceptionErgonomicsTests
         await Assert.That(() => RespireClient.Create(options))
             .ThrowsExactly<RespireConfigurationException>();
     }
+
+    [Test]
+    public async Task ClusterTopologyRefreshInterval_DefaultsToOneMinute()
+    {
+        await Assert.That(new RespireOptions().ClusterTopologyRefreshInterval)
+            .IsEqualTo(TimeSpan.FromSeconds(60));
+    }
+
+    [Test]
+    public async Task Create_WithNegativeClusterTopologyRefreshInterval_ThrowsConfigurationException()
+    {
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new RespireEndpoint("localhost")],
+            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(-2),
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task Create_WithInfiniteCommandTimeout_ThrowsConfigurationException()
+    {
+        // Topology refresh derives per-candidate deadlines from CommandTimeout ?? ConnectTimeout,
+        // so both must stay positive and finite.
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new RespireEndpoint("localhost")],
+            CommandTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task Create_WithInfiniteClusterTopologyRefreshInterval_DisablesPeriodicRefresh()
+    {
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new RespireEndpoint("localhost")],
+            ClusterTopologyRefreshInterval = Timeout.InfiniteTimeSpan,
+        };
+
+        await using var client = RespireClient.Create(options);
+        await Assert.That(client).IsNotNull();
+    }
 }

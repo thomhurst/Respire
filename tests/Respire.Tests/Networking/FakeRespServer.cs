@@ -21,6 +21,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly byte[][] _replies;
     private readonly Dictionary<int, int> _replyDelays = [];
+    private volatile (string Prefix, int Milliseconds)[] _commandDelays = [];
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,6 +126,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public void DelayReply(int replyIndex, int milliseconds) => _replyDelays[replyIndex] = milliseconds;
 
+    /// <summary>
+    /// Delays the reply to every command whose text starts with <paramref name="commandPrefix"/>.
+    /// Unlike <see cref="DelayReply"/>, it does not depend on how many setup commands precede
+    /// the target. The delay also holds back later commands on the same connection.
+    /// </summary>
+    public void DelayCommand(string commandPrefix, int milliseconds)
+        => _commandDelays = [.. _commandDelays, (commandPrefix, milliseconds)];
+
     /// <summary>Injects a server-initiated frame (e.g. a pub/sub message) onto the wire.</summary>
     public async Task SendRawAsync(byte[] frame)
     {
@@ -160,6 +169,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
             if (sent == 0) throw new IOException("Socket closed during raw frame send.");
             frame = frame[sent..];
         }
+    }
+
+    public void CloseConnection(int connectionId)
+    {
+        Socket socket;
+        lock (_receivedCommands) socket = _clientSockets[connectionId];
+        socket.LingerState = new LingerOption(true, 0);
+        socket.Close();
     }
 
     private async Task RunAsync(int maxConnections)
@@ -235,6 +252,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     if (_replyDelays.TryGetValue(replyIndex, out var delay))
                     {
                         await Task.Delay(delay, _cts.Token);
+                    }
+
+                    foreach (var (prefix, milliseconds) in _commandDelays)
+                    {
+                        if (commandText.StartsWith(prefix, StringComparison.Ordinal))
+                        {
+                            await Task.Delay(milliseconds, _cts.Token);
+                        }
                     }
 
                     if (SuppressReply?.Invoke(commandText) != true)

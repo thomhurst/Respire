@@ -8,7 +8,7 @@ var read = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: t
 var value = await client.Scripts.ExecuteStringAsync(read, keys: ["key"]);
 ```
 
-`readOnly: true` requires Redis 7 or later and selects `EVALSHA_RO` with `EVAL_RO` fallback. Redis rejects write commands inside the script. `IsReadOnly` exposes this execution contract; it does not currently select replica connections. Writable and read-only descriptors for the same source have the same SHA1. Keys receive the client's key prefix; arguments do not. Cluster scripts must access keys in one hash slot, normally through a shared hash tag.
+`readOnly: true` requires Redis 7 or later and selects `EVALSHA_RO` with `EVAL_RO` fallback. Redis rejects write commands inside the script. `IsReadOnly` exposes this execution contract. Read-only scripts follow the client's `ReadFrom` policy and can use a replica when that policy selects one. Writable and read-only descriptors for the same source have the same SHA1. Keys receive the client's key prefix; arguments do not. Cluster scripts must access keys in one hash slot, normally through a shared hash tag.
 
 The same selection applies to raw `ExecuteAsync`, generic `ExecuteAsync<T>`, `ExecuteIntegerAsync`, `ExecuteStringAsync`, and `ExecuteSpanAsync`. Dispose raw immediate results. Typed helpers dispose their replies automatically. Span inputs are consumed before the method returns its pending operation.
 
@@ -20,9 +20,9 @@ var present = await client.Scripts.ExistsAsync(digest, read.Sha1);
 await client.Scripts.FlushAsync(ScriptFlushMode.Sync);
 ```
 
-`ExistsAsync` returns one Boolean per digest in input order, including duplicates. Its cancellation overload accepts a span followed by a `CancellationToken`. Digests must be nonblank; other strings are forwarded unchanged, so Redis reports false for a value that is not a cached SHA1 rather than Respire rejecting its format. `FlushAsync` clears scripts, not keys. `Default` follows the server's `lazyfree-lazy-user-flush` setting; `Sync` and `Async` explicitly choose memory reclamation and require Redis 6.2 or later. Script execution still handles `NOSCRIPT` after a successful existence check because caches can change.
+`ExistsAsync` returns one Boolean per digest in input order, including duplicates. Its cancellation overload accepts a span followed by a `CancellationToken`. Digests must be nonblank; other strings are forwarded unchanged, so Redis reports false for a value that is not a cached SHA1 rather than Respire rejecting its format. `FlushAsync` clears scripts, not keys. `Default` follows the server's `lazyfree-lazy-user-flush` setting; `Sync` and `Async` explicitly choose memory reclamation and require Redis 6.2 or later. Script execution still handles `NOSCRIPT` after a successful existence check because caches can change. For read-only scripts, source fallback uses `EVAL_RO` on the selected connection; it does not reload the script on a primary.
 
-In Cluster, immediate `LoadAsync` and `FlushAsync` visit every discovered primary. `ExistsAsync` returns true for a digest only when every discovered primary reports it. These operations refresh topology before selecting primaries, send to those primaries concurrently, and observe every send before returning. They fail when a selected primary cannot be contacted and are not atomic across nodes. Existence results are a best-effort observation of that selected node set, not a guarantee across concurrent topology changes; cancellation or failure may leave a load or flush partially applied. Replica caches are not independently visited. Loading on primaries does not promise that a replica has the script; execution on a replica can still require the `NOSCRIPT` source fallback.
+In Cluster, immediate `LoadAsync` and `FlushAsync` visit every discovered primary. `ExistsAsync` returns true for a digest only when every discovered primary reports it. These operations refresh topology before selecting primaries, send to those primaries concurrently, and observe every send before returning. They fail when a selected primary cannot be contacted and are not atomic across nodes. Existence results are a best-effort observation of that selected node set, not a guarantee across concurrent topology changes; cancellation or failure may leave a load or flush partially applied. Replica caches are not independently visited. Loading on primaries does not promise that a replica has the script; execution on a replica can still require the `NOSCRIPT` source fallback on that same selected server.
 
 ## Batches and transactions
 
@@ -51,7 +51,7 @@ External implementations of `IScriptCommands` or `IBatchScriptCommands` remain s
 
 Redis 7+ [FCALL](https://redis.io/docs/latest/commands/fcall/) invokes named functions.
 Use `RespireFunction.Create(name, readOnly: true)` for `FCALL_RO`; Redis rejects functions
-that permit writes. `IsReadOnly` records this contract without selecting replica routing.
+that permit writes. `IsReadOnly` records this contract. Read-only functions follow the client's `ReadFrom` policy and can use a replica when that policy selects one.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");

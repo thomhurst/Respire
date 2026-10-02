@@ -197,6 +197,9 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
         $sources = ($command.Providers | ForEach-Object { "RespireCommandSource.$_" }) -join ' | '
         $readOnlyArgument = if ($command.IsReadOnly) { ', isReadOnly: true' } else { '' }
         [void] $builder.AppendLine("        /// <summary><c>$($command.Name)</c>.</summary>")
+        if ($command.Name.Contains(' ')) {
+            [void] $builder.AppendLine("        [RespireCommandCatalogName(`"$($command.Name)`")]")
+        }
         [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, RespireCacheMutation.$($command.CacheMutation)$readOnlyArgument);")
         [void] $builder.AppendLine()
         $allReferences.Add("$className.$identifier")

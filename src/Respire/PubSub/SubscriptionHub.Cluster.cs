@@ -434,6 +434,9 @@ internal sealed partial class SubscriptionHub
         }
     }
 
+    private void RequestShardedRecovery(long topologyVersion, RespireEndpoint[] endpoints, bool authoritative)
+        => RequestShardedRecovery();
+
     // An ASK route intentionally differs from the router's slot owner until migration
     // completes, so its migration source also counts as current. Once the router names the
     // target, forget the source so a later move back to it starts recovery.

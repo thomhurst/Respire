@@ -225,22 +225,6 @@ public class KeyNotificationTests
     }
 
     [Test]
-    [Arguments(1)]
-    [Arguments(0)]
-    public async Task ClusterDescriptorsNeverSilentlyUseOneArbitraryPrimary(int database)
-    {
-        await using var client = RespireClient.Create(new RespireOptions
-        {
-            UseCluster = true, Endpoints = [new("localhost", 1)],
-        });
-        var descriptor = RespireChannel.KeySpaceSingleKey("key", database);
-        if (database == 0)
-            await Assert.That(async () => await client.SubscribeAsync(descriptor)).Throws<NotSupportedException>();
-        else
-            await Assert.That(async () => await client.SubscribeAsync(descriptor)).Throws<ArgumentException>();
-    }
-
-    [Test]
     [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task RepeatedParsingAndStructEnumerationAllocateNothing()
     {

@@ -1607,6 +1607,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
 
+        public IRespireClient WithReadFrom(RespireReadFrom readFrom) => inner.WithReadFrom(readFrom);
+
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
 
         // The test owns the wrapped client's lifetime.

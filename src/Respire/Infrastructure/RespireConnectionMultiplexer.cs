@@ -38,7 +38,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private bool _retirementDrained;
     // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
     // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
-    // Lock order: _lifecycleGate, then _movingGate (RespireConnectionMultiplexer.Moving.cs).
+    // Lock order: _lifecycleGate, then MovingHandoffCoordinator.Gate.
     private readonly object _lifecycleGate = new();
     private readonly CancellationTokenSource _stopConnecting = new();
     private readonly CancellationTokenSource _abortCancellation = new();
@@ -61,10 +61,21 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     internal int PendingCorrectionFenceCount => _retiredServerClientIds.Count;
     // Published only after accepted work drained and every failed-socket identity was collected.
     internal bool RetirementDrained => Volatile.Read(ref _retirementDrained);
+    /// <summary>True when any connection has an open streamed reply that has made no progress for <paramref name="idle"/>.</summary>
+    internal bool HasStalledBulkStream(TimeSpan idle)
+    {
+        foreach (var connection in _connections)
+            if (connection?.HasStalledBulkStream(idle) == true) return true;
+        return false;
+    }
+
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
         Volatile.Read(ref _correctionOrderingFailure) is not null;
+
+    /// <summary>The definitive CLIENT ID / CLIENT KILL denial recorded for this node, if any.</summary>
+    internal string? CorrectionOrderingFailure => Volatile.Read(ref _correctionOrderingFailure);
 
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
@@ -120,6 +131,16 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
             return false;
         }
+    }
+
+    internal bool HasConnection(Func<RespireConnection, bool> predicate)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected) return false;
+        foreach (var connection in _connections)
+        {
+            if (connection is { IsAcceptingCommands: true } && predicate(connection)) return true;
+        }
+        return false;
     }
 
     private RespireConnectionMultiplexer(string host, int port, int connectionCount, RespireConnectionOptions options, ILogger? logger)
@@ -822,7 +843,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 if (!ReferenceEquals(endpoint, Volatile.Read(ref _activeEndpoint)))
                     throw new RespireConnectionException("Connection endpoint changed during reconnect.");
                 ForgetMovingSequences(connectedOnly: true);
-                lock (_movingGate)
+                lock (_moving.Gate)
                 {
                     var generation = Interlocked.Increment(ref _movingPublicationGenerations[slot]);
                     replacement.MultiplexerSlot = slot;
@@ -918,7 +939,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     // Parsed before publication: it is current as of this publication, but keeps
                     // its receipt time so the advertised grace period is not restarted.
                     PublicationGeneration = connection.MovingPublicationGeneration,
-                    HandoffEpoch = Volatile.Read(ref _movingHandoffEpoch),
+                    HandoffEpoch = _moving.HandoffEpoch,
                 });
         if (_options.EnableClientTracking)
         {
@@ -1145,7 +1166,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
         await reconnects.ConfigureAwait(false);
         Task? moving;
-        lock (_movingGate) moving = _movingCompletion?.Task;
+        lock (_moving.Gate) moving = _moving.WorkerCompletion;
         if (moving is not null) await moving.ConfigureAwait(false);
         // The worker has stopped, so no further drain can start after this snapshot.
         await WaitForMovingDrainsAsync().ConfigureAwait(false);

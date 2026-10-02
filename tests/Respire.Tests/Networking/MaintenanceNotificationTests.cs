@@ -368,9 +368,12 @@ public class MaintenanceNotificationTests
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
         var announcingConnection = multiplexer.GetConnection();
-        var movingSequences = (System.Collections.IDictionary)typeof(RespireConnectionMultiplexer)
-            .GetField("_movingSequences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+        var coordinator = typeof(RespireConnectionMultiplexer)
+            .GetField("_moving", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(multiplexer)!;
+        var movingSequences = (System.Collections.IDictionary)coordinator.GetType()
+            .GetField("_sequences", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator)!;
         var notification = new MaintenanceNotification("MOVING", 1, 10,
             new RespireEndpoint("127.0.0.1", target.Port));
 

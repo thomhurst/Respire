@@ -1130,7 +1130,7 @@ public class ClusterRetirementTests
         }
         else
         {
-            var execution = await client.StartLockExecutionAsync("key", "token", null, true, timeout.Token);
+            var execution = await client.StartLockExecutionAsync("key", "token", null, true, false, timeout.Token);
             currentIdentity = () => execution.ConnectionIdentity;
             operation = execution.Response.AsTask();
         }

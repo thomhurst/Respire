@@ -268,13 +268,15 @@ internal static class RespireTelemetry
     }
 
     internal static void RecordUnroutedFailure(string operation, int database, long started,
-        Exception error, string? storedProcedureName = null, int? batchSize = null)
+        Exception error, string? storedProcedureName = null, int? batchSize = null, RespireEndpoint? endpoint = null)
     {
         if (started == 0) return;
-        // No data connection was acquired. Do not identify a Sentinel seed or historical
-        // generation as the executing server; include the failed acquisition in duration.
-        StartOperation(operation, host: null, DefaultRedisPort, database, batchSize,
-            storedProcedureName, started).Complete(operation, host: null, DefaultRedisPort,
+        // No data connection was acquired. Use an endpoint only when the caller can identify
+        // the intended server; never identify a Sentinel seed or historical generation.
+        var host = endpoint?.Host;
+        var port = endpoint?.Port ?? DefaultRedisPort;
+        StartOperation(operation, host, port, database, batchSize,
+            storedProcedureName, started).Complete(operation, host, port,
                 database, storedProcedureName, error, batchSize: batchSize);
     }
 

@@ -329,4 +329,11 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
+
+    /// <summary>Creates a view with a different read routing policy; shares this client's connections.</summary>
+    /// <remarks>
+    /// Custom implementations and decorators must implement this member; decorators should forward it
+    /// to the wrapped client. Only catalogued read-only commands are routed by the policy.
+    /// </remarks>
+    IRespireClient WithReadFrom(RespireReadFrom readFrom);
 }

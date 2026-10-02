@@ -757,14 +757,14 @@ public class SentinelRoutingTests
         {
             await Assert.That(async () =>
             {
-                var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, default);
+                var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, false, default);
                 await execution.Response;
             }).ThrowsExactly<RespireServerException>();
             await Assert.That(promoted.ReceivedCommands.Any(IsLockMutation)).IsFalse();
         }
         else
         {
-            var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, default);
+            var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, false, default);
             await Assert.That(await execution.Response).IsTrue();
             await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(42);
             await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);

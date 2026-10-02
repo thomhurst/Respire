@@ -36,7 +36,8 @@ internal static class DeferredRawCommands
         if (layout.Extra >= 0) PrefixKey(layout.Extra);
 
         var firstKey = layout.Extra >= 0 ? layout.Extra : layout.Count > 0 ? layout.Start : -1;
-        var command = new DynamicCommand(tokens, firstKey < 0 ? -1 : words.Length + firstKey, words.Length);
+        var command = CreateCommand(descriptor, tokens,
+            firstKey < 0 ? -1 : words.Length + firstKey, words.Length);
         return sink.Add<DynamicCommand, RespireResult>(operation, command, static (client, value) =>
         {
             // Unread pendings must not retain pooled response storage.
@@ -58,6 +59,16 @@ internal static class DeferredRawCommands
                 throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
             slot = current;
         }
+    }
+
+    internal static DynamicCommand CreateCommand(
+        RespireCommand descriptor, RespireValue[] tokens, int routingKeyIndex, int argumentOffset)
+    {
+        var cursorArgumentIndex = descriptor.CursorArgumentIndex < 0
+            ? -1
+            : argumentOffset + descriptor.CursorArgumentIndex;
+        return new DynamicCommand(tokens, routingKeyIndex, argumentOffset,
+            readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex);
     }
 
     private static string Normalize(string name)

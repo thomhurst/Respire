@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Search</PackageId>
+    <Title>Respire.Search</Title>
+    <Description>Typed Redis Search and query APIs for Respire.</Description>
+    <PackageTags>$(PackageTags);redisearch;full-text;vector-search</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

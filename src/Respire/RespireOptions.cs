@@ -115,6 +115,20 @@ public sealed record RespireOptions
     /// </summary>
     public IList<RespireEndpoint> Endpoints { get; init; } = [];
 
+    /// <summary>Explicit read replicas for standalone primary/replica deployments. Sentinel ignores this list.</summary>
+    public IList<RespireEndpoint> ReplicaEndpoints { get; init; } = [];
+
+    /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
+    public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
+
+    /// <summary>
+    /// Bounds how stale replica read topology can be. A connection's <c>ROLE</c> check is reused
+    /// for this long, Sentinel replica discovery refreshes at most this often, and a replica that
+    /// failed a connection or role check is skipped for this long. Defaults to one second;
+    /// <see cref="TimeSpan.Zero"/> revalidates on every read.
+    /// </summary>
+    public TimeSpan ReplicaRefreshInterval { get; init; } = TimeSpan.FromSeconds(1);
+
     /// <summary>
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
     /// learned hash slots are routed directly on later commands.
@@ -211,6 +225,28 @@ public sealed record RespireOptions
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
+
+    /// <summary>Interval for background Redis Cluster topology refresh. Defaults to 60 seconds. Null,
+    /// <see cref="TimeSpan.Zero"/>, or <see cref="Timeout.InfiniteTimeSpan"/> disables the periodic timer;
+    /// other negative values are rejected.</summary>
+    /// <remarks>
+    /// <para>The worker starts after the client first connects, so <c>Create</c> stays lazy. Each periodic
+    /// refresh sends one <c>CLUSTER SLOTS</c> to a single node, and the interval is shortened by up to 10%
+    /// of random jitter so many clients do not refresh in step.</para>
+    /// <para>Disabling the timer disables only periodic refresh. Primary disconnects (at most one refresh
+    /// per second), <c>MOVED</c> redirects (debounced for 5 seconds) and failed-refresh retries (backoff
+    /// from 5 to 60 seconds) still refresh the topology. While a failed-refresh retry is pending, periodic
+    /// and redirect-driven refreshes wait for it. These timings are fixed. A single refresh pass
+    /// is bounded to 60 seconds regardless of this interval, and a failed pass keeps the last published
+    /// slot map.</para>
+    /// </remarks>
+    public TimeSpan? ClusterTopologyRefreshInterval { get; init; } = TimeSpan.FromSeconds(60);
+
+    // Test seam: drives the Cluster topology refresh schedule, debounce and discovery deadlines.
+    internal TimeProvider ClusterTopologyRefreshClock { get; init; } = TimeProvider.System;
+
+    /// <summary>Clock used for cluster discovery retry delays.</summary>
+    internal TimeProvider ClusterDiscoveryClock { get; init; } = TimeProvider.System;
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
@@ -313,10 +349,24 @@ public sealed record RespireOptions
         {
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
+        if (ReplicaEndpoints is null)
+            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints cannot be null.");
 
         if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
 
+        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, or ReplicaPreferred");
+        Require(
+            ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
+            nameof(ReplicaRefreshInterval),
+            "must be between zero and one hour");
+        if (ReadFrom != RespireReadFrom.Primary && UseCluster)
+            throw new RespireConfigurationException("RespireOptions.ReadFrom is not supported with Redis Cluster yet.");
+        if (UseCluster && ReplicaEndpoints.Count != 0)
+            throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Redis Cluster discovers its own topology.");
+        if (ReadFrom != RespireReadFrom.Primary && string.IsNullOrWhiteSpace(SentinelPrimaryName)
+            && ReplicaEndpoints.Count == 0)
+            throw new RespireConfigurationException("RespireOptions.ReadFrom requires Sentinel discovery or at least one ReplicaEndpoints entry.");
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
@@ -340,6 +390,9 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
+        Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero
+                || ClusterTopologyRefreshInterval == Timeout.InfiniteTimeSpan,
+            nameof(ClusterTopologyRefreshInterval), "must be non-negative, Timeout.InfiniteTimeSpan, or null");
         Require(
             CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(CommandTimeout),
@@ -406,9 +459,16 @@ public sealed record RespireOptions
             }
         }
 
+        foreach (var endpoint in ReplicaEndpoints)
+        {
+            if (endpoint.Port is < 1 or > 65535)
+                throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
+        }
+
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
+            ReplicaEndpoints = new List<RespireEndpoint>(ReplicaEndpoints),
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };

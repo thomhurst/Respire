@@ -542,6 +542,13 @@ public class CredentialProviderTests
         await connection.Closed.WaitAsync(Limit);
         await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
         await Assert.That(connection.CloseError!.ToString().Contains("second", StringComparison.Ordinal)).IsFalse();
+
+        var rejected = await Assert.That(async () =>
+                await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(rejected).IsTypeOf<RespireAuthenticationException>();
+        await Assert.That(LockCommands.IsUnsubmitted(rejected)).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
     }
 
     [Test]
@@ -695,7 +702,9 @@ public class CredentialProviderTests
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await server.SendRawAsync(FakeRespServer.OkReply);
         await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
-        await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireException>();
+        var sendError = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireException>();
+        await Assert.That(sendError).IsTypeOf<RespireAuthenticationException>();
+        await Assert.That(LockCommands.IsUnsubmitted(sendError!)).IsTrue();
         await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
         await Assert.That(connection.CloseError!.Message).Contains("expired during renewal");
         await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();

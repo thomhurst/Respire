@@ -3,6 +3,8 @@ namespace Respire;
 /// <summary>Base exception for all Respire failures.</summary>
 public class RespireException : Exception
 {
+    internal bool IsCommandNotSubmitted { get; set; }
+
     /// <summary>Creates a Respire exception.</summary>
     public RespireException(string message) : base(message)
     {
@@ -237,3 +239,14 @@ public sealed class RespireTimeoutException : RespireException
                : "The command may still execute on the server; only the wait was abandoned. ") +
            diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
 }
+
+/// <summary>
+/// Cancellation observed while a command waited for in-flight capacity, before it was enqueued.
+/// It is still an <see cref="OperationCanceledException"/> carrying the caller's token for ordinary
+/// callers; lock release uses it as proof that no delete was sent. Every command cancelled in that
+/// wait now surfaces this subtype, so code that matches the exact runtime type
+/// (<c>GetType() == typeof(OperationCanceledException)</c>) instead of using <c>catch</c> or
+/// <c>is</c> sees a different type; the library itself never does.
+/// </summary>
+internal sealed class RespireCommandNotSubmittedException(OperationCanceledException error)
+    : OperationCanceledException(error.Message, error, error.CancellationToken);

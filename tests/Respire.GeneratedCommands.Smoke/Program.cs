@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Respire;
 using Respire.Extensions.Json;
+using Redis.Search;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
@@ -17,6 +18,112 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             throw new InvalidOperationException("Generated aggregate reply failed.");
         using var raw = await commands.RawGet(key);
         if (raw.AsString() != "generated") throw new InvalidOperationException("Generated raw reply failed.");
+
+        var index = "respire:search-smoke:" + Guid.NewGuid().ToString("N");
+        var documentPrefix = index + ":doc:";
+        var vector = new byte[sizeof(float) * 2];
+        BitConverter.TryWriteBytes(vector.AsSpan(0, sizeof(float)), 1f);
+        BitConverter.TryWriteBytes(vector.AsSpan(sizeof(float), sizeof(float)), 0f);
+        var search = new RespireSearchClient(client);
+        await search.CreateIndexAsync(index, new RespireSearchIndexDefinition
+        {
+            Prefixes = [documentPrefix],
+            Fields =
+            [
+                new("title", RespireSearchFieldType.Text),
+                new("category", RespireSearchFieldType.Tag),
+                new("embedding", RespireSearchFieldType.Vector)
+                {
+                    Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2),
+                },
+            ],
+        });
+        try
+        {
+            await client.Hashes.SetAsync(documentPrefix + "1",
+                ("title", "redis search"), ("category", "cache"), ("embedding", vector));
+            await client.Hashes.SetAsync(documentPrefix + "2",
+                ("title", "redis client"), ("category", "client"), ("embedding", vector));
+
+            var found = await search.SearchAsync(index, new(RespireSearchQueryBuilder.Text("redis"), new() { Limit = (0, 10) }));
+            if (found.Total != 2 || found.Documents.Count != 2)
+                throw new InvalidOperationException("Respire.Search FT.SEARCH failed.");
+
+            var groups = await search.AggregateAsync(index, RespireSearchExpression.FromRaw("*"), new()
+            {
+                Stages =
+                [
+                    RespireSearchAggregateStage.GroupBy(["@category"], new RespireSearchReducer("COUNT", [], "count")),
+                    RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@category")),
+                ],
+            });
+            if (groups.Total != 2 || groups.Rows.Count != 2 || groups.Rows[0]["category"] != "cache")
+                throw new InvalidOperationException("Respire.Search FT.AGGREGATE failed.");
+
+            var page = await search.AggregateWithCursorAsync(index, RespireSearchExpression.FromRaw("*"),
+                new() { Stages = [RespireSearchAggregateStage.Load("@title")] },
+                new() { Count = 1 });
+            var cursorRows = page.Result.Rows.Count;
+            while (!page.IsComplete)
+            {
+                page = await search.ReadCursorAsync(page);
+                cursorRows += page.Result.Rows.Count;
+            }
+
+            if (cursorRows != 2) throw new InvalidOperationException($"Respire.Search cursor paging returned {cursorRows} rows.");
+
+            var pagedRows = 0;
+            await foreach (var rows in search.AggregatePagesAsync(index, RespireSearchExpression.FromRaw("*"),
+                new() { Stages = [RespireSearchAggregateStage.Load("@title")] },
+                new() { Count = 1 }))
+            {
+                pagedRows += rows.Rows.Count;
+            }
+
+            if (pagedRows != 2) throw new InvalidOperationException($"Respire.Search AggregatePagesAsync returned {pagedRows} rows.");
+
+            var info = await search.GetIndexInfoAsync(index);
+            if (info.Name != index || info.DocumentCount != 2 || info.Attributes.Count != 3 || info.Attributes[2].Type != "VECTOR")
+                throw new InvalidOperationException("Respire.Search FT.INFO parsing failed.");
+
+            var nearest = await search.VectorSearchAsync(index, new("embedding", vector, 1));
+            if (nearest.Documents.Count != 1)
+                throw new InvalidOperationException("Respire.Search vector query failed.");
+
+            var filtered = await search.VectorSearchAsync(index,
+                new("embedding", vector, 2) { Filter = RespireSearchQueryBuilder.Tag("category", "client") });
+            if (filtered.Documents.Count != 1 || filtered.Documents[0].Id != documentPrefix + "2")
+                throw new InvalidOperationException("Respire.Search filtered vector query failed.");
+
+            var hybrid = await search.HybridSearchAsync(index,
+                new(RespireSearchQueryBuilder.Text("redis"), "embedding", vector, 1, 2) { LoadFields = ["title"] });
+            if (hybrid.Documents.Count == 0 || !hybrid.Documents[0].Id.StartsWith(documentPrefix, StringComparison.Ordinal) || hybrid.Documents[0].Fields["title"] is null)
+                throw new InvalidOperationException($"Respire.Search hybrid query returned no documents (total {hybrid.Total}).");
+
+            try
+            {
+                await search.SearchAsync(index + ":missing", new(RespireSearchExpression.FromRaw("*")));
+                throw new InvalidOperationException("Respire.Search server error was not surfaced.");
+            }
+            catch (RespireServerException)
+            {
+            }
+
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            try
+            {
+                await search.SearchAsync(index, new(RespireSearchExpression.FromRaw("*")), canceled.Token);
+                throw new InvalidOperationException("Respire.Search cancellation was not propagated.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        finally
+        {
+            await search.DropIndexAsync(index, deleteDocuments: true);
+        }
     }
     finally
     {

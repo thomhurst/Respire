@@ -127,6 +127,10 @@ internal interface IRespCommand
 
     void OnAccepted() { }
 
+    ReadCommandKind ReadKind { get; }
+
+    int CursorArgumentIndex => -1;
+
     /// <summary>Returns cache mutation metadata for the command.</summary>
     RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.GetCacheMutation(operation);
 
@@ -152,6 +156,16 @@ internal interface IRespCommand
     bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the argument at <paramref name="index"/> (counting after the command name) when the
+    /// command keeps its arguments as a list. Read routing uses it to find a scan cursor.
+    /// </summary>
+    bool TryGetArgument(int index, out RespireValue value)
+    {
+        value = default;
         return false;
     }
 }
