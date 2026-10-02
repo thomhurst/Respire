@@ -6,11 +6,14 @@ internal sealed partial class RespireConnection
 {
     /// <summary>
     /// Reads a stream source in filled chunks of at most <see cref="StreamChunkSize"/> bytes into
-    /// one pooled buffer. Each returned chunk is valid until the next read or <see cref="Dispose"/>.
+    /// two pooled buffers so the alternate chunk can fill while the caller writes the current one.
     /// </summary>
     private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
     {
         private byte[]? _chunk;
+        private byte[]? _alternateChunk;
+        private byte[]? _pendingBuffer;
+        private bool _useAlternate;
         private long _remaining = length;
         private ReadOnlyMemory<byte> _consumedPrefix;
         private Task<int>? _pendingRead;
@@ -24,7 +27,10 @@ internal sealed partial class RespireConnection
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
         {
-            var chunk = _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
+            var chunk = _useAlternate
+                ? _alternateChunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize)
+                : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
+            _useAlternate = !_useAlternate;
             // Fill the chunk before returning it so sources that return small reads (network
             // streams, for example) do not cost one socket write and flush wait per read.
             var target = (int)Math.Min(StreamChunkSize, _remaining);
@@ -48,6 +54,7 @@ internal sealed partial class RespireConnection
                         // Retirement retry must wait for a non-cooperative read before replaying
                         // the source. It may consume more bytes and still write into this buffer.
                         _pendingRead = pendingRead;
+                        _pendingBuffer = chunk;
                         _filledBeforePendingRead = filled;
                     }
                     else if (pendingRead is { Status: TaskStatus.RanToCompletion })
@@ -72,7 +79,7 @@ internal sealed partial class RespireConnection
         internal async ValueTask<Exception?> CompletePendingReadForRetryAsync(CancellationToken cancellationToken)
         {
             if (_pendingRead is not { } pendingRead) return null;
-            var chunk = _chunk!;
+            var chunk = _pendingBuffer!;
             int read;
             Exception? readError = null;
             try
@@ -95,20 +102,24 @@ internal sealed partial class RespireConnection
                 read = 0;
             }
             _pendingRead = null;
+            _pendingBuffer = null;
             if (read > 0) _consumedPrefix = chunk.AsMemory(0, _filledBeforePendingRead + read).ToArray();
             return readError;
         }
 
         public void Dispose()
         {
-            if (_chunk is not { } chunk) return;
-            _chunk = null;
-            if (_pendingRead is { } pendingRead)
+            var pendingBuffer = _pendingBuffer;
+            if (_pendingRead is { } pendingRead && pendingBuffer is not null)
             {
                 _pendingRead = null;
-                _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
+                _pendingBuffer = null;
+                _ = ReturnChunkAfterReadAsync(pendingRead, pendingBuffer);
             }
-            else ArrayPool<byte>.Shared.Return(chunk);
+            if (_chunk is { } chunk && !ReferenceEquals(chunk, pendingBuffer)) ArrayPool<byte>.Shared.Return(chunk);
+            if (_alternateChunk is { } alternate && !ReferenceEquals(alternate, pendingBuffer)) ArrayPool<byte>.Shared.Return(alternate);
+            _chunk = null;
+            _alternateChunk = null;
         }
 
         private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)

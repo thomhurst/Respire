@@ -138,6 +138,37 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task NextSourceChunkStartsReadingWhileCurrentChunkWriteIsBlocked()
+    {
+        const int length = RespireConnection.StreamChunkSize * 2;
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        });
+        var source = new ReadSignalStream(length);
+        transport!.GateSecondWrite();
+        var command = new StreamedSetCommand((RespireValue)"overlap", source, length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+
+        await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(send.IsCompleted).IsFalse();
+
+        transport.OpenSecondWrite();
+        using var response = await send.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(response.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ValueLength).IsEqualTo(length);
+    }
+
+    [Test]
     public async Task SurplusSourceBytesAreLeftUnread()
     {
         await using var server = new CountingSetServer();
@@ -1084,9 +1115,13 @@ public sealed class StreamedSetTests
     {
         private readonly NetworkStream _inner = client.GetStream();
         private readonly TaskCompletionSource _writeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondWriteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _secondWriteGate = CreateOpenGate();
         private TaskCompletionSource _gate = CreateOpenGate();
+        private int _writeCount;
 
         internal Task WriteStarted => _writeStarted.Task;
+        internal Task SecondWriteStarted => _secondWriteStarted.Task;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => true;
@@ -1097,8 +1132,17 @@ public sealed class StreamedSetTests
 
         internal void OpenGate() => _gate.TrySetResult();
 
+        internal void GateSecondWrite() => _secondWriteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal void OpenSecondWrite() => _secondWriteGate.TrySetResult();
+
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (Interlocked.Increment(ref _writeCount) == 2)
+            {
+                _secondWriteStarted.TrySetResult();
+                await _secondWriteGate.Task.WaitAsync(cancellationToken);
+            }
             _writeStarted.TrySetResult();
             await _gate.Task.WaitAsync(cancellationToken);
             await _inner.WriteAsync(buffer, cancellationToken);
@@ -1137,6 +1181,33 @@ public sealed class StreamedSetTests
             gate.TrySetResult();
             return gate;
         }
+    }
+
+    private sealed class ReadSignalStream(int length) : Stream
+    {
+        private int _position;
+        private int _reads;
+        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _reads) == 2) SecondReadStarted.TrySetResult();
+            var count = Math.Min(buffer.Length, length - _position);
+            for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_position + index) % 251);
+            _position += count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class SynchronouslyBlockingStream(TimeSpan delay) : Stream

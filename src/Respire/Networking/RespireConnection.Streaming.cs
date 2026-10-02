@@ -425,9 +425,16 @@ internal sealed partial class RespireConnection
         {
             var write = AppendStreamingBytes(chunk.Span);
             ScheduleFlush(startedBatch: false);
+            if (reader.IsComplete)
+            {
+                await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            // Read into the alternate pooled chunk while the socket drains this chunk.
+            var nextChunk = reader.ReadChunkAsync(cancellationToken).AsTask();
             await write.WaitAsync(cancellationToken).ConfigureAwait(false);
-            if (reader.IsComplete) return;
-            chunk = await reader.ReadChunkAsync(cancellationToken).ConfigureAwait(false);
+            chunk = await nextChunk.ConfigureAwait(false);
         }
     }
 
