@@ -61,23 +61,27 @@ internal sealed partial class RespireConnection
             return chunk.AsMemory(0, filled);
         }
 
-        internal async ValueTask CompletePendingReadForRetryAsync(CancellationToken cancellationToken)
+        internal async ValueTask<Exception?> CompletePendingReadForRetryAsync(CancellationToken cancellationToken)
         {
-            if (_pendingRead is not { } pendingRead) return;
+            if (_pendingRead is not { } pendingRead) return null;
             var chunk = _chunk!;
             int read;
+            Exception? readError = null;
             try
             {
                 read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch
+            catch (Exception error)
             {
-                // Preserve bytes from earlier completed reads; the original failure still wins.
+                // A faulted Stream read reports no byte count. Its source position is unknown, so
+                // the caller must fail instead of retrying a potentially shifted payload.
+                readError = error;
                 read = 0;
             }
             _pendingRead = null;
             if (read > 0) _consumedPrefix = chunk.AsMemory(0, _filledBeforePendingRead + read).ToArray();
+            return readError;
         }
 
         public void Dispose()

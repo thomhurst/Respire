@@ -177,10 +177,21 @@ internal sealed partial class RespireConnection
                     : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
                 try
                 {
-                    await payloadReader.CompletePendingReadForRetryAsync(retryReadCancellation.Token).ConfigureAwait(false);
-                    translated = TranslateStreamedSetCancellation(
-                        error as OperationCanceledException ?? new OperationCanceledException(error.Message, error),
-                        cancellationToken, timeoutCancellation, phase);
+                    var retryReadError = await payloadReader.CompletePendingReadForRetryAsync(retryReadCancellation.Token)
+                        .ConfigureAwait(false);
+                    if (retryReadError is not null)
+                    {
+                        // The source may have consumed bytes before faulting. Surface its failure
+                        // so routing cannot replay an incomplete prefix as a full payload.
+                        failure = retryReadError;
+                        translated = retryReadError;
+                    }
+                    else
+                    {
+                        translated = TranslateStreamedSetCancellation(
+                            error as OperationCanceledException ?? new OperationCanceledException(error.Message, error),
+                            cancellationToken, timeoutCancellation, phase);
+                    }
                 }
                 catch (OperationCanceledException retryCancellation) when (retryReadCancellation.IsCancellationRequested)
                 {
@@ -189,7 +200,8 @@ internal sealed partial class RespireConnection
                 }
             }
             if (phase == StreamedSetPhase.ReadingFirstChunk
-                && (error is RespireConnectionRetiredException || translated is RespireConnectionRetiredException))
+                && (translated is RespireConnectionRetiredException
+                    || error is RespireConnectionRetiredException && translated is null))
             {
                 var consumed = !firstChunk.IsEmpty ? firstChunk : payloadReader?.ConsumedPrefix ?? default;
                 if (!consumed.IsEmpty) command.RestoreSourcePrefixForRetry(consumed.Span);
