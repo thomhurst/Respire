@@ -1153,21 +1153,10 @@ function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body) {
 }
 
 $claudeFindings = "**Review: streamed SET**`n`n**Concerns**`n`n1. **Lost wakeups.** The waiter is never cancelled.`n`n<!-- claude-code-review -->"
-$legacyClaudeFindings = "## Code Review`n`nThe design is sound.`n`n1. Head-of-line blocking: document it."
-$integrationReport = @'
-## 🧪 Integration Test Results (net8.0, RESP2)
-
-### ℹ️ Execution Details
-- **Framework**: net8.0
-- **Test Runner**: TUnit
-- **Runner**: Linux - X64
-- **Status**: success
-- **Timestamp**: 2026-10-01T10:00:00Z
-
----
-*Automated integration testing with Redis containers using TUnit*
-'@
+$unmarkedReviewFindings = "**Review of #654**`n`nThe design is sound.`n`n1. Head-of-line blocking: document it."
+$integrationReport = "## 🧪 Integration Test Results (net8.0, RESP2)`n`n- **Status**: success"
 $clearReview = "## Review`n`nNothing needs action.`n`n<!-- REVIEW_VERDICT: CLEAR -->`n<!-- claude-code-review -->"
+$blockingReview = "## Review`n`nA finding needs disposition.`n`n<!-- REVIEW_VERDICT: BLOCKING -->`n<!-- claude-code-review -->"
 
 $claudeCommentCases = @(
     @{
@@ -1178,285 +1167,33 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
-        Name = 'accepts marked Claude review after marker rollout'
+        Name = 'integration report cannot shadow marked Claude review'
         Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T18:00:00Z' $claudeFindings)
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks unanswered legacy Claude review without marker'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $legacyClaudeFindings),
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $claudeFindings),
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $integrationReport)
         )
         Blocks = $true
     },
     @{
-        Name = 'blocks legacy Claude review with Markdown heading'
+        Name = 'ignores unmarked legacy Claude review regardless of title'
         Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Review: PR 678`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with plain Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: PR 700`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with closing ATX markers'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review ##`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy review with period after heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review.`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy review with period before findings suffix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. findings`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy code review with exclamation after heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review!`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late bold legacy review with closing ATX markers'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### **Review** ###`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with bold Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "**Review**`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with emoji heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### 🔍 Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with emoji and bold heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### 🔍 **Review**`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with findings suffix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review findings`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with Code Review findings suffix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review — findings`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late descriptive colon review title with finding'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: cache routing`n`nThe new replay path can send a duplicate mutation after an ambiguous timeout.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late bold Code Review title and preserves suffix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## **Code Review:** findings`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late bold Review title with colon'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "**Review:**`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with PR Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## PR Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with Pull Request Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Pull Request Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with Security Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Security Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with five-level heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "##### Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late legacy review with six-level underline heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "###### __Review of #654__`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks late review with period before security concerns suffix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. security concerns`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Code Review Results heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review Results`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'ignores late automation heading starting with Review'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review apps deployed`n`nDeployment completed.")
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $unmarkedReviewFindings)
         )
         Blocks = $false
     },
     @{
-        Name = 'ignores late automation heading with comma after Review'
+        Name = 'ignores marker embedded in unrelated automation report'
         Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review, apps deployed`n`nDeployment completed.")
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Build report`n`nMarker text <!-- claude-code-review --> appears inside prose.")
         )
         Blocks = $false
     },
     @{
-        Name = 'ignores late automation heading with period after Review'
+        Name = 'requires github-actions bot author for marker'
         Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. apps deployed`n`nDeployment completed.")
+            (New-TestComment 'other-bot[bot]' '2026-10-01T10:00:00Z' $claudeFindings)
         )
         Blocks = $false
-    },
-    @{
-        Name = 'ignores late automation heading with colon after Review'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: apps deployed`n`nDeployment completed.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'ignores late automation heading with period after deployed'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: apps deployed.`n`nDeployment completed.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'blocks legacy review quoting automation marker on standalone line'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: PR 700`n`n1. A concrete finding.`n`n<!-- respire-automation-report -->")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks bold legacy Claude review heading with trailing text'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "**Review** — findings`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with Code Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Code Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks pre-rollout legacy Claude review with PR Review heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## PR Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks pre-rollout legacy Claude review with underscored prefix'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## API_v2 Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with emoji heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "### 🔍 Review: PR 700`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with Claude Code Review bold heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "**Claude Code Review**`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with four-level heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "#### Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with five-level heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "##### Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks legacy Claude review with six-level heading and underline formatting'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "###### __Review of #654__`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks titleless legacy Claude review with summary and numbered issues'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Summary`nReview complete.`n`n## Issues`n`n### 1. Retire the lease after removing it`nThe stale lease remains visible.")
-        )
-        Blocks = $true
     },
     @{
         Name = 'allows Claude review answered by a later human reply'
@@ -1492,6 +1229,35 @@ $claudeCommentCases = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview)
         )
         Blocks = $false
+    },
+    @{
+        Name = 'blocks BLOCKING verdict without a reply'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview)
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'allows BLOCKING verdict after maintainer disposition'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+            (New-TestComment 'thomhurst' '2026-10-01T10:30:00Z' "Handled in def789.`n<!-- REVIEW_DISPOSITION -->")
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'does not infer clear verdict from review headings'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## Design — sound`n`nNo issues found.`n`n<!-- claude-code-review -->")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks conflicting verdict markers'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "<!-- REVIEW_VERDICT: CLEAR -->`n<!-- REVIEW_VERDICT: BLOCKING -->`n<!-- claude-code-review -->")
+        )
+        Blocks = $true
     },
     @{
         Name = 'ignores integration reports when no Claude review exists'
@@ -1538,131 +1304,6 @@ $claudeCommentCases = @(
             [pscustomobject]@{ login = 'github-actions[bot]'; createdAt = $null; body = $claudeFindings }
         )
         Blocks = $true
-    },
-    @{
-        Name = 'blocks plain Review heading at marker rollout cutoff'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T17:50:23Z' "## Review: PR 700`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'ignores unrelated coverage automation that mentions review'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "## Coverage report`n`nCoverage summary generated. Review details are available in the uploaded artifact.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'blocks legacy review heading before marker rollout'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T17:00:00Z' "## Code Review`n`n1. A concrete finding.`n`n<!-- REVIEW_VERDICT: BLOCKING -->")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'ignores post-cutoff unmarked legacy review title without a prescribed heading'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "Initial analysis`n`nRace condition: stale socket remains active after retirement.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'ignores post-cutoff unmarked titleless legacy review with an itemized finding'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "I read the diff and found one issue:`n1. The retry path can deadlock when cancellation races with disposal.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'ignores post-cutoff unmarked titleless legacy review written as plain finding prose'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' 'The race condition can lose an acknowledged write when the reply is delayed.')
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'ignores post-cutoff unmarked clean pre-contract review without title or marker'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' 'Review complete. No issues found.')
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'does not mistake a benchmark section inside a legacy review for an automation report'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T17:00:00Z' @'
-## Review: cache routing
-
-## Benchmark impact
-
-The new replay path can send a duplicate mutation after an ambiguous timeout.
-'@)
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks post-cutoff standalone verdict from an in-flight markerless review workflow'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "<!-- REVIEW_VERDICT: BLOCKING -->`n`nA concrete finding remains.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks post-cutoff titleless legacy review with summary and numbered issues'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "## Summary`nReview complete.`n`n## Issues`n`n### 1. Retire the lease after removing it`nThe stale lease remains visible.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'blocks post-cutoff explicit Code Review heading from an in-flight workflow'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "## Code Review`n`n1. A concrete finding.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'ignores an explicitly marked automation report'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "<!-- respire-automation-report -->`n## Coverage report`n`nReview details are in the uploaded artifact.")
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'does not ignore a legacy review that quotes the automation marker'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T17:00:00Z' @'
-## Review: merge gate
-
-The regex treats `<!-- respire-automation-report -->` as a report marker even though it is quoted here.
-The legacy review still has a blocking finding: the merge gate can miss an unresolved review.
-'@)
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'ignores complete markerless legacy integration report'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' $integrationReport)
-        )
-        Blocks = $false
-    },
-    @{
-        Name = 'does not ignore a partial integration heading in a legacy review'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T17:00:00Z' "## Review`n`n### Integration test results`n`nA cancellation race remains in the cleanup path.")
-        )
-        Blocks = $true
-    },
-    @{
-        Name = 'unmarked automation comment does not shadow an answered marked review'
-        Comments = @(
-            (New-TestComment 'github-actions[bot]' '2026-10-01T18:00:00Z' $claudeFindings),
-            (New-TestComment 'thomhurst' '2026-10-01T18:30:00Z' "Addressed in abc123.`n<!-- REVIEW_DISPOSITION -->"),
-            (New-TestComment 'github-actions[bot]' '2026-10-01T19:00:00Z' "## Coverage report`n`nCoverage summary generated. Review details are available in the uploaded artifact.")
-        )
-        Blocks = $false
     },
     @{
         Name = 'reads REST user.login shape'

@@ -1284,7 +1284,7 @@ public sealed class StreamedSetTests
             {
                 ReadStarted.TrySetResult();
                 ContinueReading.Task.GetAwaiter().GetResult();
-                cancellationToken.ThrowIfCancellationRequested();
+                throw new OperationCanceledException();
             }
 
             var count = Math.Min(Math.Min(buffer.Length, maxRead), payload.Length - _position);
