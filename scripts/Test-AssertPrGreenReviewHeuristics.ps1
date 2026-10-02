@@ -1375,6 +1375,13 @@ $claudeCommentCases = @(
         Blocks = $false
     },
     @{
+        Name = 'ignores late automation heading with period after deployed'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: apps deployed.`n`nDeployment completed.")
+        )
+        Blocks = $false
+    },
+    @{
         Name = 'blocks legacy review quoting automation marker on standalone line'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review: PR 700`n`n1. A concrete finding.`n`n<!-- respire-automation-report -->")
