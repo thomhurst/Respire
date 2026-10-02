@@ -107,16 +107,15 @@ public partial interface IStringCommands
     /// stream returns.
     /// </para>
     /// <para>
-    /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
-    /// wait for the complete frame, so a slow source (for example a network stream) delays
-    /// unrelated traffic. Use a separate client for slow sources.
+    /// <b>The upload uses a dedicated pooled connection.</b> A slow source does not delay commands
+    /// sent through the client's multiplexed connections.
     /// </para>
     /// <para>
-    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the header
+    /// <b><paramref name="cancellationToken"/> closes the upload connection mid-upload.</b> Once the header
     /// is queued, cancellation, a source read failure or a timeout before the complete
     /// RESP frame has been written to the socket closes the connection to preserve framing, even if
-    /// the frame terminator is already
-    /// queued. That fails every other command pipelined on the connection. After the frame is
+    /// the frame terminator is already queued. Commands sent through the client's multiplexed
+    /// connections are unaffected. After the frame is
     /// written, cancellation only abandons the reply wait and the command may still execute.
     /// </para>
     /// <para>

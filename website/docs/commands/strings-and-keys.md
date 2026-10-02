@@ -40,16 +40,13 @@ the write buffer in 32 KiB chunks without combining them first; keep its memory 
 returned task completes. Both overloads always take the streaming path, which costs a few small
 allocations per call, so use the ordinary `SetAsync` overloads for small values.
 
-Respire holds that connection's write path for the complete RESP frame. This causes head-of-line
-blocking: every later command on that physical connection waits for the upload, and may exceed its
-`CommandTimeout`. Use a separate client or connection for bulk uploads and slow sources. Once the
-header is queued, cancellation, a read failure or a timeout before the complete frame has been
-written to the socket closes the connection to prevent later bytes from being parsed as another command.
-That also fails other commands pipelined on it, even when only the frame terminator was still
-waiting to be written. Prefer seekable or in-memory sources. `CommandTimeout` covers the whole
-upload, including every source read and socket write, so raise it (or pass a longer-lived
-cancellation token with a `null` timeout) for payloads that take longer than the timeout to
-transmit. If the connection closes while Respire is reading the source, the call fails with
+Respire sends each upload through a dedicated pooled connection. A slow source does not block
+commands sent through the client's multiplexed connections. Once the header is queued, cancellation,
+a read failure or a timeout before the complete frame has been written closes only the upload
+connection to preserve RESP framing. Prefer seekable or in-memory sources. `CommandTimeout` covers
+the whole upload, including every source read and socket write, so raise it (or set it to `null`)
+for payloads that take longer than the timeout to transmit. If the upload connection closes while
+Respire is reading the source, the call fails with
 `RespireConnectionException` instead of waiting for the source. After the complete frame has been
 written to the socket, cancellation only cancels the wait for its reply, and Redis may still apply
 the write.

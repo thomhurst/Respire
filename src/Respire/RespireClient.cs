@@ -2173,6 +2173,14 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (command is IStreamingRespCommand)
+        {
+            // Large uploads must not own a multiplexed connection's write path while the
+            // source or socket stalls. Keep their normal command deadline on the dedicated lease.
+            return SendBlockingAsync(operation, command, cancellationToken,
+                noRedirect: true, applyCommandTimeout: true);
+        }
+
         var cache = core.ClientCache;
         var readKind = allowReadFrom && _readFrom != RespireReadFrom.Primary
             ? command.ReadKind : ReadCommandKind.None;
@@ -3365,9 +3373,9 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Sends an intentionally blocking command (BLPOP, blocking XREADGROUP, …) on a dedicated
-    /// pooled connection so it cannot stall multiplexed traffic. No command timeout applies —
-    /// blocking is the point; cancel via the token (which abandons the connection).
+    /// Sends commands that occupy their connection on a dedicated pooled connection. Blocking
+    /// commands omit the command timeout; streamed uploads keep it, so neither stalls multiplexed
+    /// traffic while the stream is read or written.
     /// </summary>
     internal async ValueTask<RespValue> SendBlockingAsync<TCommand>(
         string operation,
@@ -3376,7 +3384,7 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null,
         bool noRedirect = false,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
-        bool allowReadFrom = true)
+        bool applyCommandTimeout = false, bool allowReadFrom = true)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3390,7 +3398,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 return await SendBlockingClusterAsync(
                         operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
-                        cancellationTimeout, callerCancellationToken, readFrom)
+                        cancellationTimeout, callerCancellationToken, applyCommandTimeout, readFrom)
                     .ConfigureAwait(false);
             }
 
@@ -3410,8 +3418,9 @@ public sealed partial class RespireClient : IRespireClient
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                         core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
-                var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
-                    .ConfigureAwait(false);
+                var response = applyCommandTimeout
+                    ? await connection.SendAsync(in command, cancellationToken, commandName: operation).ConfigureAwait(false)
+                    : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
                 pool.Return(connection);
                 returned = true;
                 if (response.IsError)
@@ -3439,8 +3448,10 @@ public sealed partial class RespireClient : IRespireClient
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    // The connection may still be mid-block server-side; don't return it to the pool.
-                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    if (applyCommandTimeout && connection.IsConnected)
+                        pool!.Return(connection);
+                    else
+                        await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;
@@ -3463,7 +3474,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         string? storedProcedureName,
         bool noRedirect,
-        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, bool applyCommandTimeout,
         RespireReadFrom readFrom)
         where TCommand : struct, IRespCommand
     {
@@ -3508,7 +3519,9 @@ public sealed partial class RespireClient : IRespireClient
                     var response = await (sendAsking
                             ? ClusterRouter.SendBlockingAskingUncheckedAsync(
                                 connection, in command, cancellationToken)
-                            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
+                            : applyCommandTimeout
+                                ? connection.SendAsync(in command, cancellationToken, commandName: operation)
+                                : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
                         .ConfigureAwait(false);
                     sendAsking = false;
                     if (response.IsError)
@@ -3586,7 +3599,10 @@ public sealed partial class RespireClient : IRespireClient
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
-                        await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        if (applyCommandTimeout && connection.IsConnected)
+                            pool.Return(connection);
+                        else
+                            await pool.DiscardAsync(connection).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;

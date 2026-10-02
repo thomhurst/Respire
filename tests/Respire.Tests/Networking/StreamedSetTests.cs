@@ -72,6 +72,62 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledStreamedSetDoesNotBlockOrAbortMultiplexedCommands(bool useCluster)
+    {
+        var pong = "+PONG\r\n"u8.ToArray();
+        FakeRespServer? server = null;
+        server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "PING" => pong,
+                "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                    $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server!.Port}\r\n"),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            UseCluster = useCluster,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+        const int length = RespireConnection.StreamChunkSize + 1;
+        using var cancellation = new CancellationTokenSource();
+        var source = new PartialThenBlockedStream(new byte[length], RespireConnection.StreamChunkSize,
+            RespireConnection.StreamChunkSize);
+        var upload = client.Strings.SetAsync("stalled", source, length, cancellationToken: cancellation.Token).AsTask();
+        await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch
+        {
+            cancellation.Cancel();
+            try { await upload; }
+            catch (Exception) { }
+            throw;
+        }
+
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await upload).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var expectedCommands = useCluster
+            ? new[] { "CLUSTER SLOTS", "PING", "PING" }
+            : new[] { "PING", "PING" };
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(expectedCommands);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SetReadOnlySequenceStreamsLargeSegmentsWithBoundedBufferMemory()
     {
         const int length = 4 * 1024 * 1024;
@@ -820,7 +876,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task ConcurrentCommandWaitsUntilStreamedFrameCompletes()
+    public async Task ConcurrentCommandRunsWhileStreamedSetIsStalled()
     {
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
@@ -835,13 +891,12 @@ public sealed class StreamedSetTests
         var set = client.Strings.SetAsync("ordered", source, 4).AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var ping = client.PingAsync().AsTask();
-        await Task.Delay(100);
-        await Assert.That(server.Commands.Contains("PING")).IsFalse();
+        await ping.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.Commands).IsEquivalentTo(["PING"]);
 
         source.ContinueReading.TrySetResult();
         await Assert.That(await set).IsTrue();
-        await ping;
-        await Assert.That(server.Commands.TakeLast(2).SequenceEqual(new[] { "SET", "PING" })).IsTrue();
+        await Assert.That(server.Commands).IsEquivalentTo(["PING", "SET"]);
     }
 
     [Test]
@@ -916,8 +971,7 @@ public sealed class StreamedSetTests
         var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
-        // The stalled read was the first chunk, so no header was queued and the connection survives.
-        await Assert.That(client.IsConnected).IsTrue();
+        // The timeout leaves the dedicated upload lease healthy; ordinary traffic stays available.
         await client.PingAsync();
 
         // Finish the ignored read so its rented buffer can be returned safely.
@@ -1899,6 +1953,7 @@ public sealed class StreamedSetTests
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _runner;
+        private readonly ConcurrentBag<Task> _connections = [];
         private readonly ConcurrentQueue<string> _commands = new();
         private readonly TaskCompletionSource _connectionClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private byte[]? _smallValue;
@@ -1918,61 +1973,79 @@ public sealed class StreamedSetTests
         {
             try
             {
-                using var socket = await _listener.AcceptSocketAsync(_stop.Token);
-                await using var stream = new NetworkStream(socket, ownsSocket: false);
                 while (!_stop.IsCancellationRequested)
                 {
-                    var marker = await ReadByteAsync(stream, _stop.Token);
-                    if (marker < 0)
+                    var socket = await _listener.AcceptSocketAsync(_stop.Token);
+                    _connections.Add(HandleConnectionAsync(socket));
+                }
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+            catch (SocketException) when (_stop.IsCancellationRequested) { }
+
+            await Task.WhenAll(_connections.ToArray());
+        }
+
+        private async Task HandleConnectionAsync(Socket socket)
+        {
+            try
+            {
+                using (socket)
+                await using (var stream = new NetworkStream(socket, ownsSocket: false))
+                {
+                    while (!_stop.IsCancellationRequested)
                     {
-                        _connectionClosed.TrySetResult();
-                        return;
-                    }
-                    if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
-                    var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
-                    string? command = null;
-                    for (var index = 0; index < count; index++)
-                    {
-                        if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
-                        var length = int.Parse(await ReadLineAsync(stream, _stop.Token));
-                        if (index == 0)
+                        var marker = await ReadByteAsync(stream, _stop.Token);
+                        if (marker < 0)
                         {
-                            var name = new byte[length];
-                            await stream.ReadExactlyAsync(name, _stop.Token);
-                            command = Encoding.ASCII.GetString(name);
+                            _connectionClosed.TrySetResult();
+                            return;
                         }
-                        else if (command == "SET" && index == 2)
+                        if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
+                        var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
+                        string? command = null;
+                        for (var index = 0; index < count; index++)
                         {
-                            ValueLength = length;
-                            if (length <= 1024) _smallValue = new byte[length];
-                            var scratch = new byte[16 * 1024];
-                            var consumed = 0;
-                            while (consumed < length)
+                            if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
+                            var length = int.Parse(await ReadLineAsync(stream, _stop.Token));
+                            if (index == 0)
                             {
-                                var read = Math.Min(scratch.Length, length - consumed);
-                                await stream.ReadExactlyAsync(scratch.AsMemory(0, read), _stop.Token);
-                                if (_smallValue is not null) scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
-                                if (_smallValue is null)
-                                    for (var i = 0; i < read; i++)
-                                        if (scratch[i] != (byte)((consumed + i) % 251))
-                                            throw new InvalidDataException("Stream payload bytes changed during transmission.");
-                                consumed += read;
+                                var name = new byte[length];
+                                await stream.ReadExactlyAsync(name, _stop.Token);
+                                command = Encoding.ASCII.GetString(name);
                             }
-                        }
-                        else
-                        {
-                            var argument = new byte[length];
-                            await stream.ReadExactlyAsync(argument, _stop.Token);
+                            else if (command == "SET" && index == 2)
+                            {
+                                ValueLength = length;
+                                if (length <= 1024) _smallValue = new byte[length];
+                                var scratch = new byte[16 * 1024];
+                                var consumed = 0;
+                                while (consumed < length)
+                                {
+                                    var read = Math.Min(scratch.Length, length - consumed);
+                                    await stream.ReadExactlyAsync(scratch.AsMemory(0, read), _stop.Token);
+                                    if (_smallValue is not null) scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
+                                    if (_smallValue is null)
+                                        for (var i = 0; i < read; i++)
+                                            if (scratch[i] != (byte)((consumed + i) % 251))
+                                                throw new InvalidDataException("Stream payload bytes changed during transmission.");
+                                    consumed += read;
+                                }
+                            }
+                            else
+                            {
+                                var argument = new byte[length];
+                                await stream.ReadExactlyAsync(argument, _stop.Token);
+                            }
+
+                            var crlf = new byte[2];
+                            await stream.ReadExactlyAsync(crlf, _stop.Token);
+                            if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
                         }
 
-                        var crlf = new byte[2];
-                        await stream.ReadExactlyAsync(crlf, _stop.Token);
-                        if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
+                        _commands.Enqueue(command ?? "");
+                        var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
+                        await stream.WriteAsync(reply, _stop.Token);
                     }
-
-                    _commands.Enqueue(command ?? "");
-                    var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
-                    await stream.WriteAsync(reply, _stop.Token);
                 }
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or SocketException)
