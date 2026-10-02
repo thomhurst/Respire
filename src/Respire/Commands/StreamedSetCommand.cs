@@ -89,6 +89,7 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
 
     internal RespireValue Key => _key;
     internal long Length => _length;
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
     internal Stream? SourceStream => _stream?.Current;
