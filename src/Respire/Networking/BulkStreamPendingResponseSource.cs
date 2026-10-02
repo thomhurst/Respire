@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
@@ -14,6 +13,8 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private readonly string? _commandName;
     private readonly bool _hasPrefixReply;
     private readonly Action<Exception?>? _onFrameCompleted;
+    private readonly CancellationToken _streamCancellationToken;
+    private CancellationTokenRegistration _streamCancellationRegistration;
     // Threading: the receive loop owns _replyIndex and _isMissing and publishes _prefixError,
     // _prefixReceived and _payload; deferred completion and Abort can observe them from other
     // threads, so those three (and the abort/completion errors) always use Volatile/Interlocked.
@@ -26,24 +27,28 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private bool _isMissing;
 
     internal BulkStreamPendingResponseSource(
-        string? commandName, bool hasPrefixReply, Action<Exception?>? onFrameCompleted)
+        string? commandName, bool hasPrefixReply, Action<Exception?>? onFrameCompleted,
+        CancellationToken streamCancellationToken = default)
     {
         _commandName = commandName;
         _hasPrefixReply = hasPrefixReply;
         _onFrameCompleted = onFrameCompleted;
+        _streamCancellationToken = streamCancellationToken;
         PrepareForUse(hasPrefixReply ? 2 : 1);
+        if (streamCancellationToken.CanBeCanceled)
+            _streamCancellationRegistration = streamCancellationToken.UnsafeRegister(
+                static (state, token) => ((BulkStreamPendingResponseSource)state!).AbortPayload(
+                    new OperationCanceledException(token)), this);
     }
 
     internal override string? CommandName => _commandName;
     internal bool HasPrefixReply => _hasPrefixReply;
     internal Action<Exception?>? OnFrameCompleted => _onFrameCompleted;
+    internal CancellationToken StreamCancellationToken => _streamCancellationToken;
 
     internal ValueTask<Stream?> Task => new(this, _core.Version);
 
     internal bool IsFinalReply => !_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0;
-
-    internal bool HasStalledReader(TimeSpan idle)
-        => Volatile.Read(ref _payload)?.HasStalledReader(idle) == true;
 
     internal bool CanStartStream => Volatile.Read(ref _prefixError) is null && !IsCompleted(State);
 
@@ -90,6 +95,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompleteMissing()
     {
+        DisposeStreamCancellationRegistration();
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
@@ -104,6 +110,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompleteDiscardedPayload()
     {
+        DisposeStreamCancellationRegistration();
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
@@ -174,11 +181,15 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     }
 
     protected override void SetExceptionCore(Exception exception)
-        => _core.SetException(exception);
+    {
+        DisposeStreamCancellationRegistration();
+        _core.SetException(exception);
+    }
 
     internal void CompletePayload(Exception? exception)
     {
         Volatile.Read(ref _payload)?.Complete(exception);
+        DisposeStreamCancellationRegistration();
         _onFrameCompleted?.Invoke(
             exception ?? Volatile.Read(ref _completionError) ?? Volatile.Read(ref _prefixError));
     }
@@ -187,6 +198,12 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     {
         Interlocked.CompareExchange(ref _completionError, exception, null);
         return exception;
+    }
+
+    private void DisposeStreamCancellationRegistration()
+    {
+        _streamCancellationRegistration.Dispose();
+        _streamCancellationRegistration = default;
     }
 
     Stream? IValueTaskSource<Stream?>.GetResult(short token)
@@ -209,6 +226,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     protected override void ResetAndReturn()
     {
+        DisposeStreamCancellationRegistration();
         // One-shot source. The caller and receive loop own its only references.
     }
 }
@@ -223,10 +241,9 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         useSynchronizationContext: false));
     private readonly Stream _readStream;
     private int _completed;
-    private long _lastReaderProgress = Stopwatch.GetTimestamp();
 
     internal RespBulkPayloadPipe()
-        => _readStream = new ProgressTrackingStream(_pipe.Reader.AsStream(leaveOpen: false), this);
+        => _readStream = _pipe.Reader.AsStream(leaveOpen: false);
 
     internal Stream ReadStream => _readStream;
 
@@ -235,11 +252,6 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     internal void Advance(int count) => _pipe.Writer.Advance(count);
 
     internal ValueTask<FlushResult> FlushAsync() => _pipe.Writer.FlushAsync();
-
-    internal bool HasStalledReader(TimeSpan idle)
-        => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastReaderProgress)) >= idle;
-
-    private void MarkReaderProgress() => Volatile.Write(ref _lastReaderProgress, Stopwatch.GetTimestamp());
 
     internal void Complete(Exception? exception = null)
     {
@@ -259,50 +271,5 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     {
         Complete();
         _readStream.Dispose();
-    }
-
-    private sealed class ProgressTrackingStream(Stream inner, RespBulkPayloadPipe owner) : Stream
-    {
-        public override bool CanRead => inner.CanRead;
-        public override bool CanSeek => inner.CanSeek;
-        public override bool CanWrite => inner.CanWrite;
-        public override long Length => inner.Length;
-        public override long Position { get => inner.Position; set => inner.Position = value; }
-        public override void Flush() => inner.Flush();
-        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
-        public override void SetLength(long value) => inner.SetLength(value);
-        public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
-        public override void Write(ReadOnlySpan<byte> buffer) => inner.Write(buffer);
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => inner.WriteAsync(buffer, offset, count, cancellationToken);
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-            => inner.WriteAsync(buffer, cancellationToken);
-
-        public override int Read(byte[] buffer, int offset, int count)
-            => RecordProgress(inner.Read(buffer, offset, count));
-        public override int Read(Span<byte> buffer) => RecordProgress(inner.Read(buffer));
-        public override int ReadByte() => RecordProgress(inner.ReadByte());
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => RecordProgressAsync(inner.ReadAsync(buffer, offset, count, cancellationToken));
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-            => RecordProgressAsync(inner.ReadAsync(buffer, cancellationToken));
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) inner.Dispose();
-            base.Dispose(disposing);
-        }
-
-        private int RecordProgress(int read)
-        {
-            if (read > 0) owner.MarkReaderProgress();
-            return read;
-        }
-
-        private async Task<int> RecordProgressAsync(Task<int> read)
-            => RecordProgress(await read.ConfigureAwait(false));
-
-        private async ValueTask<int> RecordProgressAsync(ValueTask<int> read)
-            => RecordProgress(await read.ConfigureAwait(false));
     }
 }
