@@ -19,7 +19,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _clusterSubscriptionStates = [];
     private SubscriptionHub? _hub;
-    private HashSet<DedicatedConnectionPool>? _serverPools;
+    private readonly DedicatedPoolLedger _ownedPools;
     private Dictionary<(bool Sharded, RespireEndpoint Endpoint), RespireConnectionState>? _subscriptionStates;
     private RespireEndpoint? _regularSubscriptionEndpoint;
     private bool _publishingState;
@@ -56,6 +56,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public ClientCore(RespireOptions options)
     {
+        _ownedPools = new(_hubGate);
         Options = options;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
@@ -75,6 +76,7 @@ internal sealed class ClientCore : IAsyncDisposable
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
         _dedicatedPool = CreateStandaloneDedicatedPool(_multiplexer.CaptureMovingPublication());
+        _ownedPools.Add(_dedicatedPool);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
@@ -166,7 +168,7 @@ internal sealed class ClientCore : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Disposed, this);
             var pool = new DedicatedConnectionPool(original?.NetworkPeerAddress ?? endpoint.Host,
                 original?.NetworkPeerPort ?? endpoint.Port, options, Logger);
-            (_serverPools ??= []).Add(pool);
+            _ownedPools.Add(pool);
             return new(this, pool);
         }
     }
@@ -181,7 +183,7 @@ internal sealed class ClientCore : IAsyncDisposable
             if (ReferenceEquals(publication.Publication, _dedicatedPool.MovingPublication)) return;
             previous = _dedicatedPool;
             var replacement = CreateStandaloneDedicatedPool(publication);
-            (_serverPools ??= []).Add(previous);
+            _ownedPools.Add(replacement);
             Volatile.Write(ref _dedicatedPool, replacement);
         }
         // Keep borrowed uploads and blocking calls alive, while rejecting new rentals on the
@@ -210,13 +212,12 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)
     {
-        try { await pool.RetireAsync().ConfigureAwait(false); }
+        try { await _ownedPools.RetireAsync(pool).ConfigureAwait(false); }
         catch (Exception error)
         {
             try { Logger?.LogWarning(error, "Dedicated connection cleanup after MOVING failed"); }
             catch { /* Logging cannot fault the background retirement. */ }
         }
-        finally { lock (_hubGate) _serverPools!.Remove(pool); }
     }
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
@@ -664,23 +665,13 @@ internal sealed class ClientCore : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Disposed, this);
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger,
                 NotifyRecoveryStateChanged);
-            (_serverPools ??= []).Add(pool);
+            _ownedPools.Add(pool);
             return pool;
         }
     }
 
-    internal async ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
-    {
-        try
-        {
-            await pool.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            // Keep the pool visible to concurrent client disposal until its cleanup finishes.
-            lock (_hubGate) _serverPools!.Remove(pool);
-        }
-    }
+    internal ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
+        => _ownedPools.ReleaseAsync(pool);
 
     public async ValueTask DisposeAsync()
     {
@@ -734,15 +725,12 @@ internal sealed class ClientCore : IAsyncDisposable
 
         PublishQueuedStates();
         SubscriptionHub? hub;
-        DedicatedConnectionPool[] serverPools;
         lock (_hubGate)
         {
             hub = _hub;
-            serverPools = _serverPools?.ToArray() ?? [];
         }
 
-        foreach (var pool in serverPools)
-            await pool.DisposeAsync().ConfigureAwait(false);
+        await _ownedPools.DisposeAllAsync().ConfigureAwait(false);
 
         if (hub is not null)
         {
@@ -751,7 +739,6 @@ internal sealed class ClientCore : IAsyncDisposable
 
         if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
         await ReadRouter.DisposeAsync().ConfigureAwait(false);
-        await _dedicatedPool.DisposeAsync().ConfigureAwait(false);
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;

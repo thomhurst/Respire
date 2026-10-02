@@ -123,6 +123,25 @@ enter the retry loop for unacknowledged fences. The generation remains owned unt
 disposal aborts its transports and observes the original failure. Retrying an already faulted,
 memoized transport cleanup task cannot restart cleanup or prove a successful drain.
 
+## Dedicated pool ownership
+
+`DedicatedPoolLedger` keeps the dedicated pools owned by `ClientCore`, `ClusterRouter`,
+and each Sentinel generation. Current route lookup remains with those owners. Publication
+adds a replacement before exposing it, while the previous pool stays in the ledger until
+its graceful retirement succeeds. A failed retirement remains owned for explicit disposal.
+Successful cleanup removes the pool; the ledger does not retain completed pool history.
+
+Each ledger shares its owner's publication gate. This makes shutdown snapshots wait for
+publications already in progress. Owners prevent new publication after shutdown starts.
+The ledger snapshots membership under that gate, then starts retirement or disposal outside
+it. Explicit disposal starts every owned pool's abort before awaiting any completion, so
+one cleanup failure cannot prevent another borrowed lease from being aborted. Concurrent
+retirement and disposal use the pool's existing shared cleanup task.
+
+This bookkeeping does not participate in healthy command dispatch or lease acquisition.
+Route-version validation, ASK target selection, MOVING publication, cancellation deadlines,
+and accepted-command drain rules remain with their existing owners.
+
 ## Retirement diagnostics
 
 `RespireClient.GetClusterRetirementSnapshot()` captures aggregate retained-generation
