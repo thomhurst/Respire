@@ -48,9 +48,6 @@ internal sealed class ClusterReplicaSet
     internal void MarkValidated(TimeSpan revalidationInterval)
         => Volatile.Write(ref _revalidateAt, Now + (long)revalidationInterval.TotalMilliseconds);
 
-    /// <summary>True once any caller has started a topology refresh through this set.</summary>
-    internal bool HasStartedRefresh => Volatile.Read(ref _refresh) is not null;
-
     /// <summary>Returns the next round-robin starting index. Requires a nonempty set.</summary>
     internal int NextStart()
         => (int)((uint)Interlocked.Increment(ref _cursor) % (uint)Nodes.Length);

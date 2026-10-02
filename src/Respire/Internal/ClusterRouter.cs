@@ -25,7 +25,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly ClusterReplicaSet?[] _replicasBySlot = new ClusterReplicaSet?[ClusterHash.SlotCount];
     // MOVED clears a slot's replicas to this shared set, so a burst of reads across the moved
     // slots coalesces into one topology refresh. Replaced once a refresh has started through it.
-    private ClusterReplicaSet? _movedReplicaRoutes;
     private RespireConnectionMultiplexer[] _replicaNodes = [];
     private RespireConnectionMultiplexer[] _masters = [];
     // Published with the slot map under _nodesGate but read without it. Replicas only serve as
@@ -1701,7 +1700,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint, bool readOnly)
     {
         var connectionOptions = readOnly
-            ? _commandConnectionOptions with { ReadOnly = true }
+            ? _commandConnectionOptions with
+            {
+                ReadOnly = true,
+                EnableClientTracking = false,
+                PushHandler = null,
+                CredentialCacheInvalidation = null,
+                CredentialCacheRetirementFence = null,
+            }
             : _commandConnectionOptions;
         var category = readOnly
             ? $"Respire.Cluster.Replica.{endpoint.Host}:{endpoint.Port}"
@@ -1758,20 +1764,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Stamp a changed owner before publication so a push observing it gets a newer token.
             if (!ReferenceEquals(previous, node)) MarkSlotMutatedLocked(slot);
             PublishSlotLocked(slot, node, ++_topologyVersion);
-            // The new owner's replicas are unknown until the next refresh. Moved slots share one
-            // empty set so concurrent replica reads coalesce into a single refresh. A waiter for
-            // one slot may join a refresh started for another slot. That is correct because the
-            // refresh (TryRefreshSlotThroughKnownMastersAsync) sends CLUSTER SLOTS and republishes
-            // the replica routes of every slot, not only the slot that started it.
-            // HasStartedRefresh flips outside _nodesGate, so a refresh can start between this
-            // check and the write below. The slot then shares a set whose refresh is already
-            // running. That is benign: the slot's readers join that refresh, and if it leaves the
-            // slot empty they wait out one refresh interval, as for any throttled empty set.
-            if (_movedReplicaRoutes is not { HasStartedRefresh: false } movedRoutes)
-            {
-                _movedReplicaRoutes = movedRoutes = new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval);
-            }
-            Volatile.Write(ref _replicasBySlot[slot], movedRoutes);
+            // MOVED provides no replica coverage. Keep discovery scoped to this slot until a
+            // topology reply establishes a range; partial replies cannot satisfy other slots.
+            Volatile.Write(ref _replicasBySlot[slot],
+                new ClusterReplicaSet([], _options.ReplicaRouteRevalidationInterval));
             if (ReferenceEquals(previous, node))
             {
                 return;

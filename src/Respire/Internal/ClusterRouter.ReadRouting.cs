@@ -14,6 +14,8 @@ internal sealed partial class ClusterRouter
     private readonly ClusterReplicaSet _initialReplicaRoutes = new([], TimeSpan.Zero);
     // Unknown slots have no shard identity yet. Share their work only with the same slot;
     // a partial reply for another slot must not consume this slot's discovery interval.
+    // The key space is bounded by 16384 slots. Publication removes covered entries even when
+    // their replica list is empty; uncovered entries retain their in-flight gate and throttle.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, ClusterReplicaSet> _unknownReplicaRoutes = new();
 
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
@@ -188,15 +190,9 @@ internal sealed partial class ClusterRouter
             // nodes from consuming healthy nodes' time; one snapshot batch fences late replies.
             var attempts = candidates.Select(node => TryRefreshReplicaCandidateAsync(
                 node, slot, timeout.Token, version, refreshRound)).ToArray();
-            var pending = new List<Task<bool>>(attempts);
             try
             {
-                while (pending.Count != 0)
-                {
-                    var completed = await Task.WhenAny(pending).ConfigureAwait(false);
-                    pending.Remove(completed);
-                    if (await completed.ConfigureAwait(false)) return;
-                }
+                if (await FirstSuccessfulReplicaProbeAsync(attempts).ConfigureAwait(false)) return;
                 if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, error: null);
             }
             finally
@@ -209,6 +205,33 @@ internal sealed partial class ClusterRouter
         catch (Exception error)
         {
             if (!_stopDiscovery.IsCancellationRequested) LogReplicaRefreshFailure(slot, error);
+        }
+    }
+
+    // Register each probe once instead of rebuilding a WhenAny list after every completion.
+    // The owner cancels and drains all probes after the first success or error.
+    internal static Task<bool> FirstSuccessfulReplicaProbeAsync(Task<bool>[] attempts)
+    {
+        if (attempts.Length == 0) return Task.FromResult(false);
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remaining = attempts.Length;
+        foreach (var attempt in attempts) _ = ObserveAsync(attempt);
+        return completion.Task;
+
+        async Task ObserveAsync(Task<bool> attempt)
+        {
+            try
+            {
+                if (await attempt.ConfigureAwait(false)) completion.TrySetResult(true);
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
+            }
+            finally
+            {
+                if (Interlocked.Decrement(ref remaining) == 0) completion.TrySetResult(false);
+            }
         }
     }
 
@@ -226,64 +249,6 @@ internal sealed partial class ClusterRouter
             && (error is OperationCanceledException || IsDiscoveryFailure(error)))
         {
             return false;
-        }
-    }
-
-    // Empty replica snapshots remain useful evidence (for example, a promotion), but must not
-    // publish or fence out another candidate that can still supply replicas for this slot.
-    private sealed class ReplicaRefreshRound(int slot, RespireConnectionMultiplexer? originalOwner)
-    {
-        internal readonly object SnapshotBatch = new();
-        private readonly object _gate = new();
-        private (List<ClusterTopologyRange> Ranges, long Version, long Generation)? _empty;
-
-        internal bool Accept(List<ClusterTopologyRange> ranges, long version, long generation)
-        {
-            var covered = false;
-            foreach (var range in ranges)
-            {
-                if (range.Start > slot || slot > range.End) continue;
-                if (range.Replicas.Count != 0) return true;
-                covered = true;
-            }
-            if (covered)
-                lock (_gate)
-                    if (_empty is not { } previous || generation > previous.Generation)
-                        _empty = (ranges, version, generation);
-            return false;
-        }
-
-        internal bool PublishEmpty(ClusterRouter router)
-        {
-            (List<ClusterTopologyRange> Ranges, long Version, long Generation)? candidate;
-            lock (_gate) candidate = _empty;
-            if (candidate is not { } snapshot) return false;
-            // Apply empty evidence to sibling slots of the shard that triggered discovery.
-            // A full reply from this candidate cannot overwrite unrelated shards, but a
-            // promotion must remove the old replica role throughout the advertised range.
-            List<ClusterTopologyRange> ranges = [];
-            lock (router._nodesGate)
-            {
-                foreach (var range in snapshot.Ranges)
-                {
-                    if (range.Start > slot || range.End < slot) continue;
-                    var start = -1;
-                    for (var current = range.Start; current <= range.End + 1; current++)
-                    {
-                        var sibling = current <= range.End && (current == slot || originalOwner is not null
-                            && ReferenceEquals(router._slots[current], originalOwner));
-                        if (sibling && start < 0) start = current;
-                        if (!sibling && start >= 0)
-                        {
-                            ranges.Add(range with { Start = start, End = current - 1 });
-                            start = -1;
-                        }
-                    }
-                }
-            }
-            router.ApplyTopologyCore(ranges, snapshot.Version, snapshot.Generation,
-                keepUncoveredOwners: true, snapshotBatch: SnapshotBatch);
-            return true;
         }
     }
 

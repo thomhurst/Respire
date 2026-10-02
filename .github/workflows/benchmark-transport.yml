@@ -59,6 +59,7 @@ jobs:
           # The shared fixture must compile against both pinned APIs. A mismatch fails this
           # step; the always() upload below retains its phase log without masking that failure.
           cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/Program.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -68,6 +69,8 @@ jobs:
             (
               cd "$source"
               git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --transport-case-count "$GITHUB_WORKSPACE/$phase.case-count" "$job"
               /usr/bin/time -f '%U %S %P' -o "$GITHUB_WORKSPACE/$phase.cpu" \
                 dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
@@ -78,26 +81,15 @@ jobs:
         shell: python
         run: |
           import json
-          import math
-          import re
           from pathlib import Path
-          # Every phase runs the candidate fixture, so derive the case count from its source:
-          # benchmark methods times the product of each [Params] value count.
-          source = Path("candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs").read_text()
-          # Only literal [Params(...)] lists can be counted from source. Fail loudly on any other
-          # case-multiplying attribute instead of computing a wrong expected count.
-          uncountable = re.findall(r"\[(ParamsSource|ParamsAllValues|Arguments|ArgumentsSource)\b", source)
-          assert not uncountable, f"Update this case count for {sorted(set(uncountable))} in the transport fixture"
-          methods = len(re.findall(r"\[Benchmark[\]\(]", source))
-          params = [len(values.split(",")) for values in re.findall(r"\[Params\(([^)]*)\)\]", source)]
-          expected = methods * math.prod(params)
-          assert methods > 0, "No [Benchmark] methods found in the transport fixture"
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              expected = int(Path(f"{phase}.case-count").read_text())
+              assert expected > 0, f"No benchmark cases discovered: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert len(benchmarks) == expected, f"Expected {expected} benchmark cases ({methods} methods x {params} params): {report}"
+                  assert len(benchmarks) == expected, f"Expected {expected} discovered benchmark cases: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
@@ -171,3 +163,4 @@ jobs:
           path: |
             results/
             *.log
+            *.case-count
