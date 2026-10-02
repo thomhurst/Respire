@@ -384,10 +384,9 @@ function Test-IsClaudeReviewComment {
         if ($hasFormattedTitle) {
             $title = $rawTitle -replace '^#{1,6}\s*', ''
             $title = $title -replace '\s+#{1,6}\s*$', ''
-            $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
-            $title = $title -replace '^(?:\*\*|__)\s*', ''
-            $title = [regex]::Replace($title, '(\*\*|__)(.*?)\1', '$2')
-            $reviewTitleTail = '(?:$|[.!?,;:](?:$|\s+\S)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:findings?|issues?|concerns?|summary)\b|\s+(?:findings?|issues?|concerns?|summary)\b)'
+            $title = [regex]::Replace($title, '(?:\*\*|__)', '')
+            $title = $title -replace '^[^\p{L}\p{N}_#-]+', ''
+            $reviewTitleTail = '(?:$|[.!?](?=$|\s)|:\s*(?:$|\S)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:findings?|issues?|concerns?|summary)\b|\s+(?:findings?|issues?|concerns?|summary)\b)'
             $isLegacyReviewTitle = $title -match "(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review$reviewTitleTail"
             if ($isLegacyReviewTitle) { return $true }
         }
