@@ -52,7 +52,8 @@ jobs:
           # Keep shared feature sources identical across phases so each revision builds.
           # The copied semaphore source compiles against baseline internals (for example
           # RespireLock.NewToken and the tracked-script types); the shims below add only the
-          # client and telemetry members that this PR introduces. Baseline phases benchmark the standard lease,
+          # client and telemetry members it needs. Remove these shims once the PR base contains
+          # every API used by the candidate semaphore source. Baseline phases benchmark the standard lease,
           # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
