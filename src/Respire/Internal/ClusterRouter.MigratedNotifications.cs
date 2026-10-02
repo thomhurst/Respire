@@ -383,7 +383,7 @@ internal sealed partial class ClusterRouter
             PublishSlotLocked(slot, target, migrationVersion);
             // The source shard's replicas cannot serve the migrated slot or its pinned cursors.
             Volatile.Write(ref _replicasBySlot[slot], null);
-            _unknownReplicaRoutes.TryRemove(slot, out _);
+            _unknownReplicaDiscovery.Invalidate(slot);
         }
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);

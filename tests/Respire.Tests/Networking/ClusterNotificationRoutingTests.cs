@@ -408,6 +408,7 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    [NotInParallel] // The 100 ms recovery deadline must not compete with other wire fixtures during setup.
     public async Task ClusterNotificationRecoveryHonorsReconnectAttemptLimit()
     {
         await using var server = new FakeRespServer(20);

@@ -145,3 +145,42 @@ iteration. The `GeoSearchResult` test keeps its relative comparison against
 decoding the same member. No assertion is relaxed.
 
 New allocation tests must use `AllocationMeasurement.WithoutConcurrentGc` from the start.
+
+## Unknown-slot Cluster replica discovery
+
+`ClusterReplicaDiscoveryTests` compares the previous per-slot
+`ConcurrentDictionary<int, ClusterReplicaSet>` coalescers with the shared
+coordinator. The synchronous bookkeeping comparison warms both implementations
+and measures 256 persistently uncovered slots inside `WithoutConcurrentGc`, in an
+unkeyed `NotInParallel` test with a no-inline measurement method. Both perform
+256 probes; the comparison excludes network I/O and topology parsing. It measures
+allocation, not throughput or end-to-end latency.
+
+Windows x64 Release measurements for 256 uncovered slots:
+
+| Runtime | Per-slot coalescers | Shared coordinator |
+| --- | ---: | ---: |
+| .NET 8.0.31 | 73,664 bytes | 55,288 bytes |
+| .NET 10.0.12 | 73,672 bytes | 55,288 bytes |
+
+The shared coordinator measurement includes per-slot attempt versions and the
+current probe slot used to distinguish a pending attempt from a completed,
+throttled attempt.
+
+A separate concurrent comparison holds a full-coverage reply until all 256
+callers have joined. The old coalescers start 256 probes; the shared coordinator
+starts one. Partial-coverage tests still require a second probe for a waiting
+slot that the first reply did not cover. Uncovered slots retain independent
+one-second throttles, while MOVED owner changes and SMIGRATED invalidate their
+old discovery attempt. Caller cancellation detaches only that caller; router
+disposal cancels the physical probe.
+
+With stable owners, N distinct, previously unattempted slots that remain
+uncovered require N sequential probe rounds. This preserves each slot's own
+coverage attempt when replies are partial. A completed, throttled slot returns
+its cached attempt immediately even while another slot probes; a caller for the
+pending probe's own slot still joins that probe.
+
+`CoveredSlotsDoNotAllocate` checks 1,000 already-covered lookups with the same
+no-GC boundary and an escaping allocation positive control. Healthy replica
+selection bypasses the unknown-slot coordinator entirely.

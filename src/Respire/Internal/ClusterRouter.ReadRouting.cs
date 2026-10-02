@@ -11,12 +11,12 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     private long _replicaRefreshWarningNotBefore;
-    private readonly ClusterReplicaSet _initialReplicaRoutes = new([], TimeSpan.Zero);
-    // Unknown slots have no shard identity yet. Share their work only with the same slot;
-    // a partial reply for another slot must not consume this slot's discovery interval.
-    // The key space is bounded by 16384 slots. Publication removes covered entries even when
-    // their replica list is empty; uncovered entries retain their in-flight gate and throttle.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, ClusterReplicaSet> _unknownReplicaRoutes = new();
+    // Coverage marker only. Unknown-slot refresh state belongs to the coordinator below.
+    private readonly ClusterReplicaSet _unknownReplicaRoutes = new([], TimeSpan.Zero);
+    private readonly ClusterReplicaDiscovery _unknownReplicaDiscovery;
+
+    private bool HasReplicaCoverage(int slot)
+        => GetKnownReplicas(slot) is { } routes && !ReferenceEquals(routes, _unknownReplicaRoutes);
 
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
@@ -62,27 +62,27 @@ internal sealed partial class ClusterRouter
         }
     }
 
+    private async ValueTask<ClusterReplicaSet?> GetReplicaRoutesAsync(int slot, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var routes = GetKnownReplicas(slot);
+            if (routes is not null && !ReferenceEquals(routes, _unknownReplicaRoutes)) return routes;
+            // Persistently uncovered slots can require sequential rounds; another slot's partial
+            // reply must not consume this slot's independent coverage attempt (#731).
+            var attempt = await _unknownReplicaDiscovery.DiscoverAsync(slot, cancellationToken).ConfigureAwait(false);
+            routes = GetKnownReplicas(slot);
+            if (routes is not null && !ReferenceEquals(routes, _unknownReplicaRoutes)) return routes;
+            // An owner change can invalidate discovery after it returns. Only a still-valid
+            // uncovered attempt may fail this read; otherwise obtain fresh coverage.
+            if (_unknownReplicaDiscovery.IsCurrent(slot, attempt)) return null;
+        }
+    }
+
     private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery)
     {
-        var routes = GetKnownReplicas(slot);
-        if (routes is null && Volatile.Read(ref _masters).Length == 0)
-        {
-            // Seed connection readiness precedes its topology reply. Wait for the shared
-            // initial discovery before attempting an uncovered slot independently.
-            var initial = _initialReplicaRoutes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-            if (initial is not null) await initial.WaitAsync(cancellationToken).ConfigureAwait(false);
-            routes = GetKnownReplicas(slot);
-            if (routes is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
-        }
-        if (routes is null)
-        {
-            var unknown = _unknownReplicaRoutes.GetOrAdd(slot, static _ => new([], TimeSpan.Zero));
-            var refresh = unknown.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-            if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
-            routes = GetKnownReplicas(slot);
-            if (routes is not null) _unknownReplicaRoutes.TryRemove(slot, out _);
-        }
+        var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
         var attempted = 0;
         ClusterReplicaSet? tried = null;
@@ -147,7 +147,12 @@ internal sealed partial class ClusterRouter
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
         int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken, bool revalidate = false)
     {
-        if (revalidate && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
+        var needsReplicaRevalidation = revalidate && !ReferenceEquals(GetKnownSlotOwner(slot), node);
+        if (needsReplicaRevalidation && !HasReplicaCoverage(slot))
+        {
+            await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
+        }
+        else if (needsReplicaRevalidation && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
         {
             var refresh = previous.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -183,7 +188,7 @@ internal sealed partial class ClusterRouter
                 && !replicas.Any(static node => node.IsConnected && !node.IsRetired))
             {
                 await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
-                if (GetKnownReplicas(slot) is not null) return;
+                if (HasReplicaCoverage(slot)) return;
             }
             var masters = Volatile.Read(ref _masters);
             // A connected seed can survive a failed initial CLUSTER SLOTS query without any
