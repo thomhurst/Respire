@@ -473,11 +473,12 @@ first, so Redis 5 and 6 work even with `lua-replicate-commands` disabled.
 Redis asynchronous failover can roll back permit state. Expiry scores are absolute server
 timestamps, so after failover a replica with a skewed clock expires permits early or late. After an
 uncertain acquisition, Respire attempts owner-token cleanup; finite expiry is the fallback if the
-reply and cleanup are both lost. With `RespireClient`, acquisitions under a command timeout or
-cancellation require Redis ACL permission for `CLIENT ID` and `CLIENT KILL`, so Respire can fence
-an uncertain acquire before cleanup and a delayed acquire cannot recreate a released permit. If
-the fence never succeeds, Respire sends no release. Other `IRespireClient` implementations cannot
-fence, so their cleanup can be overtaken by the delayed acquire.
+reply and cleanup are both lost. With `RespireClient`, non-expiring acquisitions and acquisitions
+under a command timeout or cancellation require Redis ACL permission for `CLIENT ID` and `CLIENT KILL`,
+so Respire can fence an uncertain acquire before cleanup and prevent a delayed acquire from
+recreating a released permit. If the fence never succeeds, Respire sends no release. Other
+`IRespireClient` implementations cannot fence, so their cleanup can be overtaken by the delayed
+acquire.
 
 An error reply to an acquisition other than a capacity mismatch, such as an ACL rejecting a command
 partway through the script, can follow writes that Redis does not roll back. Respire therefore
