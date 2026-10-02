@@ -226,8 +226,13 @@ internal sealed class SentinelNotificationCoalescer
             Active = next;
             return next;
         }
-        if (activeFailed && Active is { } failed)
-            next = Merge(failed, in next) with { MustRediscover = true };
+        if (Active is { } activeHint)
+        {
+            if (activeFailed)
+                next = Merge(activeHint, in next) with { MustRediscover = true };
+            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 })
+                next = Merge(activeHint, in next);
+        }
         _pending = null;
         Active = next;
         return next;
