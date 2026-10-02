@@ -436,12 +436,14 @@ internal sealed partial class SubscriptionHub
         List<(SubscriptionKind Kind, RespireChannel Name)>? rejected)
     {
         bool retiredDuringReplay;
+        RespireConnection? supersededConnection = null;
         lock (_gate)
         {
             retiredDuringReplay = node.Retired;
             if (!retiredDuringReplay)
             {
                 Interlocked.Exchange(ref node.Epoch, epoch);
+                supersededConnection = node.Connection;
                 node.Connection = connection;
                 _notificationNodes[node.Endpoint] = node;
                 _notificationExhaustedEndpoints.Remove(node.Endpoint);
@@ -457,6 +459,11 @@ internal sealed partial class SubscriptionHub
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { TryLogDebug(error, "Closing a replacement for a retired cluster notification node failed"); }
             throw new RespireConnectionException($"Cluster notification routes for {node.Endpoint} were removed during recovery.");
+        }
+        if (supersededConnection is not null)
+        {
+            try { await supersededConnection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception error) { TryLogDebug(error, "Closing a superseded cluster notification connection failed"); }
         }
         if (rejected is null) return;
         lock (_gate)
