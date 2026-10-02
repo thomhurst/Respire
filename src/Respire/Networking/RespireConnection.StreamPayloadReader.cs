@@ -10,17 +10,14 @@ internal sealed partial class RespireConnection
     /// </summary>
     private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
     {
-        private sealed class ActiveChunkRead(byte[] buffer)
-        {
-            internal byte[] Buffer { get; } = buffer;
-            internal TaskCompletionSource Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        }
-
+        private readonly object _bufferOwnershipGate = new();
         private byte[]? _chunk;
         private byte[]? _alternateChunk;
-        private ActiveChunkRead? _activeChunkRead;
+        private byte[]? _activeChunkBuffer;
+        private TaskCompletionSource? _disposeChunkReadCompletion;
         private byte[]? _pendingBuffer;
         private int _disposed;
+        private bool _readingChunk;
         private bool _useAlternate;
         private long _remaining = length;
         private ReadOnlyMemory<byte> _consumedPrefix;
@@ -40,8 +37,12 @@ internal sealed partial class RespireConnection
                 : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
             _useAlternate = !_useAlternate;
             // Ownership spans all partial reads, including gaps between ReadAsync calls.
-            var activeChunkRead = new ActiveChunkRead(chunk);
-            Volatile.Write(ref _activeChunkRead, activeChunkRead);
+            lock (_bufferOwnershipGate)
+            {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                _readingChunk = true;
+                _activeChunkBuffer = chunk;
+            }
             // Fill the chunk before returning it so sources that return small reads (network
             // streams, for example) do not cost one socket write and flush wait per read.
             var target = (int)Math.Min(StreamChunkSize, _remaining);
@@ -101,11 +102,20 @@ internal sealed partial class RespireConnection
             finally
             {
                 var pendingRead = Volatile.Read(ref _pendingRead);
-                if (pendingRead is { IsCompleted: false })
-                    _ = SettleChunkReadAfterSourceReadAsync(activeChunkRead, pendingRead);
-                else
-                    activeChunkRead.Settled.TrySetResult();
-                Interlocked.CompareExchange(ref _activeChunkRead, null, activeChunkRead);
+                TaskCompletionSource? disposeCompletion;
+                lock (_bufferOwnershipGate)
+                {
+                    _readingChunk = false;
+                    _activeChunkBuffer = null;
+                    disposeCompletion = _disposeChunkReadCompletion;
+                }
+                if (disposeCompletion is not null)
+                {
+                    if (pendingRead is { IsCompleted: false })
+                        _ = SettleChunkReadAfterSourceReadAsync(disposeCompletion, pendingRead);
+                    else
+                        disposeCompletion.TrySetResult();
+                }
             }
         }
 
@@ -143,15 +153,25 @@ internal sealed partial class RespireConnection
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            var activeChunkRead = Volatile.Read(ref _activeChunkRead);
+            byte[]? activeChunkBuffer = null;
+            Task? activeChunkSettled = null;
+            lock (_bufferOwnershipGate)
+            {
+                if (_readingChunk)
+                {
+                    activeChunkBuffer = _activeChunkBuffer;
+                    var settled = _disposeChunkReadCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    activeChunkSettled = settled.Task;
+                }
+            }
             var pendingBuffer = Volatile.Read(ref _pendingBuffer);
             var pendingRead = Volatile.Read(ref _pendingRead);
             byte[]? retainedBuffer = null;
             Task? bufferSettled = null;
-            if (activeChunkRead is not null)
+            if (activeChunkBuffer is not null)
             {
-                retainedBuffer = activeChunkRead.Buffer;
-                bufferSettled = activeChunkRead.Settled.Task;
+                retainedBuffer = activeChunkBuffer;
+                bufferSettled = activeChunkSettled;
             }
             else if (pendingRead is { IsCompleted: false } && pendingBuffer is not null)
             {
@@ -166,11 +186,11 @@ internal sealed partial class RespireConnection
             _alternateChunk = null;
         }
 
-        private static async Task SettleChunkReadAfterSourceReadAsync(ActiveChunkRead activeChunkRead, Task<int> pendingRead)
+        private static async Task SettleChunkReadAfterSourceReadAsync(TaskCompletionSource settled, Task<int> pendingRead)
         {
             try { _ = await pendingRead.ConfigureAwait(false); }
             catch { /* The original streamed SET owns its failure. */ }
-            finally { activeChunkRead.Settled.TrySetResult(); }
+            finally { settled.TrySetResult(); }
         }
 
         private static async Task ReturnChunkAfterReadAsync(Task bufferSettled, byte[] chunk)
