@@ -89,7 +89,7 @@ internal sealed class ReadCursorAffinity
         var key = (readFrom, slot);
         if (_clusterShared.TryGetValue(key, out var shared) && shared.ClusterNode is { } sharedNode)
         {
-            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken).ConfigureAwait(false); }
+            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation).ConfigureAwait(false); }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
@@ -106,7 +106,7 @@ internal sealed class ReadCursorAffinity
         {
             if (_clusterShared.TryGetValue(key, out shared) && shared.ClusterNode is { } currentNode)
             {
-                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken).ConfigureAwait(false); }
+                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true).ConfigureAwait(false); }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));

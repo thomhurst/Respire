@@ -108,8 +108,9 @@ internal readonly struct Verb
                 || command.Equals("ZSCAN", StringComparison.OrdinalIgnoreCase) ? 1
             : -1;
 
+    // TOUCH's observable purpose is updating access metadata on the primary.
     internal static ReadCommandKind GetReadKind(string command, bool isReadOnly)
-        => !isReadOnly ? ReadCommandKind.None
+        => !isReadOnly || command.Equals("TOUCH", StringComparison.OrdinalIgnoreCase) ? ReadCommandKind.None
             : GetCursorArgumentIndex(command) >= 0 || command == "ARSCAN"
                 ? ReadCommandKind.CursorRead : ReadCommandKind.Read;
 
@@ -161,7 +162,7 @@ internal static class Verbs
     public static readonly Verb Rename = new("RENAME");
     public static readonly Verb RenameNx = new("RENAMENX");
     public static readonly Verb Copy = new("COPY");
-    public static readonly Verb Touch = new("TOUCH", ReadCommandKind.Read);
+    public static readonly Verb Touch = new("TOUCH");
     public static readonly Verb Scan = new("SCAN", ReadCommandKind.CursorRead);
     public static readonly Verb Sort = new("SORT");
     public static readonly Verb SortRo = new("SORT_RO", ReadCommandKind.Read);

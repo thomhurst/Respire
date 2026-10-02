@@ -13,6 +13,29 @@ namespace Respire.Tests.Networking;
 public class CommandCatalogTests
 {
     [Test]
+    public async Task BuiltInReadVerbsRequireAuditedReadOnlyCatalogMetadata()
+    {
+        var catalog = RespireCommands.All.ToArray().ToDictionary(command => command.Name);
+        foreach (var field in typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static))
+        {
+            if (field.FieldType != typeof(Verb)) continue;
+            var verb = (Verb)field.GetValue(null)!;
+            if (verb.ReadKind == ReadCommandKind.None) continue;
+            var words = System.Text.Encoding.ASCII.GetString(verb.Bulk).Split("\r\n")
+                .Where((_, index) => (index & 1) != 0);
+            var name = string.Join(' ', words);
+            await Assert.That(catalog.ContainsKey(name)).IsTrue();
+            await Assert.That(catalog[name].IsReadOnly).IsTrue();
+            await Assert.That(catalog[name].ReadKind).IsEqualTo(verb.ReadKind);
+        }
+        await Assert.That(Verbs.Touch.ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(catalog["TOUCH"].ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(Verbs.MemoryUsage.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(Verbs.EvalRo.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(Verbs.EvalShaRo.ReadKind).IsEqualTo(ReadCommandKind.Read);
+    }
+
+    [Test]
     [Arguments("GET", true)]
     [Arguments("HGET", true)]
     [Arguments("EVAL_RO", true)]

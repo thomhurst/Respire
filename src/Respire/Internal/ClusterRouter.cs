@@ -1304,14 +1304,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken, DiscoveryRound? discovery,
         long? expectedTopologyVersion = null, object? snapshotBatch = null, bool keepUncoveredOwners = false,
-        int? requiredSlot = null)
+        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null)
     {
         try
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
             var load = await TryLoadSlotsAsync(node, cancellationToken,
                 expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch,
-                keepUncoveredOwners: keepUncoveredOwners, requiredSlot: requiredSlot).ConfigureAwait(false);
+                keepUncoveredOwners: keepUncoveredOwners, requiredSlot: requiredSlot,
+                replicaRefresh: replicaRefresh).ConfigureAwait(false);
             // Retained owners are not evidence that this reply revalidated the requested slot.
             var complete = load.Loaded && (requiredSlot.HasValue ? load.CoversRequiredSlot : HasCompleteTopology());
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
@@ -1529,7 +1530,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             foreach (var (range, node) in resolved)
             {
                 var replicaNodes = range.Replicas
-                    .Where(replica => !RespireEndpointComparer.Instance.Equals(replica.Endpoint, range.Preferred))
+                    .Where(replica => !MatchesPrimary(replica, range.Preferred, range.NodeId, range.Aliases))
                     .Select(_identities.GetOrCreateReplica).Distinct().ToArray();
                 // Unchanged routes keep their set, preserving its cursor and refresh throttle,
                 // and this refresh has just confirmed them.
@@ -1622,7 +1623,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             foreach (var replica in range.Replicas)
             {
-                if (RespireEndpointComparer.Instance.Equals(replica.Endpoint, range.Preferred)) continue;
+                if (MatchesPrimary(replica, range.Preferred, range.NodeId, range.Aliases)) continue;
                 if (!merged.TryGetValue(replica.Endpoint, out var entry))
                 {
                     entry = (replica.NodeId, []);
@@ -2120,7 +2121,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         bool keepUncoveredOwners = false,
         long? expectedTopologyVersion = null,
         object? snapshotBatch = null,
-        int? requiredSlot = null)
+        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -2188,7 +2189,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
                     {
                         if (TryParseReplica(values[replicaIndex], seed.Host) is not { } replica
-                            || RespireEndpointComparer.Instance.Equals(replica.Endpoint, preferred)
+                            || MatchesPrimary(replica, preferred, nodeId, aliases)
                             || replicas.Any(existing => RespireEndpointComparer.Instance.Equals(existing.Endpoint, replica.Endpoint)))
                         {
                             continue;
@@ -2210,6 +2211,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 var coversAllSlots = CoversAllSlots(topology);
                 var coversRequiredSlot = requiredSlot is not { } slot
                     || topology.Any(range => range.Start <= slot && slot <= range.End);
+                if (replicaRefresh is not null && !replicaRefresh.Accept(topology, topologyVersion, discoveryGeneration))
+                    return (false, coversAllSlots, coversRequiredSlot);
                 ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners, snapshotBatch);
                 return (true, coversAllSlots, coversRequiredSlot);
             }
@@ -2225,6 +2228,23 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // connection/server failures. Incompatible configuration must still propagate.
             return (false, false, false);
         }
+    }
+
+    private static bool MatchesPrimary(ClusterTopologyReplica replica, RespireEndpoint primary,
+        string? primaryId, List<RespireEndpoint> primaryAliases)
+    {
+        if (primaryId is not null && primaryId == replica.NodeId) return true;
+        var comparer = RespireEndpointComparer.Instance;
+        if (comparer.Equals(replica.Endpoint, primary)) return true;
+        foreach (var alias in primaryAliases)
+            if (comparer.Equals(replica.Endpoint, alias)) return true;
+        foreach (var replicaAlias in replica.Aliases)
+        {
+            if (comparer.Equals(replicaAlias, primary)) return true;
+            foreach (var alias in primaryAliases)
+                if (comparer.Equals(replicaAlias, alias)) return true;
+        }
+        return false;
     }
 
     private static bool CoversAllSlots(List<ClusterTopologyRange> topology)

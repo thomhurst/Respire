@@ -145,8 +145,13 @@ internal sealed partial class ClusterRouter
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
-        int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken)
+        int slot, RespireConnectionMultiplexer node, CancellationToken cancellationToken, bool revalidate = false)
     {
+        if (revalidate && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
+        {
+            var refresh = previous.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
         if (ReferenceEquals(GetKnownSlotOwner(slot), node))
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
@@ -180,11 +185,11 @@ internal sealed partial class ClusterRouter
             var candidates = replicas.Where(static node => node.IsConnected && !node.IsRetired)
                 .Concat(Volatile.Read(ref _masters)).Distinct().ToArray();
             var version = CaptureTopologyVersion();
-            var snapshotBatch = new object();
+            var refreshRound = new ReplicaRefreshRound(slot);
             // Each known candidate gets the shared deadline. Parallel probes prevent stalled
             // nodes from consuming healthy nodes' time; one snapshot batch fences late replies.
             var attempts = candidates.Select(node => TryRefreshReplicaCandidateAsync(
-                node, slot, timeout.Token, version, snapshotBatch)).ToArray();
+                node, slot, timeout.Token, version, refreshRound)).ToArray();
             var pending = new List<Task<bool>>(attempts);
             try
             {
@@ -194,7 +199,7 @@ internal sealed partial class ClusterRouter
                     pending.Remove(completed);
                     if (await completed.ConfigureAwait(false)) return;
                 }
-                LogReplicaRefreshFailure(slot, error: null);
+                if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, error: null);
             }
             finally
             {
@@ -211,17 +216,53 @@ internal sealed partial class ClusterRouter
 
     private async Task<bool> TryRefreshReplicaCandidateAsync(
         RespireConnectionMultiplexer node, int slot, CancellationToken cancellationToken,
-        long expectedTopologyVersion, object snapshotBatch)
+        long expectedTopologyVersion, ReplicaRefreshRound refreshRound)
     {
         try
         {
             return await TryRefreshTopologyAsync(node, cancellationToken, discovery: null,
-                expectedTopologyVersion, snapshotBatch, keepUncoveredOwners: true, requiredSlot: slot).ConfigureAwait(false);
+                expectedTopologyVersion, refreshRound.SnapshotBatch, keepUncoveredOwners: true, requiredSlot: slot,
+                replicaRefresh: refreshRound).ConfigureAwait(false);
         }
         catch (Exception error) when (cancellationToken.IsCancellationRequested
             && (error is OperationCanceledException || IsDiscoveryFailure(error)))
         {
             return false;
+        }
+    }
+
+    // Empty replica snapshots remain useful evidence (for example, a promotion), but must not
+    // publish or fence out another candidate that can still supply replicas for this slot.
+    private sealed class ReplicaRefreshRound(int slot)
+    {
+        internal readonly object SnapshotBatch = new();
+        private readonly object _gate = new();
+        private (List<ClusterTopologyRange> Ranges, long Version, long Generation)? _empty;
+
+        internal bool Accept(List<ClusterTopologyRange> ranges, long version, long generation)
+        {
+            var covered = false;
+            foreach (var range in ranges)
+            {
+                if (range.Start > slot || slot > range.End) continue;
+                if (range.Replicas.Count != 0) return true;
+                covered = true;
+            }
+            if (covered)
+                lock (_gate)
+                    if (_empty is not { } previous || generation > previous.Generation)
+                        _empty = (ranges, version, generation);
+            return false;
+        }
+
+        internal bool PublishEmpty(ClusterRouter router)
+        {
+            (List<ClusterTopologyRange> Ranges, long Version, long Generation)? candidate;
+            lock (_gate) candidate = _empty;
+            if (candidate is not { } snapshot) return false;
+            router.ApplyTopologyCore(snapshot.Ranges, snapshot.Version, snapshot.Generation,
+                keepUncoveredOwners: true, snapshotBatch: SnapshotBatch);
+            return true;
         }
     }
 
