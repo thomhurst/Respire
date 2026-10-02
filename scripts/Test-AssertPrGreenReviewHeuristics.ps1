@@ -1298,6 +1298,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks pre-rollout legacy Claude review with underscored prefix'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "## API_v2 Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks legacy Claude review with emoji heading'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "### 🔍 Review: PR 700`n`n1. A concrete finding.")
