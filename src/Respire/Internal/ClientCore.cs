@@ -730,31 +730,38 @@ internal sealed class ClientCore : IAsyncDisposable
             hub = _hub;
         }
 
-        await _ownedPools.DisposeAllAsync().ConfigureAwait(false);
-
-        if (hub is not null)
+        try
         {
-            await hub.DisposeAsync().ConfigureAwait(false);
+            // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
+            await _ownedPools.DisposeAllAsync().ConfigureAwait(false);
         }
-
-        if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
-        await ReadRouter.DisposeAsync().ConfigureAwait(false);
-        if (Cluster is { } cluster)
+        finally
         {
-            cluster.SlotStateChanged -= NotifyCommandStateChanged;
-            cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
-            cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
-            cluster.NodeRetired -= NotifyCommandNodeRetired;
-            cluster.ReplicaNodeRetired -= NotifyReadReplicaNodeRetired;
-            cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
-            await cluster.DisposeAsync(disposeStartedOnSmigratedWorker).ConfigureAwait(false);
-        }
-        else
-        {
-            Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
-            Multiplexer.MovingHandoffPublished -= RefreshStandaloneDedicatedPool;
-        }
+            // A failed dedicated pool must not prevent disposal of the other client owners.
+            if (hub is not null)
+            {
+                await hub.DisposeAsync().ConfigureAwait(false);
+            }
 
-        await _multiplexer.DisposeAsync().ConfigureAwait(false);
+            if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
+            await ReadRouter.DisposeAsync().ConfigureAwait(false);
+            if (Cluster is { } cluster)
+            {
+                cluster.SlotStateChanged -= NotifyCommandStateChanged;
+                cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
+                cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
+                cluster.NodeRetired -= NotifyCommandNodeRetired;
+                cluster.ReplicaNodeRetired -= NotifyReadReplicaNodeRetired;
+                cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
+                await cluster.DisposeAsync(disposeStartedOnSmigratedWorker).ConfigureAwait(false);
+            }
+            else
+            {
+                Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
+                Multiplexer.MovingHandoffPublished -= RefreshStandaloneDedicatedPool;
+            }
+
+            await _multiplexer.DisposeAsync().ConfigureAwait(false);
+        }
     }
 }
