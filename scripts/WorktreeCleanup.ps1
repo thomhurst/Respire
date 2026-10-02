@@ -336,11 +336,20 @@ function Remove-MergedWorktree {
         # Some disposable output (for example Debug/) is not ignored by Git. Remove
         # only those explicitly classified paths; leave ordinary source to Git's guard.
         $untracked = @(git -C $quarantine status --porcelain=v1 --untracked-files=all 2>$null)
-        if ($LASTEXITCODE -ne 0) { return }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Preserving quarantined worktree $Label : $quarantine (final status inspection failed)"
+            return
+        }
         foreach ($entry in $untracked) {
-            if ($entry -notmatch '^\?\? ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) { return }
+            if ($entry -notmatch '^\?\? ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) {
+                Write-Host "Preserving quarantined worktree $Label : $quarantine (non-disposable entry: $entry)"
+                return
+            }
             git -C $quarantine --literal-pathspecs clean -f -- $entry.Substring(3) 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0) { return }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Preserving quarantined worktree $Label : $quarantine (generated-file cleanup failed)"
+                return
+            }
         }
         # Never force removal or recursively delete after Git refuses.
         git -C $Repo worktree remove $quarantine 2>$null
