@@ -2,6 +2,7 @@ name: In-flight FIFO benchmarks
 
 on:
   pull_request:
+    types: [labeled]
     paths:
       - 'src/Respire/Networking/InflightRing.cs'
       - 'src/Respire/Networking/RespireConnection.cs'
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   inflight-comparison:
+    if: contains(github.event.pull_request.labels.*.name, 'run-benchmarks')
     name: Compare in-flight FIFO (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20

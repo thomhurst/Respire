@@ -2,6 +2,7 @@ name: Cache-aside benchmarks
 
 on:
   pull_request:
+    types: [labeled]
     paths:
       - 'src/Respire/RespireClientSideCache*.cs'
       - 'src/Respire/RespireClient.cs'
@@ -21,6 +22,7 @@ concurrency:
 
 jobs:
   cache-aside-comparison:
+    if: contains(github.event.pull_request.labels.*.name, 'run-benchmarks')
     name: Compare cache-aside (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 45

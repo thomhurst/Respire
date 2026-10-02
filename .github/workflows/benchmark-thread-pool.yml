@@ -2,6 +2,7 @@ name: Thread-pool monitoring benchmarks
 
 on:
   pull_request:
+    types: [labeled]
     paths:
       - 'src/Respire/Internal/ThreadPoolMonitor.cs'
       - 'src/Respire/Internal/ClientCore.cs'
@@ -20,6 +21,7 @@ concurrency:
 
 jobs:
   thread-pool-comparison:
+    if: contains(github.event.pull_request.labels.*.name, 'run-benchmarks')
     name: Compare thread-pool monitoring (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20
