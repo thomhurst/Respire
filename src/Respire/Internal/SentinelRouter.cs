@@ -667,6 +667,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate)
             {
                 if (_disposed) return;
+                var policy = core.Options.ReconnectPolicy;
+                if (!succeeded && policy?.IsExhausted(failures) == true)
+                {
+                    // Pending hints cannot bypass the shared retry budget.
+                    _coalescer.Complete();
+                    _notificationRediscovery = null;
+                    return;
+                }
                 if (_coalescer.TakePending(activeFailed: !succeeded) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
@@ -675,8 +683,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     // at the default backoff capped at 30 seconds: dropping the hint could leave a
                     // retired generation with no event-driven replacement. A policy's MaxAttempts
                     // bounds it; commands still run discovery on demand after that.
-                    var policy = core.Options.ReconnectPolicy;
-                    if (succeeded || policy?.IsExhausted(failures) == true)
+                    if (succeeded)
                     {
                         _coalescer.Complete();
                         _notificationRediscovery = null;
@@ -687,8 +694,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 else
                 {
                     _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    // A newer hint restarts discovery at once, but only success resets the backoff.
+                    // A newer hint restarts discovery at once. Count each failed attempt against
+                    // the same policy budget; only success starts a fresh run.
                     if (succeeded) failures = 0;
+                    else failures++;
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
                         && SameEndpoint(current.Endpoint, target))

@@ -620,6 +620,40 @@ public class SentinelRoutingTests
         await Assert.That(levels.Skip(1).All(level => level == Microsoft.Extensions.Logging.LogLevel.Debug)).IsTrue();
     }
 
+    [Test]
+    public async Task PendingHintsDoNotResetNotificationRediscoveryFailureBudget()
+    {
+        await using var original = Primary();
+        await using var unavailable = Primary((_, command) => command == "ROLE"
+            ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null);
+        unavailable.DelayCommand("ROLE", 100);
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromHours(1), MaxDelay = TimeSpan.FromHours(1), JitterRatio = 0,
+                MaxAttempts = 1,
+            },
+        });
+        await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        Volatile.Write(ref port, unavailable.Port);
+
+        var router = client.Core.Sentinel!;
+        router.QueueNotificationRediscovery(new SentinelHint("initial-hint", MustRediscover: true));
+        await WaitForCommandCountAsync(unavailable, "ROLE", 1);
+        router.QueueNotificationRediscovery(new SentinelHint("pending-hint-1", MustRediscover: true));
+        await WaitForCommandCountAsync(unavailable, "ROLE", 2);
+        router.QueueNotificationRediscovery(new SentinelHint("pending-hint-2", MustRediscover: true));
+
+        var rediscovery = router.NotificationRediscovery;
+        await Assert.That(rediscovery).IsNotNull();
+        await rediscovery!.WaitAsync(Limit);
+        await Assert.That(unavailable.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
+    }
+
     private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _recoveries;
