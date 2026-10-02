@@ -146,10 +146,13 @@ internal sealed partial class DedicatedConnectionPool(
         lock (_gate)
         {
             if (!_connections.TryGetValue(connection, out entry!) || entry.State != State.Rented) return;
-            if (!_stopping && connection.IsConnected && _idle.Count + _streamingIdle.Count < MaxIdle)
+            var idle = entry.StreamingMaintenance ? _streamingIdle : _idle;
+            // Reserve equal reuse capacity when maintenance requires incompatible lease kinds.
+            var limit = streamingMaintenance == RespireMaintenanceNotificationMode.Disabled ? MaxIdle : MaxIdle / 2;
+            if (!_stopping && connection.IsConnected && idle.Count < limit)
             {
                 entry.State = State.Idle;
-                (entry.StreamingMaintenance ? _streamingIdle : _idle).Push(entry);
+                idle.Push(entry);
                 return;
             }
             BeginCloseLocked(entry);

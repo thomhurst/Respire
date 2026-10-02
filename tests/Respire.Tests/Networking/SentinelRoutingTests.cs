@@ -441,6 +441,39 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task AcceptedStreamedSetDrainsThroughItsOriginalPoolAfterPromotion()
+    {
+        var rejectWrites = false;
+        await using var oldPrimary = Primary((_, command) =>
+            command == "SET trigger value" && Volatile.Read(ref rejectWrites)
+                ? "-READONLY replica\r\n"u8.ToArray() : null);
+        oldPrimary.SuppressReply = command => command == "SET upload payload";
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var originalPool = client.Core.DedicatedPool;
+        await using var source = new MemoryStream("payload"u8.ToArray());
+        var pending = client.Strings.SetAsync("upload", source, source.Length).AsTask();
+        await WaitForCommandAsync(oldPrimary, "SET upload ");
+        var index = oldPrimary.ReceivedCommands.ToList().FindIndex(command => command == "SET upload payload");
+        var connectionId = oldPrimary.ReceivedConnectionIds[index];
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        await using var nextSource = new MemoryStream("next"u8.ToArray());
+        await Assert.That(await client.Strings.SetAsync("new-upload", nextSource, nextSource.Length).AsTask().WaitAsync(Limit)).IsTrue();
+        await Assert.That(ReferenceEquals(originalPool, client.Core.DedicatedPool)).IsFalse();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await oldPrimary.SendRawAsync(FakeRespServer.OkReply, connectionId);
+        await Assert.That(await pending.WaitAsync(Limit)).IsTrue();
+        await originalPool.RetireAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(originalPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        await Assert.That(promoted.ReceivedCommands).Contains("SET new-upload next");
+        await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith("SET upload "))).IsFalse();
+    }
+
+    [Test]
     public async Task CancelledDiscoveryDoesNotPublishAndTheNextOperationCanConnect()
     {
         await using var primary = Primary();

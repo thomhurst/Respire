@@ -19,6 +19,70 @@ public sealed class StreamedSetTests
 {
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
 
+    [Test]
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("cluster-discovery", false)]
+    [Arguments("cluster-discovery", true)]
+    [Arguments("cluster-rent", false)]
+    [Arguments("cluster-rent", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    public async Task UploadAcquisitionObservesDeadlineAndCallerCancellation(string mode, bool cancelCaller)
+    {
+        await using var server = new FakeRespServer(5, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n")
+            : FakeRespServer.OkReply;
+        var stall = mode != "cluster-rent";
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            UseCluster = mode.StartsWith("cluster"),
+            SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (Volatile.Read(ref stall))
+                {
+                    connecting.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try { await socket.ConnectAsync(host, port, token); }
+                catch { socket.Dispose(); throw; }
+                return new NetworkStream(socket, ownsSocket: true);
+            },
+        });
+        if (mode == "cluster-rent")
+        {
+            await client.PingAsync();
+            Volatile.Write(ref stall, true);
+        }
+        using var cancellation = new CancellationTokenSource();
+        await using var source = new MemoryStream("data"u8.ToArray());
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: cancellation.Token).AsTask();
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await upload.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await upload.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        }
+        await Assert.That(source.Position).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+    }
+
     private static byte[] PatternedPayload(int length)
     {
         var payload = new byte[length];

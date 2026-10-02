@@ -1239,6 +1239,29 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MaintenanceLeaseKindsReserveIndependentIdleCapacity(bool streamingFirst)
+    {
+        await using var server = Server(maxConnections: 8);
+        server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(Options(server));
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var first = new RespireConnection[3];
+        for (var index = 0; index < first.Length; index++)
+            first[index] = await pool.RentAsync(CancellationToken.None, streaming: streamingFirst);
+        foreach (var connection in first) pool.Return(connection);
+        var other = await pool.RentAsync(CancellationToken.None, streaming: !streamingFirst);
+        pool.Return(other);
+        var reused = await pool.RentAsync(CancellationToken.None, streaming: !streamingFirst);
+        await Assert.That(ReferenceEquals(reused, other)).IsTrue();
+        pool.Return(reused);
+        var retained = await pool.RentAsync(CancellationToken.None, streaming: streamingFirst);
+        await Assert.That(ReferenceEquals(retained, first[1])).IsTrue();
+        pool.Return(retained);
+    }
+
+    [Test]
     public async Task StreamedSetUploadUsesRelaxedDeadlineDuringMaintenance()
     {
         await using var server = Server();

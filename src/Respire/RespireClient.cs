@@ -3381,11 +3381,32 @@ public sealed partial class RespireClient : IRespireClient
             ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds))
             : CommandDeadline.None;
 
+    private static CancellationToken ArmDedicatedAcquisition(
+        DedicatedAcquisitionCancellation? source, CommandDeadline deadline, CancellationToken callerToken)
+    {
+        if (source is null) return callerToken;
+        source.Arm(deadline);
+        return source.Token;
+    }
+
+    private Exception? TranslateDedicatedAcquisitionCancellation(
+        Exception error, DedicatedAcquisitionCancellation? source, CancellationToken callerToken, string operation)
+    {
+        if (source is null || error is not OperationCanceledException cancelled
+            || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested) return null;
+        return callerToken.IsCancellationRequested
+            ? new OperationCanceledException(cancelled.Message, cancelled, callerToken)
+            : new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, cancelled,
+                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+    }
+
     private static async ValueTask ReleaseFailedDedicatedConnectionAsync(
         DedicatedConnectionPool pool, RespireConnection connection, DedicatedSendPolicy policy)
     {
-        // Streaming closes its socket for incomplete frames. Once the frame is complete,
-        // the receive loop drains an abandoned reply before completing the next command.
+        // FailStreamedSetAsync aborts every incomplete-frame phase, including cancellation
+        // after the header. SendStreamedSetAsync clears _streamingActive in its finally before
+        // control reaches here. A connected socket therefore has no partial frame: either no
+        // header was sent or the receive loop can drain the completed frame's abandoned reply.
         if (policy == DedicatedSendPolicy.Streaming && connection.IsConnected) pool.Return(connection);
         else await pool.DiscardAsync(connection).ConfigureAwait(false);
     }
@@ -3429,11 +3450,15 @@ public sealed partial class RespireClient : IRespireClient
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
+            var commandDeadline = CreateDedicatedDeadline(policy);
+            using var acquisitionCancellation = commandDeadline.IsSet
+                ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
             try
             {
-                var commandDeadline = CreateDedicatedDeadline(policy);
-                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                connection = await pool.RentAsync(cancellationToken, streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
+                var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
+                pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
+                connection = await pool.RentAsync(acquisitionToken, streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
+                acquisitionCancellation?.Disarm();
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
                         core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
@@ -3455,13 +3480,14 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception ex)
             {
-                var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation)
+                    ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                     && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
                             core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
-                    : null;
+                    : null);
                 if (connection is null)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
                         sentinelStarted, timeoutError ?? ex, storedProcedureName);
@@ -3498,15 +3524,25 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var commandDeadline = CreateDedicatedDeadline(policy);
+        using var acquisitionCancellation = commandDeadline.IsSet
+            ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
+        var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
         DedicatedConnectionPool pool;
         long routeVersion;
-        if (command is IStreamingRespCommand)
-            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, cancellationToken, discovery: null)
-                .ConfigureAwait(false);
-        else
+        try
         {
-            pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
-            routeVersion = 0;
+            if (command is IStreamingRespCommand)
+                (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null)
+                    .ConfigureAwait(false);
+            else
+            {
+                pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, acquisitionToken, discovery: null).ConfigureAwait(false);
+                routeVersion = 0;
+            }
+        }
+        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation) is { } timeout)
+        {
+            throw timeout;
         }
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
@@ -3525,9 +3561,12 @@ public sealed partial class RespireClient : IRespireClient
                 var acquiringRedirectPool = false;
                 try
                 {
+                    acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        cancellationToken, discovery, streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
+                        acquisitionToken, discovery,
+                        streaming: policy == DedicatedSendPolicy.Streaming).ConfigureAwait(false);
+                    acquisitionCancellation?.Disarm();
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -3579,8 +3618,10 @@ public sealed partial class RespireClient : IRespireClient
                             // The source reply completed; no redirected command has been accepted yet.
                             cluster.RecordRejection(ref discovery, connection, error);
                             acquiringRedirectPool = true;
+                            commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
+                            acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                             var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                    error, connection, cancellationToken, slot, discovery)
+                                    error, connection, acquisitionToken, slot, discovery)
                                 .ConfigureAwait(false);
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
@@ -3648,23 +3689,25 @@ public sealed partial class RespireClient : IRespireClient
                         cluster.RecordRejection(ref discovery, connection, error);
                         if (!returned) pool.Return(connection);
                     }
+                    acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     if (sendAsking && askRedirect is not null && askingSource is not null)
                         pool = await cluster.GetRedirectDedicatedPoolAsync(
-                            askRedirect, askingSource, cancellationToken, slot, discovery).ConfigureAwait(false);
+                            askRedirect, askingSource, acquisitionToken, slot, discovery).ConfigureAwait(false);
                     else
                         (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
-                            slot, cancellationToken, discovery).ConfigureAwait(false);
+                            slot, acquisitionToken, discovery).ConfigureAwait(false);
                     continue;
                 }
                 catch (Exception ex)
                 {
-                    var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                    var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation)
+                        ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                         && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                         ? new RespireTimeoutException(operation, timeout, cancelled,
                             acquiringRedirectPool || connection is null
                                 ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
                                 : connection.CaptureDedicatedTimeoutDiagnostics())
-                        : null;
+                        : null);
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
                         acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
@@ -3677,6 +3720,10 @@ public sealed partial class RespireClient : IRespireClient
                     throw;
                 }
             }
+        }
+        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation) is { } timeout)
+        {
+            throw timeout;
         }
         finally { discovery?.Finish(); }
     }
