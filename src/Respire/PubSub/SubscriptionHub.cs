@@ -852,7 +852,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             try
             {
                 InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
-                await Task.WhenAll(interruptedDisposals).ConfigureAwait(false);
+                await CleanupTasks.WhenAllAsync(interruptedDisposals).ConfigureAwait(false);
             }
             finally
             {

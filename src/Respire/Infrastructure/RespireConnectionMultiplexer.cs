@@ -1396,7 +1396,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             await WaitForPublicationAsync().ConfigureAwait(false);
-            await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.DisposeAsync().AsTask()))
+            await CleanupTasks.WhenAllAsync(_connections.OfType<RespireConnection>().Select(connection => connection.DisposeAsync().AsTask()))
                 .ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             if (_retirementCompletion is { } retirement)

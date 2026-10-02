@@ -183,10 +183,12 @@ one cleanup failure cannot prevent another borrowed lease from being aborted. Co
 retirement and disposal use the pool's existing shared cleanup task.
 
 Client shutdown observes each owner separately in disposal order. A pool, subscription hub,
-or router failure cannot skip a later owner. A single failure is rethrown unchanged; multiple
+or router failure cannot skip a later owner. A single failure, including an owner-supplied
+`AggregateException`, is rethrown unchanged; multiple
 owner failures are preserved as direct inner exceptions in one `AggregateException` after
 cleanup finishes. The client retains every exception on a bulk disposal task, including
-multiple failures from its dedicated-pool ledger.
+multiple failures from its dedicated-pool ledger. Router and multiplexer cleanup preserve
+their internal bulk-task failures before an async await boundary can unwrap them.
 
 This bookkeeping does not participate in healthy command dispatch or lease acquisition.
 Route-version validation, ASK target selection, MOVING publication, cancellation deadlines,

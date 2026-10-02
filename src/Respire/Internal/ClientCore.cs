@@ -20,6 +20,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _clusterSubscriptionStates = [];
     private SubscriptionHub? _hub;
     private readonly DedicatedPoolLedger _ownedPools;
+    internal DedicatedPoolLedger OwnedPools => _ownedPools;
     private Dictionary<(bool Sharded, RespireEndpoint Endpoint), RespireConnectionState>? _subscriptionStates;
     private RespireEndpoint? _regularSubscriptionEndpoint;
     private bool _publishingState;
@@ -742,7 +743,7 @@ internal sealed class ClientCore : IAsyncDisposable
         await DisposeOwnerAsync(_multiplexer.DisposeAsync).ConfigureAwait(false);
         if (disposeErrors is { Count: 1 })
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeErrors[0]).Throw();
-        if (disposeErrors is { Count: > 1 }) throw new AggregateException(disposeErrors);
+        if (disposeErrors is { Count: > 1 }) throw new AggregateException(disposeErrors).Flatten();
 
         async ValueTask DisposeOwnerAsync(Func<ValueTask> dispose)
         {
@@ -755,14 +756,13 @@ internal sealed class ClientCore : IAsyncDisposable
             }
             catch (Exception error)
             {
-                // Await exposes only one failure from Task.WhenAll. Preserve the complete task exception
-                // collection, including aggregates returned by owners, without nesting the final result.
-                var failure = disposal?.Exception ?? error;
+                // Remove only the Task.Exception wrapper here. Flattening a single owner-supplied
+                // aggregate would change its identity; flatten only when combining failures above.
                 disposeErrors ??= [];
-                if (failure is AggregateException aggregate)
-                    disposeErrors.AddRange(aggregate.Flatten().InnerExceptions);
+                if (disposal?.Exception is { } taskError)
+                    disposeErrors.AddRange(taskError.InnerExceptions);
                 else
-                    disposeErrors.Add(failure);
+                    disposeErrors.Add(error);
             }
         }
     }

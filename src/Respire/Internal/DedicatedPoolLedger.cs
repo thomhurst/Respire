@@ -42,5 +42,5 @@ internal sealed class DedicatedPoolLedger(object gate)
 
     internal Task DisposeAllAsync()
         // Start every abort before awaiting any completion, even when one pool fails.
-        => Task.WhenAll(Snapshot().Select(ReleaseAsync));
+        => CleanupTasks.WhenAllAsync(Snapshot().Select(ReleaseAsync));
 }

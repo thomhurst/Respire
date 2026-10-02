@@ -327,14 +327,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             Exception? disposeError = null;
             try
             {
-                await Task.WhenAll(corrections.Select(pool => pool.DisposeAsync().AsTask())
+                await CleanupTasks.WhenAllAsync(corrections.Select(pool => pool.DisposeAsync().AsTask())
                     .Concat(owned.Select(generation => generation.DisposeAsync().AsTask()))).ConfigureAwait(false);
             }
             catch (Exception error) { disposeError = error; }
-            try { await Task.WhenAll(owned.Select(generation => generation.Retirement)).ConfigureAwait(false); }
+            try { await CleanupTasks.WhenAllAsync(owned.Select(generation => generation.Retirement)).ConfigureAwait(false); }
             catch (Exception error)
             {
-                disposeError = disposeError is null ? error : new AggregateException(disposeError, error);
+                disposeError = disposeError is null ? error : new AggregateException(disposeError, error).Flatten();
             }
             finally
             {
@@ -533,7 +533,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             Multiplexer.MovingHandoffPublished -= RefreshPool;
             RespireConnection[] connections;
             lock (_connectionsGate) connections = _connections.ToArray();
-            await Task.WhenAll(connections.Select(connection => connection.DisposeAsync().AsTask())
+            await CleanupTasks.WhenAllAsync(connections.Select(connection => connection.DisposeAsync().AsTask())
                 .Append(_pools.DisposeAllAsync())
                 .Append(Multiplexer.DisposeAsync().AsTask())).ConfigureAwait(false);
         }
