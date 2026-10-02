@@ -545,6 +545,8 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        // A closed client cannot send queued releases, so cancel its background cleanup before
+        // tearing down the transports. Dispose semaphore permits before the client when possible.
         await CoordinationCleanupQueue.DisposeAsync().ConfigureAwait(false);
         Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
         ClientCache?.StopInvalidationObservers();

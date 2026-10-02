@@ -23,6 +23,10 @@ namespace Respire.Extensions.Coordination;
 /// can overtake the delayed acquire. Finite expiry then bounds how long that permit stays held; a
 /// permit without expiry stays held until it is removed manually.
 /// </para>
+/// <para>
+/// Dispose permits before disposing their client when cleanup must reach Redis. Client disposal
+/// cancels pending background cleanup; an owner-only permit may remain held until removed manually.
+/// </para>
 /// </remarks>
 public sealed class RespireSemaphore
 {
