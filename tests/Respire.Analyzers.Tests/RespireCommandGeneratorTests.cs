@@ -91,6 +91,34 @@ public class RespireCommandGeneratorTests
     }
 
     [Test]
+    public async Task KnownCatalogSubcommandsUseTheirDescriptorAndUnknownPairsRemainInvalid()
+    {
+        var (generated, diagnostics) = Generate(Preamble + "namespace Demo { [RespireCommands] public interface IModule { " +
+            "[RespireCommand(\"FT.CURSOR READ\")] ValueTask<RespireResult> Read(string index, long cursor); " +
+            "[RespireCommand(\"FT.CURSOR DEL\")] ValueTask<RespireResult> Delete(string index, long cursor); } }");
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(generated).Contains("global::Respire.RespireCommands.Search.@FT_CURSOR_READ");
+        await Assert.That(generated).Contains("global::Respire.RespireCommands.Search.@FT_CURSOR_DEL");
+
+        var (_, invalidDiagnostics) = Generate(Preamble + "namespace Demo { [RespireCommands] public interface IModule { " +
+            "[RespireCommand(\"AUTH user\")] ValueTask Get(); } }");
+        await Assert.That(invalidDiagnostics.Any(diagnostic => diagnostic.Id == "RESP003")).IsTrue();
+    }
+
+    [Test]
+    [Arguments("GET DEL")]
+    [Arguments("JSON GET")]
+    [Arguments("CLIENT GET NAME")]
+    public async Task CatalogResolutionPreservesCommandTokenBoundaries(string name)
+    {
+        var (generated, diagnostics) = Generate(Preamble +
+            $"namespace Demo {{ [RespireCommands] public interface IModule {{ [RespireCommand(\"{name}\")] ValueTask<RespireResult> Read(); }} }}");
+
+        await Assert.That(diagnostics.Any(diagnostic => diagnostic.Id == "RESP003")).IsTrue();
+        await Assert.That(generated).IsEqualTo("");
+    }
+
+    [Test]
     public async Task NullableObliviousDeclarationsCompileWithoutWarnings()
     {
         var (generated, diagnostics) = Generate("""

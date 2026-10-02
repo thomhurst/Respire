@@ -167,15 +167,8 @@ public sealed class RespireSearchClient
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
         if (count is <= 0) throw new ArgumentOutOfRangeException(nameof(count));
         var name = RequireName(index);
-        RespireValue[] args = count is { } value
-            ? [name, cursorId, "COUNT", value]
-            : [name, cursorId];
-        // FT.CURSOR READ/DEL use the catalog command rather than IRespireSearchCommands. The generator
-        // accepts one command token, so a generated FT.CURSOR method would send READ as its first
-        // argument, and cluster routing would hash "READ" instead of the index name and could send
-        // the read to a node that does not own the cursor. The catalog entry carries the subcommand,
-        // so routing starts at the index name, the same slot FT.AGGREGATE used.
-        using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_READ, args, cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.CursorReadAsync(name, cursorId,
+            count is { } ? ["COUNT", count.Value] : [], cancellationToken).ConfigureAwait(false);
         return RespireSearchAggregateCursorPage.Parse(result, "FT.CURSOR READ", name);
     }
 
@@ -190,8 +183,7 @@ public sealed class RespireSearchClient
     public async ValueTask DeleteCursorAsync(string index, long cursorId, CancellationToken cancellationToken = default)
     {
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
-        // See ReadCursorAsync for why this uses the catalog command.
-        using var result = await _client.ExecuteAsync(RespireCommands.Search.FT_CURSOR_DEL, [RequireName(index), cursorId], cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.CursorDeleteAsync(RequireName(index), cursorId, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask TryDeleteCursorAsync(string index, long cursorId)

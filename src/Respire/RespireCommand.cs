@@ -182,6 +182,12 @@ public readonly struct RespireCommand
     }
 }
 
+[AttributeUsage(AttributeTargets.Field, Inherited = false)]
+internal sealed class RespireCommandCatalogNameAttribute(string name) : Attribute
+{
+    public string Name { get; } = name;
+}
+
 // Keep the behavior and read-only metadata within the descriptor's existing footprint.
 internal enum RespireCommandBehavior : byte
 {

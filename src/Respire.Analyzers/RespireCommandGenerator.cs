@@ -31,7 +31,8 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var interfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
                 "Respire.RespireCommandsAttribute",
                 static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attribute, cancellationToken) => Build((INamedTypeSymbol)attribute.TargetSymbol, cancellationToken))
+                static (attribute, cancellationToken) => Build((INamedTypeSymbol)attribute.TargetSymbol,
+                    attribute.SemanticModel.Compilation, cancellationToken))
             .WithTrackingName(ModelStepName);
         context.RegisterSourceOutput(interfaces, static (output, model) => Emit(output, model));
     }
@@ -44,7 +45,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             context.AddSource(model.HintName, SourceText.From(model.Source, Encoding.UTF8));
     }
 
-    private static GeneratedInterface Build(INamedTypeSymbol type, CancellationToken cancellationToken)
+    private static GeneratedInterface Build(INamedTypeSymbol type, Compilation compilation, CancellationToken cancellationToken)
     {
         if (type.ContainingType is not null || type.Arity != 0 || type.Interfaces.Length != 0
             || type.IsFileLocal || type.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal))
@@ -60,7 +61,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         foreach (var method in methods)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var error = ValidateMethod(method);
+            var error = ValidateMethod(method, compilation);
             if (error is not null) errors.Add(DiagnosticInfo.Create(method, error));
         }
         if (errors.Count != 0) return new GeneratedInterface(null, null, errors.ToArray());
@@ -86,14 +87,14 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             .Append("    { this.").Append(clientField).Append(" = client ?? throw new global::System.ArgumentNullException(nameof(client)); }\n");
 
         for (var index = 0; index < methods.Length; index++)
-            EmitMethod(source, methods[index], clientField, LocalName(memberNames, "__command" + index));
+            EmitMethod(source, methods[index], clientField, LocalName(memberNames, "__command" + index), compilation);
         source.Append("}\n");
         if (!type.ContainingNamespace.IsGlobalNamespace) source.Append("}\n");
         // Full metadata identity prevents collisions between equal simple names in distinct namespaces.
         return new GeneratedInterface(type.ToDisplayString().Replace("@", "") + ".Respire.g.cs", source.ToString(), []);
     }
 
-    private static string? ValidateMethod(IMethodSymbol method)
+    private static string? ValidateMethod(IMethodSymbol method, Compilation compilation)
     {
         if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || !method.IsAbstract
             || method.Arity != 0 || method.ReturnsByRef || method.ReturnsByRefReadonly
@@ -103,8 +104,16 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var attribute = CommandAttribute(method);
         if (attribute is null || attribute.ConstructorArguments.Length != 1
             || attribute.ConstructorArguments[0].Value is not string name || name.Length == 0
-            || name.Any(character => character < '!' || character > '~'))
-            return "Each method needs [RespireCommand] with one non-empty printable ASCII command token; pass subcommands as arguments.";
+            || name.Any(character => character < ' ' || character > '~'))
+            return "Each method needs [RespireCommand] with a non-empty printable ASCII command name.";
+        if (name.Contains(' '))
+        {
+            if (name[0] == ' ' || name[name.Length - 1] == ' ' || name.Contains("  ")
+                || ResolveCatalogCommand(compilation, name) is null)
+                return "Multi-token [RespireCommand] names must match a catalog command with single spaces between tokens.";
+            if (attribute.NamedArguments.Any(argument => argument.Key == "Mutation"))
+                return "Catalog subcommands use their descriptor's cache mutation metadata; omit Mutation.";
+        }
 
         if (method.ReturnType is not INamedTypeSymbol task || !IsTask(task)
             || task.TypeArguments.Length > 1
@@ -196,9 +205,11 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         => type.ToDisplayString() == "Respire.RespireResult" || IsScalarReply(type)
             || type is IArrayTypeSymbol { Rank: 1 } array && IsScalarReply(array.ElementType);
 
-    private static void EmitMethod(StringBuilder source, IMethodSymbol method, string clientField, string commandField)
+    private static void EmitMethod(StringBuilder source, IMethodSymbol method, string clientField, string commandField,
+        Compilation compilation)
     {
         var command = (string)CommandAttribute(method)!.ConstructorArguments[0].Value!;
+        var catalogCommand = command.Contains(' ') ? ResolveCatalogCommand(compilation, command) : null;
         var task = (INamedTypeSymbol)method.ReturnType;
         var reply = task.TypeArguments.FirstOrDefault();
         var raw = reply?.ToDisplayString() == "Respire.RespireResult";
@@ -210,11 +221,16 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var hidesObjectMember = method.Name is "Equals" or "Finalize" or "GetHashCode" or "GetType"
             or "MemberwiseClone" or "ReferenceEquals" or "ToString";
 
-        source.Append("    private static readonly global::Respire.RespireCommand ").Append(commandField)
-            .Append(" = global::Respire.RespireCommand.Create(").Append(SymbolDisplay.FormatLiteral(command, true));
-        if (CacheMutation(method) is { } cacheMutation)
+        source.Append("    private static readonly global::Respire.RespireCommand ").Append(commandField).Append(" = ");
+        if (catalogCommand is not null)
+            source.Append(catalogCommand.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                .Append('.').Append(Escape(catalogCommand.Name));
+        else
+            source.Append("global::Respire.RespireCommand.Create(").Append(SymbolDisplay.FormatLiteral(command, true));
+        if (catalogCommand is null && CacheMutation(method) is { } cacheMutation)
             source.Append(", global::Respire.RespireCacheMutation.").Append(cacheMutation);
-        source.Append(");\n")
+        if (catalogCommand is null) source.Append(')');
+        source.Append(";\n")
             .Append("    /// <inheritdoc/>\n")
             .Append("    public ").Append(hidesObjectMember ? "new " : "")
             .Append(direct ? "" : "async ").Append(TypeName(task)).Append(' ')
@@ -292,6 +308,37 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         }
         source.Append("    }\n");
     }
+
+    private static IFieldSymbol? ResolveCatalogCommand(Compilation compilation, string name)
+    {
+        var catalog = compilation.GetTypeByMetadataName("Respire.RespireCommands");
+        if (catalog is null) return null;
+        return FindCatalogCommand(catalog, name);
+    }
+
+    private static IFieldSymbol? FindCatalogCommand(INamedTypeSymbol type, string commandName)
+    {
+        var normalizedName = NormalizeCommandName(commandName);
+        foreach (var member in type.GetMembers())
+        {
+            if (member is IFieldSymbol field && field.Type.ToDisplayString() == "Respire.RespireCommand"
+                && NormalizeCommandName(field.Name) == normalizedName
+                && string.Equals(GetCatalogCommandName(field), commandName, StringComparison.OrdinalIgnoreCase))
+                return field;
+            if (member is INamedTypeSymbol nested && FindCatalogCommand(nested, commandName) is { } found)
+                return found;
+        }
+        return null;
+    }
+
+    private static string NormalizeCommandName(string name)
+        => new(name.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+
+    private static string? GetCatalogCommandName(IFieldSymbol field)
+        => field.GetAttributes()
+            .FirstOrDefault(attribute => attribute.AttributeClass?.ToDisplayString()
+                == "Respire.RespireCommandCatalogNameAttribute")?
+            .ConstructorArguments.FirstOrDefault().Value as string;
 
     private static string ArrayCreation(ITypeSymbol element, string length)
     {
