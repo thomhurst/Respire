@@ -132,6 +132,7 @@ public class ClientSideCacheTests
         await view.ExecuteFireAndForgetAsync(
             RespireCommand.Create("JSON.SET", mutation), ["key", "$.field", "value"]);
 
+        await WaitUntilAsync(() => server.CommandsSeen >= 3);
         await Assert.That(cache.Count).IsEqualTo(expectedCacheCount);
         await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:key $.field value");
     }

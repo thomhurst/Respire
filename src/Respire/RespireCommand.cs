@@ -74,7 +74,8 @@ public readonly struct RespireCommand
     /// </summary>
     /// <remarks>
     /// Uses the same safety, routing, and cache invalidation policies as catalog commands.
-    /// Key-prefixed views are unsupported because arbitrary commands have no known key layout.
+    /// Key-prefixed views rewrite keys for recognized module commands with explicitly registered
+    /// prefixable layouts. Other caller-supplied commands keep physical keys and do not infer layouts.
     /// This does not declare the command read-only or associate it with an official command source.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>

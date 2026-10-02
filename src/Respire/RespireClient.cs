@@ -342,6 +342,16 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (command.IsCallerSupplied)
         {
+            if (_keyPrefix is not null && IsModuleCommand(command.Name))
+            {
+                var moduleOperation = command.Name.ToUpperInvariant();
+                var descriptorPrefixError = PrefixModuleKeysOrError(
+                    moduleOperation, args, out var descriptorPrefixedArguments);
+                if (descriptorPrefixError is not null)
+                    return ValueTask.FromException<RespireResult>(descriptorPrefixError);
+                args = descriptorPrefixedArguments;
+            }
+
             return ExecuteRawAsync(
                 command.Name, args, flags, cancellationToken,
                 cacheMutation: command.CacheMutation,
@@ -360,15 +370,18 @@ public sealed partial class RespireClient : IRespireClient
 
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
+        var cacheMutation = command.HasExplicitCacheMutation
+            ? command.CacheMutation
+            : RespireCommands.GetCacheMutation(operation);
         if (_keyPrefix is null) return ExecuteRawAsync(
             operation, rawArguments, flags, cancellationToken,
-            cacheMutation: command.CacheMutation,
+            cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
             readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
-                cacheMutation: command.CacheMutation,
+                cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: readKind)
             : ValueTask.FromException<RespireResult>(prefixError);
@@ -381,6 +394,16 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (command.IsCallerSupplied)
         {
+            if (_keyPrefix is not null && IsModuleCommand(command.Name))
+            {
+                var moduleOperation = command.Name.ToUpperInvariant();
+                var descriptorPrefixError = PrefixModuleKeysOrError(
+                    moduleOperation, args, out var descriptorPrefixedArguments);
+                if (descriptorPrefixError is not null)
+                    return ValueTask.FromException(descriptorPrefixError);
+                args = descriptorPrefixedArguments;
+            }
+
             return ExecuteRawFireAndForgetAsync(
                 command.Name, args, cancellationToken,
                 cacheMutation: command.CacheMutation,
@@ -398,16 +421,19 @@ public sealed partial class RespireClient : IRespireClient
 
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
+        var cacheMutation = command.HasExplicitCacheMutation
+            ? command.CacheMutation
+            : RespireCommands.GetCacheMutation(operation);
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(
             operation, rawArguments, cancellationToken,
-            cacheMutation: command.CacheMutation,
+            cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
             readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
                 operation, prefixedArguments, cancellationToken,
-                cacheMutation: command.CacheMutation,
+                cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: readKind)
             : ValueTask.FromException(prefixError);
@@ -931,13 +957,13 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     private static bool IsModuleCommand(string operation)
-        => operation.StartsWith("BF.", StringComparison.Ordinal)
-            || operation.StartsWith("CF.", StringComparison.Ordinal)
-            || operation.StartsWith("CMS.", StringComparison.Ordinal)
-            || operation.StartsWith("TOPK.", StringComparison.Ordinal)
-            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal)
-            || operation.StartsWith("JSON.", StringComparison.Ordinal)
-            || operation.StartsWith("TS.", StringComparison.Ordinal);
+        => operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase);
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
         => arguments.Length > 0 &&

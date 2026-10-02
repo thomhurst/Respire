@@ -659,9 +659,16 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     public int CursorArgumentIndex => command.CursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
-        => command.CacheMutation == RespireCacheMutation.Unknown && !command.HasExplicitCacheMutation
-            ? RespireCommands.GetCacheMutation(operation)
-            : command.CacheMutation;
+    {
+        if (command.HasExplicitCacheMutation) return command.CacheMutation;
+        if (!operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase)
+            || command.CacheMutation == RespireCacheMutation.Unknown)
+        {
+            return RespireCommands.GetCacheMutation(operation);
+        }
+
+        return command.CacheMutation;
+    }
 
     public bool TryGetArgument(int index, out RespireValue value)
     {
