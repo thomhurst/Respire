@@ -25,12 +25,13 @@ await redis.Strings.SetAsync("archive", file, file.Length);
 ```
 
 The stream overload requires an exact, non-negative byte length. Respire reads no more than
-that length, leaves the stream open, and does not seek it; any surplus bytes stay unread in the
+that length and leaves the stream open. Normal streaming does not seek it; any surplus bytes stay unread in the
 stream. A seekable stream with fewer remaining bytes than the declared length is rejected with
 `ArgumentOutOfRangeException` before anything is sent; any other source that ends early throws
 `EndOfStreamException`. Respire reads the first chunk (up to 32 KiB) before it sends anything, so a
-source that fails, ends, is cancelled or times out within that chunk throws without affecting the
-connection. The stream has still been read, so retry with a fresh or rewound source. On a cluster
+source that fails, ends, is cancelled or times out within that chunk throws without sending a command
+header. The client discards the rented upload connection; multiplexed connections are unaffected.
+The stream has still been read, so retry with a fresh or rewound source. On a cluster
 client, if the node loses its slots while that first chunk is being read, Respire keeps the chunk
 and sends the upload to the new owner without reading those bytes again when every completed read
 reported its byte count. A canceled or faulted read with an unknown byte count fails instead of

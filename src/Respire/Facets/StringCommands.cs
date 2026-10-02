@@ -91,8 +91,9 @@ public partial interface IStringCommands
     /// stream with fewer remaining bytes is rejected before anything is sent. Respire reads the first
     /// chunk (up to 32 KiB) before it sends anything, so a source that fails, ends early
     /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
-    /// without affecting the connection. The source has still been read, so the call is not
-    /// retryable with the same stream. On a cluster client, if the node loses its slots during that
+    /// without sending a command header. The client discards the rented upload connection;
+    /// multiplexed connections are unaffected. The source has still been read, so retry with a
+    /// fresh or rewound source. On a cluster client, if the node loses its slots during that
     /// first read, the held chunk is sent to the new owner only when each completed read reported
     /// its byte count. A canceled or faulted read with an unknown byte count fails instead of retrying
     /// a potentially shifted payload. A failure after the
@@ -116,7 +117,8 @@ public partial interface IStringCommands
     /// RESP frame has been written to the socket closes the connection to preserve framing, even if
     /// the frame terminator is already queued. Commands sent through the client's multiplexed
     /// connections are unaffected. After the frame is
-    /// written, cancellation only abandons the reply wait and the command may still execute.
+    /// written, cancellation abandons the reply wait and the command may still execute. The
+    /// client still discards the cancelled upload's lease rather than returning it to the idle pool.
     /// </para>
     /// <para>
     /// The command timeout covers the whole upload, including every source read and socket write.
