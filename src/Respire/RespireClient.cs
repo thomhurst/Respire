@@ -3357,12 +3357,20 @@ public sealed partial class RespireClient : IRespireClient
         /// </summary>
         internal long StartedTimestamp { get; set; }
 
+        private long PendingSerializedTimestamp { get; set; }
+
         private Action<long>? OnSerialized { get; }
 
         private Action? OnCommandNotApplied { get; }
 
         internal void RecordSerialized(long timestamp)
         {
+            PendingSerializedTimestamp = timestamp;
+        }
+
+        internal void RecordAccepted()
+        {
+            var timestamp = PendingSerializedTimestamp;
             StartedTimestamp = timestamp;
             OnSerialized?.Invoke(timestamp);
         }
@@ -3388,6 +3396,8 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         public ReadCommandKind ReadKind => command.ReadKind;
+
+        public void OnAccepted() => execution.RecordAccepted();
 
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
 

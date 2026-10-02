@@ -1407,6 +1407,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
                 else _inflight.TryEnqueue(source, _enqueuedBytes);
+                command.OnAccepted();
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1494,6 +1495,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
             else _inflight.TryEnqueue(source, _enqueuedBytes);
+            command.OnAccepted();
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
