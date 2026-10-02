@@ -359,7 +359,13 @@ internal sealed partial class ClusterRouter
         // One discovery fence per migration: older in-flight CLUSTER SLOTS replies cannot
         // overwrite these slots.
         var migrationVersion = ++_topologyVersion;
-        foreach (var slot in movable) PublishSlotLocked(slot, target, migrationVersion);
+        foreach (var slot in movable)
+        {
+            PublishSlotLocked(slot, target, migrationVersion);
+            // The source shard's replicas cannot serve the migrated slot or its pinned cursors.
+            Volatile.Write(ref _replicasBySlot[slot], null);
+            _unknownReplicaRoutes.TryRemove(slot, out _);
+        }
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);
         if (RemoveSlot(source!, movable.Count, preserveMaintenanceHandlerForRetirement: true))

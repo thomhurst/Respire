@@ -76,12 +76,12 @@ internal sealed class ClusterReplicaRegistry
     internal void Retain(
         HashSet<RespireConnectionMultiplexer> retained, HashSet<RespireConnectionMultiplexer> active)
     {
-        // These snapshots scale with advertised replicas, once per topology refresh.
-        foreach (var (endpoint, node) in _byEndpoint.ToArray())
+        // Dictionary.Remove preserves enumerators on the supported .NET 8+ runtimes.
+        foreach (var (endpoint, node) in _byEndpoint)
             if (!retained.Contains(node)) _byEndpoint.Remove(endpoint);
-        foreach (var (id, node) in _byId.ToArray())
+        foreach (var (id, node) in _byId)
             if (!active.Contains(node)) _byId.Remove(id);
-        foreach (var (node, id) in _ids.ToArray())
+        foreach (var (node, id) in _ids)
             if (!_byId.TryGetValue(id, out var current) || !ReferenceEquals(current, node)) _ids.Remove(node);
     }
 

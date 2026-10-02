@@ -11,7 +11,10 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     private long _replicaRefreshWarningNotBefore;
-    private readonly ClusterReplicaSet _unknownReplicaRoutes = new([], TimeSpan.Zero);
+    private readonly ClusterReplicaSet _initialReplicaRoutes = new([], TimeSpan.Zero);
+    // Unknown slots have no shard identity yet. Share their work only with the same slot;
+    // a partial reply for another slot must not consume this slot's discovery interval.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, ClusterReplicaSet> _unknownReplicaRoutes = new();
 
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
@@ -61,9 +64,18 @@ internal sealed partial class ClusterRouter
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery)
     {
         var routes = GetKnownReplicas(slot);
+        if (routes is null && Volatile.Read(ref _masters).Length == 0)
+        {
+            // Seed connection readiness precedes its topology reply. Wait for the shared
+            // initial discovery before attempting an uncovered slot independently.
+            var initial = _initialReplicaRoutes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            if (initial is not null) await initial.WaitAsync(cancellationToken).ConfigureAwait(false);
+            routes = GetKnownReplicas(slot);
+        }
         if (routes is null)
         {
-            var refresh = _unknownReplicaRoutes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            var unknown = _unknownReplicaRoutes.GetOrAdd(slot, static _ => new([], TimeSpan.Zero));
+            var refresh = unknown.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             routes = GetKnownReplicas(slot);
         }
@@ -77,32 +89,10 @@ internal sealed partial class ClusterRouter
             if (!ReferenceEquals(routes, tried) && routes.Nodes.Length > 0)
             {
                 tried = routes;
-                var nodes = routes.Nodes;
-                var start = routes.NextStart();
-                for (var offset = 0; offset < nodes.Length; offset++)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var node = nodes[(start + offset) % nodes.Length];
-                    if (node.IsRetired) continue;
-                    attempted++;
-                    try
-                    {
-                        await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
-                        if (node.IsRetired) continue;
-                        // A healthy read never redirects, so old routes are revalidated in the
-                        // background. A failover that promoted this replica then retires it.
-                        // RefreshReplicaRoutesAsync catches and logs every refresh failure.
-                        if (routes.IsDueForRevalidation)
-                        {
-                            _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-                        }
-                        return node.GetConnection(slot);
-                    }
-                    catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
-                    {
-                        lastError = error;
-                    }
-                }
+                var selection = await TrySelectReplicaAsync(routes, slot, cancellationToken, discovery).ConfigureAwait(false);
+                attempted += selection.Attempted;
+                lastError = selection.LastError ?? lastError;
+                if (selection.Connection is { } connection) return connection;
             }
 
             if (round > 0) break;
@@ -119,6 +109,37 @@ internal sealed partial class ClusterRouter
         throw lastError is null
             ? new RespireConnectionException(message)
             : new RespireConnectionException(message, lastError);
+    }
+
+    private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
+        ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    {
+        var nodes = routes.Nodes;
+        var start = routes.NextStart();
+        var attempted = 0;
+        Exception? lastError = null;
+        for (var offset = 0; offset < nodes.Length; offset++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = nodes[(start + offset) % nodes.Length];
+            if (node.IsRetired) continue;
+            attempted++;
+            try
+            {
+                await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
+                if (node.IsRetired) continue;
+                // Healthy reads do not redirect; background revalidation discovers promotions.
+                // RefreshReplicaRoutesAsync catches and logs every refresh failure.
+                if (routes.IsDueForRevalidation)
+                    _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+                return (node.GetConnection(slot), lastError, attempted);
+            }
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+            {
+                lastError = error;
+            }
+        }
+        return (null, lastError, attempted);
     }
 
     internal async ValueTask<RespireConnection> GetPinnedReadConnectionAsync(
@@ -152,7 +173,7 @@ internal sealed partial class ClusterRouter
             {
                 if (replica.IsConnected && !replica.IsRetired
                     && await TryRefreshTopologyAsync(replica, timeout.Token, discovery: null,
-                        keepUncoveredOwners: true).ConfigureAwait(false))
+                        keepUncoveredOwners: true, requiredSlot: slot).ConfigureAwait(false))
                     return;
             }
             if (Volatile.Read(ref _masters).Length == 0)

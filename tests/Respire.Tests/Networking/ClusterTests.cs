@@ -93,6 +93,115 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_UnknownSlotCoverageDoesNotShareAnotherSlotsResult()
+    {
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLUSTER SLOTS") return false;
+                started.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var keys = Enumerable.Range(0, 100).Select(i => $"key:{i}").ToArray();
+        var lowKey = keys.First(key => ClusterHash.GetSlot(key) < 8192);
+        var highKey = keys.First(key => ClusterHash.GetSlot(key) >= 8192);
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var lowRead = reads.Strings.GetStringAsync(lowKey).AsTask();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var highRead = reads.Strings.GetStringAsync(highKey).AsTask();
+        var full = ClusterTopology(primary.Port, replica.Port);
+        var partial = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(full).Replace(":0\r\n:16383", ":0\r\n:8191"));
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? full : null;
+        primary.SuppressReply = null;
+        await primary.SendRawAsync(partial, primary.ReceivedConnectionIds[^1]);
+        await Assert.That(await lowRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+        await Assert.That(await highRead.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReadFrom_PartialReplicaCoverageContinuesToPrimary()
+    {
+        byte[]? partial = null;
+        await using var oldReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? partial
+                : command == "READONLY" ? FakeRespServer.OkReply : "$3\r\nold\r\n"u8.ToArray(),
+        };
+        await using var newReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$3\r\nnew\r\n"u8.ToArray(),
+        };
+        byte[]? topology = null;
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Volatile.Read(ref topology) : null,
+        };
+        topology = ClusterTopology(primary.Port, oldReplica.Port);
+        partial = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(topology).Replace(":0\r\n:16383", ":0\r\n:8191"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var key = Enumerable.Range(0, 100).Select(i => $"key:{i}").First(value => ClusterHash.GetSlot(value) >= 8192);
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        await Assert.That(await reads.Strings.GetStringAsync(key)).IsEqualTo("old");
+        var routes = ReplicaRoutes(client)[ClusterHash.GetSlot(key)]!;
+        Volatile.Write(ref topology, ClusterTopology(primary.Port, newReplica.Port));
+        routes.MarkValidated(TimeSpan.Zero);
+        await reads.Strings.GetStringAsync(key);
+        var refresh = routes.JoinOrStartRefresh(() => throw new InvalidOperationException("Read did not start refresh"));
+        if (refresh is not null) await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+        await Assert.That(await reads.Strings.GetStringAsync(key)).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task ReadFrom_MigrationReplicaCoverageDropsSourceRoutes()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Endpoints = [new("127.0.0.1", 6379)],
+        });
+        var router = client.Core.Cluster!;
+        var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var targetEndpoint = new RespireEndpoint("target", 7001);
+        router.ApplyTopology([new ClusterTopologyRange(0, 16383, sourceEndpoint, "source", [])
+        {
+            Replicas = [new(new("replica", 7002), "replica", [])],
+        }], 0, 1);
+        var source = router.GetKnownSlotOwner(0)!;
+        var oldRoutes = ReplicaRoutes(client)[0]!;
+        var replica = oldRoutes.Nodes[0];
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.TopologyChanged += (_, _, _) => changed.TrySetResult();
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
+            [new(sourceEndpoint, targetEndpoint, "0")]));
+        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(targetEndpoint);
+        await Assert.That(ReplicaRoutes(client)[0]).IsNull();
+        await Assert.That(ReplicaRoutes(client)[1]).IsSameReferenceAs(oldRoutes);
+        await Assert.That(async () => await router.GetPinnedReadConnectionAsync(0, replica, CancellationToken.None))
+            .ThrowsExactly<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task ReadFrom_ReplicaRefreshPreservesUncoveredShard()
     {
         byte[]? reply = null;

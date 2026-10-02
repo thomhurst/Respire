@@ -1303,15 +1303,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<bool> TryRefreshTopologyAsync(
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken, DiscoveryRound? discovery,
-        long? expectedTopologyVersion = null, object? snapshotBatch = null, bool keepUncoveredOwners = false)
+        long? expectedTopologyVersion = null, object? snapshotBatch = null, bool keepUncoveredOwners = false,
+        int? requiredSlot = null)
     {
         try
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
-            var complete = (await TryLoadSlotsAsync(node, cancellationToken,
+            var load = await TryLoadSlotsAsync(node, cancellationToken,
                 expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch,
-                keepUncoveredOwners: keepUncoveredOwners).ConfigureAwait(false)).Loaded
-                && HasCompleteTopology();
+                keepUncoveredOwners: keepUncoveredOwners, requiredSlot: requiredSlot).ConfigureAwait(false);
+            // Retained owners are not evidence that this reply revalidated the requested slot.
+            var complete = load.Loaded && (requiredSlot.HasValue ? load.CoversRequiredSlot : HasCompleteTopology());
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
             return complete;
         }
@@ -1335,7 +1337,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // generation instead of immediately retrying the already rejected connection.
             if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
             if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
-                    keepUncoveredOwners)
+                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null)
                 .ConfigureAwait(false))
             {
                 continue;
@@ -2110,12 +2112,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     // keepUncoveredOwners is true for background refresh: slots the reply does not cover keep their
     // current owner instead of being cleared (see ApplyTopologyCore).
-    private async ValueTask<(bool Loaded, bool CoversAllSlots)> TryLoadSlotsAsync(
+    private async ValueTask<(bool Loaded, bool CoversAllSlots, bool CoversRequiredSlot)> TryLoadSlotsAsync(
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken,
         bool keepUncoveredOwners = false,
         long? expectedTopologyVersion = null,
-        object? snapshotBatch = null)
+        object? snapshotBatch = null,
+        int? requiredSlot = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -2135,7 +2138,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 if (reply.IsError)
                 {
-                    return (false, false);
+                    return (false, false, false);
                 }
 
                 var ranges = reply.AsArray();
@@ -2204,12 +2207,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
                 if (topology.Count == 0)
                 {
-                    return (false, false);
+                    return (false, false, false);
                 }
 
                 var coversAllSlots = CoversAllSlots(topology);
+                var coversRequiredSlot = requiredSlot is not { } slot
+                    || topology.Any(range => range.Start <= slot && slot <= range.End);
                 ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners, snapshotBatch);
-                return (true, coversAllSlots);
+                return (true, coversAllSlots, coversRequiredSlot);
             }
             finally
             {
@@ -2221,7 +2226,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // ACLs and Redis-compatible servers may hide CLUSTER SLOTS. MOVED/ASK learning
             // remains sufficient for correctness, so topology discovery is opportunistic for
             // connection/server failures. Incompatible configuration must still propagate.
-            return (false, false);
+            return (false, false, false);
         }
     }
 

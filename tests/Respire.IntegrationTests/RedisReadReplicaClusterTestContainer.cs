@@ -149,6 +149,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
             {
                 ports[i] = GetAvailablePort(excludedPorts);
                 excludedPorts.Add(ports[i]);
+                excludedPorts.Add(ports[i] + 10_000);
             }
             var commandPorts = string.Join(' ', ports);
             var builder = new ContainerBuilder("redis:7.0.15");
@@ -201,7 +202,8 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            if (port <= 55_535 && !excludedPorts.Contains(port)) return port;
+            // Each process also binds its implicit Cluster bus port inside the container.
+            if (port <= 55_535 && !excludedPorts.Contains(port) && !excludedPorts.Contains(port + 10_000)) return port;
         }
     }
 
