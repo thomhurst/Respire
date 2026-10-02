@@ -55,11 +55,51 @@ public class SemaphoreWireTests
         });
 
         await using var attempt = await new RespireSemaphore(client, "{optional}:semaphore", capacity: 1)
-            .TryAcquireAsync();
+            .TryAcquireAsync(TimeSpan.FromSeconds(30));
 
         await Assert.That(attempt.Acquired).IsTrue();
         await Assert.That(seed.ReceivedCommands.Concat(target.ReceivedCommands)
             .Any(command => command.StartsWith("CLIENT ID", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task NonExpiringClusterAcquireRequiresClientIdPermission()
+    {
+        await using var target = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                var clientId when clientId.StartsWith("CLIENT ID", StringComparison.Ordinal) =>
+                    "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        var slot = ClusterHash.GetSlot("{required}:semaphore");
+        await using var seed = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                var eval when eval.StartsWith("EVALSHA ", StringComparison.Ordinal) =>
+                    Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            CommandTimeout = null,
+        });
+
+        await Assert.That(async () => await new RespireSemaphore(client, "{required}:semaphore", capacity: 1)
+            .TryAcquireAsync()).Throws<RespireServerException>();
+
+        await Assert.That(target.ReceivedCommands.Any(command =>
+            command.StartsWith($"EVALSHA {RespireSemaphore.AcquireScript.Sha1} ", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]
@@ -267,7 +307,7 @@ public class SemaphoreWireTests
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var semaphore = new RespireSemaphore(client, "{renew}:acl", capacity: 1);
-        await using var attempt = await semaphore.TryAcquireAsync();
+        await using var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(60));
         var clientIdCount = server.ReceivedCommands.Count(command => command == "CLIENT ID");
         using var cancellation = new CancellationTokenSource();
 
@@ -373,6 +413,33 @@ public class SemaphoreWireTests
         await Assert.That(attempt.Permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(1));
         await Assert.That(attempt.Permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(attempt.Permit.IsReleased).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ShorteningRenewalBoundsLocalValidityWhileReplyIsDelayed()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 300);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var permit = (await new RespireSemaphore(client, "{renew}:shorten-pending", capacity: 1)
+            .TryAcquireAsync()).Permit;
+
+        var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(100)).AsTask();
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while (EvalCommands(server).Length < 2) await Task.Delay(10, sent.Token);
+        }
+        await Task.Delay(150);
+
+        await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(permit.IsReleased).IsTrue();
+        await Assert.That(await renewal).IsFalse();
     }
 
     [Test]

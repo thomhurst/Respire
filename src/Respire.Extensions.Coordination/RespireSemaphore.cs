@@ -16,11 +16,12 @@ namespace Respire.Extensions.Coordination;
 /// replication first, so Redis 5 and 6 work even with <c>lua-replicate-commands</c> disabled.
 /// </para>
 /// <para>
-/// With <see cref="RespireClient"/>, acquisitions under a command timeout or cancellation require
-/// Redis ACL permission for <c>CLIENT ID</c> and <c>CLIENT KILL</c> to fence an uncertain acquire
-/// before cleanup. Other <see cref="IRespireClient"/> implementations cannot fence, so cleanup of
-/// an uncertain acquire can overtake the delayed acquire. Finite expiry then bounds how long that
-/// permit stays held; a permit without expiry stays held until it is removed manually.
+/// With <see cref="RespireClient"/>, acquisitions under a command timeout or cancellation and
+/// acquisitions without expiry require Redis ACL permission for <c>CLIENT ID</c> and
+/// <c>CLIENT KILL</c> to fence an uncertain acquire before cleanup. Other
+/// <see cref="IRespireClient"/> implementations cannot fence, so cleanup of an uncertain acquire
+/// can overtake the delayed acquire. Finite expiry then bounds how long that permit stays held; a
+/// permit without expiry stays held until it is removed manually.
 /// </para>
 /// </remarks>
 public sealed class RespireSemaphore
@@ -79,6 +80,13 @@ public sealed class RespireSemaphore
         var trackedWire = concreteClient is null
             ? null
             : await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken).ConfigureAwait(false);
+        if (concreteClient is not null && milliseconds == 0)
+        {
+            // An uncertain owner-only acquire has no server expiry as a fallback. Require the
+            // identity barrier even without a command timeout or caller cancellation.
+            await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            trackedWire = concreteClient;
+        }
         // Sampled after connection preflight: the permit cannot exist before the script is sent,
         // so only the acquisition itself counts against a short expiry.
         var started = Stopwatch.GetTimestamp();
@@ -98,7 +106,7 @@ public sealed class RespireSemaphore
                 var requiresReliableOrdering = concreteClient.RequiresReliableCorrectionOrdering(cancellationToken);
                 trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                     AcquireScript, [Key], args, cancellationToken,
-                    requireReliableCorrectionOrdering: requiresReliableOrdering,
+                    requireReliableCorrectionOrdering: requiresReliableOrdering || milliseconds == 0,
                     captureSendTimestampOnly: trackedWire is null).ConfigureAwait(false);
                 using var response = await trackedExecution.Response.ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;
@@ -624,6 +632,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 : PermitState.FiniteOutcomeUncertain;
             Set(pending);
             var started = Stopwatch.GetTimestamp();
+            var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
             RespireClient.TrackedScriptExecution? trackedExecution = null;
             bool renewed;
             long completed;
@@ -637,10 +646,17 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken,
                         requireReliableCorrectionOrdering: false, captureSendTimestampOnly: true).ConfigureAwait(false);
+                    var sentAt = trackedExecution.StartedTimestamp;
+                    ClampLocalLeaseForPendingRenewal(requestedExpiry,
+                        sentAt > 0 ? sentAt : started);
                     response = await trackedExecution.Response.ConfigureAwait(false);
                 }
                 else
                 {
+                    // This interface has no send timestamp. Counting from before the send is
+                    // conservative and prevents a delayed shortening renewal from outliving the
+                    // local validity reported by this handle.
+                    ClampLocalLeaseForPendingRenewal(requestedExpiry, started);
                     response = await _client.Scripts.ExecuteAsync(
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 }
@@ -673,7 +689,6 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             }
 
             if (trackedExecution is { StartedTimestamp: > 0 } sent) started = Math.Max(started, sent.StartedTimestamp);
-            var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
             var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
             var stillValid = remaining is not { } left || left > TimeSpan.Zero;
             // Record the confirmed lifetime before clearing the pending flag, so disposal cleanup
@@ -871,6 +886,18 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             if (observed == current) return;
             current = observed;
         }
+    }
+
+    private void ClampLocalLeaseForPendingRenewal(TimeSpan? requestedExpiry, long sentAt)
+    {
+        if (requestedExpiry is not { } expiry) return;
+        var validUntil = AddTimestampDuration(sentAt, expiry);
+        var current = Volatile.Read(ref _lease);
+        if (validUntil >= current.ValidUntil) return;
+
+        // A shortening renewal may already have taken effect even while its reply is pending.
+        // Keep the local estimate no later than its possible server-side expiry.
+        Volatile.Write(ref _lease, new Lease(expiry.Ticks, validUntil));
     }
 
     // Saturates below long.MaxValue, which means "no expiry", so a centuries-long expiry cannot
