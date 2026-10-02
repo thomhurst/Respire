@@ -5,6 +5,7 @@ using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,6 +16,28 @@ public class ClusterRetirementTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
+
+    private readonly struct AdmissionCallbackCommand(Action onAccepted) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public void Write(ref RespWriter writer) { }
+        public void OnAccepted() => onAccepted();
+    }
+
+    [Test]
+    public async Task PrefixedCommandForwardsAdmissionCallback()
+    {
+        var accepted = 0;
+        var prefix = new Cmd(RespireCommands.String.SET.Verb);
+        var command = new AdmissionCallbackCommand(() => accepted++);
+        var wrapper = typeof(RespireConnection).GetNestedType("PrefixedCommand`2", BindingFlags.NonPublic)!
+            .MakeGenericType(typeof(Cmd), typeof(AdmissionCallbackCommand));
+        var prefixed = (IRespCommand)Activator.CreateInstance(wrapper, prefix, command)!;
+
+        prefixed.OnAccepted();
+
+        await Assert.That(accepted).IsEqualTo(1);
+    }
 
     [Test]
     public async Task RetirementSnapshotsAreOwnedAndRequireALiveClient()

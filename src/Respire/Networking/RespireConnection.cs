@@ -2693,6 +2693,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _command.Write(ref writer);
         }
 
+        public void OnAccepted() => _command.OnAccepted();
+
         public ReadCommandKind ReadKind => _command.ReadKind;
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
     }

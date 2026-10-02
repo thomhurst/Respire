@@ -256,14 +256,15 @@ and [replication guarantees](https://redis.io/docs/latest/operate/oss_and_stack/
 
 ## Renewal, release and uncertain outcomes
 
-`ResetExpiryAsync` renews only the current owner and retains its fencing token.
+`RespireLock.ResetExpiryAsync` renews only the current owner and retains its fencing token.
 `VerifyStillHeldAsync` checks ownership at one instant; it cannot promise ownership for a
 later write. `RemainingEstimate` measures elapsed time from before acquisition and is a
-local estimate. A renewal attempted after this estimate expires returns `false` without
-contacting Redis. A renewal already in flight can return `true` on an accepted reply,
-even if the previous estimate elapsed while it waited; that reply does not trigger
-owner-token cleanup. Stop protected work when the lease expires or ownership
-becomes uncertain.
+local estimate. For `RespireLock`, a renewal attempted after this estimate expires returns
+`false` without contacting Redis. A renewal already in flight can return `true` on an
+accepted reply even if the previous estimate elapsed while it waited; that reply does not
+trigger owner-token cleanup. A hash-field `RespireCoordinationLease.ResetExpiryAsync` checks
+the owner field in Redis instead, so it can return `true` after its local estimate expires
+while the field still exists. Stop protected work when ownership expires or becomes uncertain.
 
 Renewal and release reuse the existing [managed lock lifecycle](distributed-locks.md).
 Managed renewal and concrete-client hash-field lease acquisition require `CLIENT ID` and
