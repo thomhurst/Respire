@@ -138,7 +138,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
-                forceDiscovery ? previous?.Endpoint : null).ConfigureAwait(false);
+                forceDiscovery ? previous?.Endpoint : null,
+                notificationHint?.Target).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -171,8 +172,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
                 StartNotificationMonitoringLocked();
-                var rearm = _monitorRearm;
-                _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var rearm = Volatile.Read(ref _monitorRearm);
+                Volatile.Write(ref _monitorRearm, new(TaskCreationOptions.RunContinuationsAsynchronously));
                 rearm.TrySetResult();
             }
             return replacement;
@@ -382,9 +383,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     internal Task CurrentMonitorRearm()
-    {
-        lock (_gate) return _monitorRearm.Task;
-    }
+        => Volatile.Read(ref _monitorRearm).Task;
 
     private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)
     {
@@ -402,35 +401,41 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         var authDisabled = options.SentinelPassword is { Length: 0 };
         var useSeparateCredentials = options.SentinelUsername is not null || options.SentinelPassword is not null;
-        return options with
+        // Copy only transport, credentials and subscription policy. New data-client options
+        // must not silently become monitor settings.
+        return new RespireOptions
         {
             Endpoints = [endpoint],
-            UseCluster = false,
-            SentinelPrimaryName = null,
-            ReplicaEndpoints = [],
-            ReadFrom = RespireReadFrom.Primary,
+            TestingStreamFactory = options.TestingStreamFactory,
+            LoggerFactory = options.LoggerFactory,
+            ConnectTimeout = options.ConnectTimeout,
+            CommandTimeout = options.CommandTimeout,
+            ConnectionIdleReadTimeout = options.ConnectionIdleReadTimeout,
+            ReconnectPolicy = options.ReconnectPolicy,
+            CredentialRefreshBeforeExpiry = options.CredentialRefreshBeforeExpiry,
+            CredentialRefreshRetryDelay = options.CredentialRefreshRetryDelay,
+            CredentialTimeProvider = options.CredentialTimeProvider,
+            TcpKeepAliveTime = options.TcpKeepAliveTime,
+            TcpKeepAliveInterval = options.TcpKeepAliveInterval,
+            TcpKeepAliveRetryCount = options.TcpKeepAliveRetryCount,
+            SubscriptionBufferSize = options.SubscriptionBufferSize,
+            SubscriptionOverflow = options.SubscriptionOverflow,
+            ReceiveBufferSize = options.ReceiveBufferSize,
+            WriteBufferSize = options.WriteBufferSize,
+            MaxInflightCommands = options.MaxInflightCommands,
             Username = authDisabled ? null : options.SentinelUsername ?? options.Username,
             Password = authDisabled ? null : options.SentinelPassword ?? options.Password,
             CredentialProvider = authDisabled ? null : options.SentinelCredentialProvider
                 ?? (useSeparateCredentials ? null : options.CredentialProvider),
-            SentinelUsername = null,
-            SentinelPassword = null,
-            SentinelCredentialProvider = null,
-            SentinelUseTls = null,
-            SentinelTlsOptions = null,
             UseTls = options.SentinelUseTls ?? options.UseTls,
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
-            ClientName = null,
-            Database = 0,
             Protocol = !authDisabled && (options.SentinelCredentialProvider is not null
                 || (!useSeparateCredentials && options.CredentialProvider is not null)
                 ) ? RespProtocol.Resp3 : RespProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ReconnectTelemetryScope = SentinelMonitorReconnectScope,
             ReconnectEpisodeStarted = reconnectEpisodeStarted,
-            ClientSideCache = null,
             ThreadPoolMonitoring = false,
-            Connections = 1,
         };
     }
 

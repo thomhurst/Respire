@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
+using Respire.Networking;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,6 +12,46 @@ namespace Respire.Tests.Networking;
 
 public class SentinelTests
 {
+    [Test]
+    public async Task MonitorEpochIsCapturedBeforeConnectionClosedCompletes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        var oldEpoch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        oldEpoch.SetResult(); // A healthy-period publication must not grant a later reconnect budget.
+        var currentEpoch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? capturedEpoch = null;
+        var captured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            UnexpectedConnectionClosed = () =>
+            {
+                capturedEpoch = currentEpoch.Task;
+                captured.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            },
+        });
+        try
+        {
+            // RESP2 has no handshake commands. Wait until the fake server has accepted the socket.
+            var ping = new Respire.Commands.RawCommand("*1\r\n$4\r\nPING\r\n"u8.ToArray());
+            using (await connection.SendAsync(in ping)) { }
+            server.CloseConnections();
+            await captured.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.Closed.IsCompleted).IsFalse();
+            await Assert.That(capturedEpoch!.IsCompleted).IsFalse();
+            var publication = currentEpoch;
+            currentEpoch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            publication.TrySetResult();
+            release.TrySetResult();
+            await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(capturedEpoch.IsCompleted).IsTrue();
+            await Assert.That(currentEpoch.Task.IsCompleted).IsFalse();
+        }
+        finally { release.TrySetResult(); }
+    }
+
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
@@ -712,7 +753,10 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task DiscoverySkipsPreviouslyValidatedPrimaryFromPreferredReporter()
+    [Arguments(null)]
+    [Arguments(6379)]
+    [Arguments(6380)]
+    public async Task DiscoveryKeepsReportingSentinelUnlessSwitchTargetContradictsIt(int? targetPort)
     {
         await using var reporter = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
         await using var healthy = new FakeRespServer(PrimaryReply(6380), "*0\r\n"u8.ToArray());
@@ -730,11 +774,14 @@ public class SentinelTests
             CancellationToken.None,
             new SentinelDiscoveryState([reporterEndpoint, healthyEndpoint]),
             reporterEndpoint,
-            new RespireEndpoint("127.0.0.1", 6379));
+            new RespireEndpoint("127.0.0.1", 6379),
+            targetPort is { } target ? new RespireEndpoint("127.0.0.1", target) : (RespireEndpoint?)null);
 
-        await Assert.That(resolved).IsEqualTo(new RespireEndpoint("127.0.0.1", 6380));
+        var contradictory = targetPort == 6380;
+        await Assert.That(resolved).IsEqualTo(new RespireEndpoint("127.0.0.1", contradictory ? 6380 : 6379));
         await Assert.That(reporter.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
-        await Assert.That(healthy.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
+        await Assert.That(healthy.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER")))
+            .IsEqualTo(contradictory ? 1 : 0);
     }
 
     [Test]

@@ -96,7 +96,8 @@ internal static class SentinelResolver
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
-        RespireEndpoint? previouslyValidatedPrimary = null)
+        RespireEndpoint? previouslyValidatedPrimary = null,
+        RespireEndpoint? preferredTarget = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -158,7 +159,9 @@ internal static class SentinelResolver
                     && RespireEndpointComparer.Instance.Equals(endpoint, reporter)
                     && previouslyValidatedPrimary is { } previous
                     && sentinelEndpoints.Count > 1
-                    && RespireEndpointComparer.Instance.Equals(primary, previous))
+                    && RespireEndpointComparer.Instance.Equals(primary, previous)
+                    && preferredTarget is { } target
+                    && !RespireEndpointComparer.Instance.Equals(target, previous))
                 {
                     logger?.LogWarning(
                         "Sentinel {Sentinel} reported previously validated primary {Primary}; checking another Sentinel",

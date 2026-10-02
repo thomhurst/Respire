@@ -53,14 +53,16 @@ internal sealed class SentinelNotificationCoalescer
     /// <param name="targetIsCurrent">Whether the hint's target is already the healthy current primary.</param>
     internal bool Offer(in SentinelHint hint, bool targetIsCurrent)
     {
+        if (ActiveKey == hint.Key && _pending is { } intervening && intervening.Key != hint.Key)
+        {
+            _pending = Merge(intervening, in hint);
+            return false;
+        }
         if (ActiveKey == hint.Key || _pending?.Key == hint.Key)
         {
             // Duplicates coalesce. A fault report must still outlive the active attempt, because
             // that attempt may have queried Sentinel before the fault happened, or may fail.
-            var knownReporters = (Active is { } activeHintForReporter ? EnumerateReportingSentinels(activeHintForReporter) : [])
-                .Concat(_pending is { } pendingReporters ? EnumerateReportingSentinels(pendingReporters) : [])
-                .ToHashSet(SentinelDiscoveryState.EndpointComparer.Instance);
-            var newReporter = EnumerateReportingSentinels(hint).Any(reporter => !knownReporters.Contains(reporter));
+            var newReporter = HasNewReporter(in hint);
             if (hint.MustRediscover || newReporter)
                 _pending = _pending is { } pending
                     ? Merge(pending, in hint) with { MustRediscover = pending.MustRediscover || hint.MustRediscover }
@@ -76,6 +78,29 @@ internal sealed class SentinelNotificationCoalescer
         _pending = null;
         Active = hint;
         return true;
+    }
+
+    private bool HasNewReporter(in SentinelHint hint)
+    {
+        if (hint.ReportingSentinel is { } reporter && !IsKnownReporter(reporter)) return true;
+        if (hint.AdditionalReportingSentinels is { } reporters)
+            foreach (var additional in reporters)
+                if (!IsKnownReporter(additional)) return true;
+        return false;
+    }
+
+    private bool IsKnownReporter(RespireEndpoint reporter)
+        => ContainsReporter(Active, reporter) || ContainsReporter(_pending, reporter);
+
+    private static bool ContainsReporter(SentinelHint? hint, RespireEndpoint reporter)
+    {
+        if (hint is not { } value) return false;
+        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        if (value.ReportingSentinel is { } first && comparer.Equals(first, reporter)) return true;
+        if (value.AdditionalReportingSentinels is { } additional)
+            foreach (var endpoint in additional)
+                if (comparer.Equals(endpoint, reporter)) return true;
+        return false;
     }
 
     /// <summary>
@@ -252,7 +277,19 @@ internal sealed class SentinelNotificationCoalescer
                         || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
                 if (unqueriedReporters.Length > 0)
-                    next = PrioritizeReportingSentinels(next, unqueriedReporters);
+                {
+                    var failedReporter = activeHint.ReportingSentinel;
+                    var remainingReporters = unqueriedReporters.Concat(EnumerateReportingSentinels(next))
+                        .Where(reporter => failedReporter is not { } failed
+                            || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(reporter, failed))
+                        .Distinct(SentinelDiscoveryState.EndpointComparer.Instance);
+                    var reporters = remainingReporters.ToArray();
+                    next = next with
+                    {
+                        ReportingSentinel = reporters[0],
+                        AdditionalReportingSentinels = reporters.Length < 2 ? null : reporters[1..],
+                    };
+                }
             }
             else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
             {

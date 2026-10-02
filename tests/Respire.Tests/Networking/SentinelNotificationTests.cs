@@ -251,6 +251,20 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task RepeatedActiveSwitchAfterInterveningSwitchRemainsPending()
+    {
+        var aToB = new SentinelHint("a-to-b", NewPrimary, OldPrimary);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(in aToB, targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-a", OldPrimary, NewPrimary), targetIsCurrent: false);
+        coalescer.Offer(in aToB, targetIsCurrent: false);
+
+        await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
+        await Assert.That(coalescer.Pending!.Value.OldPrimary).IsEqualTo(OldPrimary);
+        await Assert.That(coalescer.Pending!.Value.AdditionalOldPrimaries).Contains(NewPrimary);
+    }
+
+    [Test]
     public async Task DuplicateDeliveryGapRetainsEveryReportingSentinelForCatchUpDiscovery()
     {
         var first = new RespireEndpoint("10.0.1.1", 26379);
@@ -392,6 +406,23 @@ public class SentinelNotificationTests
 
         // A newer target that happens to be current must not end the worker before the failed hint is retried.
         await Assert.That(next).IsEqualTo(laterSwitch with { MustRediscover = true });
+    }
+
+    [Test]
+    public async Task FailedReporterIsNotRetriedAfterItsReplacementSucceeds()
+    {
+        var first = new RespireEndpoint("10.0.1.1", 26379);
+        var second = new RespireEndpoint("10.0.1.2", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), false);
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), false);
+
+        var replacement = coalescer.TakePending(activeFailed: true)!.Value;
+        var afterSuccess = coalescer.TakePending(activeFailed: false);
+
+        await Assert.That(replacement.ReportingSentinel).IsEqualTo(second);
+        await Assert.That(replacement.AdditionalReportingSentinels).IsNull();
+        await Assert.That(afterSuccess).IsNull();
     }
 
     [Test]
