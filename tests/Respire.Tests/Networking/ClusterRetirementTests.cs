@@ -1807,25 +1807,28 @@ public class ClusterRetirementTests
         // reading the original source for the rest.
         var payload = new byte[RespireConnection.StreamChunkSize + 7_000];
         for (var index = 0; index < payload.Length; index++) payload[index] = (byte)('a' + index % 26);
-        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = CreateClient();
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
-        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
-        Publish(router, endpoint, "old", 1);
+        var oldEndpoint = new RespireEndpoint("127.0.0.1", oldServer.Port);
+        var replacementEndpoint = new RespireEndpoint("127.0.0.1", replacementServer.Port);
+        Publish(router, oldEndpoint, "old", 1);
         _ = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
 
         var source = new PausingStream(payload, pauseAt: 16);
         var set = client.Strings.SetAsync("key", source, payload.Length, cancellationToken: timeout.Token).AsTask();
         await source.Paused.Task.WaitAsync(timeout.Token);
         // Retire the generation while the first chunk is still being read, then let the read finish.
-        Publish(router, endpoint, "new", 2);
+        Publish(router, replacementEndpoint, "new", 2);
         source.Resume.TrySetResult();
 
         await Assert.That(await set.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(source.BytesRead).IsEqualTo(payload.Length); // Every source byte was read once.
-        await Assert.That(server.ReceivedConnectionIds).IsEquivalentTo([1]); // Nothing reached the retired connection.
-        var arguments = server.ReceivedArguments.Single();
+        await Assert.That(oldServer.ReceivedCommands.Any(command => command.StartsWith("SET", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(replacementServer.ReceivedConnectionIds.Count).IsEqualTo(1);
+        var arguments = replacementServer.ReceivedArguments.Single();
         await Assert.That(System.Text.Encoding.ASCII.GetString(arguments[0])).IsEqualTo("SET");
         await Assert.That(arguments[2].AsSpan().SequenceEqual(payload)).IsTrue();
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);

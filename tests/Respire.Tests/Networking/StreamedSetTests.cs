@@ -854,6 +854,39 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task RetirementCancellingPartialFirstChunkRestoresEveryConsumedByte()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        var generation = new TestConnectionGeneration();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = null,
+                Generation = generation,
+            });
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        var payload = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
+        var source = new PartialThenBlockedStream(payload, maxRead: 6, pauseAfter: 12);
+        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        generation.IsRetired = true;
+        _ = connection.RetireAsync();
+        await connection.DisposeAsync(); // The retired socket's close cancels the blocked third read.
+        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+
+        var replayed = new byte[payload.Length];
+        await command.SourceStream!.ReadExactlyAsync(replayed);
+        await Assert.That(replayed).IsEquivalentTo(payload);
+        await Assert.That(peer.Available).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ThrowingSourceClosesConnectionAndClientRecovers()
     {
         await using var server = new FakeRespServer(2, "+OK\r\n"u8.ToArray())
@@ -1095,6 +1128,38 @@ public sealed class StreamedSetTests
             "data"u8.CopyTo(buffer.Span);
             _read += 4;
             return 4;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class PartialThenBlockedStream(byte[] payload, int maxRead, int pauseAfter) : Stream
+    {
+        private int _position;
+        private int _blocked;
+        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => payload.Length;
+        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_position >= pauseAfter && Interlocked.Exchange(ref _blocked, 1) == 0)
+            {
+                Paused.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            var count = Math.Min(Math.Min(buffer.Length, maxRead), payload.Length - _position);
+            payload.AsMemory(_position, count).CopyTo(buffer);
+            _position += count;
+            return count;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

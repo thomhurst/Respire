@@ -21,7 +21,7 @@ internal sealed partial class RespireConnection
     private sealed class StreamDeadlineCancellation : IDisposable
     {
         private readonly RespireConnection _connection;
-        private readonly long _deadline;
+        private readonly CommandDeadline _deadline;
         private readonly CancellationTokenSource _source = new();
         private readonly Timer _timer;
         private readonly Action? _maintenanceChanged;
@@ -33,7 +33,7 @@ internal sealed partial class RespireConnection
         private long _effectiveTimeoutTicks;
         private long _committedTimeoutTicks = long.MinValue;
 
-        internal StreamDeadlineCancellation(RespireConnection connection, long deadline)
+        internal StreamDeadlineCancellation(RespireConnection connection, CommandDeadline deadline)
         {
             _connection = connection;
             _deadline = deadline;
@@ -128,8 +128,8 @@ internal sealed partial class RespireConnection
             // The capacity wait shares this computation, and the deadline sweep applies the same
             // MaintenanceTimeoutState rule: an active maintenance window relaxes the deadline
             // measured from the command's original start, and its end restores it.
-            var remaining = _connection.RemainingUntilCommandDeadline(_deadline, Environment.TickCount64,
-                out effectiveTimeout, out var window);
+            var remaining = _connection.RemainingUntilCommandDeadline(_deadline.Ticks, Environment.TickCount64,
+                out effectiveTimeout, out var window, _deadline.IsRelaxed);
             if (remaining <= 0) return null;
 
             var sleep = Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds);

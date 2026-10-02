@@ -138,7 +138,7 @@ internal sealed partial class RespireConnection
     /// socket's maintenance window was relaxing it, the relaxed allowance is added once and
     /// marked, so the replacement socket's own window cannot add it again.
     /// </summary>
-    private CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
+    internal CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
     {
         if (!deadline.IsSet || deadline.IsRelaxed
             || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;

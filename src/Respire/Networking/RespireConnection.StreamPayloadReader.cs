@@ -12,8 +12,10 @@ internal sealed partial class RespireConnection
     {
         private byte[]? _chunk;
         private long _remaining = length;
+        private ReadOnlyMemory<byte> _consumedPrefix;
 
         internal bool IsComplete => _remaining == 0;
+        internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
         {
@@ -33,6 +35,7 @@ internal sealed partial class RespireConnection
                 }
                 catch
                 {
+                    if (filled > 0) _consumedPrefix = chunk.AsMemory(0, filled).ToArray();
                     // The read may still be writing into this pooled memory. Retain it until
                     // that read finishes instead of returning it while the source can mutate it.
                     _chunk = null;

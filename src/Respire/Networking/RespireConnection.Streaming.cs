@@ -64,7 +64,7 @@ internal sealed partial class RespireConnection
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
     {
         using var timeoutCancellation = deadline.IsSet
-            ? new StreamDeadlineCancellation(this, deadline.Ticks)
+            ? new StreamDeadlineCancellation(this, deadline)
             : null;
         timeoutCancellation?.Start();
         // Streamed SETs are rare and large, so one linked source per call is cheap. It observes the
@@ -164,9 +164,11 @@ internal sealed partial class RespireConnection
                 ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
                 : null;
             if (phase == StreamedSetPhase.ReadingFirstChunk
-                && (error is RespireConnectionRetiredException || translated is RespireConnectionRetiredException)
-                && !firstChunk.IsEmpty)
-                command.RestoreSourcePrefixForRetry(firstChunk.Span);
+                && (error is RespireConnectionRetiredException || translated is RespireConnectionRetiredException))
+            {
+                var consumed = !firstChunk.IsEmpty ? firstChunk : payloadReader?.ConsumedPrefix ?? default;
+                if (!consumed.IsEmpty) command.RestoreSourcePrefixForRetry(consumed.Span);
+            }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
             await FailStreamedSetAsync(source, phase, error, translated is RespireTimeoutException)

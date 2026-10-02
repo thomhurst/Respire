@@ -2419,13 +2419,17 @@ public sealed partial class RespireClient : IRespireClient
                     initialRejection, connection, cancellationToken, slot, discovery).ConfigureAwait(false);
                 discoveryPending = false;
             }
+            var commandDeadline = command is IStreamingRespCommand && _core.Options.CommandTimeout is { } streamTimeout
+                ? CommandDeadline.After(Math.Max(1L, (long)streamTimeout.TotalMilliseconds))
+                : CommandDeadline.None;
             var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;
             for (var attempt = firstAttempt; ; attempt++)
             {
                 try
                 {
                     return await SendOnConnectionAsync(
-                            operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
+                            operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
+                            commandDeadline, allowStreamingConnectionReroute: false)
                         .ConfigureAwait(false);
                 }
                 // Retirement rejects a streamed SET before its header is written. Its source is
@@ -2433,6 +2437,7 @@ public sealed partial class RespireClient : IRespireClient
                 // the command can move to the replacement connection without losing bytes.
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
+                    commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                     cluster.RecordRejection(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
@@ -2867,11 +2872,15 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        bool sendAsking = false)
+        bool sendAsking = false,
+        CommandDeadline commandDeadline = default,
+        bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
         => sendAsking
-            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
-            : connection.SendCheckedAsync(in command, cancellationToken, operation);
+            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
+                commandDeadline, allowStreamingConnectionReroute)
+            : connection.SendCheckedAsync(in command, cancellationToken, operation,
+                commandDeadline, allowStreamingConnectionReroute);
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
@@ -3092,12 +3101,16 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
-        bool sendAsking = false)
+        bool sendAsking = false,
+        CommandDeadline commandDeadline = default,
+        bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsEnabled
             ? SendOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
-            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking);
+                operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
+                commandDeadline, allowStreamingConnectionReroute)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
+                commandDeadline, allowStreamingConnectionReroute);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -3108,7 +3121,9 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName,
-        bool sendAsking)
+        bool sendAsking,
+        CommandDeadline commandDeadline,
+        bool allowStreamingConnectionReroute)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3121,7 +3136,8 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var response = await SendOnConnectionCoreAsync(
-                    operation, connection, command, cancellationToken, sendAsking)
+                    operation, connection, command, cancellationToken, sendAsking,
+                    commandDeadline, allowStreamingConnectionReroute)
                 .ConfigureAwait(false);
             telemetry.Complete(
                 operation,
