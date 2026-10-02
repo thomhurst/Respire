@@ -1251,7 +1251,8 @@ public class ReadEndpointRoutingTests
             SentinelPrimaryName = "mymaster",
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10),
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            // Keep command timeout above the 300 ms retired-stream idle limit below.
+            CommandTimeout = TimeSpan.FromSeconds(2),
             Protocol = RespProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
