@@ -17,7 +17,7 @@ if ($primaryGuardIndex -lt 0 -or $primaryGuardIndex -gt $mergeMatch.Index) {
     throw 'Primary-checkout cleanup guard must run before gh pr merge.'
 }
 
-$cleanupIndex = $script.IndexOf('Remove-MergedWorktree', $mergeMatch.Index)
+$cleanupIndex = $script.IndexOf('Clear-CompletedWorktreeArtifacts', $mergeMatch.Index)
 $remoteDeleteIndex = $script.IndexOf('push "--force-with-lease=${remoteRef}:$mergedHead" origin ":$remoteRef"', $mergeMatch.Index)
 
 if ($cleanupIndex -lt 0) {

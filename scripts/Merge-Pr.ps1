@@ -2,12 +2,11 @@
 # One-command, fail-closed merge for the issue-pr-loop skill:
 #   1. runs the pure gate  Assert-PrGreen.ps1  (read-only; exits 0 only when green)
 #   2. merges with  gh pr merge --squash  (only if the gate passed)
-#   3. removes the PR's isolated worktree
-#   4. deletes the unchanged remote head branch; retains local recovery refs
+#   3. clears safe generated output; leaves checkout removal to explicit owner release
+#   4. deletes the unchanged remote head branch only when no checkout remains
 #
-# Cleanup is *part of* the merge command — an agent cannot merge and then forget
-# to remove the worktree, because it is the same call. This is the durable fix for
-# the worktree pile-up the prose-only rule could not guarantee.
+# Cleanup is part of the merge command. Active or retained checkouts remain for
+# explicit owner release, which runs after the owner stops its background processes.
 #
 # The gate stays a separate, pure predicate ON PURPOSE: Assert-PrGreen.ps1 must be
 # safe to run as a check without side effects. Merge-Pr COMPOSES it; it does not
@@ -19,7 +18,7 @@
 # artifacts (node_modules/bin/obj) are cleared.
 #
 # Usage:  pwsh scripts/Merge-Pr.ps1 -Pr 1234 [-Repo owner/name] [-Worktree <path>]
-# Exit:   0 = merged (worktree removed, or preserved because dirty)
+# Exit:   0 = merged (checkout contents preserved for owner release)
 #         1 = NOT merged (gate denied, or merge failed) — nothing destroyed
 
 [CmdletBinding()]
@@ -95,8 +94,8 @@ if ($mergeExitCode -ne 0) {
 }
 Write-Host "Merged #${Pr} ($headRef)."
 
-# --- 3. Remove the PR's worktree. ----------------------------------------------
-# Re-resolve after the merge for auto-discovered paths, but only remove the exact linked
+# --- 3. Clear safe generated output; preserve the checkout for owner release. ---
+# Re-resolve after the merge for auto-discovered paths, but only clean the exact linked
 # worktree validated above. The private identity token disappears if that worktree is
 # removed/recreated, preventing a replacement worktree from becoming the target.
 $currentBranchWorktree = Find-WorktreeForBranch -RepoPath $mainRepo -Branch $headRef
@@ -115,20 +114,20 @@ if ($worktreeIdentityFile) {
 }
 
 if (-not $Worktree -and -not $currentBranchWorktree) {
-    Write-Host "No isolated worktree found for branch '$headRef' (nothing to remove)."
+    Write-Host "No isolated worktree found for branch '$headRef' (nothing to clean)."
     git -C $mainRepo worktree prune
 } elseif (-not $cleanupWorktree) {
     Write-Host "WARNING: merged #${Pr}, but the validated worktree identity changed. Preserving worktree and branches."
     git -C $mainRepo worktree prune
     exit 0
 } else {
-    # Standalone merges can clean up immediately. An owned checkout remains until
-    # the agent's explicit release; never release another caller's lock here.
-    $didRemove = Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}"
+    # Unattended cleanup cannot rule out background directory handles, even with a
+    # free lease. Clear generated output only; never release another caller's lock.
+    Clear-CompletedWorktreeArtifacts -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}" | Out-Null
 
     # A dirty worktree is intentionally preserved. Its local and remote branches are
     # also preserved so uncommitted work retains an upstream recovery point.
-    if (-not $didRemove) {
+    if (Test-Path -LiteralPath $cleanupWorktree) {
         Write-Host "Preserving branches for worktree #${Pr}: $cleanupWorktree"
         exit 0
     }

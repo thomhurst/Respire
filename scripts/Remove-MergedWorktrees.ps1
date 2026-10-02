@@ -1,5 +1,6 @@
 # Remove-MergedWorktrees.ps1
-# Safety-net sweep for completed worktrees, preserving active or unpublished work.
+# Safety-net artifact sweep for completed worktrees, preserving checkout contents.
+# Full checkout removal belongs to explicit owner release after its processes stop.
 #
 # SQUASH-SAFE DETECTION:
 #   - Exact merged PR head SHA (including renamed or detached checkouts).
@@ -35,7 +36,7 @@
 param(
     [string]$Repo,
     [switch]$WhatIf,
-    # Opt-in: also remove clean snapshots reachable from origin/main whose HEAD
+    # Opt-in: also clear generated output in snapshots reachable from origin/main whose HEAD
     # commit is older than this many days. Unpublished work is always preserved.
     [int]$StaleDays = 0
 )
@@ -108,7 +109,7 @@ try {
     }
     if ($cur) { $wts += [pscustomobject]@{ Path = $cur; Branch = $branch; Detached = $detached; Locked = $locked } }
 
-    $removed = 0; $unmatched = @()
+    $cleaned = 0; $unmatched = @()
     $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     foreach ($w in $wts) {
         if ($w.Path -eq $mainRepo) { continue }
@@ -159,10 +160,10 @@ try {
 
         if (-not $why) { $unmatched += $w; continue }
 
-        $didRemove = Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -Label "($why)" -WhatIf:$WhatIf
+        $didClean = Clear-CompletedWorktreeArtifacts -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -Label "($why)" -WhatIf:$WhatIf
         if ($WhatIf) { continue }
-        if ($didRemove) {
-            $removed++
+        if ($didClean) {
+            $cleaned++
             # Local refs are cheap recovery points. Another checkout can reuse the same
             # branch and SHA at any time, which a compare-and-delete cannot detect.
         }
@@ -174,7 +175,7 @@ try {
             $label = if ($w.Branch) { "[$($w.Branch)]" } else { '(detached)' }
             Write-Host "sweep:   $($w.Path) $label"
         }
-        if ($StaleDays -eq 0) { Write-Host 'sweep: re-run with -StaleDays <n> to also remove published snapshots older than n days.' }
+        if ($StaleDays -eq 0) { Write-Host 'sweep: re-run with -StaleDays <n> to also clear generated output in published snapshots older than n days.' }
     }
 
     # --- Orphaned directories: registration gone, directory left behind. -------------
@@ -224,7 +225,7 @@ try {
     }
 
     if (-not $WhatIf) { git -C $mainRepo worktree prune }
-    Write-Host "sweep: removed $removed merged worktree(s); preserved $orphansPreserved orphaned dir(s) for manual recovery."
+    Write-Host "sweep: cleared generated output in $cleaned completed checkout(s); preserved checkout contents and $orphansPreserved orphaned dir(s) for owner release or manual recovery."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"

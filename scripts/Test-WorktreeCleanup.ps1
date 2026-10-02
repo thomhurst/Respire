@@ -33,19 +33,7 @@ function global:git {
         return 'completed-head'
     }
     if ($args -contains 'remove') {
-        $target = $args[-1]
-        if ($target -eq $aliasRoot) {
-            Remove-Item -LiteralPath $aliasRoot -Force
-        }
-        else {
-            Remove-Item -LiteralPath $target -Recurse -Force
-        }
-    }
-    if ($args -contains 'move') {
-        $source = [IO.Path]::GetFullPath($args[-2])
-        $target = [IO.Path]::GetFullPath($args[-1])
-        if (-not $source.StartsWith($testRoot) -or -not $target.StartsWith($testRoot)) { throw 'Unsafe fixture move.' }
-        Move-Item -LiteralPath $source -Destination $target
+        throw 'Unattended cleanup must preserve checkout contents.'
     }
 }
 
@@ -117,7 +105,7 @@ try {
     }
 
     $primarySpelling = if ($IsWindows) { ($primaryRoot + '\').ToUpperInvariant() } else { $primaryRoot + '/' }
-    $output = Remove-MergedWorktree -Repo $primaryRoot -Worktree $primarySpelling -Label '#test' 6>&1
+    $output = Clear-CompletedWorktreeArtifacts -Repo $primaryRoot -Worktree $primarySpelling -Label '#test' 6>&1
 
     if ($script:gitCalled) {
         throw 'Primary-checkout protection ran after a git operation.'
@@ -132,7 +120,7 @@ try {
     }
 
     $script:gitCalled = $false
-    Remove-MergedWorktree -Repo $primaryRoot -Worktree $aliasRoot -Label '#alias'
+    Clear-CompletedWorktreeArtifacts -Repo $primaryRoot -Worktree $aliasRoot -Label '#alias'
 
     if ($script:gitCalled) {
         throw 'A primary-checkout alias reached a git operation.'
@@ -142,22 +130,22 @@ try {
         throw 'Primary checkout was removed through an alias.'
     }
 
-    Remove-MergedWorktree -Repo $primaryRoot -Worktree $isolatedRoot -ExpectedHead 'completed-head' -Label '#test'
+    Clear-CompletedWorktreeArtifacts -Repo $primaryRoot -Worktree $isolatedRoot -ExpectedHead 'completed-head' -Label '#test'
 
     if (-not $script:gitCalled) {
         throw 'Normal isolated-worktree cleanup did not run git.'
     }
 
-    if (Test-Path -LiteralPath $isolatedRoot) {
-        throw 'Normal isolated worktree was not removed.'
+    if (-not (Test-Path -LiteralPath $isolatedRoot)) {
+        throw 'Unattended cleanup removed the isolated checkout.'
     }
 
     if (-not $IsWindows) {
         $script:gitCalled = $false
-        Remove-MergedWorktree -Repo $casePrimaryRoot -Worktree $caseIsolatedRoot -ExpectedHead 'completed-head' -Label '#case'
+        Clear-CompletedWorktreeArtifacts -Repo $casePrimaryRoot -Worktree $caseIsolatedRoot -ExpectedHead 'completed-head' -Label '#case'
 
-        if (-not $script:gitCalled -or (Test-Path -LiteralPath $caseIsolatedRoot)) {
-            throw 'Case-distinct isolated worktree was incorrectly preserved.'
+        if (-not $script:gitCalled -or -not (Test-Path -LiteralPath $caseIsolatedRoot)) {
+            throw 'Case-distinct isolated worktree was not inspected and preserved.'
         }
 
         if (-not (Test-Path -LiteralPath $casePrimaryRoot)) {

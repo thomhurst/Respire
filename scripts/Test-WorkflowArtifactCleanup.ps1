@@ -22,7 +22,7 @@ try {
     git -C $repo worktree add --quiet -b merged $worktree
     $head = git -C $repo rev-parse HEAD
     $removeArgs = @{ Repo = $repo; Worktree = $worktree }
-    if ((Get-Command Remove-MergedWorktree).Parameters.ContainsKey('ExpectedHead')) { $removeArgs.ExpectedHead = $head }
+    if ((Get-Command Clear-CompletedWorktreeArtifacts).Parameters.ContainsKey('ExpectedHead')) { $removeArgs.ExpectedHead = $head }
 
     foreach ($file in @('build.log', 'pressure.nettrace', 'pr-body.md', 'review-pr-body.md', 'sdk-review-disposition.md', 'rebase-validation.md', 'ci-fix-comment.md', 'throttle-issue.md', '.artifacts/run.txt')) {
         git -C $worktree check-ignore --quiet -- $file
@@ -42,30 +42,33 @@ try {
 
     $source = Join-Path $worktree 'NewFeature.cs'
     Set-Content -LiteralPath $source -Value 'untracked source'
-    Remove-MergedWorktree @removeArgs
+    Clear-CompletedWorktreeArtifacts @removeArgs
     Assert-True (Test-Path -LiteralPath $source) 'Untracked source was removed.'
     Remove-Item -LiteralPath $source
 
     $settings = Join-Path $worktree '.env'
     Set-Content -LiteralPath $settings -Value 'local settings'
     if ($IsWindows) { (Get-Item -LiteralPath $settings -Force).Attributes = [IO.FileAttributes]::Hidden }
-    Remove-MergedWorktree @removeArgs
+    Clear-CompletedWorktreeArtifacts @removeArgs
     Assert-True (Test-Path -LiteralPath $settings) 'Unknown ignored files were removed.'
     Remove-Item -LiteralPath $settings -Force
 
     $trackedLog = Join-Path $worktree 'tracked.log'
     Set-Content -LiteralPath $trackedLog -Value 'tracked fixture'
     git -C $worktree add --force tracked.log
-    Remove-MergedWorktree @removeArgs
+    Clear-CompletedWorktreeArtifacts @removeArgs
     Assert-True (Test-Path -LiteralPath $trackedLog) 'Tracked log changes were discarded.'
     git -C $worktree reset --quiet HEAD -- tracked.log
 
-    if ((Get-Command Remove-MergedWorktree).Parameters.ContainsKey('WhatIf')) {
-        Remove-MergedWorktree @removeArgs -WhatIf
+    if ((Get-Command Clear-CompletedWorktreeArtifacts).Parameters.ContainsKey('WhatIf')) {
+        Clear-CompletedWorktreeArtifacts @removeArgs -WhatIf
         Assert-True (Test-Path -LiteralPath $worktree) 'Dry run removed a worktree.'
     }
-    Remove-MergedWorktree @removeArgs
-    Assert-True (-not (Test-Path -LiteralPath $worktree)) 'Ignored workflow output prevented cleanup.'
+    Clear-CompletedWorktreeArtifacts @removeArgs
+    Assert-True (Test-Path -LiteralPath (Join-Path $worktree '.gitignore')) 'Unattended cleanup removed checkout contents.'
+    foreach ($file in @('build.log', 'pressure.nettrace', 'pr-body.md', 'review-pr-body.md', 'sdk-review-disposition.md', 'rebase-validation.md', 'ci-fix-comment.md', 'throttle-issue.md', '.artifacts/run.txt', 'website/build/output.txt', 'website/.docusaurus/output.txt')) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $worktree $file))) "Generated output survived cleanup: $file"
+    }
     foreach ($path in @('src/source.log', 'src/pr-body.md', 'README.md', 'new-feature.md', '.env')) {
         Assert-True (-not (Test-DisposableWorktreePath -Path $path)) "Source or unknown file marked disposable: $path"
     }

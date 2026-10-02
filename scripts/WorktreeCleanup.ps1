@@ -1,12 +1,12 @@
 # WorktreeCleanup.ps1
-# Shared worktree-removal helper, dot-sourced by Merge-Pr.ps1 and
+# Shared unattended-cleanup helper, dot-sourced by Merge-Pr.ps1 and
 # Remove-MergedWorktrees.ps1. Not meant to be run directly.
 #
-# Removal policy (one place, both callers):
+# Cleanup policy (one place, both callers):
 #   - PRESERVE tracked changes and untracked/ignored files outside known generated paths.
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
-#   - Git performs the final dirty/lock checks. Failed removal preserves the directory;
-#     recursive filesystem deletion must never bypass Git's refusal.
+#   - PRESERVE the checkout itself: a free lock cannot rule out background directory handles.
+#     Explicit owner release removes checkouts after the owner stops its processes.
 
 function New-OrdinalStringMap {
     [CmdletBinding()]
@@ -252,25 +252,24 @@ function Get-WorktreeStatusBlocker {
     return $null
 }
 
-function Remove-MergedWorktree {
+function Clear-CompletedWorktreeArtifacts {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Repo,       # a checkout that is NOT the one being removed (main)
-        [Parameter(Mandatory)][string]$Worktree,   # path to remove
+        [Parameter(Mandatory)][string]$Repo,       # primary checkout for canonical ownership checks
+        [Parameter(Mandatory)][string]$Worktree,   # completed checkout whose generated output may be cleared
         [string]$ExpectedHead,                    # tip independently verified as completed by the caller
         [string]$Label = '',                       # e.g. "#1234" for log lines
         [switch]$WhatIf
     )
 
     if (-not (Test-Path -LiteralPath $Worktree)) {
-        if (-not $WhatIf) { git -C $Repo worktree prune }
         return
     }
 
-    # Only linked worktrees are valid deletion targets. This rejects the primary
-    # checkout even through a filesystem alias before any git or recursive delete.
+    # Only linked worktrees are valid cleanup targets. This rejects the primary
+    # checkout even through a filesystem alias before any Git cleanup.
     if (-not (Test-IsLinkedWorktree -Path $Worktree)) {
-        Write-Host "WARNING: refusing to remove primary checkout or non-linked worktree $Label : $Worktree"
+        Write-Host "WARNING: refusing to clean primary checkout or non-linked worktree $Label : $Worktree"
         return
     }
 
@@ -292,7 +291,7 @@ function Remove-MergedWorktree {
         return
     }
 
-    if ($WhatIf) { Write-Host "sweep: WOULD remove $Worktree -- $Label"; return }
+    if ($WhatIf) { Write-Host "sweep: WOULD clear generated output in $Worktree -- $Label"; return }
 
     # Recheck after status inspection, which can take time in a large build tree.
     $head = git -C $Worktree rev-parse HEAD 2>$null
@@ -307,69 +306,34 @@ function Remove-MergedWorktree {
         Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
         return
     }
-    # Atomically vacate the published path before the last ignored-file inspection.
-    # A path-based writer either lands in this snapshot or recreates the original path;
-    # it cannot put an ignored file into the deletion target after that inspection.
-    $original = [IO.Path]::GetFullPath($Worktree).TrimEnd([char[]]@('/', '\'))
-    $parent = Split-Path -Path $original -Parent
-    $quarantine = "$original-cleanup-$([guid]::NewGuid().ToString('N'))"
-    if (-not (Test-IsDescendantPath -Path $original -Parent $parent) -or
-        -not (Test-IsDescendantPath -Path $quarantine -Parent $parent) -or
-        (Test-Path -LiteralPath $quarantine)) {
-        Write-Host "WARNING: could not establish a safe quarantine path for $Worktree"
-        return
-    }
-    git -C $Repo worktree move $original $quarantine 2>$null
+    # A free lease cannot prove that an old process has released its cwd/directory
+    # handles. Even renaming the tree cannot stop that process from writing ignored
+    # source after inspection. Unattended cleanup therefore removes only disposable
+    # generated output; owner-driven release remains responsible for checkout removal.
+    $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Preserving worktree $Label : $original (could not quarantine checkout)"
+        Write-Host "Preserving worktree $Label : $Worktree (could not enumerate generated output)"
         return
     }
-    try {
-        $head = git -C $quarantine rev-parse HEAD 2>$null
+    foreach ($entry in $status) {
+        if ($entry -notmatch '^(\?\?|!!) ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) {
+            Write-Host "Preserving worktree $Label : $Worktree (new source or unknown output: $entry)"
+            return
+        }
+    }
+    foreach ($entry in $status) {
+        $head = git -C $Worktree rev-parse HEAD 2>$null
         if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead -or
-            (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $quarantine) -or
-            (Get-WorktreeStatusBlocker -Worktree $quarantine)) {
-            Write-Host "Preserving quarantined worktree $Label : $quarantine (work or ownership changed)"
+            (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $Worktree)) {
+            Write-Host "Preserving worktree $Label : $Worktree (HEAD or ownership changed before artifact cleanup)"
             return
         }
-
-        # Some disposable output (for example Debug/) is not ignored by Git. Remove
-        # only those explicitly classified paths; leave ordinary source to Git's guard.
-        $untracked = @(git -C $quarantine status --porcelain=v1 --untracked-files=all 2>$null)
+        git -C $Worktree --literal-pathspecs clean -fdx -- $entry.Substring(3) 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "Preserving quarantined worktree $Label : $quarantine (final status inspection failed)"
+            Write-Host "Preserving worktree $Label : $Worktree (could not clear generated path $($entry.Substring(3)))"
             return
-        }
-        foreach ($entry in $untracked) {
-            if ($entry -notmatch '^\?\? ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) {
-                Write-Host "Preserving quarantined worktree $Label : $quarantine (non-disposable entry: $entry)"
-                return
-            }
-            git -C $quarantine --literal-pathspecs clean -f -- $entry.Substring(3) 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "Preserving quarantined worktree $Label : $quarantine (generated-file cleanup failed)"
-                return
-            }
-        }
-        # Never force removal or recursively delete after Git refuses.
-        git -C $Repo worktree remove $quarantine 2>$null
-        if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $quarantine)) {
-            Write-Host "WARNING: preserving worktree after Git removal failed $Label : $quarantine"
-            return
-        }
-        if (Test-Path -LiteralPath $original) {
-            Write-Host "Preserving newly created path $Label : $original"
-            return
-        }
-        Write-Host "Removed worktree $Label : $original"
-        return $true
-    }
-    finally {
-        # Restore retained work when its old path is still free. Never overwrite a new
-        # checkout or files created by a writer using the original path.
-        if ((Test-Path -LiteralPath $quarantine) -and -not (Test-Path -LiteralPath $original)) {
-            git -C $Repo worktree move $quarantine $original 2>$null
-            if ($LASTEXITCODE -ne 0) { Write-Host "Recovery worktree remains at $quarantine" }
         }
     }
+    Write-Host "Cleared generated output; preserving checkout for owner release or manual recovery $Label : $Worktree"
+    return $true
 }

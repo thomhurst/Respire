@@ -115,6 +115,10 @@ switch ($LockName) {
     $generated = New-Checkout 'pr-123-generated'
     New-Item -ItemType Directory -Path (Join-Path $generated 'Debug') | Out-Null
     Set-Content -LiteralPath (Join-Path $generated 'Debug/generated.dll') -Value generated
+    foreach ($path in @($safe, $raceBeforeRemoval, $raceAfterFailure, $raceBranch, $raceCheckout, $raceIgnored, $raceOldPath)) {
+        New-Item -ItemType Directory -Path (Join-Path $path 'bin') | Out-Null
+        Set-Content -LiteralPath (Join-Path $path 'bin/generated.dll') -Value generated
+    }
     $replacementHead = & $gitExecutable -C $unpublished rev-parse HEAD
     $orphan = Join-Path $worktreeRoot 'pr-123-orphan'
     New-Item -ItemType Directory -Path $orphan | Out-Null
@@ -133,41 +137,47 @@ param($Sweep, $Repo, $GitExecutable, $Fixtures)
 $data = Get-Content -LiteralPath $Fixtures -Raw | ConvertFrom-Json
 function global:git {
     if ($args -contains 'fetch') { $global:LASTEXITCODE = 0; return }
-    if ($args -contains 'move' -and $args -contains 'worktree' -and
-        ($args[-2] -replace '\\', '/') -eq ($data.RaceIgnored -replace '\\', '/')) {
-        Set-Content -LiteralPath (Join-Path $args[-2] '.env') -Value 'Ignored file written after inspection.'
-    }
     if ($args -contains 'remove' -and $args -contains 'worktree') {
-        $target = $args[-1]
-        if (($target -replace '\\', '/') -eq ($data.RaceIgnored -replace '\\', '/')) {
-            Set-Content -LiteralPath (Join-Path $target '.env') -Value 'Ignored file written after inspection.'
+        throw 'Unattended cleanup must not recursively remove checkout contents.'
+    }
+    $target = $args[1] -replace '\\', '/'
+    if ($args -contains 'clean') {
+        if ($target -eq ($data.BeforeRemoval -replace '\\', '/')) {
+            Set-Content -LiteralPath (Join-Path $args[1] 'source.txt') -Value 'Written just before artifact cleanup.'
         }
-        if (($target -replace '\\', '/') -like "$($data.BeforeRemoval -replace '\\', '/')*") {
-            Set-Content -LiteralPath (Join-Path $target 'source.txt') -Value 'Written just before Git removal.'
-        }
-        if (($target -replace '\\', '/') -like "$($data.AfterFailure -replace '\\', '/')*") {
-            Set-Content -LiteralPath (Join-Path $target 'new-source.txt') -Value 'Written during failed Git removal.'
+        if ($target -eq ($data.AfterFailure -replace '\\', '/')) {
+            Set-Content -LiteralPath (Join-Path $args[1] 'new-source.txt') -Value 'Written during failed artifact cleanup.'
             $global:LASTEXITCODE = 1
             return
         }
-        if (($target -replace '\\', '/') -like "$($data.RaceOldPath -replace '\\', '/')*") {
-            New-Item -ItemType Directory -Path $data.RaceOldPath -Force | Out-Null
-            Set-Content -LiteralPath (Join-Path $data.RaceOldPath '.env') -Value 'Ignored file written at the original path.'
+        if ($target -eq ($data.RaceIgnored -replace '\\', '/')) {
+            # The child inherits an already-open cwd, just like a background worker.
+            # Unattended cleanup must preserve its ignored file even after inspection.
+            $process = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
+            $process.WorkingDirectory = $args[1]
+            $process.ArgumentList.Add('-NoProfile')
+            $process.ArgumentList.Add('-Command')
+            $process.ArgumentList.Add('Set-Content -LiteralPath .env -Value "Ignored file written through cwd after inspection."')
+            $child = [Diagnostics.Process]::Start($process)
+            $child.WaitForExit()
+            if ($child.ExitCode -ne 0) { throw 'Could not inject background cwd write.' }
+            $child.Dispose()
+        }
+        if ($target -eq ($data.RaceOldPath -replace '\\', '/')) {
+            Set-Content -LiteralPath (Join-Path $args[1] '.env') -Value 'Ignored file written at the original path.'
         }
     }
     $output = & $GitExecutable @args
     $code = $LASTEXITCODE
-    if ($code -eq 0 -and $args -contains 'remove' -and $args -contains 'worktree' -and
-        ($args[-1] -replace '\\', '/') -like "$($data.RaceBranch -replace '\\', '/')*") {
+    if ($code -eq 0 -and $args -contains 'clean' -and $target -eq ($data.RaceBranch -replace '\\', '/')) {
         & $GitExecutable -C $Repo update-ref refs/heads/pr-123-branch-race $data.ReplacementHead
         if ($LASTEXITCODE -ne 0) { throw 'Could not inject branch advancement.' }
     }
-    if ($code -eq 0 -and $args -contains 'remove' -and $args -contains 'worktree' -and
-        ($args[-1] -replace '\\', '/') -like "$($data.RaceCheckout -replace '\\', '/')*") {
-        & $GitExecutable -C $Repo worktree add $data.ReplacementCheckout pr-123-checkout-race 2>$null | Out-Null
+    if ($code -eq 0 -and $args -contains 'clean' -and $target -eq ($data.RaceCheckout -replace '\\', '/')) {
+        & $GitExecutable -C $Repo worktree add --force $data.ReplacementCheckout pr-123-checkout-race 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Could not inject same-commit branch checkout.' }
     }
-    if ($args -contains 'status' -and ($args[1] -replace '\\', '/') -eq ($data.AfterStatus -replace '\\', '/')) {
+    if ($args -contains 'status' -and $target -eq ($data.AfterStatus -replace '\\', '/')) {
         Set-Content -LiteralPath (Join-Path $args[1] 'new-source.txt') -Value 'Written after status was read.'
     }
     $global:LASTEXITCODE = $code
@@ -190,14 +200,15 @@ Set-Location -LiteralPath $Repo
     foreach ($path in @($raceAfterStatus, $raceAfterFailure)) {
         Assert (Test-Path -LiteralPath (Join-Path $path 'new-source.txt')) "New source was lost: $path"
     }
-    Assert ((Get-Content -LiteralPath (Join-Path $raceBeforeRemoval 'source.txt')) -eq 'Written just before Git removal.') 'Tracked edit was lost.'
+    Assert ((Get-Content -LiteralPath (Join-Path $raceBeforeRemoval 'source.txt')) -eq 'Written just before artifact cleanup.') 'Tracked edit was lost.'
     Assert (Test-Path -LiteralPath (Join-Path $orphan 'source.txt')) 'Orphan source was lost.'
-    Assert ((Get-Content -LiteralPath (Join-Path $raceIgnored '.env')) -eq 'Ignored file written after inspection.') 'Late ignored file was lost.'
+    Assert ((Get-Content -LiteralPath (Join-Path $raceIgnored '.env')) -eq 'Ignored file written through cwd after inspection.') 'Late background cwd write was lost.'
     Assert ((Get-Content -LiteralPath (Join-Path $raceOldPath '.env')) -eq 'Ignored file written at the original path.') 'Recreated path was removed.'
-    Assert (-not (Test-Path -LiteralPath $safe)) 'Exact completed PR tip was not removed.'
-    Assert (-not (Test-Path -LiteralPath $released)) 'Released completed snapshot was not removed.'
-    Assert (-not (Test-Path -LiteralPath $raceBranch)) 'Completed branch-race checkout was not removed.'
-    Assert (-not (Test-Path -LiteralPath $generated)) 'Unignored generated output prevented completed-checkout removal.'
+    foreach ($path in @($safe, $released, $raceBranch, $generated)) {
+        Assert (Test-Path -LiteralPath (Join-Path $path 'source.txt')) "Completed checkout source was removed: $path"
+        Assert (-not (Test-Path -LiteralPath (Join-Path $path 'bin/generated.dll'))) "Generated output survived cleanup: $path"
+    }
+    Assert (-not (Test-Path -LiteralPath (Join-Path $generated 'Debug/generated.dll'))) 'Unignored generated output survived cleanup.'
     $checkoutHead = & $gitExecutable -C $replacementCheckout rev-parse HEAD
     Assert ($LASTEXITCODE -eq 0 -and $checkoutHead -eq $main) 'Same-commit checkout lost its branch ref.'
     $branchHead = & $gitExecutable -C $repo rev-parse --verify refs/heads/pr-123-branch-race
@@ -205,9 +216,9 @@ Set-Location -LiteralPath $Repo
     & $gitExecutable -C $repo show-ref --verify --quiet refs/heads/completed
     Assert ($LASTEXITCODE -eq 0) 'Completed local branch recovery ref was deleted.'
     . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
-    Remove-MergedWorktree -Repo $repo -Worktree $unpublished -ExpectedHead $main
+    Clear-CompletedWorktreeArtifacts -Repo $repo -Worktree $unpublished -ExpectedHead $main
     Assert (Test-Path -LiteralPath $unpublished) 'Changed HEAD was removed by the shared helper.'
-    Remove-MergedWorktree -Repo $repo -Worktree $locked -ExpectedHead $main
+    Clear-CompletedWorktreeArtifacts -Repo $repo -Worktree $locked -ExpectedHead $main
     Assert (Test-Path -LiteralPath $locked) 'Git lock was bypassed by the shared helper.'
     Write-Host 'OK merged worktree sweep preserves active and unpublished work.'
 }
