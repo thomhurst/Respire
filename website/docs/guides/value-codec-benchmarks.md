@@ -58,8 +58,7 @@ dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
 ```
 
 Use `--job Dry --launchCount 1` first, and replace `Encode` with `Decode` for reads.
-Repository agents run measurements through CI and follow the shared performance-lock
-workflow before any local build or diagnostic run. Do not run the full benchmark suite.
+Do not run the full benchmark suite.
 
 Each artifact retains the exact Git revision, SDK/runtime information, CPU description,
 resolved packages, build log, all three benchmark phases, BDN reports, input digests,
