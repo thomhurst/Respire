@@ -169,6 +169,99 @@ public class FunctionClusterTests
         await Assert.That(async () => await pending).Throws<RespireServerException>();
     }
 
+    [Test]
+    [Arguments(false, "success")]
+    [Arguments(true, "success")]
+    [Arguments(false, "cancel")]
+    [Arguments(true, "cancel")]
+    [Arguments(false, "MOVED")]
+    [Arguments(true, "MOVED")]
+    [Arguments(false, "ASK")]
+    [Arguments(true, "ASK")]
+    [Arguments(false, "accepted-ASK")]
+    public async Task AcceptedClusterFunctionKeepsResponseAndReadPolicyPastAdmissionBudget(bool strict, string outcome)
+    {
+        const string source = "#!lua name=sample\nreturn 1";
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redirected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var target = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("FCALL_RO", StringComparison.Ordinal)) return false;
+                redirected.TrySetResult();
+                return true;
+            },
+        };
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("FCALL_RO", StringComparison.Ordinal)) return false;
+                if (Interlocked.Increment(ref calls) == 1) return false;
+                accepted.TrySetResult();
+                return true;
+            },
+            ReplyOverride = (_, command) => command.StartsWith("FCALL_RO", StringComparison.Ordinal)
+                ? "-ERR Function not found\r\n"u8.ToArray() : null,
+        };
+        await using var primary = new FakeRespServer(FunctionLibraryList(source));
+        await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            CommandTimeout = null,
+            ClusterTopologyRefreshInterval = null,
+        });
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
+        var pending = client.WithReadFrom(strict ? RespireReadFrom.Replica : RespireReadFrom.ReplicaPreferred)
+            .Functions.ExecuteIntegerAsync(function, ["{foo}:key"], cancellationToken: caller.Token).AsTask();
+        await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var responseServer = replica;
+        if (outcome == "accepted-ASK")
+        {
+            await replica.SendRawAsync(Redirect("ASK"));
+            await redirected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            responseServer = target;
+        }
+
+        // Start the wait after Redis has observed the retry (or its ASK-prefixed replacement).
+        // The response stays gated until the whole admission budget has certainly elapsed.
+        await Task.Delay(FunctionCommands.FunctionPropagationLimit + TimeSpan.FromMilliseconds(250));
+        await Assert.That(pending.IsCompleted).IsFalse();
+        if (outcome is "success" or "accepted-ASK")
+        {
+            await responseServer.SendRawAsync(":42\r\n"u8.ToArray());
+            await Assert.That(await pending.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(42);
+        }
+        else if (outcome == "cancel")
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await replica.SendRawAsync(":42\r\n"u8.ToArray());
+        }
+        else
+        {
+            await replica.SendRawAsync(Redirect(outcome));
+            if (strict && outcome == "ASK")
+                await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                    .Throws<RespireConnectionException>();
+            else
+                await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                    .Throws<RespireTimeoutException>();
+        }
+        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("FCALL", StringComparison.Ordinal)))
+            .IsEqualTo(outcome == "accepted-ASK" ? 1 : 0);
+        if (outcome == "accepted-ASK") await Assert.That(target.ReceivedCommands).Contains("ASKING");
+
+        byte[] Redirect(string kind) => Encoding.ASCII.GetBytes($"-{kind} {ClusterHash.GetSlot("foo")} 127.0.0.1:{target.Port}\r\n");
+    }
+
     private static RespireOptions Options(int seedPort) => new()
     {
         Protocol = RespProtocol.Resp2,

@@ -2784,7 +2784,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Writes two RESP commands as one buffer append.</summary>
-    private readonly struct PrefixedCommand<TPrefix, TCommand> : IRespCommand
+    private readonly struct PrefixedCommand<TPrefix, TCommand> : IRespCommandWrapper
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {

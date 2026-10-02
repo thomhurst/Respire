@@ -199,6 +199,17 @@ internal interface IStreamingRespCommand : IRespCommand
 {
 }
 
+/// <summary>
+/// Requires wrappers to choose admission, response cancellation, and acceptance behavior explicitly.
+/// Ordinary commands retain the defaults on <see cref="IRespCommand"/>.
+/// </summary>
+internal interface IRespCommandWrapper : IRespCommand
+{
+    new void ValidateAdmission();
+    new CancellationToken GetResponseCancellationToken(CancellationToken admissionToken);
+    new void OnAccepted();
+}
+
 /// <summary>A streamed command that can reset its source and resend after a Cluster redirect.</summary>
 internal interface IReplayableStreamingRespCommand : IStreamingRespCommand
 {

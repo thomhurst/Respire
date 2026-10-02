@@ -1027,7 +1027,7 @@ public class ReadEndpointRoutingTests
                 var expectedMilliseconds = Math.Min(timeoutMilliseconds ?? 5000, 5000);
                 await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(expectedMilliseconds));
                 await Assert.That(error.Message).Contains("Replica function propagation");
-                await Assert.That(error.Message).Contains("five seconds");
+                await Assert.That(error.Message).Contains($"{FunctionCommands.FunctionPropagationLimit.TotalSeconds:0} seconds");
                 await Assert.That(error.Message).DoesNotContain("Review RespireOptions.CommandTimeout");
             }
             await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsFalse();
