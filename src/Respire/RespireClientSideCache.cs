@@ -458,7 +458,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             && command.TryGetClientCacheKey(operation, out var arguments)
             && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout))
         {
-            if (mutation == RespireCacheMutation.MultiKey || layout.Count > 1 || layout.Extra >= 0)
+            if (mutation == RespireCacheMutation.MultiKey || layout.Count != 1 || layout.Extra >= 0)
                 return BeginMultiKeyMutation(in arguments, layout);
 
             var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();

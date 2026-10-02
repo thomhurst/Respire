@@ -74,6 +74,25 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task ExplicitZeroKeyMutation_FencesCacheWithoutReadingKeyArgument()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "+PONG\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+
+        using var pong = await client.ExecuteAsync(
+            RespireCommand.Create("PING", RespireCacheMutation.Mutation));
+
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
     public async Task DeterministicRead_CachesIntegerReply()
     {
         await using var server = new FakeRespServer(
