@@ -114,6 +114,7 @@ public partial interface IStringCommands
     /// Respire does not retry a streamed write once its header is sent. Cluster <c>MOVED</c>/<c>ASK</c>
     /// redirects are followed when the source is a seekable stream or an in-memory sequence; a
     /// non-seekable stream returns the redirect to the caller because its source cannot be replayed.
+    /// For a seekable stream, the position when this method is called is the replay point.
     /// Each call always takes the streaming path, which costs a few
     /// small allocations per call; use the <see cref="RespireValue"/> overload for small values.
     /// </para>

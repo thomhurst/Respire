@@ -2464,11 +2464,12 @@ public sealed partial class RespireClient : IRespireClient
                         {
                             replayable.ResetSourceForReplay();
                         }
-                        catch (Exception resetError) when (resetError is NotSupportedException or IOException or ObjectDisposedException)
+                        catch (Exception resetError) when (resetError is not OutOfMemoryException
+                            and not AccessViolationException and not StackOverflowException)
                         {
-                            // Preserve the redirect as the command result. A source whose seek
-                            // operation stopped working cannot be retried safely. Routing has
-                            // already learned the redirect so the next command uses its owner.
+                            // The caller-owned source can fail its seek with its own exception
+                            // type. Preserve the redirect when any non-fatal reset failure makes
+                            // retry unsafe; routing already learned the new owner.
                             RethrowPreservingStackTrace(error);
                         }
                     }

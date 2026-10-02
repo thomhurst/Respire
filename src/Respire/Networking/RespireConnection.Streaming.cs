@@ -141,6 +141,7 @@ internal sealed partial class RespireConnection
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
             }
+
             // A source that ignored the token can complete its read after the caller, the deadline
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
             // the wire yet, so fail here instead of queueing an expired header that a later wait
