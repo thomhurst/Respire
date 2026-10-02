@@ -16,7 +16,7 @@ public class ReadLatencySamplerTests
         var suppress = true;
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
         {
-            SuppressReply = command => command == "PING" && Volatile.Read(ref suppress),
+            SuppressReply = command => (command == "PING" || command == "GET blocked") && Volatile.Read(ref suppress),
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -34,8 +34,15 @@ public class ReadLatencySamplerTests
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
 
+        if (commandDeadline)
+        {
+            // The sampler's unarmed command must not hide a later user's armed deadline.
+            await Assert.That(async () => await client.GetStringAsync("blocked").AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireTimeoutException>();
+        }
+
         Volatile.Write(ref suppress, false);
-        await server.SendRawAsync(FakeRespServer.PongReply);
+        await server.SendRawAsync(commandDeadline ? "+PONG\r\n$5\r\nvalue\r\n"u8.ToArray() : FakeRespServer.PongReply);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (sampler.SamplesStarted == 1)
         {
