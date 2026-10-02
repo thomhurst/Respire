@@ -717,7 +717,7 @@ internal sealed class ClientCore : IAsyncDisposable
             hub = _hub;
         }
 
-        Exception? disposeError = null;
+        List<Exception>? disposeErrors = null;
         // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
         await DisposeOwnerAsync(() => new(_ownedPools.DisposeAllAsync())).ConfigureAwait(false);
         if (hub is not null) await DisposeOwnerAsync(hub.DisposeAsync).ConfigureAwait(false);
@@ -740,15 +740,29 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         await DisposeOwnerAsync(_multiplexer.DisposeAsync).ConfigureAwait(false);
-        if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
+        if (disposeErrors is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeErrors[0]).Throw();
+        if (disposeErrors is { Count: > 1 }) throw new AggregateException(disposeErrors);
 
         async ValueTask DisposeOwnerAsync(Func<ValueTask> dispose)
         {
             // Keep shutdown ordered, but never let one owner's failure skip another or mask an earlier error.
-            try { await dispose().ConfigureAwait(false); }
+            Task? disposal = null;
+            try
+            {
+                disposal = dispose().AsTask();
+                await disposal.ConfigureAwait(false);
+            }
             catch (Exception error)
             {
-                disposeError = disposeError is null ? error : new AggregateException(disposeError, error);
+                // Await exposes only one failure from Task.WhenAll. Preserve the complete task exception
+                // collection, including aggregates returned by owners, without nesting the final result.
+                var failure = disposal?.Exception ?? error;
+                disposeErrors ??= [];
+                if (failure is AggregateException aggregate)
+                    disposeErrors.AddRange(aggregate.Flatten().InnerExceptions);
+                else
+                    disposeErrors.Add(failure);
             }
         }
     }

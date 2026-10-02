@@ -188,7 +188,8 @@ public class DedicatedPoolLedgerTests
             {
                 var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
                     .ThrowsExactly<AggregateException>();
-                var failures = error!.Flatten().InnerExceptions;
+                var failures = error!.InnerExceptions;
+                await Assert.That(failures.Any(failure => failure is AggregateException)).IsFalse();
                 await Assert.That(failures.Contains(logger.WarningFailure)).IsTrue();
                 await Assert.That(failures.Contains(logger.Failure)).IsTrue();
             }
@@ -213,6 +214,44 @@ public class DedicatedPoolLedgerTests
             catch (InvalidOperationException error) when (ReferenceEquals(error, logger.Failure)) { }
             await pool.DisposeAsync();
         }
+    }
+
+    [Test]
+    public async Task ClientDisposalPreservesEveryFailedPool()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var firstLogger = new CleanupFailureLogger();
+        var secondLogger = new CleanupFailureLogger();
+        await using var first = CreatePool(server, firstLogger);
+        await using var second = CreatePool(server, secondLogger);
+        // Inject distinct failures into two owned pools to exercise the bulk task's exception collection.
+        var ledger = (DedicatedPoolLedger)typeof(ClientCore).GetField("_ownedPools",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(client.Core)!;
+        ledger.Add(first);
+        ledger.Add(second);
+        foreach (var pool in new[] { first, second })
+        {
+            var lease = await pool.RentAsync(CancellationToken.None);
+            pool.Return(lease);
+            await Assert.That(async () => await pool.RetireAsync()).ThrowsExactly<InvalidOperationException>();
+        }
+        var connection = client.Core.Multiplexer.GetConnection();
+        firstLogger.ThrowOnWarning = secondLogger.ThrowOnWarning = true;
+        try
+        {
+            var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                .ThrowsExactly<AggregateException>();
+            await Assert.That(error!.InnerExceptions.Count).IsEqualTo(2);
+            await Assert.That(error.InnerExceptions.Contains(firstLogger.WarningFailure)).IsTrue();
+            await Assert.That(error.InnerExceptions.Contains(secondLogger.WarningFailure)).IsTrue();
+            await Assert.That(connection.IsConnected).IsFalse();
+            await Assert.That(client.Core.Multiplexer.IsRetired).IsTrue();
+        }
+        finally { firstLogger.ThrowOnWarning = secondLogger.ThrowOnWarning = false; }
     }
 
     private sealed class CleanupFailureLogger : ILogger, ILoggerFactory
