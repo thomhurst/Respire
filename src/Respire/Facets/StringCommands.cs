@@ -111,9 +111,10 @@ public partial interface IStringCommands
     /// </para>
     /// <para>
     /// The command timeout covers the whole upload, including every source read and socket write.
-    /// Respire does not retry a streamed write once its header is sent, and cluster
-    /// <c>MOVED</c>/<c>ASK</c> redirects are returned to the caller as server errors rather than
-    /// followed, because a stream source cannot be replayed. Each call always takes the streaming path, which costs a few
+    /// Respire does not retry a streamed write once its header is sent. Cluster <c>MOVED</c>/<c>ASK</c>
+    /// redirects are followed when the source is a seekable stream or an in-memory sequence; a
+    /// non-seekable stream returns the redirect to the caller because its source cannot be replayed.
+    /// Each call always takes the streaming path, which costs a few
     /// small allocations per call; use the <see cref="RespireValue"/> overload for small values.
     /// </para>
     /// </remarks>
@@ -131,9 +132,10 @@ public partial interface IStringCommands
     /// </summary>
     /// <remarks>
     /// The sequence's memory must stay unchanged until the returned task completes. Connection
-    /// ownership, cancellation, timeout and redirect behavior match the <see cref="Stream"/>
-    /// overload, except that an in-memory sequence cannot fail mid-read. Every call takes the
-    /// streaming path; use the <see cref="RespireValue"/> overload for small values.
+    /// ownership, cancellation and timeout behavior match the <see cref="Stream"/> overload,
+    /// except that an in-memory sequence cannot fail mid-read. Cluster <c>MOVED</c>/<c>ASK</c>
+    /// redirects are followed by replaying the unchanged sequence. Every call takes the streaming
+    /// path; use the <see cref="RespireValue"/> overload for small values.
     /// </remarks>
     ValueTask<bool> SetAsync(
         RespireKey key,

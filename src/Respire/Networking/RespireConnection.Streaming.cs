@@ -132,25 +132,6 @@ internal sealed partial class RespireConnection
                 effectiveCancellation).ConfigureAwait(false);
             source.Deadline = deadline;
 
-            if (prelude is { } prefix)
-            {
-                phase = StreamedSetPhase.AskingQueued;
-                try
-                {
-                    using var askingResponse = await AppendStreamingPreludeAsync(
-                        prefix, effectiveCancellation, deadline).ConfigureAwait(false);
-                }
-                catch (RespireServerException)
-                {
-                    // The rejected prelude did not arm ASKING on this connection.
-                    phase = StreamedSetPhase.NotStarted;
-                    throw;
-                }
-
-                askingAccepted = true;
-                phase = StreamedSetPhase.AskingAccepted;
-            }
-
             if (command.SourceStream is { } stream && command.Length > 0)
             {
                 // Read the first chunk before the header goes out. A source that fails, is
@@ -172,6 +153,25 @@ internal sealed partial class RespireConnection
             // would have to abort the connection for.
             timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
+
+            if (prelude is { } prefix)
+            {
+                phase = StreamedSetPhase.AskingQueued;
+                try
+                {
+                    using var askingResponse = await AppendStreamingPreludeAsync(
+                        prefix, effectiveCancellation, deadline).ConfigureAwait(false);
+                }
+                catch (RespireServerException)
+                {
+                    // The rejected prelude did not arm ASKING on this connection.
+                    phase = StreamedSetPhase.NotStarted;
+                    throw;
+                }
+
+                askingAccepted = true;
+                phase = StreamedSetPhase.AskingAccepted;
+            }
 
             // Retirement (local or cluster generation) rejects the upload until its header is
             // queued, exactly like an ordinary command that was not yet enqueued. The catch below

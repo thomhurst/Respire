@@ -71,9 +71,11 @@ jobs:
                              '        }\n'
                              '        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;\n'
                              '    }\n\n')
-          assert source.count(correction_marker) == 1
-          source = source.replace(correction_marker, correction_shim + correction_marker, 1)
-          assert source.count('GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)') == 1
+          correction_api = 'internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)'
+          if correction_api not in source:
+              assert source.count(correction_marker) == 1
+              source = source.replace(correction_marker, correction_shim + correction_marker, 1)
+          assert source.count(correction_api) == 1
           marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
           shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')

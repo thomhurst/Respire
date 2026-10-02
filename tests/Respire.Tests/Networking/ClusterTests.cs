@@ -117,6 +117,79 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task MovedRedirect_ResetFailurePreservesServerRedirect()
+    {
+        const string key = "reset-failure-key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Moved);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new ResetFailingMemoryStream([1, 2, 3]);
+
+        var error = await Assert.That(async () => await client.Strings.SetAsync(key, stream, 3))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.Moved);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task MovedRedirect_ReplaysStreamAcrossMultipleHops()
+    {
+        const string key = "multi-hop-stream-key";
+        var slot = ClusterHash.GetSlot(key);
+        var payload = new byte[] { 4, 8, 12, 16 };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var middle = new FakeRespServer(FakeRespServer.OkReply);
+        middle.ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
+            ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n")
+            : null;
+        await using var seed = CreateRedirectingSeed(slot, middle, RespireErrorCodes.Moved);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new MemoryStream(payload);
+
+        await Assert.That(await client.Strings.SetAsync(key, stream, payload.Length)).IsTrue();
+
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(1);
+        await Assert.That(target.ReceivedArguments[^1][2]).IsEquivalentTo(payload);
+    }
+
+    [Test]
+    public async Task ReplayResetDiscardsRetirementPrefixWrapper()
+    {
+        await using var source = new MemoryStream([10, 20, 30, 40]) { Position = 1 };
+        var command = new StreamedSetCommand("prefix-reset-key", source, 3, default, SetWhen.Always);
+        command.RestoreSourcePrefixForRetry([99]);
+
+        command.ResetSourceForReplay();
+        var buffer = new byte[3];
+        var read = await command.SourceStream!.ReadAsync(buffer);
+
+        await Assert.That(read).IsEqualTo(3);
+        await Assert.That(buffer).IsEquivalentTo(new byte[] { 20, 30, 40 });
+    }
+
+    [Test]
+    public async Task AskRedirect_ReadFailureDoesNotConsumeAskingStateOrCloseConnection()
+    {
+        const string key = "asking-read-failure-key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var target = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
+        await using var client = await CreateClusterClientAsync(seed);
+        await using var stream = new ThrowOnceStream([1, 2, 3]);
+
+        await Assert.That(async () => await client.Strings.SetAsync(key, stream, 3))
+            .Throws<IOException>();
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+        await Assert.That(await client.Strings.SetAsync(key, stream, 3)).IsTrue();
+
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands[1]).StartsWith($"SET {key}");
+    }
+
+    [Test]
     public async Task MovedRedirect_ReplaysReadOnlySequencePayload()
     {
         const string key = "sequence-key";
@@ -1927,6 +2000,31 @@ public class ClusterTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ResetFailingMemoryStream(byte[] value) : MemoryStream(value)
+    {
+        public override long Position
+        {
+            get => base.Position;
+            set => throw new IOException("Stream position reset failed.");
+        }
+    }
+
+    private sealed class ThrowOnceStream(byte[] value) : MemoryStream(value)
+    {
+        private bool _throw = true;
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_throw)
+            {
+                _throw = false;
+                throw new IOException("Source read failed.");
+            }
+
+            return base.ReadAsync(buffer, cancellationToken);
+        }
     }
 
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -2451,7 +2452,19 @@ public sealed partial class RespireClient : IRespireClient
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
                     if (command is IReplayableStreamingRespCommand replayable)
-                        replayable.ResetSourceForReplay();
+                    {
+                        try
+                        {
+                            replayable.ResetSourceForReplay();
+                        }
+                        catch (Exception)
+                        {
+                            // Preserve the redirect as the command result. A source whose seek
+                            // operation stopped working cannot be retried safely.
+                            ExceptionDispatchInfo.Capture(error).Throw();
+                            throw;
+                        }
+                    }
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
