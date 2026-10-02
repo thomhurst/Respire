@@ -1618,7 +1618,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             if (change.State == RespireConnectionState.Reconnecting)
             {
-                lock (_nodesGate) _smigratedSequences.Remove(node);
+                lock (_nodesGate) _migrations.ForgetSequence(node);
             }
             SlotStateChanged?.Invoke(node, slot, change);
             // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
@@ -2097,7 +2097,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
             _correctionPools.Clear();
-            _deferredSmigratedMigrations.Clear();
+            _migrations.ClearDeferred();
         }
 
         _smigratedNotifications.Writer.TryComplete();

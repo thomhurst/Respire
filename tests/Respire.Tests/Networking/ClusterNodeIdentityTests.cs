@@ -370,7 +370,7 @@ public class ClusterNodeIdentityTests
         source.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0-1")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await WaitUntilAsync(() => source.IsRetired);
+        await Assert.That(source.IsRetired).IsTrue();
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
@@ -585,7 +585,9 @@ public class ClusterNodeIdentityTests
         using var inReceiveCallback = new ThreadLocal<bool>(() => false);
         var metricRanOnReceiveThread = 0;
         var metricHadSenderTags = 0;
+        const long expectedDrops = 372;
         long metricDroppedCount = 0;
+        var allMetricsReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var metricReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseMetricCallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new System.Diagnostics.Metrics.MeterListener
@@ -608,7 +610,8 @@ public class ClusterNodeIdentityTests
             }
             if (isQueueDrop)
             {
-                Interlocked.Add(ref metricDroppedCount, measurement);
+                if (Interlocked.Add(ref metricDroppedCount, measurement) == expectedDrops)
+                    allMetricsReported.TrySetResult();
                 if (hasSenderTags) Interlocked.Exchange(ref metricHadSenderTags, 1);
                 if (inReceiveCallback.Value) Interlocked.Exchange(ref metricRanOnReceiveThread, 1);
                 metricReported.TrySetResult();
@@ -620,9 +623,7 @@ public class ClusterNodeIdentityTests
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         await using var router = new ClusterRouter(options, primary);
-        var refresh = (ClusterTopologyRefreshScheduler)typeof(ClusterRouter).GetField("_topologyRefresh",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
-        await Assert.That(refresh.Next().Wait).IsNull();
+        await Assert.That(router.NextTopologyRefresh().Wait).IsNull();
         var sourceEndpoint = new RespireEndpoint("source", 7000);
         var secondSourceEndpoint = new RespireEndpoint("second-source", 7002);
         var targetEndpoint = new RespireEndpoint("target", 7001);
@@ -672,21 +673,20 @@ public class ClusterNodeIdentityTests
                     inReceiveCallback.Value = false;
                 }
             }
-            const long expectedDrops = 372;
             await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(expectedDrops);
             try
             {
                 await metricReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Assert.That(router.SmigratedDropDiagnosticsQueued).IsEqualTo(1);
-                var refreshDecision = refresh.Next();
+                var refreshDecision = router.NextTopologyRefresh();
                 await Assert.That(refreshDecision.Run || refreshDecision.Wait is not null).IsTrue();
             }
             finally
             {
                 releaseMetricCallback.TrySetResult();
             }
-            await WaitUntilAsync(() => Interlocked.Read(ref metricDroppedCount) == expectedDrops);
-            await WaitUntilAsync(() => logger.WarningCount == 1);
+            await allMetricsReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await logger.WarningReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(metricRanOnReceiveThread).IsEqualTo(0);
             await Assert.That(metricDroppedCount).IsEqualTo(expectedDrops);
             await Assert.That(metricHadSenderTags).IsEqualTo(0);
@@ -1116,7 +1116,7 @@ public class ClusterNodeIdentityTests
         // Meanwhile A->B, received on another connection, retires A and detaches its handlers.
         router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")])));
-        await WaitUntilAsync(() => a.IsRetired);
+        await Assert.That(a.IsRetired).IsTrue();
         await Assert.That(a.CaptureMaintenanceHandlers()).IsNull();
         var handlers = a.CaptureMaintenanceHandlers(bcToken);
         await Assert.That(handlers).IsNotNull();
@@ -2443,6 +2443,7 @@ public class ClusterNodeIdentityTests
     {
         private int _warningCount;
         internal int WarningCount => Volatile.Read(ref _warningCount);
+        internal TaskCompletionSource WarningReported { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string LastWarning { get; private set; } = "";
         public ILogger CreateLogger(string categoryName) => this;
         public void AddProvider(ILoggerProvider provider) { }
@@ -2455,6 +2456,7 @@ public class ClusterNodeIdentityTests
             if (logLevel < LogLevel.Warning) return;
             LastWarning = formatter(state, exception);
             Interlocked.Increment(ref _warningCount);
+            WarningReported.TrySetResult();
         }
     }
 
