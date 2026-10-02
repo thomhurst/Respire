@@ -170,7 +170,7 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task DelayedFailbackCopyRetainsThePublishedFormerPrimaryAsASource()
+    public async Task DelayedFailbackCopyKeepsLatestTargetAndBothSwitchSources()
     {
         var a = OldPrimary;
         var bToAReporter = new RespireEndpoint("10.0.1.1", 26379);
@@ -182,8 +182,8 @@ public class SentinelNotificationTests
 
         var pending = coalescer.Pending!.Value;
         await Assert.That(pending.MustRediscover).IsTrue();
-        await Assert.That(pending.Target).IsEqualTo(a);
-        await Assert.That(pending.ReportingSentinel).IsEqualTo(bToAReporter);
+        await Assert.That(pending.Target).IsEqualTo(NewPrimary);
+        await Assert.That(pending.ReportingSentinel).IsEqualTo(delayedReporter);
         await Assert.That(pending.OldPrimary).IsEqualTo(a);
         await Assert.That(pending.AdditionalOldPrimaries!).Contains(NewPrimary);
     }

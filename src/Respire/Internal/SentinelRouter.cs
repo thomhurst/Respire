@@ -308,7 +308,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint,
-                    () => Volatile.Write(ref rearm, CurrentMonitorRearm())));
+                    () => Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)))));
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
@@ -511,7 +511,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
                 {
                     Invalidate(current!);
-                    QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
+                    if (_coalescer.ActiveKey != hint.Key && _coalescer.Pending?.Key != hint.Key)
+                        QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
                 }
             }
         }
