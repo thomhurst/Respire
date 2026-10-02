@@ -89,7 +89,7 @@ jobs:
           assert source.count(tracked_marker) == 1
           source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
           source = source.replace(marker, shim + marker, 1)
-          assert source.count('bool captureSendTimestampOnly)') == 1
+          assert source.count('bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)') == 1
           assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)') == 1
           path.write_text(source)
 
