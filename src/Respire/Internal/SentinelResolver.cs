@@ -100,7 +100,8 @@ internal static class SentinelResolver
         RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? previouslyValidatedPrimary = null,
         RespireEndpoint? preferredTarget = null,
-        SentinelHint? notificationHint = null)
+        SentinelHint? notificationHint = null,
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -157,6 +158,17 @@ internal static class SentinelResolver
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 var primary = observation.Endpoint;
+                string[]? primaryAddresses = null;
+                if (!IPAddress.TryParse(primary.Host, out _))
+                {
+                    try
+                    {
+                        var addresses = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, discoveryTimeoutSource.Token)
+                            .ConfigureAwait(false);
+                        primaryAddresses = Array.ConvertAll(addresses, NormalizeAddress);
+                    }
+                    catch (System.Net.Sockets.SocketException) { /* Retain the textual owner fence if DNS is unavailable. */ }
+                }
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
                 // Switch evidence names its source, not whichever healthy generation application
@@ -168,7 +180,7 @@ internal static class SentinelResolver
                     && !RespireEndpointComparer.Instance.Equals(target, primary)
                     && !discoveryState.IsNewerConfiguration(observation.Epoch);
                 if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
-                if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch))
+                if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
                 {
                     // A rejected view consumes the same fallback budget as a failed ROLE check.
                     throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
@@ -184,7 +196,7 @@ internal static class SentinelResolver
                 try
                 {
                     var result = await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
-                    discoveryState.AcceptConfiguration(primary, observation.Epoch);
+                    discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses);
                     return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -419,19 +431,20 @@ internal static class SentinelResolver
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)
     {
-        var candidateHost = NormalizeHost(candidate.Host);
-        if (hint.OldPrimary is { } first && Matches(first, hint.OldPrimaryAddresses)) return true;
-        if (hint.AdditionalSources is { } additional)
-            foreach (var source in additional)
-                if (Matches(source.Endpoint, source.Addresses)) return true;
+        foreach (var source in hint.Sources)
+            if (MatchesSwitchSource(candidate, source)) return true;
         return false;
-
-        bool Matches(RespireEndpoint source, string[]? addresses)
-            => source.Port == candidate.Port && (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Host))
-                || addresses is not null && addresses.Contains(candidateHost, StringComparer.OrdinalIgnoreCase));
     }
 
-    private static string NormalizeHost(string host)
+    internal static bool MatchesSwitchSource(RespireEndpoint candidate, SentinelSwitchSource source)
+    {
+        var candidateHost = NormalizeHost(candidate.Host);
+        return source.Endpoint.Port == candidate.Port
+            && (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Endpoint.Host))
+                || source.Addresses?.Contains(candidateHost, StringComparer.OrdinalIgnoreCase) == true);
+    }
+
+    internal static string NormalizeHost(string host)
         => IPAddress.TryParse(host, out var address) ? NormalizeAddress(address) : host;
 
     internal static string NormalizeAddress(IPAddress address)
@@ -499,120 +512,5 @@ internal static class SentinelResolver
             || port is < 1 or > 65535) return false;
         endpoint = new(host, port);
         return true;
-    }
-}
-
-// Reusable discovery state for runtime failover. Configured endpoints are never evicted;
-// learned peers are bounded, deduplicated by host/port, and copied before asynchronous work.
-internal sealed class SentinelDiscoveryState
-{
-    internal const int MaximumDiscoveredEndpoints = 64;
-    private readonly object _gate = new();
-    private readonly List<RespireEndpoint> _endpoints = [];
-    private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
-    private readonly int _configuredCount;
-    private long? _acceptedEpoch;
-    private RespireEndpoint? _observedPrimary;
-    private long? _observedEpoch;
-    private int _missingEpochWarning;
-
-    internal bool IsNewerConfiguration(long? epoch)
-    {
-        lock (_gate) return epoch is { } candidate && _acceptedEpoch is { } accepted && candidate > accepted;
-    }
-
-    internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch)
-    {
-        lock (_gate) return IsCurrentConfigurationLocked(primary, epoch);
-    }
-
-    private bool IsCurrentConfigurationLocked(RespireEndpoint primary, long? epoch)
-    {
-        // Servers that never expose epochs retain ROLE/switch-evidence discovery. Once an
-        // epoch is observed, a missing epoch cannot erase that ordering evidence.
-        if (_observedEpoch is not { } observed) return true;
-        if (epoch is { } candidate && candidate > observed) return true;
-        return (epoch is null || epoch == observed) && _observedPrimary is { } current
-            && EndpointComparer.Instance.Equals(primary, current);
-    }
-
-    internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch)
-    {
-        lock (_gate)
-        {
-            if (!IsCurrentConfigurationLocked(primary, epoch)) return false;
-            if (epoch is { } candidate && (_observedEpoch is null || candidate > _observedEpoch))
-            {
-                _observedEpoch = candidate;
-                _observedPrimary = primary;
-            }
-            return true;
-        }
-    }
-
-    internal void WarnMissingEpoch(ILogger? logger, RespireEndpoint sentinel)
-    {
-        if (logger is null || Interlocked.Exchange(ref _missingEpochWarning, 1) != 0) return;
-        try
-        {
-            logger.LogWarning("Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.", sentinel);
-        }
-        catch { /* Diagnostic providers must not prevent failover. */ }
-    }
-
-    internal void AcceptConfiguration(RespireEndpoint primary, long? epoch)
-    {
-        lock (_gate)
-        {
-            if (!TryObserveConfiguration(primary, epoch))
-                throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
-            _acceptedEpoch = epoch ?? _observedEpoch;
-        }
-    }
-
-
-    internal SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
-    {
-        foreach (var endpoint in configured)
-            if (_known.Add(endpoint)) _endpoints.Add(endpoint);
-        _configuredCount = _known.Count;
-    }
-
-    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
-
-    // Returns the endpoints and a task that completes when a later TryAdd learns a new endpoint.
-    // Endpoints are never removed, so consumers only need to react to additions.
-    internal RespireEndpoint[] Snapshot(out Task changed)
-    {
-        lock (_gate)
-        {
-            changed = _changed.Task;
-            return _endpoints.ToArray();
-        }
-    }
-
-    internal bool TryAdd(RespireEndpoint endpoint)
-    {
-        TaskCompletionSource changed;
-        lock (_gate)
-        {
-            if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints || !_known.Add(endpoint)) return false;
-            _endpoints.Add(endpoint);
-            changed = _changed;
-            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        }
-        changed.TrySetResult();
-        return true;
-    }
-
-    internal sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
-    {
-        internal static readonly EndpointComparer Instance = new();
-        public bool Equals(RespireEndpoint x, RespireEndpoint y)
-            => x.Port == y.Port && StringComparer.OrdinalIgnoreCase.Equals(x.Host, y.Host);
-        public int GetHashCode(RespireEndpoint endpoint)
-            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(endpoint.Host), endpoint.Port);
     }
 }

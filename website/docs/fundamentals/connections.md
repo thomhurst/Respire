@@ -479,6 +479,10 @@ generation before rediscovery only when its old address matches that generation,
 endpoint or by the connected peer address. Hints for other services and replica events never
 start discovery.
 
+Notification-driven discovery starts at most once per 100 ms, even when repeated fault hints
+keep arriving and each discovery succeeds. Hints received during that interval remain coalesced.
+Command-triggered discovery is not delayed by this notification rate limit.
+
 Discovery also reads `SENTINEL MASTER` to associate the reported address with its `config-epoch`.
 After observing an epoch, Respire rejects older configurations and conflicting addresses at the
 same epoch. All retained reporters are queried, so a later promotion can supersede an intermediate
@@ -488,6 +492,10 @@ primary matching the observed epoch can still be confirmed. If no epoch has ever
 discovery continues using `ROLE` validation and switch evidence, including after delivery gaps.
 Missing epoch metadata emits one warning per client. Once an epoch is observed, a failed connection
 attempt does not discard it: older fallback replies cannot restore a stale primary.
+Owner comparison recognizes resolved hostname/IP aliases and canonical IPv4/IPv6 spellings,
+so an unavailable hostname transport does not fence out the same owner reported by its IP.
+Reporter reconciliation retains evidence naming demoted primaries when configuration metadata
+is unavailable; a stale reporter cannot restore one merely because it still answers `ROLE master`.
 
 Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
 independently under the client's `ReconnectPolicy`, reported with

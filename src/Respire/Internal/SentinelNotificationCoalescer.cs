@@ -2,31 +2,61 @@ namespace Respire.Internal;
 
 internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
 
-/// <summary>A failover hint queued for notification-triggered Sentinel rediscovery.</summary>
-/// <param name="Key">Deduplication identity. Identical keys coalesce while a discovery is active.</param>
-/// <param name="Target">The endpoint the hint names as primary, or null for untargeted rediscovery.</param>
-/// <param name="OldPrimary">
-/// The endpoint a switch hint says lost the role. Only a hint whose source is the current
-/// generation retires it before discovery.
-/// </param>
-/// <param name="MustRediscover">
-/// The hint reports a fault or a delivery gap, so a discovery that started before it arrived cannot satisfy it.
-/// </param>
-/// <param name="OldPrimaryAddresses">Resolved addresses of a hostname <paramref name="OldPrimary"/>, if any.</param>
-/// <param name="AdditionalSources">Other switch sources paired with their resolved addresses.</param>
-/// <param name="AdditionalTargets">Other announced targets retained while pending hints merge.</param>
-/// <param name="ReportingSentinel">The Sentinel that delivered the switch hint.</param>
-/// <param name="AdditionalReportingSentinels">Other reporting Sentinels retained during coalescing.</param>
+/// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
 internal readonly record struct SentinelHint(
-    string Key,
-    RespireEndpoint? Target = null,
-    RespireEndpoint? OldPrimary = null,
-    bool MustRediscover = false,
-    string[]? OldPrimaryAddresses = null,
-    SentinelSwitchSource[]? AdditionalSources = null,
-    RespireEndpoint? ReportingSentinel = null,
-    RespireEndpoint[]? AdditionalTargets = null,
-    RespireEndpoint[]? AdditionalReportingSentinels = null);
+    string Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
+    RespireEndpoint[] Reporters, bool MustRediscover)
+{
+    // Convenience constructor for a single wire event and existing call sites.
+    internal SentinelHint(string Key, RespireEndpoint? Target = null, RespireEndpoint? OldPrimary = null,
+        bool MustRediscover = false, string[]? OldPrimaryAddresses = null,
+        SentinelSwitchSource[]? AdditionalSources = null, RespireEndpoint? ReportingSentinel = null,
+        RespireEndpoint[]? AdditionalTargets = null, RespireEndpoint[]? AdditionalReportingSentinels = null)
+        : this(Key,
+            [.. Target is { } target ? new[] { target } : [], .. AdditionalTargets ?? []],
+            [.. OldPrimary is { } source ? new[] { new SentinelSwitchSource(source, OldPrimaryAddresses) } : [], .. AdditionalSources ?? []],
+            [.. ReportingSentinel is { } reporter ? new[] { reporter } : [], .. AdditionalReportingSentinels ?? []],
+            MustRediscover || OldPrimary is not null && Target is null) { }
+
+    // Only one unambiguous target can satisfy the router's target-is-current shortcut.
+    internal RespireEndpoint? Target
+    {
+        get
+        {
+            RespireEndpoint? result = null;
+            foreach (var target in Targets)
+            {
+                var isSource = false;
+                foreach (var source in Sources)
+                    if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)) { isSource = true; break; }
+                if (isSource) continue;
+                if (result is not null) return null;
+                result = target;
+            }
+            return result;
+        }
+    }
+    internal RespireEndpoint? OldPrimary => Sources.Length == 0 ? (RespireEndpoint?)null : Sources[0].Endpoint;
+    internal string[]? OldPrimaryAddresses => Sources.Length == 0 ? null : Sources[0].Addresses;
+    internal SentinelSwitchSource[]? AdditionalSources => Sources.Length < 2 ? null : Sources[1..];
+    internal RespireEndpoint? ReportingSentinel => Reporters.Length == 0 ? (RespireEndpoint?)null : Reporters[0];
+    internal RespireEndpoint[]? AdditionalReportingSentinels => Reporters.Length < 2 ? null : Reporters[1..];
+    internal RespireEndpoint[]? AdditionalTargets
+    {
+        get
+        {
+            var sources = Sources;
+            var selected = Target;
+            return Targets.Where(target => !sources.Any(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target))
+                && (selected is null || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(selected.Value, target)))
+                .ToArray() is { Length: > 0 } others ? others : null;
+        }
+    }
+
+    internal SentinelHint WithSourceAddresses(RespireEndpoint endpoint, string[] addresses)
+        => this with { Sources = Sources.Select(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)
+            ? source with { Addresses = addresses } : source).ToArray() };
+}
 
 /// <summary>
 /// Coalesces failover hints for the single notification rediscovery worker. At most one hint is
@@ -53,39 +83,28 @@ internal sealed class SentinelNotificationCoalescer
     /// <param name="targetIsCurrent">Whether the hint's target is already the healthy current primary.</param>
     internal bool Offer(in SentinelHint hint, bool targetIsCurrent)
     {
-        if (ActiveKey == hint.Key && _pending is { } intervening && intervening.Key != hint.Key)
+        // State table: idle starts one worker; active coalesces duplicates; active+pending unions evidence.
+        if (Active is null)
         {
-            _pending = Merge(intervening, in hint);
-            return false;
+            if (!hint.MustRediscover && targetIsCurrent) return false;
+            _pending = null;
+            Active = hint;
+            return true;
         }
-        if (ActiveKey == hint.Key || _pending?.Key == hint.Key)
-        {
-            // Duplicates coalesce. A fault report must still outlive the active attempt, because
-            // that attempt may have queried Sentinel before the fault happened, or may fail.
-            var newReporter = HasNewReporter(in hint);
-            if (hint.MustRediscover || newReporter)
-                _pending = _pending is { } pending
-                    ? Merge(pending, in hint) with { MustRediscover = pending.MustRediscover || hint.MustRediscover || newReporter }
-                    : Active is { } active ? Merge(active, in hint) with { MustRediscover = active.MustRediscover || hint.MustRediscover || newReporter } : hint;
-            return false;
-        }
-        if (!hint.MustRediscover && targetIsCurrent) return false;
-        if (ActiveKey is not null)
-        {
-            _pending = Merge(_pending, hint);
-            return false;
-        }
-        _pending = null;
-        Active = hint;
-        return true;
+        var duplicate = ActiveKey == hint.Key || _pending?.Key == hint.Key;
+        if (!duplicate && !hint.MustRediscover && targetIsCurrent) return false;
+        var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint);
+        if (duplicate && !needsAnotherPass && (_pending is null || _pending.Value.Key == hint.Key)) return false;
+        var basis = _pending ?? (duplicate ? Active : null);
+        _pending = Merge(basis, in hint);
+        if (duplicate && needsAnotherPass) _pending = _pending.Value with { MustRediscover = true };
+        return false;
     }
 
     private bool HasNewReporter(in SentinelHint hint)
     {
-        if (hint.ReportingSentinel is { } reporter && !IsKnownReporter(reporter)) return true;
-        if (hint.AdditionalReportingSentinels is { } reporters)
-            foreach (var additional in reporters)
-                if (!IsKnownReporter(additional)) return true;
+        foreach (var reporter in hint.Reporters)
+            if (!IsKnownReporter(reporter)) return true;
         return false;
     }
 
@@ -96,96 +115,31 @@ internal sealed class SentinelNotificationCoalescer
     {
         if (hint is not { } value) return false;
         var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
-        if (value.ReportingSentinel is { } first && comparer.Equals(first, reporter)) return true;
-        if (value.AdditionalReportingSentinels is { } additional)
-            foreach (var endpoint in additional)
-                if (comparer.Equals(endpoint, reporter)) return true;
+        foreach (var endpoint in value.Reporters)
+            if (comparer.Equals(endpoint, reporter)) return true;
         return false;
     }
 
-    /// <summary>
-    /// Merges a hint into the pending slot. A hint that names a switch source replaces a pending
-    /// hint without one, keeping the earlier target when it has none, unless the later hint names
-    /// that target as its own switch source. A pending switch is never
-    /// replaced by a hint without a source, so a later down event cannot erase its retirement.
-    /// Fault flags accumulate, and two different targets always require fresh discovery.
-    /// </summary>
+    /// <summary>Unions event evidence without inferring chronology from targets, sources, or reporters.</summary>
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
     {
         if (pending is not { } previous) return hint;
-        // Two Sentinels can deliver one failover sequence in different orders, so arrival order
-        // cannot say which of two different targets is newer. Neither may end the worker early
-        // through the target-is-current shortcut; fresh discovery decides between them.
-        var conflictingTargets = previous.Target is { } previousTarget && hint.Target is { } hintTarget
-            && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(previousTarget, hintTarget);
-        var mustRediscover = previous.MustRediscover || hint.MustRediscover || conflictingTargets
-            || hint.OldPrimary is not null && hint.Target is null;
-        var merged = hint.OldPrimary is not null || previous.OldPrimary is null
-            ? hint with
-            {
-                // A later switch away from the earlier target supersedes it rather than inheriting it.
-                Target = hint.Target ?? (previous.Target is { } target && hint.OldPrimary is { } source
-                    && SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, source) ? null : previous.Target),
-                MustRediscover = mustRediscover,
-            }
-            : previous with { MustRediscover = mustRediscover };
-        var sources = new Dictionary<RespireEndpoint, string[]?>(SentinelDiscoveryState.EndpointComparer.Instance);
-        AddSources(previous);
-        AddSources(hint);
-        var selectedAddresses = merged.OldPrimary is { } selected
-            ? sources.GetValueOrDefault(selected)
-            : null;
-        var additionalSources = new List<SentinelSwitchSource>();
-        foreach (var (endpoint, addresses) in sources)
-            if (merged.OldPrimary is not { } primary || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, primary))
-                additionalSources.Add(new(endpoint, addresses));
-        var targets = UnionEndpoints(EnumerateTargets(previous), EnumerateTargets(hint));
         var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
-        RespireEndpoint? selectedTarget = null;
-        // Arrival order cannot establish chronology. A target that is also a retained switch
-        // source is ambiguous; let fresh discovery choose instead of promoting it by edge shape.
-        if (merged.Target is { } candidate && !sources.ContainsKey(candidate))
-            selectedTarget = candidate;
-        else if (previous.Target is { } priorCandidate && !sources.ContainsKey(priorCandidate)) selectedTarget = priorCandidate;
-        else selectedTarget = targets.Where(target => !sources.ContainsKey(target))
-            .Select(static target => (RespireEndpoint?)target).FirstOrDefault();
-        RespireEndpoint? reportingSentinel = null;
-        var previousTargetMatches = previous.Target is { } previousTargetForReporter
-            && selectedTarget is { } targetForReporter
-            && comparer.Equals(targetForReporter, previousTargetForReporter);
-        if (selectedTarget is { } survivingTarget)
+        var targets = UnionEndpoints(previous.Targets, hint.Targets);
+        var reporters = UnionEndpoints(previous.Reporters, hint.Reporters);
+        var sources = new Dictionary<RespireEndpoint, string[]?>(comparer);
+        foreach (var source in hint.Sources.Concat(previous.Sources))
         {
-            if (hint.Target is { } reportedTarget && comparer.Equals(survivingTarget, reportedTarget))
-                reportingSentinel = hint.ReportingSentinel
-                    ?? (previousTargetMatches ? previous.ReportingSentinel : null);
-            else if (previousTargetMatches)
-                reportingSentinel = previous.ReportingSentinel;
+            if (!sources.TryGetValue(source.Endpoint, out var known)) sources.Add(source.Endpoint, source.Addresses);
+            else if (source.Addresses is { } addresses)
+                sources[source.Endpoint] = (known ?? []).Union(addresses, StringComparer.OrdinalIgnoreCase).ToArray();
         }
-        var reporters = UnionEndpoints(EnumerateReportingSentinels(previous), EnumerateReportingSentinels(hint));
-        if (reportingSentinel is null && reporters.Length > 0) reportingSentinel = reporters[0];
-        return merged with
-        {
-            MustRediscover = mustRediscover || targets.Any(sources.ContainsKey),
-            Target = selectedTarget,
-            AdditionalSources = additionalSources.Count == 0 ? null : additionalSources.ToArray(),
-            OldPrimaryAddresses = selectedAddresses,
-            ReportingSentinel = reportingSentinel,
-            AdditionalReportingSentinels = reporters.Where(reporter => reportingSentinel is not { } selected
-                || !comparer.Equals(reporter, selected)).ToArray() is { Length: > 0 } additionalReporters
-                ? additionalReporters : null,
-            AdditionalTargets = targets.Where(target => selectedTarget is not { } primaryTarget
-                || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primaryTarget))
-                .Where(target => !sources.ContainsKey(target))
-                .ToArray() is { Length: > 0 } extraTargets
-                ? extraTargets : null,
-        };
-
-        void AddSources(SentinelHint value)
-        {
-            foreach (var source in EnumerateOldPrimaries(value))
-                if (!sources.TryGetValue(source.Endpoint, out var addresses) || addresses is null)
-                    sources[source.Endpoint] = source.Addresses;
-        }
+        var mustRediscover = previous.MustRediscover || hint.MustRediscover
+            || targets.Length > 1 || targets.Any(sources.ContainsKey);
+        // Keep the switch key when a down/gap event contributes no source. This is only deduplication identity.
+        var key = hint.Sources.Length > 0 || previous.Sources.Length == 0 ? hint.Key : previous.Key;
+        return new(key, targets, sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray(),
+            reporters, mustRediscover);
     }
 
     /// <summary>Retains a completed DNS lookup for its source in active and pending hints.</summary>
@@ -196,53 +150,12 @@ internal sealed class SentinelNotificationCoalescer
     }
 
     private static SentinelHint AddResolvedAddresses(SentinelHint hint, RespireEndpoint oldPrimary, string[] addresses)
-    {
-        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
-        if (hint.OldPrimary is { } primary && comparer.Equals(primary, oldPrimary))
-            return hint with { OldPrimaryAddresses = addresses };
-        if (hint.AdditionalSources is not { } additional) return hint;
-        for (var i = 0; i < additional.Length; i++)
-        {
-            if (!comparer.Equals(additional[i].Endpoint, oldPrimary)) continue;
-            var sources = additional.ToArray();
-            sources[i] = new(oldPrimary, addresses);
-            return hint with { AdditionalSources = sources };
-        }
-        return hint;
-    }
+        => hint.WithSourceAddresses(oldPrimary, addresses);
 
-    private static IEnumerable<RespireEndpoint> EnumerateTargets(SentinelHint hint)
-    {
-        if (hint.Target is { } target) yield return target;
-        if (hint.AdditionalTargets is { } additional)
-            foreach (var endpoint in additional) yield return endpoint;
-    }
+    private static IEnumerable<RespireEndpoint> EnumerateReportingSentinels(SentinelHint hint) => hint.Reporters;
 
-    private static IEnumerable<SentinelSwitchSource> EnumerateOldPrimaries(SentinelHint hint)
-    {
-        if (hint.OldPrimary is { } oldPrimary) yield return new(oldPrimary, hint.OldPrimaryAddresses);
-        if (hint.AdditionalSources is { } additional)
-            foreach (var source in additional) yield return source;
-    }
-
-    private static IEnumerable<RespireEndpoint> EnumerateReportingSentinels(SentinelHint hint)
-    {
-        if (hint.ReportingSentinel is { } reporter) yield return reporter;
-        if (hint.AdditionalReportingSentinels is { } additional)
-            foreach (var endpoint in additional) yield return endpoint;
-    }
-
-    private static SentinelHint PrioritizeReportingSentinels(
-        SentinelHint hint,
-        IEnumerable<RespireEndpoint> prioritized)
-    {
-        var reporters = UnionEndpoints(prioritized, EnumerateReportingSentinels(hint));
-        return hint with
-        {
-            ReportingSentinel = reporters[0],
-            AdditionalReportingSentinels = reporters.Length < 2 ? null : reporters[1..],
-        };
-    }
+    private static SentinelHint PrioritizeReportingSentinels(SentinelHint hint, IEnumerable<RespireEndpoint> prioritized)
+        => hint with { Reporters = UnionEndpoints(prioritized, hint.Reporters) };
 
     // Set union preserves first-seen reporter order without assigning event chronology.
     private static RespireEndpoint[] UnionEndpoints(
@@ -267,25 +180,24 @@ internal sealed class SentinelNotificationCoalescer
     /// Whether the active attempt failed. Its hint is then merged into the next one and marked
     /// must-rediscover, so a newer hint of a different kind cannot silently drop the failed one.
     /// </param>
-    internal SentinelHint? TakePending(bool activeFailed = false)
+    internal SentinelHint? TakePending(bool activeFailed = false, RespireEndpoint? validatedPrimary = null)
     {
         if (_pending is not { } next)
         {
             if (Active is not { AdditionalReportingSentinels: { Length: > 0 } reporters } active) return null;
-            next = (activeFailed ? active : ForReporterReconciliation(active)) with
+            next = (activeFailed ? active : ForReporterReconciliation(active, validatedPrimary)) with
             {
                 MustRediscover = true,
-                ReportingSentinel = reporters[0],
-                AdditionalReportingSentinels = reporters.Length == 1 ? null : reporters[1..],
+                Reporters = reporters,
             };
             Active = next;
             return next;
         }
         if (Active is { } activeHint)
         {
-            // A successful pass consumed this switch's source evidence. An alternate reporter
-            // still needs querying, but cannot retire the generation that was just validated.
-            if (!activeFailed && next.Key == activeHint.Key) next = ForReporterReconciliation(next);
+            // Reconciliation preserves demoted sources and consumes only the validated primary's
+            // source evidence, so an alternate reporter cannot retire that generation again.
+            if (!activeFailed && next.Key == activeHint.Key) next = ForReporterReconciliation(next, validatedPrimary);
             if (activeFailed)
             {
                 var unqueriedReporters = EnumerateReportingSentinels(next)
@@ -297,18 +209,15 @@ internal sealed class SentinelNotificationCoalescer
                     var reporters = UnionEndpoints(unqueriedReporters, EnumerateReportingSentinels(next), activeHint.ReportingSentinel);
                     next = next with
                     {
-                        ReportingSentinel = reporters[0],
-                        AdditionalReportingSentinels = reporters.Length < 2 ? null : reporters[1..],
+                        Reporters = reporters,
                     };
                 }
             }
             else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
             {
-                var unqueried = ForReporterReconciliation(activeHint) with
+                var unqueried = ForReporterReconciliation(activeHint, validatedPrimary) with
                 {
-                    ReportingSentinel = unqueriedReporters[0],
-                    AdditionalReportingSentinels = unqueriedReporters.Length == 1
-                        ? null : unqueriedReporters[1..],
+                    Reporters = unqueriedReporters,
                 };
                 next = Merge(unqueried, in next);
                 next = PrioritizeReportingSentinels(next, unqueriedReporters);
@@ -319,9 +228,15 @@ internal sealed class SentinelNotificationCoalescer
         return next;
     }
 
-    private static SentinelHint ForReporterReconciliation(SentinelHint hint)
-        => new(hint.Key, MustRediscover: true, ReportingSentinel: hint.ReportingSentinel,
-            AdditionalReportingSentinels: hint.AdditionalReportingSentinels);
+    private static SentinelHint ForReporterReconciliation(SentinelHint hint, RespireEndpoint? validatedPrimary)
+        => hint with
+        {
+            MustRediscover = true,
+            // Successful validation consumes only that primary's source evidence. Keep every
+            // other demotion fence: metadata-free reporters can still advertise a stale master.
+            Sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
+                !SentinelResolver.MatchesSwitchSource(primary, source)).ToArray() : hint.Sources,
+        };
 
     /// <summary>Ends the worker: no hint is active or pending.</summary>
     internal void Complete()

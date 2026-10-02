@@ -76,6 +76,44 @@ public class SentinelNotificationTests
         }
     }
 
+    private static async Task AssertHintEvidence(SentinelHint actual, SentinelHint expected)
+    {
+        await Assert.That(actual.Key).IsEqualTo(expected.Key);
+        await Assert.That(actual.MustRediscover).IsEqualTo(expected.MustRediscover);
+        await Assert.That(actual.Targets).IsEquivalentTo(expected.Targets);
+        await Assert.That(actual.Sources).IsEquivalentTo(expected.Sources);
+        await Assert.That(actual.Reporters).IsEquivalentTo(expected.Reporters);
+    }
+
+    [Test]
+    public async Task MergeUnionsAreCommutativeIdempotentAndKeepTheFaultFlag()
+    {
+        var random = new Random(549);
+        var endpoints = Enumerable.Range(0, 8).Select(i => new RespireEndpoint($"10.0.0.{i + 1}", 6379)).ToArray();
+        for (var iteration = 0; iteration < 256; iteration++)
+        {
+            var left = CreateHint();
+            var right = CreateHint();
+            var forward = SentinelNotificationCoalescer.Merge(left, in right);
+            var reverse = SentinelNotificationCoalescer.Merge(right, in left);
+            var duplicate = SentinelNotificationCoalescer.Merge(forward, in forward);
+            await Assert.That(Evidence(forward)).IsEqualTo(Evidence(reverse));
+            await Assert.That(Evidence(duplicate)).IsEqualTo(Evidence(forward));
+            if (left.MustRediscover || right.MustRediscover) await Assert.That(forward.MustRediscover).IsTrue();
+        }
+
+        SentinelHint CreateHint() => new("property", endpoints[random.Next(endpoints.Length)],
+            endpoints[random.Next(endpoints.Length)], random.Next(2) == 0,
+            OldPrimaryAddresses: [$"192.0.2.{random.Next(4) + 1}"],
+            ReportingSentinel: endpoints[random.Next(endpoints.Length)]);
+
+        static string Evidence(SentinelHint hint) => string.Join("|",
+            hint.MustRediscover,
+            string.Join(",", hint.Targets.Select(endpoint => endpoint.ToString()).Order()),
+            string.Join(",", hint.Sources.Select(source => $"{source.Endpoint}={string.Join(";", (source.Addresses ?? []).Order())}").Order()),
+            string.Join(",", hint.Reporters.Select(endpoint => endpoint.ToString()).Order()));
+    }
+
     private static SentinelEvent Parse(string channel, string text, string service = "mymaster")
         => SentinelEvent.Parse(Encoding.UTF8.GetBytes(channel), Encoding.UTF8.GetBytes(text), Encoding.UTF8.GetBytes(service));
 
@@ -147,8 +185,8 @@ public class SentinelNotificationTests
         coalescer.Offer(in down, targetIsCurrent: false);
 
         await Assert.That(coalescer.Offer(in down, targetIsCurrent: false)).IsFalse();
-        await Assert.That(coalescer.Pending).IsEqualTo(down);
-        await Assert.That(coalescer.TakePending()).IsEqualTo(down);
+        await AssertHintEvidence(coalescer.Pending!.Value, down);
+        await AssertHintEvidence(coalescer.TakePending()!.Value, down);
         await Assert.That(coalescer.ActiveKey).IsEqualTo("master-down");
         await Assert.That(coalescer.TakePending()).IsNull();
     }
@@ -173,7 +211,7 @@ public class SentinelNotificationTests
 
         coalescer.Offer(new SentinelHint("master-down", MustRediscover: true), targetIsCurrent: false);
 
-        await Assert.That(coalescer.Pending).IsEqualTo(pendingSwitch with { MustRediscover = true });
+        await AssertHintEvidence(coalescer.Pending!.Value, pendingSwitch with { MustRediscover = true });
     }
 
     [Test]
@@ -184,7 +222,7 @@ public class SentinelNotificationTests
 
         var merged = SentinelNotificationCoalescer.Merge(pendingDown, in later);
 
-        await Assert.That(merged).IsEqualTo(later with { MustRediscover = true });
+        await AssertHintEvidence(merged, later with { MustRediscover = true });
     }
 
     [Test]
@@ -268,13 +306,13 @@ public class SentinelNotificationTests
         var recovery = coalescer.TakePending()!.Value;
         await Assert.That(recovery.ReportingSentinel).IsEqualTo(first);
 
-        var next = coalescer.TakePending(activeFailed);
+        var next = coalescer.TakePending(activeFailed, validatedPrimary: activeFailed ? (RespireEndpoint?)null : OldPrimary);
 
         await Assert.That(next!.Value.ReportingSentinel).IsEqualTo(delayed);
         if (!activeFailed)
         {
-            await Assert.That(next.Value.OldPrimary).IsNull();
-            await Assert.That(next.Value.AdditionalSources).IsNull();
+            await Assert.That(next.Value.Sources.Select(source => source.Endpoint)).IsEquivalentTo([NewPrimary]);
+            await Assert.That(next.Value.Targets).IsEquivalentTo([OldPrimary, NewPrimary]);
         }
     }
 
@@ -499,7 +537,7 @@ public class SentinelNotificationTests
         var next = coalescer.TakePending(activeFailed: true);
 
         // The down hint has no switch source, so the failed switch is kept and must be retried.
-        await Assert.That(next).IsEqualTo(failedSwitch with { MustRediscover = true });
+        await AssertHintEvidence(next!.Value, failedSwitch with { MustRediscover = true });
         await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
     }
 
@@ -514,7 +552,7 @@ public class SentinelNotificationTests
         var next = coalescer.TakePending(activeFailed: true);
 
         // A newer target that happens to be current must not end the worker before the failed hint is retried.
-        await Assert.That(next).IsEqualTo(laterSwitch with { MustRediscover = true });
+        await AssertHintEvidence(next!.Value, laterSwitch with { MustRediscover = true });
     }
 
     [Test]

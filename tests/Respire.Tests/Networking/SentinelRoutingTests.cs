@@ -15,6 +15,61 @@ namespace Respire.Tests.Networking;
 public class SentinelRoutingTests
 {
     [Test]
+    [Arguments("127.0.0.1")]
+    [Arguments("::ffff:127.0.0.1")]
+    public async Task SameEpochFallbackRecognizesResolvedOwnerAlias(string numericHost)
+    {
+        const int primaryPort = 7001;
+        await using var first = Sentinel(() => primaryPort, () => 6);
+        var reply = first.ReplyOverride!;
+        first.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? AddressReply("owner.test", primaryPort)
+            : command == "SENTINEL MASTER mymaster"
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primaryPort, 6)).Replace("127.0.0.1", "owner.test"))
+                : reply(id, command);
+        await using var second = Sentinel(() => primaryPort, () => 6);
+        var secondReply = second.ReplyOverride!;
+        second.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? AddressReply(numericHost, primaryPort)
+            : command == "SENTINEL MASTER mymaster"
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primaryPort, 6)).Replace("127.0.0.1", numericHost))
+                : secondReply(id, command);
+        var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
+        var candidates = new List<string>();
+        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port) with { Endpoints = [.. endpoints] },
+            (options, _) =>
+            {
+                candidates.Add(options.PrimaryEndpoint.Host);
+                if (options.PrimaryEndpoint.Host == "owner.test") throw new RespireConnectionException("Hostname transport unavailable");
+                return ValueTask.FromResult(options.PrimaryEndpoint.Host);
+            }, CancellationToken.None, new SentinelDiscoveryState(endpoints),
+            hostResolver: (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]));
+        await Assert.That(result).IsEqualTo(numericHost);
+        await Assert.That(candidates).IsEquivalentTo(["owner.test", numericHost]);
+    }
+
+    [Test]
+    public async Task RepeatedSuccessfulFaultHintsHaveAMinimumDiscoveryInterval()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var watch = Stopwatch.StartNew();
+        for (var index = 0; index < 8; index++)
+        {
+            router.QueueNotificationRediscovery(new SentinelHint($"fault-{index}", MustRediscover: true,
+                ReportingSentinel: new("127.0.0.1", sentinel.Port)));
+            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+        }
+        // Seven gaps are required; allow one interval of timing margin for the first worker.
+        await Assert.That(watch.ElapsedMilliseconds)
+            .IsGreaterThanOrEqualTo(6L * SentinelRouter.MinimumNotificationDiscoveryIntervalMilliseconds);
+        await Assert.That(router.Current!.IsRetired).IsFalse();
+    }
+
+    [Test]
     public async Task InProgressFailoverDoesNotRememberNewEpochForOldAddress()
     {
         const int originalPort = 7001, promotedPort = 7002;
@@ -399,11 +454,13 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task AlternateReporterUsesEpochInsteadOfArrivalOrder(bool switchHint, bool laterPromotion)
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task AlternateReporterUsesEpochInsteadOfArrivalOrder(bool switchHint, bool laterPromotion, bool denyEpoch)
     {
         await using var original = Primary();
         await using var intermediate = Primary();
@@ -414,6 +471,15 @@ public class SentinelRoutingTests
             () => Volatile.Read(ref firstPort) == original.Port ? 1 : 2);
         await using var second = Sentinel(() => Volatile.Read(ref secondPort),
             () => Volatile.Read(ref secondPort) == original.Port ? 1 : 3);
+        if (denyEpoch)
+        {
+            foreach (var sentinel in new[] { first, second })
+            {
+                var reply = sentinel.ReplyOverride!;
+                sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                    ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+            }
+        }
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
@@ -434,7 +500,7 @@ public class SentinelRoutingTests
         router.QueueNotificationRediscovery(in hint);
         await WaitForCommandCountAsync(first, query, firstQueries + 1);
         var blockedConnection = first.ReceivedConnectionIds[^1];
-        router.QueueNotificationRediscovery(hint with { ReportingSentinel = new("127.0.0.1", second.Port) });
+        router.QueueNotificationRediscovery(hint with { Reporters = [new("127.0.0.1", second.Port)] });
         first.SuppressReply = null;
         await first.SendRawAsync(AddressReply(intermediate.Port), blockedConnection);
         await WaitForCommandCountAsync(second, query, secondQueries + 1);
