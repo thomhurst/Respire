@@ -1323,14 +1323,17 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             // The barrier may time out behind an accepted command. Let those callers finish or
             // reach their own command deadlines before aborting the connection to release the
-            // barrier, which has no reply once its timeout has elapsed.
+            // barrier, which has no reply once its timeout has elapsed. Keep this grace bounded
+            // even when CommandTimeout is disabled.
+            using var drainTimeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
+            drainTimeout.CancelAfter(_options.CommandTimeout ?? _options.ConnectTimeout);
             try
             {
-                await connection.WaitForOtherCommandsToCompleteAsync(_abortCancellation.Token).ConfigureAwait(false);
+                await connection.WaitForOtherCommandsToCompleteAsync(drainTimeout.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested)
+            catch (OperationCanceledException) when (drainTimeout.IsCancellationRequested)
             {
-                // Multiplexer disposal aborts every physical connection independently.
+                // Preserve accepted commands only through their own deadline or this grace.
             }
 
             try { await connection.DisposeAsync().ConfigureAwait(false); }
