@@ -660,17 +660,18 @@ public class ClusterNodeIdentityTests
             if (router.GetKnownSlotOwner(0)?.Port == cEndpoint.Port) topologyChanged.TrySetResult();
         };
 
-        // One receive loop on A identifies a B->C push and pauses before dispatching it.
-        var handlers = a.CaptureMaintenanceHandlers(out var bcToken);
-        await Assert.That(handlers).IsNotNull();
+        // One receive loop stamps a B->C push, then pauses while another connection retires A.
+        var bcToken = ClusterSlotMutationClock.Next();
 
         // Meanwhile A->B, received on another connection, retires A and detaches its handlers.
         router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")])));
         await WaitUntilAsync(() => a.IsRetired);
         await Assert.That(a.CaptureMaintenanceHandlers()).IsNull();
+        var handlers = a.CaptureMaintenanceHandlers(bcToken);
+        await Assert.That(handlers).IsNotNull();
 
-        // The paused loop resumes. A was active when the push arrived, so it is delivered.
+        // The paused loop resumes. Its earlier token selects the handler epoch active at receipt.
         a.PublishMaintenanceNotification(handlers, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")]), bcToken);
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));

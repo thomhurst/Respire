@@ -86,33 +86,68 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
     // Raised for SMIGRATED pushes only; other maintenance kinds have no topology consumer.
     // The scope is the receiving physical connection; SMIGRATED sequence IDs are scoped to it.
-    // Subscription and capture share _maintenanceHandlersGate, so a capture is atomic with the
-    // router detaching a retiring sender: it sees either the attached handlers of an active
-    // sender, or null because the detach (the sender's retirement point) already happened.
+    // Subscription changes record handler epochs using ClusterSlotMutationClock, so a receive
+    // token selects the handlers that were eligible before attach, detach, retirement or disposal.
     internal event MaintenanceNotificationHandler? MaintenanceNotificationReceived
     {
-        add { lock (_maintenanceHandlersGate) _maintenanceNotificationReceived += value; }
-        remove { lock (_maintenanceHandlersGate) _maintenanceNotificationReceived -= value; }
+        add
+        {
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                CloseMaintenanceHandlerEpoch(boundary);
+                _maintenanceNotificationReceived += value;
+                if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                    _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+            }
+        }
+        remove
+        {
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                CloseMaintenanceHandlerEpoch(boundary);
+                _maintenanceNotificationReceived -= value;
+                if (IsOperational && _maintenanceNotificationReceived is { } handlers)
+                    _maintenanceHandlerEpochs.Add((boundary, long.MaxValue, handlers));
+            }
+        }
     }
 
     private readonly object _maintenanceHandlersGate = new();
     private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
+    // A receive loop stamps its fence before waiting for this gate. Keep each subscription
+    // epoch so a frame received before detachment can still capture its eligible handler.
+    private readonly List<(long Start, long End, MaintenanceNotificationHandler Handlers)> _maintenanceHandlerEpochs = [];
 
-    // Receive loop: capture handler eligibility and its slot-mutation fence under the same gate
-    // used by subscription changes. Retirement cannot detach the handler between those reads.
-    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers(out long slotMutationToken)
+    // Receive loop: the fence is stamped as soon as the push is identified. Select its matching
+    // subscription epoch under the same gate used to publish epoch boundaries.
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers(long slotMutationToken)
     {
         lock (_maintenanceHandlersGate)
         {
-            slotMutationToken = ClusterSlotMutationClock.Next();
-            return IsRetired || Volatile.Read(ref _disposed) != 0 ? null : _maintenanceNotificationReceived;
+            for (var i = _maintenanceHandlerEpochs.Count - 1; i >= 0; i--)
+            {
+                var epoch = _maintenanceHandlerEpochs[i];
+                if (slotMutationToken >= epoch.Start && slotMutationToken < epoch.End)
+                    return epoch.Handlers;
+            }
+            return null;
         }
     }
 
     internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
-        => CaptureMaintenanceHandlers(out _);
+        => CaptureMaintenanceHandlers(ClusterSlotMutationClock.Next());
 
-    // handlers and slotMutationToken come from CaptureMaintenanceHandlers.
+    private void CloseMaintenanceHandlerEpoch(long boundary)
+    {
+        if (_maintenanceHandlerEpochs.Count is 0) return;
+        var current = _maintenanceHandlerEpochs[^1];
+        if (current.End == long.MaxValue)
+            _maintenanceHandlerEpochs[^1] = (current.Start, boundary, current.Handlers);
+    }
+
+    // The caller captures handlers for the token recorded by the receive loop.
     internal void PublishMaintenanceNotification(MaintenanceNotificationHandler? handlers,
         object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
         => handlers?.Invoke(this, sequenceScope, notification, slotMutationToken);
@@ -120,7 +155,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     // Test convenience: delivers the notification as if it was received with this token now.
     internal void PublishMaintenanceNotification(
         object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
-        => PublishMaintenanceNotification(CaptureMaintenanceHandlers(), sequenceScope, notification, slotMutationToken);
+        => PublishMaintenanceNotification(CaptureMaintenanceHandlers(slotMutationToken), sequenceScope, notification, slotMutationToken);
 
     // Test convenience: stamps the notification as received now.
     internal void PublishMaintenanceNotification(object sequenceScope, MaintenanceNotification notification)
@@ -1159,7 +1194,12 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (_retirementCompletion is not null) return _retirementCompletion.Task;
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _retired, 1);
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                Volatile.Write(ref _retired, 1);
+                CloseMaintenanceHandlerEpoch(boundary);
+            }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
         _stopConnecting.Cancel();
@@ -1242,8 +1282,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
             completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _disposed, 1);
-            Volatile.Write(ref _retired, 1);
+            lock (_maintenanceHandlersGate)
+            {
+                var boundary = ClusterSlotMutationClock.Next();
+                Volatile.Write(ref _disposed, 1);
+                Volatile.Write(ref _retired, 1);
+                CloseMaintenanceHandlerEpoch(boundary);
+            }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
         _stopConnecting.Cancel();

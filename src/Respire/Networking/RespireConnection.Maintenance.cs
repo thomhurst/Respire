@@ -95,7 +95,8 @@ internal sealed partial class RespireConnection
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
-            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers(out slotMutationToken);
+            slotMutationToken = ClusterSlotMutationClock.Next();
+            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
         }
         if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not

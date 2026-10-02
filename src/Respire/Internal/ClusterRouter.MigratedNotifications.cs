@@ -21,7 +21,7 @@ internal sealed partial class ClusterRouter
     // SequenceScope is the physical connection that received the push. Sequence IDs restart
     // with each connection, so deduplication never spans a reconnect, and items queued by an
     // old connection cannot mark a new connection's IDs as already seen.
-    // SlotMutationVersion is the ClusterSlotMutationClock value read when the push was parsed.
+    // SlotMutationVersion is the ClusterSlotMutationClock value read when the push was identified.
     internal sealed record QueuedSmigratedNotification(
         RespireConnectionMultiplexer Sender, object SequenceScope,
         MaintenanceNotification Notification, long SlotMutationVersion);
