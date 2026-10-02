@@ -170,9 +170,7 @@ public sealed partial class RespireClient
         }
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
-        var sendAsking = false;
-        RespireConnection? askingSource = null;
-        RespireServerException? askRedirect = null;
+        UploadAskState asking = default;
 
         ClusterRouter.DiscoveryRound? discovery = null;
         try
@@ -186,7 +184,7 @@ public sealed partial class RespireClient
                 {
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                        pool, new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Primary, askRedirect, askingSource),
+                        pool, new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Primary, asking.Redirect, asking.Source),
                         acquisitionToken, discovery,
                         kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
@@ -210,8 +208,8 @@ public sealed partial class RespireClient
                     try
                     {
                         // ASK validates the target pool against the captured slot generation.
-                        var route = new DedicatedStreamRoute(cluster, pool, connection, slot, routeVersion, sendAsking);
-                        response = await (sendAsking
+                        var route = new DedicatedStreamRoute(cluster, pool, connection, slot, routeVersion, asking.IsActive);
+                        response = await (asking.IsActive
                             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
                                 operation, commandDeadline, allowStreamingConnectionReroute: false, streamingRoute: route)
                             : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
@@ -219,7 +217,7 @@ public sealed partial class RespireClient
                             .ConfigureAwait(false);
                     }
                     catch (RespireServerException error) { serverError = error; }
-                    sendAsking = false;
+                    asking = default;
                     if (serverError is not null || response.IsError)
                     {
                         var error = serverError ?? ResponseReader.ServerError(in response, operation);
@@ -256,9 +254,8 @@ public sealed partial class RespireClient
                                     RethrowPreservingStackTrace(error);
                                 }
                             }
-                            sendAsking = error.Code == RespireErrorCodes.Ask;
-                            askingSource = sendAsking ? connection : null;
-                            askRedirect = sendAsking ? error : null;
+                            asking = error.Code == RespireErrorCodes.Ask
+                                ? new UploadAskState(connection, error) : default;
                             continue;
                         }
 
@@ -284,15 +281,12 @@ public sealed partial class RespireClient
                         if (!returned) pool.Return(connection);
                     }
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                    if (sendAsking && askRedirect is not null && askingSource is not null
-                        && cluster.CaptureSlotVersion(slot) == routeVersion)
+                    if (asking.IsActive && cluster.CaptureSlotVersion(slot) == routeVersion)
                         pool = await cluster.GetRedirectDedicatedPoolAsync(
-                            askRedirect, askingSource, acquisitionToken, slot, discovery).ConfigureAwait(false);
+                            asking.Redirect!, asking.Source!, acquisitionToken, slot, discovery).ConfigureAwait(false);
                     else
                     {
-                        sendAsking = false;
-                        askRedirect = null;
-                        askingSource = null;
+                        asking = default;
                         (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
                             slot, acquisitionToken, discovery).ConfigureAwait(false);
                     }
@@ -315,10 +309,19 @@ public sealed partial class RespireClient
                 }
             }
         }
+        // Acquisition inside the retirement catch bypasses the per-attempt catch above.
+        // Translate that cancellation here while the outer finally still finishes discovery.
         catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
         {
             throw timeout;
         }
         finally { discovery?.Finish(); }
+    }
+
+    // ASK identity must be set and cleared together. Slot version and discovery also serve
+    // ordinary routes, so they remain independent of this optional redirect state.
+    private readonly record struct UploadAskState(RespireConnection? Source, RespireServerException? Redirect)
+    {
+        internal bool IsActive => Redirect is not null;
     }
 }

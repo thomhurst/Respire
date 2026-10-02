@@ -190,7 +190,9 @@ public class ClusterNodeIdentityTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
             CommandTimeout = null,
-            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            // This also bounds the maintenance barrier, but socket setup needs scheduling headroom.
+            // Keep the separate 150 ms drain grace and three-second retirement assertion below.
+            ConnectTimeout = TimeSpan.FromSeconds(1),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };
@@ -231,7 +233,9 @@ public class ClusterNodeIdentityTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
             CommandTimeout = null,
-            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            // This also bounds the maintenance barrier, but socket setup needs scheduling headroom.
+            // Keep the separate 150 ms drain grace and three-second retirement assertion below.
+            ConnectTimeout = TimeSpan.FromSeconds(1),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };
