@@ -68,7 +68,9 @@ internal static class DeferredRawCommands
             ? -1
             : argumentOffset + descriptor.CursorArgumentIndex;
         return new DynamicCommand(tokens, routingKeyIndex, argumentOffset,
-            readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex);
+            cacheMutation: descriptor.CacheMutation,
+            readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex,
+            hasExplicitCacheMutation: descriptor.HasExplicitCacheMutation);
     }
 
     private static string Normalize(string name)

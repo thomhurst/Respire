@@ -344,6 +344,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             return ExecuteRawAsync(
                 command.Name, args, flags, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
@@ -359,10 +361,16 @@ public sealed partial class RespireClient : IRespireClient
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
         if (_keyPrefix is null) return ExecuteRawAsync(
-            operation, rawArguments, flags, cancellationToken, readKind: readKind);
+            operation, rawArguments, flags, cancellationToken,
+            cacheMutation: command.CacheMutation,
+            hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+            readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, readKind: readKind)
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+                readKind: readKind)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -375,6 +383,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             return ExecuteRawFireAndForgetAsync(
                 command.Name, args, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
@@ -389,11 +399,17 @@ public sealed partial class RespireClient : IRespireClient
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(
-            operation, rawArguments, cancellationToken, readKind: readKind);
+            operation, rawArguments, cancellationToken,
+            cacheMutation: command.CacheMutation,
+            hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+            readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
-                operation, prefixedArguments, cancellationToken, readKind: readKind)
+                operation, prefixedArguments, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+                readKind: readKind)
             : ValueTask.FromException(prefixError);
     }
 
@@ -576,12 +592,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandFlags flags,
         CancellationToken cancellationToken,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         ValidateResultFlags(flags);
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
         var isBlocking = RespireCommand.IsBlocking(
             operation,
             RespireCommand.Classify(operation),
@@ -628,13 +645,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         CancellationToken cancellationToken,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
@@ -872,6 +890,7 @@ public sealed partial class RespireClient : IRespireClient
         int firstArgumentIndex,
         RespireValue[] args,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         var tokens = new RespireValue[words.Length + args.Length];
@@ -888,7 +907,7 @@ public sealed partial class RespireClient : IRespireClient
             operation, tokens, firstArgumentIndex);
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
-                Verb.GetCursorArgumentIndex(operation)));
+                Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)

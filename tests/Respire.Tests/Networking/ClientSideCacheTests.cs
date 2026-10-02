@@ -93,6 +93,50 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    [Arguments(RespireCacheMutation.Unknown, 0)]
+    [Arguments(RespireCacheMutation.ReadOnly, 1)]
+    public async Task PrefixedRawDescriptor_PreservesExplicitCacheMutation(
+        RespireCacheMutation mutation, int expectedCacheCount)
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+        var view = client.WithKeyPrefix("tenant:");
+
+        using var result = await view.ExecuteAsync(
+            RespireCommand.Create("JSON.SET", mutation), ["key", "$.field", "value"]);
+
+        await Assert.That(cache.Count).IsEqualTo(expectedCacheCount);
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:key $.field value");
+    }
+
+    [Test]
+    [Arguments(RespireCacheMutation.Unknown, 0)]
+    [Arguments(RespireCacheMutation.ReadOnly, 1)]
+    public async Task PrefixedRawDescriptorFireAndForget_PreservesExplicitCacheMutation(
+        RespireCacheMutation mutation, int expectedCacheCount)
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+        var view = client.WithKeyPrefix("tenant:");
+
+        await view.ExecuteFireAndForgetAsync(
+            RespireCommand.Create("JSON.SET", mutation), ["key", "$.field", "value"]);
+
+        await Assert.That(cache.Count).IsEqualTo(expectedCacheCount);
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:key $.field value");
+    }
+
+    [Test]
     public async Task DeterministicRead_CachesIntegerReply()
     {
         await using var server = new FakeRespServer(

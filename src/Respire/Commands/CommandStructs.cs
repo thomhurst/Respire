@@ -439,13 +439,14 @@ internal readonly struct DynamicCommand(
     int argumentOffset = 1,
     RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
     ReadCommandKind readKind = ReadCommandKind.None,
-    int cursorArgumentIndex = -1) : IRespCommand
+    int cursorArgumentIndex = -1,
+    bool hasExplicitCacheMutation = false) : IRespCommand
 {
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
-        => cacheMutation == RespireCacheMutation.Unknown
+        => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation
             ? RespireCommands.GetCacheMutation(operation)
             : cacheMutation;
 
