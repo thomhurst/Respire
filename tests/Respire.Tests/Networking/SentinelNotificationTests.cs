@@ -153,6 +153,42 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task DelayedSwitchCannotEraseRetirementOrReporterForSurvivingTarget()
+    {
+        var c = new RespireEndpoint("10.0.0.3", 6381);
+        var sentinelForC = new RespireEndpoint("10.0.1.3", 26379);
+        var sentinelForB = new RespireEndpoint("10.0.1.2", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-c", c, NewPrimary, ReportingSentinel: sentinelForC), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: sentinelForB), targetIsCurrent: false);
+
+        var pending = coalescer.Pending!.Value;
+        await Assert.That(pending.Target).IsEqualTo(c);
+        await Assert.That(pending.ReportingSentinel).IsEqualTo(sentinelForC);
+        await Assert.That(pending.AdditionalOldPrimaries!).Contains(NewPrimary);
+    }
+
+    [Test]
+    public async Task DelayedFailbackCopyRetainsThePublishedFormerPrimaryAsASource()
+    {
+        var a = OldPrimary;
+        var bToAReporter = new RespireEndpoint("10.0.1.1", 26379);
+        var delayedReporter = new RespireEndpoint("10.0.1.2", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary, ReportingSentinel: bToAReporter), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("a-to-b-delayed", NewPrimary, a, ReportingSentinel: delayedReporter), targetIsCurrent: false);
+
+        var pending = coalescer.Pending!.Value;
+        await Assert.That(pending.MustRediscover).IsTrue();
+        await Assert.That(pending.Target).IsEqualTo(a);
+        await Assert.That(pending.ReportingSentinel).IsEqualTo(bToAReporter);
+        await Assert.That(pending.OldPrimary).IsEqualTo(a);
+        await Assert.That(pending.AdditionalOldPrimaries!).Contains(NewPrimary);
+    }
+
+    [Test]
     public async Task PendingSwitchRetainsSourceAddressesResolvedBeforeItBecomesActive()
     {
         var coalescer = new SentinelNotificationCoalescer();

@@ -101,15 +101,19 @@ internal sealed class SentinelNotificationCoalescer
             .Select(static group => (Endpoint: group.Key, Addresses: group.Select(static source => source.Addresses)
                 .FirstOrDefault(static addresses => addresses is not null)))
             .ToArray();
-        // A switch away from the pending target establishes a new transition. If it fails back
-        // to an older source, that endpoint is a valid target again. A delayed older switch does
-        // not meet this condition, so its target remains suppressed by the newer source record.
+        // Different monitors can deliver the same switch sequence out of order. If a delayed
+        // copy closes a cycle back onto an earlier source, retain the prior announced target and
+        // its reporter; retire the incoming target as a source instead of accepting its stale view.
         if (hint.OldPrimary is { } transitionSource && previous.Target is { } priorPendingTarget
             && SentinelDiscoveryState.EndpointComparer.Instance.Equals(transitionSource, priorPendingTarget)
             && hint.Target is { } transitionTarget)
         {
+            var delayedFromAnotherMonitor = previous.ReportingSentinel is { } previousReporter
+                && hint.ReportingSentinel is { } hintReporter
+                && !SentinelDiscoveryState.EndpointComparer.Instance.Equals(previousReporter, hintReporter);
+            var endpointToRelease = delayedFromAnotherMonitor ? priorPendingTarget : transitionTarget;
             sources = sources.Where(source =>
-                !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, transitionTarget)).ToArray();
+                !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpointToRelease)).ToArray();
         }
         var selectedAddresses = merged.OldPrimary is { } selected
             ? sources.FirstOrDefault(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, selected)).Addresses
@@ -121,9 +125,12 @@ internal sealed class SentinelNotificationCoalescer
             .ToHashSet(SentinelDiscoveryState.EndpointComparer.Instance);
         var targets = EnumerateTargets(previous).Concat(EnumerateTargets(hint))
             .Distinct(SentinelDiscoveryState.EndpointComparer.Instance).ToArray();
-        var selectedTarget = merged.Target is { } candidate && !sourceEndpoints.Contains(candidate)
-            ? candidate
-            : (RespireEndpoint?)null;
+        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        RespireEndpoint? selectedTarget = null;
+        if (merged.Target is { } candidate && !sourceEndpoints.Contains(candidate)) selectedTarget = candidate;
+        else if (previous.Target is { } priorCandidate && !sourceEndpoints.Contains(priorCandidate)) selectedTarget = priorCandidate;
+        else selectedTarget = targets.Where(target => !sourceEndpoints.Contains(target))
+            .Select(static target => (RespireEndpoint?)target).FirstOrDefault();
         return merged with
         {
             Target = selectedTarget,
@@ -132,9 +139,10 @@ internal sealed class SentinelNotificationCoalescer
             AdditionalOldPrimaryAddresses = additionalSources.Length == 0 ? null
                 : additionalSources.Select(static source => source.Addresses).ToArray(),
             OldPrimaryAddresses = selectedAddresses,
-            ReportingSentinel = hint.Target is not null
-                ? hint.ReportingSentinel ?? previous.ReportingSentinel
-                : previous.ReportingSentinel ?? hint.ReportingSentinel,
+            ReportingSentinel = selectedTarget is { } survivingTarget && hint.Target is { } reportedTarget
+                && comparer.Equals(survivingTarget, reportedTarget)
+                    ? hint.ReportingSentinel ?? previous.ReportingSentinel
+                    : previous.ReportingSentinel,
             AdditionalTargets = targets.Where(target => selectedTarget is not { } primaryTarget
                 || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primaryTarget))
                 .Where(target => !sourceEndpoints.Contains(target))

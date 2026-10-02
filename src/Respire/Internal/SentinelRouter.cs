@@ -36,6 +36,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
+    private TaskCompletionSource _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
     // Background DNS checks for +switch-master sources. Disposal joins them with the monitors.
     private readonly HashSet<Task> _switchSourceResolutions = []; // Guarded by _gate.
     private int _queuedNotifications;
@@ -587,7 +588,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         // Untargeted and never satisfied by an earlier attempt: a missed switch could leave the
         // former primary serving reads as a replica without a disconnect or READONLY reply.
         QueueNotificationRediscovery(new SentinelHint(DeliveryGapKey, MustRediscover: true,
-            ReportingSentinel: initialSubscription ? (RespireEndpoint?)null : sentinel));
+            ReportingSentinel: initialSubscription ? sentinel : (RespireEndpoint?)null));
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)
@@ -611,6 +612,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
                 && SameEndpoint(current.Endpoint, target);
             var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
+            if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
             // Compare the switch source with Current under the gate, immediately before retirement.
             // This also covers hints that wait behind an active discovery, so a direct endpoint
             // match never waits for that attempt or for DNS.
@@ -678,6 +680,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 }
                 else
                 {
+                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     // A newer hint restarts discovery at once, but only success resets the backoff.
                     if (succeeded) failures = 0;
                     var current = Current;
@@ -694,7 +697,24 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
             if (retryDelay > TimeSpan.Zero)
             {
-                try { await Task.Delay(retryDelay, Clock, _lifetime.Token).ConfigureAwait(false); }
+                Task notification;
+                lock (_gate)
+                {
+                    if (_coalescer.Pending is not null) continue;
+                    notification = _pendingNotification.Task;
+                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+                try
+                {
+                    using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                    var delay = Task.Delay(retryDelay, Clock, retry.Token);
+                    if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
+                    {
+                        retry.Cancel();
+                        continue;
+                    }
+                    await delay.ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             }
         }
