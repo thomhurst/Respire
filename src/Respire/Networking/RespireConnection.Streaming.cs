@@ -111,7 +111,6 @@ internal sealed partial class RespireConnection
 
         var phase = StreamedSetPhase.NotStarted;
         var ownsWritePath = false;
-        var askingAccepted = false;
         StreamPayloadReader? payloadReader = null;
         ReadOnlyMemory<byte> firstChunk = default;
         try
@@ -142,11 +141,6 @@ internal sealed partial class RespireConnection
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
             }
-            else if (askingAccepted)
-            {
-                phase = StreamedSetPhase.AskingAccepted;
-            }
-
             // A source that ignored the token can complete its read after the caller, the deadline
             // or an abort cancelled it (WaitAsync returns an already-completed read). Nothing is on
             // the wire yet, so fail here instead of queueing an expired header that a later wait
@@ -169,7 +163,6 @@ internal sealed partial class RespireConnection
                     throw;
                 }
 
-                askingAccepted = true;
                 phase = StreamedSetPhase.AskingAccepted;
             }
 
@@ -255,7 +248,7 @@ internal sealed partial class RespireConnection
             }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
-            await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException, askingAccepted)
+            await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException)
                 .ConfigureAwait(false);
             if (translated is null) throw;
             throw translated;
@@ -382,10 +375,9 @@ internal sealed partial class RespireConnection
     }
 
     private async ValueTask FailStreamedSetAsync(
-        PendingResponseSource source, StreamedSetPhase phase, Exception error, bool timedOut,
-        bool askingAccepted)
+        PendingResponseSource source, StreamedSetPhase phase, Exception error, bool timedOut)
     {
-        if (askingAccepted || phase is StreamedSetPhase.AskingQueued
+        if (phase is StreamedSetPhase.AskingQueued or StreamedSetPhase.AskingAccepted
             or StreamedSetPhase.HeaderQueued or StreamedSetPhase.ResponseQueued)
         {
             // Abort is a no-op when the connection is already dead.
