@@ -8,6 +8,20 @@ namespace Respire.Extensions.Coordination.Tests;
 public class CoordinationCleanupQueueTests
 {
     [Test]
+    public async Task InvalidRetryDelayCompletesCleanupAndDisposal()
+    {
+        await using var queue = new CoordinationCleanupQueue();
+        string? abandoned = null;
+        var completion = queue.EnqueueAsync(_ => new(CleanupAttemptResult.Failed), null,
+            TimeSpan.FromMinutes(1), TimeSpan.FromSeconds(-1), TimeSpan.FromSeconds(1),
+            reason => abandoned = reason);
+
+        await Assert.That(await completion.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(abandoned).IsEqualTo("failed");
+        await queue.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task DisposedClientRejectsCleanupWithoutStartingAttempt()
     {
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });

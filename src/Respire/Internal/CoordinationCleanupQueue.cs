@@ -184,15 +184,12 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 
     private void ScheduleRetry(Cleanup cleanup, TimeSpan delay)
     {
-        var retry = RequeueAfterDelayAsync(cleanup, delay);
-        lock (_scheduledGate) _scheduledRetries.Add(retry);
-        _ = retry.ContinueWith(completed =>
-        {
-            lock (_scheduledGate) _scheduledRetries.Remove(completed);
-        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_scheduledGate) _scheduledRetries.Add(completion.Task);
+        _ = RequeueAfterDelayAsync(cleanup, delay, completion);
     }
 
-    private async Task RequeueAfterDelayAsync(Cleanup cleanup, TimeSpan delay)
+    private async Task RequeueAfterDelayAsync(Cleanup cleanup, TimeSpan delay, TaskCompletionSource completion)
     {
         try
         {
@@ -203,6 +200,16 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         {
             cleanup.Report("client_disposed");
             cleanup.Complete(false);
+        }
+        catch
+        {
+            cleanup.Report("failed");
+            cleanup.Complete(false);
+        }
+        finally
+        {
+            lock (_scheduledGate) _scheduledRetries.Remove(completion.Task);
+            completion.TrySetResult();
         }
     }
 

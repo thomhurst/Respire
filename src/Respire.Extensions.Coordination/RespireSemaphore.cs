@@ -218,6 +218,7 @@ public sealed class RespireSemaphore
                 CleanupRetryLimit, CleanupRetryInitialDelay, CleanupRetryMaxDelay, onAbandoned);
         }
 
+        // Legacy IRespireClient implementations have no shared core to own a bounded queue.
         return RetryCleanupAsync(Stopwatch.GetTimestamp(), () => attempt(CancellationToken.None), shouldContinue,
             onAbandoned);
     }
