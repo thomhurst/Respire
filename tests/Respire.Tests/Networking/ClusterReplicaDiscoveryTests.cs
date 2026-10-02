@@ -116,6 +116,55 @@ public class ClusterReplicaDiscoveryTests
     }
 
     [Test]
+    public async Task SlowUncoveredProbeCompletesOneAttemptDespiteExpiredThrottle()
+    {
+        long now = 10;
+        var commands = 0;
+        var coordinator = new ClusterReplicaDiscovery(_ =>
+        {
+            commands++;
+            now += ClusterReplicaSet.RefreshIntervalMilliseconds;
+            return Task.CompletedTask;
+        }, _ => false, () => now);
+        await coordinator.DiscoverAsync(1, default);
+        await Assert.That(commands).IsEqualTo(1);
+        await coordinator.DiscoverAsync(1, default);
+        await Assert.That(commands).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ChangedOwnerAfterProbeCompletionRequiresFreshCoverage()
+    {
+        // Inline probe completion lets the test hold the coordinator gate across completion
+        // and invalidation, before a resumed waiter can recheck the completed attempt.
+        var first = new TaskCompletionSource();
+        var commands = 0;
+        var covered = false;
+        var coordinator = new ClusterReplicaDiscovery(_ =>
+        {
+            if (Interlocked.Increment(ref commands) == 1) return first.Task;
+            Volatile.Write(ref covered, true);
+            return Task.CompletedTask;
+        }, _ => Volatile.Read(ref covered));
+        var pending = coordinator.DiscoverAsync(1, default).AsTask();
+        var gate = typeof(ClusterReplicaDiscovery).GetField("_gate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
+        bool completed;
+        lock (gate)
+        {
+            first.SetResult();
+            var probe = (Task)typeof(ClusterReplicaDiscovery).GetField("_current",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
+            completed = probe.IsCompleted;
+            coordinator.Invalidate(1);
+        }
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(completed).IsTrue();
+        await Assert.That(commands).IsEqualTo(2);
+        await Assert.That(covered).IsTrue();
+    }
+
+    [Test]
     [NotInParallel]
     public async Task UncoveredSlotBookkeepingAllocatesLessThanPerSlotCoalescers()
     {

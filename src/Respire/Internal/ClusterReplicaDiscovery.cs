@@ -45,7 +45,12 @@ internal sealed class ClusterReplicaDiscovery(
             if (start is not null) _ = RunAsync(slot, start);
             // Caller cancellation only detaches this waiter. The router owns probe cancellation.
             var attemptedSlot = await current.WaitAsync(cancellationToken).ConfigureAwait(false);
-            if (attemptedSlot == slot) return;
+            lock (_gate)
+            {
+                // Invalidation can arrive after completion but before this waiter resumes.
+                // Accept only this still-current, valid attempt; a newer probe must be joined.
+                if (attemptedSlot == slot && ReferenceEquals(current, _current) && !_invalidated) return;
+            }
             // Recheck this slot after shared work. A partial reply for another slot neither
             // completes this discovery nor consumes this slot's refresh interval.
             // Persistently uncovered distinct slots intentionally probe sequentially: each
@@ -58,7 +63,7 @@ internal sealed class ClusterReplicaDiscovery(
         lock (_gate)
         {
             _notBefore.Remove(slot);
-            if (_currentSlot == slot && _current is { IsCompleted: false }) _invalidated = true;
+            if (_currentSlot == slot) _invalidated = true;
         }
     }
 
