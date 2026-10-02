@@ -18,7 +18,7 @@ if ($primaryGuardIndex -lt 0 -or $primaryGuardIndex -gt $mergeMatch.Index) {
 }
 
 $cleanupIndex = $script.IndexOf('Clear-CompletedWorktreeArtifacts', $mergeMatch.Index)
-$remoteDeleteIndex = $script.IndexOf('push "--force-with-lease=${remoteRef}:$mergedHead" origin ":$remoteRef"', $mergeMatch.Index)
+$remoteDeleteIndex = $script.IndexOf('Remove-MergedRemoteBranch -Repo', $mergeMatch.Index)
 
 if ($cleanupIndex -lt 0) {
     throw 'Merged worktree cleanup is missing.'
@@ -34,6 +34,18 @@ if ($cleanupIndex -gt $remoteDeleteIndex) {
 
 if ($script -match 'branch -[dD]|update-ref -d') {
     throw 'Merge cleanup must retain local refs that another worktree can reuse.'
+}
+
+$remoteHelper = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'MergedBranchCleanup.ps1') -Raw
+if (-not $remoteHelper.Contains('--force-with-lease=${remoteRef}:$ExpectedHead')) {
+    throw 'Remote cleanup must compare the recorded merged head.'
+}
+if (-not $script.Contains('Set-MergedBranchCleanup') -or -not $script.Contains('$head.isCrossRepository -eq $false')) {
+    throw 'Merge must defer branch cleanup to release and preserve fork branches.'
+}
+$releaseScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Remove-ReleasedWorktree.ps1') -Raw
+if ($releaseScript.IndexOf('Remove-MergedRemoteBranch -Repo') -lt $releaseScript.IndexOf('worktree remove --force')) {
+    throw 'Owner release must remove the checkout before deleting its merged remote branch.'
 }
 
 $mergedConfirmationIndex = $script.IndexOf('Write-Host "Merged', $mergeMatch.Index)

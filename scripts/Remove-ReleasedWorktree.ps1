@@ -54,6 +54,21 @@ function Remove-ReleasedWorktree {
     }
     $head = git -C $target rev-parse HEAD 2>$null
     if ($LASTEXITCODE -ne 0) { throw "Cannot resolve HEAD: $target" }
+    $pendingBranchPath = Join-Path $gitDirectory 'respire-merged-branch.json'
+    $pendingBranch = $null
+    if (Test-Path -LiteralPath $pendingBranchPath) {
+        try {
+            $metadata = Get-Content -LiteralPath $pendingBranchPath -Raw | ConvertFrom-Json
+            if ($metadata.Branch -isnot [string] -or [string]::IsNullOrWhiteSpace($metadata.Branch) -or
+                $metadata.ExpectedHead -notmatch '^[0-9a-f]{40}$' -or
+                $metadata.RemoteUrlHash -notmatch '^[0-9a-fA-F]{64}$') {
+                throw 'Invalid deferred branch cleanup metadata.'
+            }
+            $pendingBranch = $metadata
+        } catch {
+            Write-Host 'Preserving remote branch: cleanup metadata is unreadable or invalid.'
+        }
+    }
     git -C $target symbolic-ref -q HEAD 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         # A stable ref keeps unpublished detached commits reachable after Git prunes
@@ -73,4 +88,9 @@ function Remove-ReleasedWorktree {
     git -C $repo -c core.longpaths=true worktree remove --force -- $target
     if ($LASTEXITCODE -ne 0) { throw "Could not remove released worktree: $target" }
     Write-Host "Removed released worktree: $target"
+    if ($pendingBranch) {
+        . (Join-Path $PSScriptRoot 'MergedBranchCleanup.ps1')
+        Remove-MergedRemoteBranch -Repo $repo -Branch $pendingBranch.Branch `
+            -ExpectedHead $pendingBranch.ExpectedHead -RemoteUrlHash $pendingBranch.RemoteUrlHash
+    }
 }
