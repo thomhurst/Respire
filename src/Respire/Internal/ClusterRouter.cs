@@ -735,7 +735,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         => GetOrCreateDedicatedPool(endpoint);
 
     internal long CaptureSlotVersion(int? slot)
-        => slot is { } value ? Volatile.Read(ref _slotVersions[value]) : 0;
+    {
+        if (slot is not { } value) return 0;
+        // PublishSlotLocked writes the version before the owner. Do not capture the new
+        // version while pool selection can still observe the previous owner.
+        lock (_nodesGate) return _slotVersions[value];
+    }
 
     internal async ValueTask<(DedicatedConnectionPool Pool, long SlotVersion)> GetDedicatedStreamPoolAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
@@ -750,10 +755,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection)
     {
         if (slot is not { } value) return true;
-        if (Volatile.Read(ref _slotVersions[value]) != slotVersion) return false;
-        // With no discovered owner, the selected seed is still eligible. Learning an owner
-        // changes the slot version, so that publication invalidates this provisional route.
-        return Volatile.Read(ref _slots[value]) is not { } owner || IsSameEndpoint(owner, connection);
+        lock (_nodesGate)
+        {
+            if (_slotVersions[value] != slotVersion) return false;
+            // Read the version and owner together; a half-published route must not validate.
+            // With no discovered owner, the selected seed is still eligible. Learning an owner
+            // changes the slot version, so that publication invalidates this provisional route.
+            return _slots[value] is not { } owner || IsSameEndpoint(owner, connection);
+        }
     }
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(

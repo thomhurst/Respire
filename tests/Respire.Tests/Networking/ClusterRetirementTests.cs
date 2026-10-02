@@ -1825,6 +1825,45 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamRouteCannotValidateHalfPublishedSlotOwner(bool captureVersion)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", server.Port), "old", 1);
+        var connection = await router.GetConnectionAsync(42, CancellationToken.None, discovery: null);
+        var replacement = router.GetOrCreateNode(new("replacement.invalid", 6379));
+        var gate = typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!;
+        var versions = (long[])typeof(ClusterRouter).GetField("_slotVersions", Private)!.GetValue(router)!;
+        var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool readerReachedSnapshot;
+        lock (gate)
+        {
+            // Pause PublishSlotLocked between its version and owner writes.
+            var version = versions[42] + 1;
+            Volatile.Write(ref versions[42], version);
+            var reader = new Thread(() =>
+            {
+                try
+                {
+                    var captured = captureVersion ? router.CaptureSlotVersion(42) : version;
+                    result.TrySetResult(router.IsDedicatedStreamRouteCurrent(42, captured, connection));
+                }
+                catch (Exception error) { result.TrySetException(error); }
+            }) { IsBackground = true };
+            reader.Start();
+            // Wait for a real result or lock contention, rather than relying on a sleep.
+            readerReachedSnapshot = SpinWait.SpinUntil(() => result.Task.IsCompleted
+                || (reader.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit);
+            router.SetSlotOwner(42, replacement);
+        }
+        await Assert.That(readerReachedSnapshot).IsTrue();
+        await Assert.That(await result.Task.WaitAsync(Limit)).IsFalse();
+    }
+
+    [Test]
     public async Task StreamedSetRetiredDuringFirstChunkResendsWholePayloadOnReplacement()
     {
         // Larger than one chunk, so the retry must replay the restored first chunk and then keep

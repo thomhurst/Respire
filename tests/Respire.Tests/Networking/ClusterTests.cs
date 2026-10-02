@@ -2246,17 +2246,18 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task AskRedirect_ReadFailureDoesNotConsumeAskingStateOrCloseConnection()
+    public async Task AskRedirect_ReadFailureDiscardsLeaseWithoutConsumingAskingState()
     {
         const string key = "asking-read-failure-key";
         var slot = ClusterHash.GetSlot(key);
         await using var target = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply);
-        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask);
+        await using var seed = CreateRedirectingSeed(slot, target, RespireErrorCodes.Ask, maxConnections: 3);
         await using var client = await CreateClusterClientAsync(seed);
         await using var stream = new ThrowOnceStream([1, 2, 3]);
 
         await Assert.That(async () => await client.Strings.SetAsync(key, stream, 3))
             .Throws<IOException>();
+        await seed.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEmpty();
         await Assert.That(await client.Strings.SetAsync(key, stream, 3)).IsTrue();
 
@@ -4023,9 +4024,9 @@ public class ClusterTests
     private static byte[] ScanMetadataReply(string value)
         => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
-    private static FakeRespServer CreateRedirectingSeed(int slot, FakeRespServer target, string code)
+    private static FakeRespServer CreateRedirectingSeed(int slot, FakeRespServer target, string code, int maxConnections = 2)
     {
-        var seed = new FakeRespServer(2, FakeRespServer.OkReply);
+        var seed = new FakeRespServer(maxConnections, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*1\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
         var redirect = Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");

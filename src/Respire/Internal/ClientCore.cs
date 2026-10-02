@@ -131,8 +131,7 @@ internal sealed class ClientCore : IAsyncDisposable
                 var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
                 return (pool, connection);
             }
-            catch (Exception error) when (!Disposed && !cancellationToken.IsCancellationRequested
-                && pool.IsStopping && error is ObjectDisposedException or OperationCanceledException)
+            catch (Exception error) when (IsRetirementRace(pool, error, cancellationToken))
             {
                 // Publication can retire the selected pool before rental or during its handshake.
                 // No application command has been sent. Keep the caller's acquisition deadline
@@ -143,6 +142,10 @@ internal sealed class ClientCore : IAsyncDisposable
             }
         }
     }
+
+    private bool IsRetirementRace(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken)
+        => !Disposed && !cancellationToken.IsCancellationRequested && pool.IsStopping
+            && error is ObjectDisposedException or OperationCanceledException;
 
     internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
         => !pool.IsStopping && ReferenceEquals(pool, DedicatedPool)
