@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -336,19 +335,10 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         => new(name.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
     private static string? GetCatalogCommandName(IFieldSymbol field)
-    {
-        var documentation = field.GetDocumentationCommentXml();
-        if (string.IsNullOrEmpty(documentation)) return null;
-        try
-        {
-            return XDocument.Parse(documentation).Descendants("summary").FirstOrDefault()?
-                .Descendants("c").FirstOrDefault()?.Value;
-        }
-        catch (System.Xml.XmlException)
-        {
-            return null;
-        }
-    }
+        => field.GetAttributes()
+            .FirstOrDefault(attribute => attribute.AttributeClass?.ToDisplayString()
+                == "Respire.RespireCommandCatalogNameAttribute")?
+            .ConstructorArguments.FirstOrDefault().Value as string;
 
     private static string ArrayCreation(ITypeSymbol element, string length)
     {

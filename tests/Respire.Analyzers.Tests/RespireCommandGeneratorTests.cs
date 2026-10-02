@@ -170,12 +170,9 @@ public class RespireCommandGeneratorTests
 
     private static CSharpCompilation CreateCompilation(string source, CSharpParseOptions parseOptions)
     {
-        var respirePath = typeof(RespireCommand).Assembly.Location;
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Append(typeof(RespireCommand).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(path => MetadataReference.CreateFromFile(path));
-        references = references.Append(MetadataReference.CreateFromFile(respirePath,
-            documentation: XmlDocumentationProvider.CreateFromFile(Path.ChangeExtension(respirePath, ".xml"))));
         return CSharpCompilation.Create("GeneratedConsumer", [CSharpSyntaxTree.ParseText(source, parseOptions)], references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
     }
