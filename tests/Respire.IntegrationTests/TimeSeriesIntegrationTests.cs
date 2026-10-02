@@ -188,9 +188,11 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
-    public async Task KeyPrefixedViewStoresPrefixedSeries()
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task KeyPrefixedViewStoresPrefixedSeries(int protocol)
     {
-        await using var client = await ConnectAsync(3);
+        await using var client = await ConnectAsync(protocol);
         var prefix = $"tenant:{Guid.NewGuid():N}:";
         var tenant = new RespireTimeSeriesClient(client.WithKeyPrefix(prefix));
         var root = new RespireTimeSeriesClient(client);
@@ -203,5 +205,91 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
             new RespireTimeSeriesSample(1, 1.5), new RespireTimeSeriesSample(2, 2.5),
         ]);
         await Assert.That(async () => await tenant.QueryIndexAsync(["room=1"])).Throws<NotSupportedException>();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ServerErrorsAndCancelledWritesPreserveExistingSamples(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var key = $"ts:{Guid.NewGuid():N}";
+        await client.SetAsync(key + ":string", "not a time series");
+        await Assert.That(async () => await timeSeries.AddAsync(key + ":string", 1, 1.0))
+            .Throws<RespireServerException>();
+        await Assert.That(async () => await timeSeries.GetAsync(key + ":missing"))
+            .Throws<RespireServerException>();
+
+        await timeSeries.AddAsync(key, 1, 1.5);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var error = await Assert.That(async () =>
+                await timeSeries.AddAsync(key + ":cancelled", 2, 2.5, cancellationToken: cancelled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancelled.Token);
+        var multiAddError = await Assert.That(async () => await timeSeries.MultiAddAsync(
+                [new(key, 2, 2.5), new(key, 3, 3.5)], maxBatchSize: 1, cancellationToken: cancelled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(multiAddError!.CancellationToken).IsEqualTo(cancelled.Token);
+
+        await Assert.That(await client.Keys.ExistsAsync(key + ":cancelled")).IsFalse();
+        await Assert.That((await timeSeries.RangeAsync(key, new(0, 10))).Samples)
+            .IsEquivalentTo([new RespireTimeSeriesSample(1, 1.5)]);
+    }
+
+    // Stable tracking is needed to prove a cache hit before each mutation, as in the cache suite.
+    [Test, NotInParallel]
+    public async Task LocalMutationsInvalidateTrackedReadsAndFlushCompactionDependencies()
+    {
+        var options = RespireOptions.Parse(fixture.ConnectionString) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new(),
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var prefix = $"ts:{{{Guid.NewGuid():N}}}:";
+        RespireKey source = prefix + "source";
+        RespireKey destination = prefix + "compacted";
+        RespireKey unrelated = prefix + "unrelated";
+        var cache = client.ClientSideCache!;
+        await client.SetAsync(unrelated, "retained");
+
+        // TS.CREATE must invalidate the cached missing-key result, despite NOLOOP tracking.
+        await Assert.That(await client.Keys.ExistsAsync(source)).IsFalse();
+        var hits = cache.GetStatistics().Hits;
+        await Assert.That(await client.Keys.ExistsAsync(source)).IsFalse();
+        await Assert.That(cache.GetStatistics().Hits).IsEqualTo(hits + 1);
+        await timeSeries.CreateAsync(source);
+        await Assert.That(await client.Keys.ExistsAsync(source)).IsTrue();
+
+        await timeSeries.CreateAsync(destination);
+        await timeSeries.CreateRuleAsync(source, destination, RespireTimeSeriesAggregation.Sum, 10);
+        // Every sample mutation can affect a compaction destination absent from its arguments.
+        // The documented conservative contract is a full local flush, including unrelated keys.
+        Func<Task>[] mutations =
+        [
+            async () => { await timeSeries.AddAsync(source, 1, 1.5); },
+            async () => { await timeSeries.MultiAddAsync([new(source, 11, 2.5), new(source, 21, 3.5)], maxBatchSize: 1); },
+            async () => { await timeSeries.IncrementByAsync(source, 1, new() { Timestamp = 31 }); },
+            async () => { await timeSeries.DecrementByAsync(source, 0.5, new() { Timestamp = 41 }); },
+            async () => { await timeSeries.DeleteRangeAsync(source, new(41, 41)); },
+        ];
+        foreach (var mutate in mutations)
+        {
+            await Assert.That(await client.GetStringAsync(unrelated)).IsEqualTo("retained");
+            hits = cache.GetStatistics().Hits;
+            await Assert.That(await client.GetStringAsync(unrelated)).IsEqualTo("retained");
+            await Assert.That(cache.GetStatistics().Hits).IsEqualTo(hits + 1);
+
+            await mutate();
+
+            await Assert.That(cache.Count).IsEqualTo(0);
+        }
+
+        // Samples at timestamps 11 and later close bucket 0, publishing its sum to the destination.
+        var compacted = await timeSeries.RangeAsync(destination, new(0, 9));
+        await Assert.That(compacted.Samples).IsEquivalentTo([new RespireTimeSeriesSample(0, 1.5)]);
     }
 }
