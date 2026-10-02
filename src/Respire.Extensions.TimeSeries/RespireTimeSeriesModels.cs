@@ -563,6 +563,8 @@ public readonly record struct RespireTimeSeriesRule(RespireKey DestinationKey, l
 /// <remarks>Fields the server does not report keep their defaults. Unrecognized fields are ignored.</remarks>
 public sealed record RespireTimeSeriesInfo
 {
+    internal static IReadOnlyDictionary<string, string?> EmptyLabels { get; } = new Dictionary<string, string?>();
+
     /// <summary>Number of samples in the series.</summary>
     public long TotalSamples { get; init; }
     /// <summary>Memory used by the series, in bytes.</summary>
@@ -586,7 +588,7 @@ public sealed record RespireTimeSeriesInfo
     /// <summary>The IGNORE maximum value difference.</summary>
     public double IgnoreMaxValueDifference { get; init; }
     /// <summary>Labels of the series.</summary>
-    public IReadOnlyDictionary<string, string?> Labels { get; init; } = new Dictionary<string, string?>();
+    public IReadOnlyDictionary<string, string?> Labels { get; init; } = EmptyLabels;
     /// <summary>The source series when this series is a compaction destination; otherwise null.</summary>
     public RespireKey? SourceKey { get; init; }
     /// <summary>Compaction rules whose source is this series.</summary>

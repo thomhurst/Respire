@@ -49,33 +49,58 @@ internal static class TimeSeriesReplyParser
         if (result.Type is not (RespDataType.Map or RespDataType.Array) || result.Count % 2 != 0)
             throw UnexpectedReply();
 
-        var info = new RespireTimeSeriesInfo();
+        long totalSamples = 0;
+        long memoryUsageBytes = 0;
+        long firstTimestamp = 0;
+        long lastTimestamp = 0;
+        long retentionMilliseconds = 0;
+        long chunkCount = 0;
+        long chunkSizeBytes = 0;
+        string? chunkType = null;
+        RespireTimeSeriesDuplicatePolicy? duplicatePolicy = null;
+        long ignoreMaxTimeDifference = 0;
+        double ignoreMaxValueDifference = 0;
+        IReadOnlyDictionary<string, string?> labels = RespireTimeSeriesInfo.EmptyLabels;
+        RespireKey? sourceKey = null;
+        IReadOnlyList<RespireTimeSeriesRule> rules = [];
         for (var index = 0; index + 1 < result.Count; index += 2)
         {
             var value = result[index + 1];
-            info = result[index].AsString() switch
+            switch (result[index].AsString())
             {
-                "totalSamples" => info with { TotalSamples = value.AsInteger() },
-                "memoryUsage" => info with { MemoryUsageBytes = value.AsInteger() },
-                "firstTimestamp" => info with { FirstTimestamp = value.AsInteger() },
-                "lastTimestamp" => info with { LastTimestamp = value.AsInteger() },
-                "retentionTime" => info with { RetentionMilliseconds = value.AsInteger() },
-                "chunkCount" => info with { ChunkCount = value.AsInteger() },
-                "chunkSize" => info with { ChunkSizeBytes = value.AsInteger() },
-                "chunkType" => info with { ChunkType = value.IsNull ? null : value.AsString() },
-                "duplicatePolicy" => info with
-                {
-                    DuplicatePolicy = RespireTimeSeriesOptions.FromPolicy(value.IsNull ? null : value.AsString()),
-                },
-                "ignoreMaxTimeDiff" => info with { IgnoreMaxTimeDifference = value.AsInteger() },
-                "ignoreMaxValDiff" => info with { IgnoreMaxValueDifference = value.AsDouble() },
-                "labels" => info with { Labels = ParseLabels(value) },
-                "sourceKey" => info with { SourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes()) },
-                "rules" => info with { Rules = ParseRules(value) },
-                _ => info,
-            };
+                case "totalSamples": totalSamples = value.AsInteger(); break;
+                case "memoryUsage": memoryUsageBytes = value.AsInteger(); break;
+                case "firstTimestamp": firstTimestamp = value.AsInteger(); break;
+                case "lastTimestamp": lastTimestamp = value.AsInteger(); break;
+                case "retentionTime": retentionMilliseconds = value.AsInteger(); break;
+                case "chunkCount": chunkCount = value.AsInteger(); break;
+                case "chunkSize": chunkSizeBytes = value.AsInteger(); break;
+                case "chunkType": chunkType = value.IsNull ? null : value.AsString(); break;
+                case "duplicatePolicy": duplicatePolicy = RespireTimeSeriesOptions.FromPolicy(value.IsNull ? null : value.AsString()); break;
+                case "ignoreMaxTimeDiff": ignoreMaxTimeDifference = value.AsInteger(); break;
+                case "ignoreMaxValDiff": ignoreMaxValueDifference = value.AsDouble(); break;
+                case "labels": labels = ParseLabels(value); break;
+                case "sourceKey": sourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes()); break;
+                case "rules": rules = ParseRules(value); break;
+            }
         }
-        return info;
+        return new RespireTimeSeriesInfo
+        {
+            TotalSamples = totalSamples,
+            MemoryUsageBytes = memoryUsageBytes,
+            FirstTimestamp = firstTimestamp,
+            LastTimestamp = lastTimestamp,
+            RetentionMilliseconds = retentionMilliseconds,
+            ChunkCount = chunkCount,
+            ChunkSizeBytes = chunkSizeBytes,
+            ChunkType = chunkType,
+            DuplicatePolicy = duplicatePolicy,
+            IgnoreMaxTimeDifference = ignoreMaxTimeDifference,
+            IgnoreMaxValueDifference = ignoreMaxValueDifference,
+            Labels = labels,
+            SourceKey = sourceKey,
+            Rules = rules,
+        };
     }
 
     internal static InvalidOperationException UnexpectedReply()
