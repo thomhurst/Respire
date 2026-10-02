@@ -51,6 +51,41 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task InlineRawReadsAndPreencodedDatabaseSizeUseReplicaView()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "ROLE" => ReplicaRole,
+                "GET key" => Bulk("replica"),
+                "DBSIZE" => ":42\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        using var raw = await view.ExecuteAsync("GET key");
+        await view.ExecuteFireAndForgetAsync("GET key");
+        var databaseSize = await view.Server.DatabaseSizeAsync();
+
+        await Assert.That(raw.AsString()).IsEqualTo("replica");
+        await Assert.That(databaseSize).IsEqualTo(42);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands).Contains("DBSIZE");
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task TypedDescriptorRoutesReadEvenWhenOperationLabelIsNotCanonical()
     {
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);

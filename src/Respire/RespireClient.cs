@@ -886,6 +886,8 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tokens, words.Length);
+        if (readKind == ReadCommandKind.None)
+            readKind = RawCommandDescriptorLookup.GetReadKind(operation, tokens.AsSpan(firstArgumentIndex));
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = GetRawRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);

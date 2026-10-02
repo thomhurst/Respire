@@ -3,8 +3,10 @@ using Respire.Protocol;
 namespace Respire.Commands;
 
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
-internal readonly struct RawCommand(byte[] preEncoded) : IRespCommand
+internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {
+    public ReadCommandKind ReadKind => readKind;
+
     public void Write(ref RespWriter writer) => writer.WriteRaw(preEncoded);
 }
 
