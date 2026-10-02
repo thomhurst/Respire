@@ -41,6 +41,12 @@ function global:git {
             Remove-Item -LiteralPath $target -Recurse -Force
         }
     }
+    if ($args -contains 'move') {
+        $source = [IO.Path]::GetFullPath($args[-2])
+        $target = [IO.Path]::GetFullPath($args[-1])
+        if (-not $source.StartsWith($testRoot) -or -not $target.StartsWith($testRoot)) { throw 'Unsafe fixture move.' }
+        Move-Item -LiteralPath $source -Destination $target
+    }
 }
 
 try {

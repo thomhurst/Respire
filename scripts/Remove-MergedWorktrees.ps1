@@ -159,15 +159,12 @@ try {
 
         if (-not $why) { $unmatched += $w; continue }
 
-        Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -Label "($why)" -WhatIf:$WhatIf
+        $didRemove = Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -Label "($why)" -WhatIf:$WhatIf
         if ($WhatIf) { continue }
-        if (-not (Test-Path -LiteralPath $w.Path)) {
+        if ($didRemove) {
             $removed++
-            # Delete only the verified tip. A concurrent follow-up commit must keep its branch.
-            if ($w.Branch -and $why -like 'merged PR*') {
-                git -C $mainRepo update-ref -d "refs/heads/$($w.Branch)" $sha 2>$null
-                if ($LASTEXITCODE -ne 0) { Write-Host "sweep: preserving branch that changed during cleanup: $($w.Branch)" }
-            }
+            # Local refs are cheap recovery points. Another checkout can reuse the same
+            # branch and SHA at any time, which a compare-and-delete cannot detect.
         }
     }
 

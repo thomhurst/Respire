@@ -307,18 +307,60 @@ function Remove-MergedWorktree {
         Write-Host "Preserving worktree $Label : $Worktree ($blocker)"
         return
     }
-    # Do not force removal: Git must reject source written after the final inspection.
-    # Ignored generated artifacts can still be removed by Git's ordinary cleanup.
-    git -C $Repo worktree remove $Worktree 2>$null
-    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $Worktree)) {
-        Write-Host "WARNING: preserving worktree after Git removal failed $Label : $Worktree"
+    # Atomically vacate the published path before the last ignored-file inspection.
+    # A path-based writer either lands in this snapshot or recreates the original path;
+    # it cannot put an ignored file into the deletion target after that inspection.
+    $original = [IO.Path]::GetFullPath($Worktree).TrimEnd([char[]]@('/', '\'))
+    $parent = Split-Path -Path $original -Parent
+    $quarantine = "$original-cleanup-$([guid]::NewGuid().ToString('N'))"
+    if (-not (Test-IsDescendantPath -Path $original -Parent $parent) -or
+        -not (Test-IsDescendantPath -Path $quarantine -Parent $parent) -or
+        (Test-Path -LiteralPath $quarantine)) {
+        Write-Host "WARNING: could not establish a safe quarantine path for $Worktree"
         return
     }
+    git -C $Repo worktree move $original $quarantine 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Preserving worktree $Label : $original (could not quarantine checkout)"
+        return
+    }
+    try {
+        $head = git -C $quarantine rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead -or
+            (Get-WorktreeOwnershipBlocker -Repo $Repo -Worktree $quarantine) -or
+            (Get-WorktreeStatusBlocker -Worktree $quarantine)) {
+            Write-Host "Preserving quarantined worktree $Label : $quarantine (work or ownership changed)"
+            return
+        }
 
-    git -C $Repo worktree prune
-    if (Test-Path -LiteralPath $Worktree) {
-        Write-Host "WARNING: could not fully remove $Worktree"
-    } else {
-        Write-Host "Removed worktree $Label : $Worktree"
+        # Some disposable output (for example Debug/) is not ignored by Git. Remove
+        # only those explicitly classified paths; leave ordinary source to Git's guard.
+        $untracked = @(git -C $quarantine status --porcelain=v1 --untracked-files=all 2>$null)
+        if ($LASTEXITCODE -ne 0) { return }
+        foreach ($entry in $untracked) {
+            if ($entry -notmatch '^\?\? ' -or -not (Test-DisposableWorktreePath -Path $entry.Substring(3))) { return }
+            git -C $quarantine --literal-pathspecs clean -f -- $entry.Substring(3) 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { return }
+        }
+        # Never force removal or recursively delete after Git refuses.
+        git -C $Repo worktree remove $quarantine 2>$null
+        if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $quarantine)) {
+            Write-Host "WARNING: preserving worktree after Git removal failed $Label : $quarantine"
+            return
+        }
+        if (Test-Path -LiteralPath $original) {
+            Write-Host "Preserving newly created path $Label : $original"
+            return
+        }
+        Write-Host "Removed worktree $Label : $original"
+        return $true
+    }
+    finally {
+        # Restore retained work when its old path is still free. Never overwrite a new
+        # checkout or files created by a writer using the original path.
+        if ((Test-Path -LiteralPath $quarantine) -and -not (Test-Path -LiteralPath $original)) {
+            git -C $Repo worktree move $quarantine $original 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Host "Recovery worktree remains at $quarantine" }
+        }
     }
 }

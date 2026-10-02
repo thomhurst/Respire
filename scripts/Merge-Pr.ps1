@@ -3,7 +3,7 @@
 #   1. runs the pure gate  Assert-PrGreen.ps1  (read-only; exits 0 only when green)
 #   2. merges with  gh pr merge --squash  (only if the gate passed)
 #   3. removes the PR's isolated worktree
-#   4. deletes the merged local and remote head branches
+#   4. deletes the unchanged remote head branch; retains local recovery refs
 #
 # Cleanup is *part of* the merge command — an agent cannot merge and then forget
 # to remove the worktree, because it is the same call. This is the durable fix for
@@ -124,11 +124,11 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
 } else {
     # Standalone merges can clean up immediately. An owned checkout remains until
     # the agent's explicit release; never release another caller's lock here.
-    Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}"
+    $didRemove = Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}"
 
     # A dirty worktree is intentionally preserved. Its local and remote branches are
     # also preserved so uncommitted work retains an upstream recovery point.
-    if (Test-Path -LiteralPath $cleanupWorktree) {
+    if (-not $didRemove) {
         Write-Host "Preserving branches for worktree #${Pr}: $cleanupWorktree"
         exit 0
     }
@@ -146,12 +146,7 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-git -C $mainRepo show-ref --verify --quiet "refs/heads/$headRef"
-if ($LASTEXITCODE -eq 0) {
-    git -C $mainRepo update-ref -d "refs/heads/$headRef" $mergedHead 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "WARNING: merged #${Pr}, but could not delete local branch '$headRef'"
-    }
-}
+# Keep local refs: another worktree may have checked out this same branch and SHA
+# after cleanup. SHA comparison cannot establish that the branch is still unused.
 
 exit 0

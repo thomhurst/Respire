@@ -34,7 +34,7 @@ jobs:
       - name: Verify worktree cleanup safety
         shell: pwsh
         run: |
-          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup')) {
+          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr')) {
             & pwsh -NoProfile -File "./scripts/$test.ps1"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
