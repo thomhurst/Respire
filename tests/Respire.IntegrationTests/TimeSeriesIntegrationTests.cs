@@ -228,9 +228,10 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
                 await timeSeries.AddAsync(key + ":cancelled", 2, 2.5, cancellationToken: cancelled.Token))
             .Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancelled.Token);
-        await Assert.That(async () => await timeSeries.MultiAddAsync(
+        var multiAddError = await Assert.That(async () => await timeSeries.MultiAddAsync(
                 [new(key, 2, 2.5), new(key, 3, 3.5)], maxBatchSize: 1, cancellationToken: cancelled.Token))
             .Throws<OperationCanceledException>();
+        await Assert.That(multiAddError!.CancellationToken).IsEqualTo(cancelled.Token);
 
         await Assert.That(await client.Keys.ExistsAsync(key + ":cancelled")).IsFalse();
         await Assert.That((await timeSeries.RangeAsync(key, new(0, 10))).Samples)
@@ -287,6 +288,7 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
             await Assert.That(cache.Count).IsEqualTo(0);
         }
 
+        // Samples at timestamps 11 and later close bucket 0, publishing its sum to the destination.
         var compacted = await timeSeries.RangeAsync(destination, new(0, 9));
         await Assert.That(compacted.Samples).IsEquivalentTo([new RespireTimeSeriesSample(0, 1.5)]);
     }
