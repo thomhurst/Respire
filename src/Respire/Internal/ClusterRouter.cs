@@ -1458,6 +1458,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // ownership it does report without dropping the rest. Within one fallback batch, the first
     // reply covering a slot also stays authoritative while later candidates fill uncovered slots.
     // Replica metadata is retained as well.
+    // Primary and replica publication share _nodesGate and the same slot/version fences.
+    // Replica sets keep immutable membership; their cursor and refresh throttle are separate
+    // mutable coordination state. Unchanged membership must retain that state. A future shared
+    // topology snapshot (issue #738) must preserve these fences and uncovered-slot ownership.
     private void ApplyTopologyCore(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration,
         bool keepUncoveredOwners, object? snapshotBatch)
     {

@@ -224,6 +224,50 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_FailedRefreshesRemainThrottled()
+    {
+        long now = 100;
+        var attempts = 0;
+        var routes = new ClusterReplicaSet([], TimeSpan.Zero, () => now);
+        Task Fail()
+        {
+            attempts++;
+            return Task.FromException(new RespireConnectionException("discovery unavailable"));
+        }
+        await routes.JoinOrStartRefresh(Fail)!;
+        for (var index = 0; index < 100; index++)
+            await Assert.That(routes.JoinOrStartRefresh(Fail)).IsNull();
+        await Assert.That(attempts).IsEqualTo(1);
+        now += ClusterReplicaSet.RefreshIntervalMilliseconds;
+        await routes.JoinOrStartRefresh(Fail)!;
+        await Assert.That(attempts).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ReadFrom_StrictReplicaReportsPersistentRefreshFailure()
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? ClusterTopologyWithoutReplicas(primary.Port) : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        primary.ReplyOverride = (_, _) => "-ERR topology unavailable\r\n"u8.ToArray();
+        await using var strict = client.WithReadFrom(RespireReadFrom.Replica);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var error = await Assert.That(async () => await strict.Strings.GetStringAsync("key"))
+                .ThrowsExactly<RespireConnectionException>();
+            await Assert.That(error!.Message).Contains("no replica available");
+            await Assert.That(error.Message).Contains(ClusterHash.GetSlot("key").ToString());
+        }
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
+    }
+
+    [Test]
     public async Task ReadFrom_LazyReplicaReadDiscoversConfiguredSeed()
     {
         await using var replica = new FakeRespServer(FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
@@ -407,7 +451,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_ReplicaRefreshPreservesUncoveredShard()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_ReplicaRefreshPreservesUncoveredShard(bool staleFullSnapshot)
     {
         byte[]? reply = null;
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -416,7 +462,7 @@ public class ClusterTests
                 : command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
         };
         await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
-        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? SplitClusterTopology(primary.Port, replica.Port) : null;
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? ClusterTopology(primary.Port, replica.Port) : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
@@ -429,8 +475,10 @@ public class ClusterTests
         await reads.Strings.GetStringAsync(key);
         var lowOwner = client.Core.Cluster!.GetKnownSlotOwner(0);
         var lowReplicas = ReplicaRoutes(client)[0];
-        reply = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ClusterTopologyWithoutReplicas(primary.Port))
-            .Replace(":0\r\n:16383", ":8192\r\n:16383"));
+        reply = staleFullSnapshot
+            ? ClusterTopologyWithoutReplicas(replica.Port)
+            : Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ClusterTopologyWithoutReplicas(primary.Port))
+                .Replace(":0\r\n:16383", ":8192\r\n:16383"));
         // Keep this regression focused on the replica's partial reply; concurrent primary
         // discovery must not win with its original full snapshot before that reply arrives.
         primary.SuppressReply = command => command == "CLUSTER SLOTS";
@@ -442,6 +490,8 @@ public class ClusterTests
         await Assert.That(client.Core.Cluster.GetKnownSlotOwner(0)).IsSameReferenceAs(lowOwner);
         await Assert.That(ReplicaRoutes(client)[0]).IsSameReferenceAs(lowReplicas);
         await Assert.That(lowOwner!.IsRetired).IsFalse();
+        var lowKey = Enumerable.Range(0, 100).Select(i => $"key:{i}").First(value => ClusterHash.GetSlot(value) < 8192);
+        await Assert.That(await reads.Strings.GetStringAsync(lowKey)).IsEqualTo("value");
     }
 
     [Test]

@@ -7,8 +7,7 @@ on:
       - 'src/Respire/Networking/**'
       - 'src/Respire/Infrastructure/RespireConnectionMultiplexer.cs'
       - 'src/Respire/RespireClient.cs'
-      - 'src/Respire/Internal/ClusterRouter.cs'
-      - 'src/Respire/Internal/ClusterRouter.ReadRouting.cs'
+      - 'src/Respire/Internal/Cluster*.cs'
       - 'benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs'
       - '.github/workflows/benchmark-transport.yml'
 

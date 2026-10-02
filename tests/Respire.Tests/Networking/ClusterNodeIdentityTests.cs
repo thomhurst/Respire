@@ -276,7 +276,8 @@ public class ClusterNodeIdentityTests
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(600),
             MaintenanceWindowTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
-            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            // Connection setup is outside the maintenance deadline under test.
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };

@@ -116,15 +116,13 @@ internal sealed partial class ClusterRouter
     private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
         ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        var nodes = routes.Nodes;
-        var start = routes.NextStart();
+        var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
         Exception? lastError = null;
-        for (var offset = 0; offset < nodes.Length; offset++)
+        cancellationToken.ThrowIfCancellationRequested();
+        while (candidates.TryNext(out var node))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var node = nodes[(start + offset) % nodes.Length];
-            if (node.IsRetired) continue;
             attempted++;
             try
             {
@@ -260,7 +258,11 @@ internal sealed partial class ClusterRouter
             (List<ClusterTopologyRange> Ranges, long Version, long Generation)? candidate;
             lock (_gate) candidate = _empty;
             if (candidate is not { } snapshot) return false;
-            router.ApplyTopologyCore(snapshot.Ranges, snapshot.Version, snapshot.Generation,
+            // Only this slot exhausted its candidates. An empty fallback is not evidence
+            // that unrelated shards lost their replicas or changed their primary.
+            var ranges = snapshot.Ranges.Where(range => range.Start <= slot && slot <= range.End)
+                .Select(range => range with { Start = slot, End = slot }).ToList();
+            router.ApplyTopologyCore(ranges, snapshot.Version, snapshot.Generation,
                 keepUncoveredOwners: true, snapshotBatch: SnapshotBatch);
             return true;
         }
