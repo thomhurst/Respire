@@ -149,7 +149,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
         => !pool.IsStopping && ReferenceEquals(pool, DedicatedPool)
-            && (Sentinel is not null || _multiplexer.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port));
+            && Multiplexer.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port);
 
     internal sealed class CorrectionLease(ClientCore owner, DedicatedConnectionPool pool) : IAsyncDisposable
     {

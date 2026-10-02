@@ -3604,7 +3604,8 @@ public sealed partial class RespireClient : IRespireClient
                             response = await (sendAsking
                                 ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
                                     operation, commandDeadline, allowStreamingConnectionReroute: false,
-                                    validateStreamingRoute: () => !pool.IsStopping)
+                                    validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
+                                        slot, routeVersion, connection, asking: true))
                                 : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
                                     commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
                                     validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
@@ -3704,12 +3705,18 @@ public sealed partial class RespireClient : IRespireClient
                         if (!returned) pool.Return(connection);
                     }
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                    if (sendAsking && askRedirect is not null && askingSource is not null)
+                    if (sendAsking && askRedirect is not null && askingSource is not null
+                        && cluster.CaptureSlotVersion(slot) == routeVersion)
                         pool = await cluster.GetRedirectDedicatedPoolAsync(
                             askRedirect, askingSource, acquisitionToken, slot, discovery).ConfigureAwait(false);
                     else
+                    {
+                        sendAsking = false;
+                        askRedirect = null;
+                        askingSource = null;
                         (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
                             slot, acquisitionToken, discovery).ConfigureAwait(false);
+                    }
                     continue;
                 }
                 catch (Exception ex)

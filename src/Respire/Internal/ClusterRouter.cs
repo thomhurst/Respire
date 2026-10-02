@@ -18,6 +18,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly ClusterNodeIdentityIndex _identities;
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
+    private readonly Dictionary<RespireConnectionMultiplexer, Action> _dedicatedMovingHandlers = [];
     private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
@@ -752,16 +753,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return (pool, slotVersion);
     }
 
-    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection)
+    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection, bool asking = false)
     {
         if (slot is not { } value) return true;
         lock (_nodesGate)
         {
             if (_slotVersions[value] != slotVersion) return false;
+            if (asking) return true;
             // Read the version and owner together; a half-published route must not validate.
             // With no discovered owner, the selected seed is still eligible. Learning an owner
             // changes the slot version, so that publication invalidates this provisional route.
-            return _slots[value] is not { } owner || IsSameEndpoint(owner, connection);
+            return _slots[value] is not { } owner
+                || owner.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port);
         }
     }
 
@@ -2063,27 +2066,50 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         => GetOrCreateDedicatedPool(GetOrCreateNode(endpoint, observe: false));
 
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireConnectionMultiplexer node)
+        => RefreshDedicatedPool(node)!;
+
+    private DedicatedConnectionPool? RefreshDedicatedPool(RespireConnectionMultiplexer node, bool fromNotification = false)
     {
+        DedicatedConnectionPool? previous;
+        DedicatedConnectionPool pool;
         lock (_nodesGate)
         {
+            if (fromNotification && (_disposed != 0 || node.IsRetired || !_dedicatedPools.ContainsKey(node))) return null;
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_dedicatedPools.TryGetValue(node, out var existing))
+            if (node.IsRetired || _retiringNodes.ContainsKey(node))
+                throw new RespireConnectionRetiredException(node.Host, node.Port);
+            var endpoint = node.ActiveConnectionEndpoint;
+            if (_dedicatedPools.TryGetValue(node, out previous) && previous.Endpoint == endpoint) return previous;
+            if (!_dedicatedMovingHandlers.ContainsKey(node))
             {
-                return existing;
+                Action handler = () => RefreshDedicatedPool(node, fromNotification: true);
+                _dedicatedMovingHandlers.Add(node, handler);
+                node.MovingHandoffPublished += handler;
             }
-
-            // Dedicated pools disable tracking. Streaming leases enable maintenance notifications;
-            // ordinary leases disable them. Replica pools add Cluster READONLY mode.
-            var pool = new DedicatedConnectionPool(
-                node.Host,
-                node.Port,
+            DedicatedConnectionPool? created = null;
+            created = new DedicatedConnectionPool(
+                endpoint.Host,
+                endpoint.Port,
                 _options.ToConnectionOptions(enableMaintenanceNotifications: true) with { ReadOnly = node.Options.ReadOnly },
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
-                change => DedicatedStateChanged?.Invoke(change));
-            _dedicatedPools.Add(node, pool);
+                change => DedicatedStateChanged?.Invoke(change),
+                connection =>
+                {
+                    void OnMoving(MovingAnnouncement announcement)
+                        => node.QueueDedicatedMovingHandoff(connection, announcement, () =>
+                        {
+                            lock (_nodesGate) return _disposed == 0 && !node.IsRetired
+                                && _dedicatedPools.TryGetValue(node, out var current) && ReferenceEquals(current, created);
+                        });
+                    connection.MovingNotification += OnMoving;
+                    if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
+                });
+            pool = created;
+            _dedicatedPools[node] = pool;
             _ownedPools.Add(pool);
-            return pool;
         }
+        if (previous is not null) _ = RetirePoolAsync(previous);
+        return pool;
     }
 
     // CLUSTER SLOTS node entry: [host, port, id?, metadata?]. Metadata supplies host names
@@ -2324,6 +2350,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _nodeMaintenanceHandlers.Clear();
             _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
+            foreach (var (node, handler) in _dedicatedMovingHandlers) node.MovingHandoffPublished -= handler;
+            _dedicatedMovingHandlers.Clear();
             _correctionPools.Clear();
             _migrations.ClearDeferred();
         }

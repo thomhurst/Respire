@@ -50,7 +50,7 @@ Both lease kinds share the four-connection idle limit. Either kind can use all f
 the other kind has no idle connections. When the pool is full, a returning lease can reclaim
 up to half the slots from the other kind, so neither kind continually reconnects under mixed demand.
 
-After a standalone `MOVING` handoff publishes a replacement endpoint, new uploads use a new pool
+After a standalone, Cluster, or Sentinel `MOVING` handoff publishes a replacement endpoint, new uploads use a new pool
 for that endpoint. The old pool stops accepting rentals and drains uploads already in progress.
 
 With Sentinel, an upload already assigned to a primary drains through its original connection

@@ -20,6 +20,7 @@ internal sealed partial class DedicatedConnectionPool(
     Action<RespireConnection>? streamingConnectionCreated = null) : IAsyncDisposable
 {
     private const int MaxIdle = 4;
+    internal RespireEndpoint Endpoint => new(host, port);
 
     // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
     // back into the router or invoke user callbacks while holding this gate.

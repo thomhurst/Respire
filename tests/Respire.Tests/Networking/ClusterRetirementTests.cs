@@ -1864,6 +1864,62 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AskUploadRevalidatesSlotAfterSourceReadAndAsking(bool changeDuringRead)
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var oldTarget = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => !changeDuringRead && command == "ASKING",
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SET ")
+                ? System.Text.Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{oldTarget.Port}\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
+        // Keep the ASK target alive after this upload's slot changes.
+        router.SetSlotOwner((slot + 1) % 16384, oldNode);
+        var next = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
+        using var timeout = new CancellationTokenSource(Limit);
+        using var source = new ReplayReadStream(() =>
+        {
+            if (changeDuringRead) router.SetSlotOwner(slot, next);
+        });
+        var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+        if (!changeDuringRead)
+        {
+            while (!oldTarget.ReceivedCommands.Contains("ASKING"))
+            {
+                if (upload.IsCompleted) await upload;
+                await Task.Delay(5, timeout.Token);
+            }
+            router.SetSlotOwner(slot, next);
+            await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
+        }
+        await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
+        await Assert.That(oldNode.IsRetired).IsFalse();
+        await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key payload");
+    }
+
+    private sealed class ReplayReadStream(Action onReplay) : MemoryStream("payload"u8.ToArray())
+    {
+        private int _reads;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (++_reads == 2) onReplay();
+            return base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Test]
     public async Task StreamedSetRetiredDuringFirstChunkResendsWholePayloadOnReplacement()
     {
         // Larger than one chunk, so the retry must replay the restored first chunk and then keep

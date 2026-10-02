@@ -248,7 +248,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private async Task DrainAsync(Generation generation)
     {
         var connectionsDrained = generation.StopConnections();
-        var poolDrain = generation.Pool.RetireAsync().AsTask();
+        var poolDrain = generation.RetirePoolsAsync();
         try
         {
             try { await generation.Multiplexer.RetireAsync().ConfigureAwait(false); }
@@ -355,12 +355,19 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal sealed class Generation : IConnectionGeneration, IAsyncDisposable
     {
         private readonly SentinelRouter _owner;
+        private readonly ClientCore _core;
         private readonly object _connectionsGate = new();
+        private readonly object _poolsGate = new();
+        private readonly HashSet<DedicatedConnectionPool> _pools = [];
+        private DedicatedConnectionPool _pool;
         private readonly HashSet<RespireConnection> _connections = [];
         private int _retired;
         internal readonly RespireEndpoint Endpoint;
         internal readonly RespireConnectionMultiplexer Multiplexer;
-        internal readonly DedicatedConnectionPool Pool;
+        internal DedicatedConnectionPool Pool
+        {
+            get { RefreshPool(); return Volatile.Read(ref _pool); }
+        }
         internal readonly RespireConnectionOptions ConnectionOptions;
         internal Task Retirement = Task.CompletedTask;
         internal bool CountedAsRetired; // Accessed only under the router gate.
@@ -368,6 +375,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         internal Generation(SentinelRouter owner, ClientCore core, RespireOptions options)
         {
             _owner = owner;
+            _core = core;
             Endpoint = options.PrimaryEndpoint;
             ConnectionOptions = options.ToConnectionOptions(enableMaintenanceNotifications: true) with { Generation = this };
             var clientCache = core.ClientCache;
@@ -380,7 +388,61 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
             };
             Multiplexer = RespireConnectionMultiplexer.Create(Endpoint.Host, Endpoint.Port, options.Connections, commandOptions, core.Logger);
-            Pool = new(Endpoint.Host, Endpoint.Port, ConnectionOptions, core.Logger, core.NotifyRecoveryStateChanged);
+            _pool = CreatePool(Endpoint);
+            _pools.Add(_pool);
+            Multiplexer.MovingHandoffPublished += RefreshPool;
+        }
+
+        private DedicatedConnectionPool CreatePool(RespireEndpoint endpoint)
+        {
+            DedicatedConnectionPool? pool = null;
+            pool = new(endpoint.Host, endpoint.Port, ConnectionOptions, _core.Logger, _core.NotifyRecoveryStateChanged,
+                connection =>
+                {
+                    void OnMoving(MovingAnnouncement announcement)
+                        => Multiplexer.QueueDedicatedMovingHandoff(connection, announcement,
+                            () => !IsRetired && ReferenceEquals(pool, Volatile.Read(ref _pool)) && !pool!.IsStopping);
+                    connection.MovingNotification += OnMoving;
+                    if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
+                });
+            return pool;
+        }
+
+        private void RefreshPool()
+        {
+            DedicatedConnectionPool previous;
+            lock (_poolsGate)
+            {
+                if (IsRetired) return;
+                var endpoint = Multiplexer.ActiveConnectionEndpoint;
+                if (_pool.Endpoint == endpoint) return;
+                previous = _pool;
+                var next = CreatePool(endpoint);
+                _pools.Add(next);
+                Volatile.Write(ref _pool, next);
+            }
+            _ = DrainMovedPoolAsync(previous);
+        }
+
+        private async Task DrainMovedPoolAsync(DedicatedConnectionPool pool)
+        {
+            try
+            {
+                await pool.RetireAsync().ConfigureAwait(false);
+                lock (_poolsGate) _pools.Remove(pool);
+            }
+            catch (Exception error)
+            {
+                try { _core.Logger?.LogWarning(error, "Sentinel upload pool cleanup after MOVING failed"); }
+                catch { /* Keep failed cleanup owned even if logging fails. */ }
+            }
+        }
+
+        internal Task RetirePoolsAsync()
+        {
+            DedicatedConnectionPool[] pools;
+            lock (_poolsGate) pools = _pools.ToArray();
+            return Task.WhenAll(pools.Select(pool => pool.RetireAsync().AsTask()));
         }
 
         public bool IsRetired => Volatile.Read(ref _retired) != 0;
@@ -472,10 +534,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         public async ValueTask DisposeAsync()
         {
             TryRetire();
+            Multiplexer.MovingHandoffPublished -= RefreshPool;
             RespireConnection[] connections;
             lock (_connectionsGate) connections = _connections.ToArray();
+            DedicatedConnectionPool[] pools;
+            lock (_poolsGate) pools = _pools.ToArray();
             await Task.WhenAll(connections.Select(connection => connection.DisposeAsync().AsTask())
-                .Append(Pool.DisposeAsync().AsTask()).Append(Multiplexer.DisposeAsync().AsTask())).ConfigureAwait(false);
+                .Concat(pools.Select(pool => pool.DisposeAsync().AsTask()))
+                .Append(Multiplexer.DisposeAsync().AsTask())).ConfigureAwait(false);
         }
     }
 }
