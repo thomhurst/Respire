@@ -2,7 +2,7 @@ name: Semaphore benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire.Extensions.Coordination/**'
       - 'src/Respire/RespireClient.cs'

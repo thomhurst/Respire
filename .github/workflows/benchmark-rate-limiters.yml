@@ -2,7 +2,7 @@ name: Redis rate limiter benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire.Extensions.Coordination/**'
       - 'Directory.Packages.props'

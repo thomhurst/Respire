@@ -2,7 +2,7 @@ name: Partial hash read benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire/RespireClientSideCache*.cs'
       - 'src/Respire/RespireClient.HashCache.cs'

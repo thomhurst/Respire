@@ -2,7 +2,7 @@ name: Pub/sub dispatch benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
     paths:
       - 'src/Respire/PubSub/**'
       - 'benchmarks/Respire.Benchmarks/PubSubLookupBenchmarks.cs'
