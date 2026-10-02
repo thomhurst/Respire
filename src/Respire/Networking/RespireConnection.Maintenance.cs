@@ -89,16 +89,13 @@ internal sealed partial class RespireConnection
     {
         var status = Volatile.Read(ref _maintenanceStatus);
         if (status == MaintenanceInactive) return false;
-        // Stamp SMIGRATED as soon as the frame is known, before handler capture can block or
-        // Parse scans its (up to 16384) triplets. A later token could let a stale push overwrite
-        // an owner mutation made while capture or parsing runs. Capture handlers before parsing,
-        // while the sender is still active, so retirement after capture still delivers this push.
+        // Capture the handler set and slot-mutation fence atomically before parsing, which can
+        // scan up to 16384 triplets. A concurrent retirement cannot split these observations.
         MaintenanceNotificationHandler? migrationHandlers = null;
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
-            slotMutationToken = ClusterSlotMutationClock.Next();
-            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers();
+            migrationHandlers = Multiplexer?.CaptureMaintenanceHandlers(out slotMutationToken);
         }
         if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not

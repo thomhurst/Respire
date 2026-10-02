@@ -98,18 +98,21 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly object _maintenanceHandlersGate = new();
     private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
 
-    // Receive loop: the handlers for a push that arrived now, or null once this multiplexer is
-    // retired or disposed. The loop captures them before parsing, so a push that arrived while
-    // the sender was active is still delivered if a migration processed meanwhile on another
-    // connection retires the sender (and detaches the handlers) before parsing finishes.
-    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
+    // Receive loop: capture handler eligibility and its slot-mutation fence under the same gate
+    // used by subscription changes. Retirement cannot detach the handler between those reads.
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers(out long slotMutationToken)
     {
         lock (_maintenanceHandlersGate)
+        {
+            slotMutationToken = ClusterSlotMutationClock.Next();
             return IsRetired || Volatile.Read(ref _disposed) != 0 ? null : _maintenanceNotificationReceived;
+        }
     }
 
-    // handlers comes from CaptureMaintenanceHandlers. slotMutationToken comes from
-    // ClusterSlotMutationClock, read before handler capture can block.
+    internal MaintenanceNotificationHandler? CaptureMaintenanceHandlers()
+        => CaptureMaintenanceHandlers(out _);
+
+    // handlers and slotMutationToken come from CaptureMaintenanceHandlers.
     internal void PublishMaintenanceNotification(MaintenanceNotificationHandler? handlers,
         object sequenceScope, MaintenanceNotification notification, long slotMutationToken)
         => handlers?.Invoke(this, sequenceScope, notification, slotMutationToken);

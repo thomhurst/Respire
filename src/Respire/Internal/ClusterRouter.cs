@@ -1620,9 +1620,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
-        MaintenanceNotificationHandler maintenanceHandler = QueueSmigratedNotification;
-        _nodeMaintenanceHandlers.Add(node, maintenanceHandler);
-        node.MaintenanceNotificationReceived += maintenanceHandler;
+        if (!_nodeMaintenanceHandlers.ContainsKey(node))
+        {
+            MaintenanceNotificationHandler maintenanceHandler = QueueSmigratedNotification;
+            _nodeMaintenanceHandlers.Add(node, maintenanceHandler);
+            node.MaintenanceNotificationReceived += maintenanceHandler;
+        }
     }
 
     internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
@@ -1743,15 +1746,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _masterSlotCounts = contractedCounts;
         Volatile.Write(ref _masters, contracted);
 
-        // ASK-protected zero-slot transports remain live and may still publish topology
-        // notifications. DetachGenerationsLocked removes these handlers when protection ends.
-        if (!_redirectVersions.ContainsKey(node))
-        {
-            if (_nodeStateHandlers.Remove(node, out var handler))
-                node.SlotStateChanged -= handler;
-            if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
-                node.MaintenanceNotificationReceived -= maintenanceHandler;
-        }
+        // Zero-slot nodes no longer affect command health or routed slot state, so stale state
+        // callbacks must not invalidate the client cache. Keep maintenance handlers on redirect-
+        // protected nodes and configured seeds, which may still send useful SMIGRATED pushes.
+        if (_nodeStateHandlers.Remove(node, out var handler))
+            node.SlotStateChanged -= handler;
+        if (!_redirectVersions.ContainsKey(node)
+            && !_seeds.Any(seed => ClusterNodeIdentityIndex.EndpointsEqual(seed, Endpoint(node)))
+            && _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
+            node.MaintenanceNotificationReceived -= maintenanceHandler;
 
         return true;
     }

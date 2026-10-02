@@ -58,8 +58,6 @@ internal sealed partial class ClusterRouter
 
     // A migration that just moved Slots (sorted ascending) to Target.
     private readonly record struct AppliedSmigratedMove(RespireConnectionMultiplexer Target, int[] Slots);
-    private readonly record struct SmigratedDropWorkItem(
-        ClusterRouter Router, QueuedSmigratedNotification Notification);
 
     private readonly Channel<QueuedSmigratedNotification> _smigratedNotifications;
     private readonly Dictionary<RespireConnectionMultiplexer, MaintenanceNotificationHandler> _nodeMaintenanceHandlers = [];
@@ -75,6 +73,9 @@ internal sealed partial class ClusterRouter
     // DisposeAsync swaps in a completed task, after which no worker can start.
     private Task? _smigratedWorker;
     private long _smigratedNotificationsDropped;
+    private long _pendingSmigratedDropDiagnostics;
+    private int _smigratedDropDiagnosticsQueued;
+    private RespireConnectionMultiplexer? _lastSmigratedDropSender;
     private long _lastSmigratedDropWarning = long.MinValue;
     // Set only while the worker runs ApplySmigratedNotification and its callbacks. Being
     // thread-static, it does not flow into tasks a callback starts, so their disposal still
@@ -87,6 +88,8 @@ internal sealed partial class ClusterRouter
 
     internal long SmigratedNotificationsDropped => Interlocked.Read(ref _smigratedNotificationsDropped);
 
+    internal int SmigratedDropDiagnosticsQueued => Volatile.Read(ref _smigratedDropDiagnosticsQueued);
+
     internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     private Channel<QueuedSmigratedNotification> CreateSmigratedChannel()
@@ -98,19 +101,39 @@ internal sealed partial class ClusterRouter
             AllowSynchronousContinuations = false,
         }, OnSmigratedNotificationDropped);
 
-    // Runs on the receive loop that overflowed the queue. Only update the local count there;
+    // Runs on the receive loop that overflowed the queue. Only update counters there;
     // metric and logger callbacks can re-enter client disposal and must run off the receive loop.
+    // A single queued drain coalesces bursts, so slow diagnostics cannot build an unbounded
+    // thread-pool backlog or retain every dropped notification.
     private void OnSmigratedNotificationDropped(QueuedSmigratedNotification dropped)
     {
         Interlocked.Increment(ref _smigratedNotificationsDropped);
-        ThreadPool.UnsafeQueueUserWorkItem(
-            static work => work.Router.ReportSmigratedNotificationDrop(work.Notification),
-            new SmigratedDropWorkItem(this, dropped), preferLocal: false);
+        Interlocked.Increment(ref _pendingSmigratedDropDiagnostics);
+        Volatile.Write(ref _lastSmigratedDropSender, dropped.Sender);
+        if (Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0) return;
+        if (!ThreadPool.UnsafeQueueUserWorkItem(
+                static router => router.ReportPendingSmigratedDropDiagnostics(), this, preferLocal: false))
+            Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
     }
 
-    private void ReportSmigratedNotificationDrop(QueuedSmigratedNotification dropped)
+    private void ReportPendingSmigratedDropDiagnostics()
     {
-        RecordSmigratedSkipped("queue_full", dropped.Sender);
+        while (true)
+        {
+            var count = Interlocked.Exchange(ref _pendingSmigratedDropDiagnostics, 0);
+            if (count > 0 && Volatile.Read(ref _lastSmigratedDropSender) is { } sender)
+                ReportSmigratedNotificationDrop(count, sender);
+
+            Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
+            if (Interlocked.Read(ref _pendingSmigratedDropDiagnostics) == 0
+                || Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0)
+                return;
+        }
+    }
+
+    private void ReportSmigratedNotificationDrop(long count, RespireConnectionMultiplexer sender)
+    {
+        RecordSmigratedSkipped("queue_full", sender, count);
         if (_logger is null) return;
         var now = Environment.TickCount64;
         var last = Volatile.Read(ref _lastSmigratedDropWarning);
@@ -120,7 +143,7 @@ internal sealed partial class ClusterRouter
         {
             _logger.LogWarning(
                 "Cluster SMIGRATED queue is full; dropped the oldest notification (from {Host}:{Port}). {Dropped} dropped so far. MOVED handling and topology discovery will correct the affected slots.",
-                dropped.Sender.Host, dropped.Sender.Port, SmigratedNotificationsDropped);
+                sender.Host, sender.Port, SmigratedNotificationsDropped);
         }
         catch
         {
@@ -128,9 +151,8 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    // Called on the receive loop (queue drops) and by the worker under _nodesGate, where a
-    // throw would abandon a half-applied notification. Listener failures are therefore
-    // contained here, as the maintenance diagnostics path contains them.
+    // Called on diagnostic and migration workers, where a throw could abandon a half-applied
+    // notification. Listener failures are isolated as in the maintenance diagnostics path.
     private void RecordSmigratedSkipped(string reason, RespireConnectionMultiplexer sender, long count = 1)
     {
         try
