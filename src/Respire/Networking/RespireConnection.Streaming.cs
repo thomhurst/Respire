@@ -175,6 +175,14 @@ internal sealed partial class RespireConnection
                 : null;
             if (phase == StreamedSetPhase.ReadingFirstChunk
                 && translated is RespireConnectionRetiredException
+                && payloadReader?.HasPendingRead != true
+                && _closedCancellation.IsCancellationRequested)
+            {
+                translated = ClosedDuringStreamedSet(error as OperationCanceledException
+                    ?? new OperationCanceledException(error.Message, error));
+            }
+            if (phase == StreamedSetPhase.ReadingFirstChunk
+                && translated is RespireConnectionRetiredException
                 && payloadReader?.UnknownPositionReadError is { } unknownPositionError)
             {
                 failure = unknownPositionError;

@@ -754,8 +754,8 @@ public sealed class StreamedSetTests
                 Protocol = RespProtocol.Resp2,
                 CommandTimeout = timeout ? TimeSpan.FromMilliseconds(200) : null,
             });
-            // The source sees the linked token cancelled between its own reads and reports it with
-            // an exception that carries CancellationToken.None, which streams are allowed to do.
+            // The source sees the linked token cancelled during a read and may report it with an
+            // exception that carries CancellationToken.None, which streams are allowed to do.
             var source = new TokenlessCancellationStream();
             var command = new StreamedSetCommand((RespireValue)"tokenless", source, 4, default, SetWhen.Always);
             var set = Task.Run(async () =>
@@ -783,7 +783,8 @@ public sealed class StreamedSetTests
                     .Throws<RespireConnectionException>();
             }
 
-            await Assert.That(source.ThrewTokenless).IsTrue();
+            // WaitAsync may return before the background source read observes cancellation.
+            await source.TokenlessCancellationThrown.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
@@ -1698,6 +1699,7 @@ public sealed class StreamedSetTests
     {
         private int _reads;
         internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource TokenlessCancellationThrown { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool ThrewTokenless { get; private set; }
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -1717,6 +1719,7 @@ public sealed class StreamedSetTests
 
             if (!cancellationToken.IsCancellationRequested) throw new InvalidOperationException("Token was not cancelled.");
             ThrewTokenless = true;
+            TokenlessCancellationThrown.TrySetResult();
             return ValueTask.FromException<int>(new OperationCanceledException("Source observed cancellation."));
         }
 
