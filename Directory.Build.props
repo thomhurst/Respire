@@ -29,6 +29,7 @@
       Respire.Extensions.DependencyInjection;
       Respire.Extensions.Json;
       Respire.Extensions.Probabilistic;
+      Respire.Extensions.Search;
       Respire.Extensions.TimeSeries;
       Respire.Testing;
       Respire.Testing.Containers;
