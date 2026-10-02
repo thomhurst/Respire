@@ -190,7 +190,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompletePayload(Exception? exception)
     {
-        var completionError = exception ?? Volatile.Read(ref _payloadAbortError);
+        // The abort reason explains why the socket stopped. A subsequent read may surface
+        // SocketException or cancellation from that same abort; do not let it mask the cause.
+        var completionError = Volatile.Read(ref _payloadAbortError) ?? exception;
         Volatile.Read(ref _payload)?.Complete(completionError);
         DisposeStreamCancellationRegistration();
         _onFrameCompleted?.Invoke(
