@@ -9,11 +9,10 @@ description: Register lazy Respire clients in ASP.NET Core and worker services.
 
 ## Register a default client
 
-Add project references while Respire remains pre-release:
+Install [Respire.Extensions.DependencyInjection from NuGet](https://www.nuget.org/packages/Respire.Extensions.DependencyInjection), including prerelease versions. The package also brings in `Respire` as a dependency:
 
 ```bash
-dotnet add reference path/to/Respire/src/Respire/Respire.csproj
-dotnet add reference path/to/Respire/src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj
+dotnet add package Respire.Extensions.DependencyInjection --prerelease
 ```
 
 Register a connection string:
