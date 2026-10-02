@@ -14,6 +14,52 @@ namespace Respire.Tests.Networking;
 
 public class SentinelRoutingTests
 {
+    [Test]
+    public async Task DeliveryGapCanDiscoverPromotionWhenConfigurationCommandIsDenied()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        Volatile.Write(ref port, promoted.Port);
+        var router = client.Core.Sentinel!;
+        router.QueueNotificationRediscovery(new SentinelHint("gap-acl", MustRediscover: true,
+            ReportingSentinel: new("127.0.0.1", sentinel.Port)));
+        await WaitForEndpointAsync(client, promoted.Port);
+        await Assert.That(promoted.ReceivedCommands.Contains("ROLE")).IsTrue();
+    }
+
+    [Test]
+    public async Task FailedNewerConfigurationCannotFallBackToOlderEpoch()
+    {
+        const int originalPort = 7001, promotedPort = 7002;
+        await using var first = Sentinel(() => promotedPort, () => 6);
+        await using var second = Sentinel(() => originalPort, () => 5);
+        var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
+        var state = new SentinelDiscoveryState(endpoints);
+        state.AcceptConfiguration(new("127.0.0.1", originalPort), 5);
+        var options = Options(first.Port) with { Endpoints = [.. endpoints] };
+        var candidates = new List<int>();
+        await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options,
+            (candidate, _) =>
+            {
+                candidates.Add(candidate.PrimaryEndpoint.Port);
+                if (candidate.PrimaryEndpoint.Port == promotedPort) throw new RespireConnectionException("Transient promotion failure");
+                return ValueTask.FromResult(candidate.PrimaryEndpoint.Port);
+            }, CancellationToken.None, state, notificationHint: new SentinelHint("gap", MustRediscover: true)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(candidates).IsEquivalentTo([promotedPort]);
+        // A later attempt may confirm the observed generation once its transport recovers.
+        var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+        await Assert.That(recovered).IsEqualTo(promotedPort);
+    }
+
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
@@ -248,7 +294,9 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    public async Task SwitchRetryRejectsOriginalPrimaryAfterTransientTargetFailure()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SwitchRetryRejectsOriginalPrimaryAfterTransientTargetFailure(bool denyEpoch)
     {
         await using var original = Primary();
         var targetReady = false;
@@ -256,6 +304,12 @@ public class SentinelRoutingTests
             ? "*0\r\n"u8.ToArray() : null);
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        if (denyEpoch)
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+        }
         var retryDelay = TimeSpan.FromSeconds(1);
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {

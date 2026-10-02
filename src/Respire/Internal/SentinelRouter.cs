@@ -730,15 +730,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         if (current is not { IsRetired: false }) return false;
         if (hint.OldPrimary is { } oldPrimary && IsCurrentPeer(current, oldPrimary, hint.OldPrimaryAddresses)) return true;
-        if (hint.AdditionalOldPrimaries is { } additional)
+        if (hint.AdditionalSources is { } additional)
         {
-            for (var i = 0; i < additional.Length; i++)
-            {
-                var addresses = hint.AdditionalOldPrimaryAddresses is { } allAddresses && i < allAddresses.Length
-                    ? allAddresses[i]
-                    : null;
-                if (IsCurrentPeer(current, additional[i], addresses)) return true;
-            }
+            foreach (var source in additional)
+                if (IsCurrentPeer(current, source.Endpoint, source.Addresses)) return true;
         }
         return false;
     }

@@ -166,9 +166,8 @@ internal static class SentinelResolver
                 var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
                     && !RespireEndpointComparer.Instance.Equals(target, primary)
                     && !discoveryState.IsNewerConfiguration(observation.Epoch);
-                var requireEpoch = notificationHint is not null
-                    && (preferredTarget is not { } announced || !RespireEndpointComparer.Instance.Equals(primary, announced));
-                if (contradictsSwitch || !discoveryState.IsCurrentConfiguration(primary, observation.Epoch, requireEpoch))
+                if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
+                if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch))
                 {
                     // A rejected view consumes the same fallback budget as a failed ROLE check.
                     throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
@@ -398,10 +397,9 @@ internal static class SentinelResolver
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)
     {
         if (hint.OldPrimary is { } first && Matches(first, hint.OldPrimaryAddresses)) return true;
-        if (hint.AdditionalOldPrimaries is { } additional)
-            for (var index = 0; index < additional.Length; index++)
-                if (Matches(additional[index], hint.AdditionalOldPrimaryAddresses is { } addresses && index < addresses.Length
-                    ? addresses[index] : null)) return true;
+        if (hint.AdditionalSources is { } additional)
+            foreach (var source in additional)
+                if (Matches(source.Endpoint, source.Addresses)) return true;
         return false;
 
         bool Matches(RespireEndpoint source, string[]? addresses)
@@ -480,33 +478,62 @@ internal sealed class SentinelDiscoveryState
     private readonly List<RespireEndpoint> _endpoints = [];
     private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
     private readonly int _configuredCount;
-    private RespireEndpoint? _acceptedPrimary;
     private long? _acceptedEpoch;
+    private RespireEndpoint? _observedPrimary;
+    private long? _observedEpoch;
+    private int _missingEpochWarning;
 
     internal bool IsNewerConfiguration(long? epoch)
     {
         lock (_gate) return epoch is { } candidate && _acceptedEpoch is { } accepted && candidate > accepted;
     }
 
-    internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch, bool requireEpoch = false)
+    internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch)
+    {
+        lock (_gate) return IsCurrentConfigurationLocked(primary, epoch);
+    }
+
+    private bool IsCurrentConfigurationLocked(RespireEndpoint primary, long? epoch)
+    {
+        // Servers that never expose epochs retain ROLE/switch-evidence discovery. Once an
+        // epoch is observed, a missing epoch cannot erase that ordering evidence.
+        if (_observedEpoch is not { } observed) return true;
+        if (epoch is { } candidate && candidate > observed) return true;
+        return (epoch is null || epoch == observed) && _observedPrimary is { } current
+            && EndpointComparer.Instance.Equals(primary, current);
+    }
+
+    internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch)
     {
         lock (_gate)
         {
-            if (_acceptedEpoch is not { } accepted)
-                return !requireEpoch || epoch is not null || _acceptedPrimary is not { } known
-                    || EndpointComparer.Instance.Equals(primary, known);
-            if (epoch is { } candidate && candidate > accepted) return true;
-            return (epoch is null || epoch == accepted) && _acceptedPrimary is { } current
-                && EndpointComparer.Instance.Equals(primary, current);
+            if (!IsCurrentConfigurationLocked(primary, epoch)) return false;
+            if (epoch is { } candidate && (_observedEpoch is null || candidate > _observedEpoch))
+            {
+                _observedEpoch = candidate;
+                _observedPrimary = primary;
+            }
+            return true;
         }
+    }
+
+    internal void WarnMissingEpoch(ILogger? logger, RespireEndpoint sentinel)
+    {
+        if (logger is null || Interlocked.Exchange(ref _missingEpochWarning, 1) != 0) return;
+        try
+        {
+            logger.LogWarning("Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.", sentinel);
+        }
+        catch { /* Diagnostic providers must not prevent failover. */ }
     }
 
     internal void AcceptConfiguration(RespireEndpoint primary, long? epoch)
     {
         lock (_gate)
         {
-            _acceptedPrimary = primary;
-            if (epoch is not null) _acceptedEpoch = epoch;
+            if (!TryObserveConfiguration(primary, epoch))
+                throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
+            _acceptedEpoch = epoch ?? _observedEpoch;
         }
     }
 
