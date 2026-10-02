@@ -869,7 +869,7 @@ public sealed class StreamedSetTests
     [Arguments(true)]
     public async Task AbortDoesNotRunSourceCancellationCallbacksInline(bool blockCallback)
     {
-        var server = new CountingSetServer();
+        CountingSetServer? server = new();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp2,
@@ -877,17 +877,23 @@ public sealed class StreamedSetTests
         var source = new CancellationCallbackStream(blockCallback);
         var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, SetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
-        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        await server.DisposeAsync();
-        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
-            .Throws<RespireConnectionException>();
-        await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(connection.IsConnected).IsFalse();
-
-        source.ReleaseCallback.TrySetResult();
+        try
+        {
+            await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.DisposeAsync();
+            server = null;
+            await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
+                .Throws<RespireConnectionException>();
+            await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.IsConnected).IsFalse();
+        }
+        finally
+        {
+            source.ReleaseCallback.TrySetResult();
+            if (server is not null) await server.DisposeAsync();
+            await source.DisposeAsync();
+        }
         await source.CallbackCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await source.DisposeAsync();
     }
 
     [Test]
@@ -1120,6 +1126,64 @@ public sealed class StreamedSetTests
         await command.SourceStream!.ReadExactlyAsync(replayed);
         await Assert.That(replayed).IsEquivalentTo(payload);
         await Assert.That(peer.Available).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementSettlesWholeFirstFillBeforeRestoringPrefix(bool synchronousRead)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
+        var generation = new TestConnectionGeneration();
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
+            {
+                Protocol = RespProtocol.Resp2, CommandTimeout = null, Generation = generation,
+            });
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        using var source = new GatedFirstReadStream(synchronousRead);
+        var command = new StreamedSetCommand("retry", source, 4, default, SetWhen.Always);
+        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            generation.IsRetired = true;
+            _ = connection.RetireAsync();
+            await connection.DisposeAsync();
+            await Task.Delay(50);
+            await Assert.That(send.IsCompleted).IsFalse();
+        }
+        finally { source.Release.TrySetResult(); }
+        await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionRetiredException>();
+
+        var replay = new byte[4];
+        await command.SourceStream!.ReadExactlyAsync(replay);
+        await Assert.That(replay).IsEquivalentTo(new byte[] { 1, 2, 3, 4 });
+        await Assert.That(peer.Available).IsEqualTo(0);
+    }
+
+    private sealed class GatedFirstReadStream(bool synchronousRead) : MemoryStream(new byte[] { 1, 2, 3, 4 })
+    {
+        private bool _first = true;
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (!_first) return base.ReadAsync(buffer, cancellationToken);
+            _first = false;
+            Entered.TrySetResult();
+            if (!synchronousRead) return ReadAfterReleaseAsync(buffer);
+            Release.Task.GetAwaiter().GetResult();
+            return base.ReadAsync(buffer[..2], CancellationToken.None);
+        }
+        private async ValueTask<int> ReadAfterReleaseAsync(Memory<byte> buffer)
+        {
+            await Release.Task;
+            return await base.ReadAsync(buffer[..2], CancellationToken.None);
+        }
     }
 
     [Test]
@@ -1693,8 +1757,8 @@ public sealed class StreamedSetTests
         public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
     }
 
-    // First read waits (blocking) until its token is cancelled and still returns a byte; the next
-    // read reports the cancellation with a token-less exception.
+    // The read waits (blocking) until its token is cancelled, then reports cancellation without
+    // including that token. No second source call is needed after cancellation.
     private sealed class TokenlessCancellationStream : Stream
     {
         private int _reads;
@@ -1713,8 +1777,6 @@ public sealed class StreamedSetTests
             {
                 ReadStarted.TrySetResult();
                 SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested, TimeSpan.FromSeconds(5));
-                buffer.Span[0] = 1;
-                return ValueTask.FromResult(1);
             }
 
             if (!cancellationToken.IsCancellationRequested) throw new InvalidOperationException("Token was not cancelled.");

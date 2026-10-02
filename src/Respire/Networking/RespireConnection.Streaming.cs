@@ -101,6 +101,7 @@ internal sealed partial class RespireConnection
         var ownsWritePath = false;
         StreamPayloadReader? payloadReader = null;
         ReadOnlyMemory<byte> firstChunk = default;
+        Task<ReadOnlyMemory<byte>>? firstChunkRead = null;
         try
         {
             // Respect the credential-renewal fence like ordinary commands: AUTH must be admitted
@@ -127,7 +128,7 @@ internal sealed partial class RespireConnection
                 // after the frame is open on the wire, have to abort it.
                 payloadReader = new StreamPayloadReader(stream, command.Length, _streamPayloadPool);
                 phase = StreamedSetPhase.ReadingFirstChunk;
-                var firstChunkRead = StartStreamChunkRead(payloadReader, effectiveCancellation);
+                firstChunkRead = payloadReader.StartRead(effectiveCancellation);
                 try
                 {
                     firstChunk = await firstChunkRead.WaitAsync(effectiveCancellation).ConfigureAwait(false);
@@ -175,44 +176,34 @@ internal sealed partial class RespireConnection
                 : null;
             if (phase == StreamedSetPhase.ReadingFirstChunk
                 && translated is RespireConnectionRetiredException
-                && payloadReader?.HasPendingRead != true
-                && _closedCancellation.IsCancellationRequested)
-            {
-                translated = ClosedDuringStreamedSet(error as OperationCanceledException
-                    ?? new OperationCanceledException(error.Message, error));
-            }
-            if (phase == StreamedSetPhase.ReadingFirstChunk
-                && translated is RespireConnectionRetiredException
-                && payloadReader?.UnknownPositionReadError is { } unknownPositionError)
-            {
-                failure = unknownPositionError;
-                translated = unknownPositionError is OperationCanceledException unknownPositionCancellation
-                    ? ClosedDuringStreamedSet(unknownPositionCancellation)
-                    : unknownPositionError;
-            }
-            if (phase == StreamedSetPhase.ReadingFirstChunk
-                && translated is RespireConnectionRetiredException
-                && payloadReader?.HasPendingRead == true
+                && firstChunkRead is not null
                 && !cancellationToken.IsCancellationRequested
                 && timeoutCancellation?.IsCancellationRequested != true)
             {
-                // A non-cooperative source can keep consuming after WaitAsync observes retirement.
-                // Wait for that read, then snapshot its bytes before the cluster retry reads again.
+                // Retirement may cancel the outer wait while any part of the fill still consumes
+                // the source. Settle the whole fill before reading its state or replaying its prefix.
                 using var retryReadCancellation = timeoutCancellation is null
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
                 try
                 {
-                    var retryReadError = await payloadReader.CompletePendingReadForRetryAsync(retryReadCancellation.Token)
-                        .ConfigureAwait(false);
-                    if (retryReadError is not null)
+                    Exception? fillError = null;
+                    try { firstChunk = await firstChunkRead.WaitAsync(retryReadCancellation.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (retryReadCancellation.IsCancellationRequested) { throw; }
+                    catch (Exception readError) { fillError = readError; }
+
+                    // Awaiting the task publishes the prefix and error. A canceled source operation
+                    // has an unknown byte count; cancellation between successful reads is retryable.
+                    if (payloadReader!.UnknownPositionReadError is { } unknownPositionError)
                     {
-                        // A failed read has unknown source position. Surface its failure so
-                        // routing cannot replay an incomplete or shifted payload.
-                        failure = retryReadError;
-                        translated = retryReadError is OperationCanceledException readCancellation
-                            ? ClosedDuringStreamedSet(readCancellation)
-                            : retryReadError;
+                        failure = unknownPositionError;
+                        translated = unknownPositionError is OperationCanceledException unknownCancellation
+                            ? ClosedDuringStreamedSet(unknownCancellation) : unknownPositionError;
+                    }
+                    else if (fillError is not null and not OperationCanceledException)
+                    {
+                        failure = fillError;
+                        translated = fillError;
                     }
                     else
                     {
@@ -450,7 +441,7 @@ internal sealed partial class RespireConnection
 
             // AppendStreamingBytes copies the chunk into the connection buffer, so the reader can
             // reuse its single pooled chunk while the socket drains that copy.
-            var nextChunk = StartStreamChunkRead(reader, cancellationToken);
+            var nextChunk = reader.StartRead(cancellationToken);
             try
             {
                 await write.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -463,11 +454,6 @@ internal sealed partial class RespireConnection
             }
         }
     }
-
-    private static Task<ReadOnlyMemory<byte>> StartStreamChunkRead(
-        StreamPayloadReader reader, CancellationToken cancellationToken)
-        => Task.Run(async () => await reader.ReadChunkAsync(cancellationToken).ConfigureAwait(false),
-            CancellationToken.None);
 
     private static void ObserveStreamReadFailure(Task read)
         => _ = read.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
