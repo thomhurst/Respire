@@ -1023,7 +1023,10 @@ public sealed class StreamedSetTests
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
         await Assert.That(connection.IsConnected).IsTrue();
-        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING");
+        // This PING only verifies the untouched connection. Its wait must not inherit
+        // the deliberately tiny deadline used to reject the blocked source read.
+        using var ping = await connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING",
+            commandDeadline: CommandDeadline.After(5_000));
         await Assert.That(server.Commands).IsEquivalentTo(new[] { "PING" });
     }
 
