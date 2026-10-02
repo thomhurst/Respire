@@ -864,6 +864,8 @@ public class ClientSideCacheCoordinatorTests
 
     private readonly struct MultiKeyCacheCommand(RespireValue[] arguments) : IRespCommand
     {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) { }
 
         public RespireCacheMutation GetCacheMutation(string operation) => RespireCacheMutation.MultiKey;

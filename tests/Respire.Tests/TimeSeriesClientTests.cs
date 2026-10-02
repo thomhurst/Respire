@@ -451,6 +451,26 @@ public class TimeSeriesClientTests
     }
 
     [Test]
+    public async Task MultiAdd_SnapshotsMutableSamplesBeforeSendingChunks()
+    {
+        await using var server = new FakeRespServer(Frame("*1\r\n:1\r\n"));
+        server.DelayReply(0, 250);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var samples = new List<RespireTimeSeriesWrite> { new("first", 1, 1), new("second", 2, 2) };
+
+        var write = timeSeries.MultiAddAsync(samples, maxBatchSize: 1).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+            await Task.Delay(10, timeout.Token);
+        samples[1] = new RespireTimeSeriesWrite("replacement", 99, 99);
+
+        await write;
+
+        await Assert.That(Sent(server)).IsEqualTo("TS.MADD first 1 1 | TS.MADD second 2 2");
+    }
+
+    [Test]
     public async Task IncrementAndDecrement_SendTimestampAndCreationOptions()
     {
         await using var server = new FakeRespServer(Frame(":5\r\n"), Frame(":6\r\n"), Frame(":7\r\n"));

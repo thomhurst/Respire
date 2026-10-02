@@ -90,19 +90,25 @@ public sealed class RespireTimeSeriesClient
         if (samples.Count == 0) throw new ArgumentException("At least one sample is required.", nameof(samples));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
         // Validate and normalize every timestamp first, so invalid input never leaves earlier chunks written.
-        var validatedTimestamps = new string[samples.Count];
-        for (var index = 0; index < samples.Count; index++)
-            validatedTimestamps[index] = samples[index].Timestamp.RequireWrite(nameof(samples));
-
-        var timestamps = new long[samples.Count];
-        string?[]? errors = null;
-        for (var start = 0; start < samples.Count;)
+        var sampleCount = samples.Count;
+        var stableSamples = new RespireTimeSeriesWrite[sampleCount];
+        var validatedTimestamps = new string[sampleCount];
+        for (var index = 0; index < sampleCount; index++)
         {
-            var count = Math.Min(maxBatchSize, samples.Count - start);
+            var sample = samples[index];
+            stableSamples[index] = sample;
+            validatedTimestamps[index] = sample.Timestamp.RequireWrite(nameof(samples));
+        }
+
+        var timestamps = new long[sampleCount];
+        string?[]? errors = null;
+        for (var start = 0; start < sampleCount;)
+        {
+            var count = Math.Min(maxBatchSize, sampleCount - start);
             var arguments = new RespireValue[checked(count * 3)];
             for (var index = 0; index < count; index++)
             {
-                var sample = samples[start + index];
+                var sample = stableSamples[start + index];
                 arguments[index * 3] = sample.Key;
                 arguments[index * 3 + 1] = validatedTimestamps[start + index];
                 arguments[index * 3 + 2] = sample.Value;
