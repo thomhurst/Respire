@@ -381,6 +381,7 @@ function Test-IsClaudeReviewComment {
         $hasFormattedTitle = $rawTitle -match '^(?:#{1,6}\s+|\*\*.+\*\*|__.+__)'
         if ($hasFormattedTitle) {
             $title = $rawTitle -replace '^#{1,6}\s*', ''
+            $title = $title -replace '\s+#{1,6}\s*$', ''
             $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
             $title = $title -replace '^(?:\*\*|__)\s*', ''
             $title = $title -replace '(?:\*\*|__).*$' , ''
