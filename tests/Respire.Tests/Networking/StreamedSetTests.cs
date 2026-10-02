@@ -211,6 +211,7 @@ public sealed class StreamedSetTests
         }
 
         await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pool.WaitForReturnAsync(source.CapturedBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
     }
 
@@ -239,6 +240,7 @@ public sealed class StreamedSetTests
             reader.Dispose();
             await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
         }
+        await pool.WaitForReturnAsync(pendingBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pool.Returned.Contains(pendingBuffer!)).IsTrue();
     }
 
@@ -1288,10 +1290,22 @@ public sealed class StreamedSetTests
     private sealed class TrackingArrayPool : ArrayPool<byte>
     {
         internal ConcurrentBag<byte[]> Returned { get; } = [];
+        private readonly ConcurrentDictionary<byte[], TaskCompletionSource> _returnSignals = new(ReferenceEqualityComparer.Instance);
+
+        internal Task WaitForReturnAsync(byte[] buffer)
+        {
+            var signal = _returnSignals.GetOrAdd(buffer, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+            if (Returned.Contains(buffer)) signal.TrySetResult();
+            return signal.Task;
+        }
 
         public override byte[] Rent(int minimumLength) => new byte[minimumLength];
 
-        public override void Return(byte[] array, bool clearArray = false) => Returned.Add(array);
+        public override void Return(byte[] array, bool clearArray = false)
+        {
+            Returned.Add(array);
+            _returnSignals.GetOrAdd(array, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+        }
     }
 
     private sealed class ShortReadThenBlockedStream : Stream
