@@ -66,12 +66,14 @@ for payloads that take longer than the timeout to transmit. If the upload connec
 Respire is reading the source, the call fails with
 `RespireConnectionException` instead of waiting for the source. After the complete frame has been
 written to the socket, cancellation only cancels the wait for its reply, and Redis may still apply
-the write.
+the write. In either case, Respire discards the cancelled upload's rented connection instead of
+returning it to the idle pool, so a later upload cannot consume its abandoned reply.
 
-A streamed write is not retried once its header is sent. In a cluster, `MOVED` and `ASK` replies
-are returned to the caller as server errors instead of being followed: a stream source cannot be
-replayed, and the redirect path cannot prefix a streamed frame with `ASKING`. Transport failures are returned to the caller too; after a transport
-failure, Redis may or may not have applied the write.
+After a transport failure once the header is sent, Respire does not replay the write: Redis may
+or may not have applied it. Explicit Cluster `MOVED` and `ASK` replies reject the attempted command.
+Respire follows those redirects for seekable streams and unchanged `ReadOnlySequence<byte>` sources,
+replaying a seekable stream from its original position and sending `ASKING` when required.
+Non-seekable streams return the redirect to the caller because their consumed bytes cannot be replayed.
 
 Conditional writes use `SetWhen`:
 

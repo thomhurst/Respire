@@ -148,7 +148,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task CancelledReplyDiscardsDedicatedConnectionBeforeNextUpload()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledUploadDiscardsDedicatedConnectionBeforeNextUpload(bool midFrame)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -168,15 +170,26 @@ public sealed class StreamedSetTests
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
         var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token);
-        var connection = await pool.RentAsync(timeout.Token);
+        var connection = await pool.RentAsync(timeout.Token, kind: Respire.Internal.DedicatedLeaseKind.Streaming);
         using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
         pool.Return(connection);
         using var cancellation = new CancellationTokenSource();
-        var first = client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
-            cancellationToken: cancellation.Token).AsTask();
-        await firstReceived.Task.WaitAsync(timeout.Token);
-        while (connection.IsStreamingWriteActive)
-            await Task.Delay(1, timeout.Token);
+        using var source = new PartialThenBlockedStream(new byte[RespireConnection.StreamChunkSize + 1],
+            RespireConnection.StreamChunkSize, RespireConnection.StreamChunkSize);
+        var first = midFrame
+            ? client.Strings.SetAsync("first", source, source.Length, cancellationToken: cancellation.Token).AsTask()
+            : client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
+                cancellationToken: cancellation.Token).AsTask();
+        if (midFrame)
+        {
+            await source.Paused.Task.WaitAsync(timeout.Token);
+            await Assert.That(connection.IsStreamingWriteActive).IsTrue();
+        }
+        else
+        {
+            await firstReceived.Task.WaitAsync(timeout.Token);
+            while (connection.IsStreamingWriteActive) await Task.Delay(1, timeout.Token);
+        }
         cancellation.Cancel();
         await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
         await Assert.That(connection.IsConnected).IsFalse();
@@ -185,6 +198,7 @@ public sealed class StreamedSetTests
             cancellationToken: timeout.Token).AsTask();
         await secondReceived.Task.WaitAsync(timeout.Token);
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+        await Assert.That(second.IsCompleted).IsFalse();
         // The second command owns a fresh socket; the abandoned reply cannot reach it.
         await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[^1]);
         await Assert.That(await second.WaitAsync(timeout.Token)).IsTrue();

@@ -120,7 +120,8 @@ public partial interface IStringCommands
     /// </para>
     /// <para>
     /// The command timeout covers the whole upload, including every source read and socket write.
-    /// Respire does not retry a streamed write once its header is sent. Cluster <c>MOVED</c>/<c>ASK</c>
+    /// Respire does not replay a streamed write after a transport failure once its header is sent.
+    /// Explicit Cluster <c>MOVED</c>/<c>ASK</c>
     /// redirects are followed when the source is a seekable stream or an in-memory sequence; a
     /// non-seekable stream returns the redirect to the caller because its source cannot be replayed.
     /// For a seekable stream, the position when this method is called is the replay point.
