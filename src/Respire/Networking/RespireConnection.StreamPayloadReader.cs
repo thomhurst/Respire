@@ -72,6 +72,12 @@ internal sealed partial class RespireConnection
                 read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException)
+            {
+                // Retirement canceled the source read. Preserve prior completed reads; the
+                // source API exposes no count for the canceled read itself.
+                read = 0;
+            }
             catch (Exception error)
             {
                 // A faulted Stream read reports no byte count. Its source position is unknown, so
