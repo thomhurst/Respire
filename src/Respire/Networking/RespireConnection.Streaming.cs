@@ -160,9 +160,34 @@ internal sealed partial class RespireConnection
         }
         catch (Exception error)
         {
+            var failure = error;
             var translated = error is OperationCanceledException canceled
                 ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
                 : null;
+            if (phase == StreamedSetPhase.ReadingFirstChunk
+                && translated is RespireConnectionRetiredException
+                && payloadReader?.HasPendingRead == true
+                && !cancellationToken.IsCancellationRequested
+                && timeoutCancellation?.IsCancellationRequested != true)
+            {
+                // A non-cooperative source can keep consuming after WaitAsync observes retirement.
+                // Wait for that read, then snapshot its bytes before the cluster retry reads again.
+                using var retryReadCancellation = timeoutCancellation is null
+                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                    : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+                try
+                {
+                    await payloadReader.CompletePendingReadForRetryAsync(retryReadCancellation.Token).ConfigureAwait(false);
+                    translated = TranslateStreamedSetCancellation(
+                        error as OperationCanceledException ?? new OperationCanceledException(error.Message, error),
+                        cancellationToken, timeoutCancellation, phase);
+                }
+                catch (OperationCanceledException retryCancellation) when (retryReadCancellation.IsCancellationRequested)
+                {
+                    failure = retryCancellation;
+                    translated = TranslateStreamedSetCancellation(retryCancellation, cancellationToken, timeoutCancellation, phase);
+                }
+            }
             if (phase == StreamedSetPhase.ReadingFirstChunk
                 && (error is RespireConnectionRetiredException || translated is RespireConnectionRetiredException))
             {
@@ -171,7 +196,7 @@ internal sealed partial class RespireConnection
             }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
-            await FailStreamedSetAsync(source, phase, error, translated is RespireTimeoutException)
+            await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException)
                 .ConfigureAwait(false);
             if (translated is null) throw;
             throw translated;

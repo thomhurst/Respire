@@ -13,9 +13,12 @@ internal sealed partial class RespireConnection
         private byte[]? _chunk;
         private long _remaining = length;
         private ReadOnlyMemory<byte> _consumedPrefix;
+        private Task<int>? _pendingRead;
+        private int _filledBeforePendingRead;
 
         internal bool IsComplete => _remaining == 0;
         internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
+        internal bool HasPendingRead => _pendingRead is not null;
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
         {
@@ -26,36 +29,67 @@ internal sealed partial class RespireConnection
             var filled = 0;
             while (filled < target)
             {
-                var pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
-                int read;
+                Task<int>? pendingRead = null;
                 try
                 {
+                    pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
                     // WaitAsync also bounds streams that ignore their cancellation token.
-                    read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    var read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
+                    filled += read;
                 }
                 catch
                 {
                     if (filled > 0) _consumedPrefix = chunk.AsMemory(0, filled).ToArray();
-                    // The read may still be writing into this pooled memory. Retain it until
-                    // that read finishes instead of returning it while the source can mutate it.
-                    _chunk = null;
-                    _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
+                    if (pendingRead is { IsCompleted: false })
+                    {
+                        // Retirement retry must wait for a non-cooperative read before replaying
+                        // the source. It may consume more bytes and still write into this buffer.
+                        _pendingRead = pendingRead;
+                        _filledBeforePendingRead = filled;
+                    }
+                    else if (pendingRead is { Status: TaskStatus.RanToCompletion })
+                    {
+                        var completedRead = pendingRead.GetAwaiter().GetResult();
+                        if (completedRead > 0) _consumedPrefix = chunk.AsMemory(0, filled + completedRead).ToArray();
+                    }
                     throw;
                 }
-
-                if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
-                filled += read;
             }
 
             _remaining -= filled;
             return chunk.AsMemory(0, filled);
         }
 
+        internal async ValueTask CompletePendingReadForRetryAsync(CancellationToken cancellationToken)
+        {
+            if (_pendingRead is not { } pendingRead) return;
+            var chunk = _chunk!;
+            int read;
+            try
+            {
+                read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch
+            {
+                // Preserve bytes from earlier completed reads; the original failure still wins.
+                read = 0;
+            }
+            _pendingRead = null;
+            if (read > 0) _consumedPrefix = chunk.AsMemory(0, _filledBeforePendingRead + read).ToArray();
+        }
+
         public void Dispose()
         {
             if (_chunk is not { } chunk) return;
             _chunk = null;
-            ArrayPool<byte>.Shared.Return(chunk);
+            if (_pendingRead is { } pendingRead)
+            {
+                _pendingRead = null;
+                _ = ReturnChunkAfterReadAsync(pendingRead, chunk);
+            }
+            else ArrayPool<byte>.Shared.Return(chunk);
         }
 
         private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
