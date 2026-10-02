@@ -11,6 +11,7 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     private long _replicaRefreshWarningNotBefore;
+    private readonly ClusterReplicaSet _unknownReplicaRoutes = new([], TimeSpan.Zero);
 
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
@@ -62,7 +63,8 @@ internal sealed partial class ClusterRouter
         var routes = GetKnownReplicas(slot);
         if (routes is null)
         {
-            await RefreshReplicaRoutesAsync(slot).WaitAsync(cancellationToken).ConfigureAwait(false);
+            var refresh = _unknownReplicaRoutes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             routes = GetKnownReplicas(slot);
         }
 
@@ -149,13 +151,18 @@ internal sealed partial class ClusterRouter
             foreach (var replica in GetKnownReplicas(slot)?.Nodes ?? [])
             {
                 if (replica.IsConnected && !replica.IsRetired
-                    && await TryRefreshTopologyAsync(replica, timeout.Token, discovery: null).ConfigureAwait(false))
+                    && await TryRefreshTopologyAsync(replica, timeout.Token, discovery: null,
+                        keepUncoveredOwners: true).ConfigureAwait(false))
                     return;
             }
             if (Volatile.Read(ref _masters).Length == 0)
+            {
                 await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
+                if (GetKnownReplicas(slot) is not null) return;
+            }
             var owner = await TryRefreshSlotThroughKnownMastersAsync(
-                slot, failedOwner: null, cancellationToken: timeout.Token, discovery: null).ConfigureAwait(false);
+                slot, failedOwner: null, cancellationToken: timeout.Token, discovery: null,
+                keepUncoveredOwners: true).ConfigureAwait(false);
             if (owner is null) LogReplicaRefreshFailure(slot, error: null);
         }
         catch (Exception error)

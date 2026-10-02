@@ -2510,7 +2510,16 @@ public sealed partial class RespireClient : IRespireClient
                 connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
                 discoveryPending = false;
             }
-            if (initialRejection is not null)
+            var switchedRole = false;
+            if (initialRejection is not null && !cursorContinuation
+                && ClusterRouter.CanFallBackToOtherRole(initialRejection, readFrom, slot,
+                    ClusterRouter.IsReplicaConnection(connection)))
+            {
+                connection = await cluster.GetOtherRoleReadConnectionAsync(
+                    slot!.Value, readFrom, initialRejection, cancellationToken, discovery).ConfigureAwait(false);
+                switchedRole = true;
+            }
+            else if (initialRejection is not null)
             {
                 if (cursorContinuation) throw initialRejection;
                 if (ClusterRouter.IsStrictReplicaAsk(initialRejection, readFrom)) throw ClusterRouter.CreateStrictReplicaAskException(initialRejection, slot);
@@ -2530,7 +2539,6 @@ public sealed partial class RespireClient : IRespireClient
                 ? CommandDeadline.After(Math.Max(1L, (long)streamTimeout.TotalMilliseconds))
                 : CommandDeadline.None;
             var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;
-            var switchedRole = false;
             for (var attempt = firstAttempt; ; attempt++)
             {
                 try
