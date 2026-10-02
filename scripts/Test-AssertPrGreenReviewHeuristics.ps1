@@ -1326,6 +1326,20 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks late review with period before security concerns suffix'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. security concerns`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks legacy Code Review Results heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review Results`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'ignores late automation heading starting with Review'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review apps deployed`n`nDeployment completed.")

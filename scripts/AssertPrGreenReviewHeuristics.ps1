@@ -386,7 +386,7 @@ function Test-IsClaudeReviewComment {
             $title = $title -replace '\s+#{1,6}\s*$', ''
             $title = [regex]::Replace($title, '(?:\*\*|__)', '')
             $title = $title -replace '^[^\p{L}\p{N}_#-]+', ''
-            $reviewTitleTail = '(?:$|[.!?](?=$|\s+(?:findings?|issues?|concerns?|summary)\b)|:\s*(?:$|\S)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:findings?|issues?|concerns?|summary)\b|\s+(?:findings?|issues?|concerns?|summary)\b)'
+            $reviewTitleTail = '(?:$|[.!?](?=$|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)|:\s*(?:$|\S)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)'
             $isLegacyReviewTitle = $title -match "(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review$reviewTitleTail"
             if ($isLegacyReviewTitle) { return $true }
         }
