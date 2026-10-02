@@ -46,20 +46,6 @@ $repoArgs = @(); if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 function Warn([string]$m) { [Console]::Error.WriteLine("sweep: $m") }
 
-function Test-HasMeaningfulFileNewerThan {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][DateTimeOffset]$Cutoff
-    )
-
-    $ignoredSegments = '[\\/](?:bin|obj|node_modules|TestResults)[\\/]'
-    foreach ($file in (Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue)) {
-        if ($file.FullName -match $ignoredSegments) { continue }
-        if ($file.LastWriteTimeUtc -gt $Cutoff.UtcDateTime) { return $true }
-    }
-    return $false
-}
-
 function Preserve-OrphanedDirectory {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -69,7 +55,6 @@ function Preserve-OrphanedDirectory {
     # The lost Git registration may have held an explicit agent.lockName unrelated to
     # the directory name. Neither a free inferred lock nor timestamps prove ownership.
     Write-Host "sweep: preserving orphan for manual recovery; original lock identity is unavailable: $Path ($Reason)"
-    return $false
 }
 
 # "Exit 0 always" is load-bearing: a sweep failure must never kill an otherwise-healthy
@@ -178,11 +163,11 @@ try {
         if ($WhatIf) { continue }
         if (-not (Test-Path -LiteralPath $w.Path)) {
             $removed++
-            # Once the PR is merged the local branch has served its purpose; drop it so
-            # `git branch` does not pile up alongside the worktrees. -D because a squash
-            # merge leaves the tip unreachable from main by design. Never done for the
-            # stale tier (no merge evidence).
-            if ($w.Branch -and $why -like 'merged PR*') { git -C $mainRepo branch -D $w.Branch 2>$null }
+            # Delete only the verified tip. A concurrent follow-up commit must keep its branch.
+            if ($w.Branch -and $why -like 'merged PR*') {
+                git -C $mainRepo update-ref -d "refs/heads/$($w.Branch)" $sha 2>$null
+                if ($LASTEXITCODE -ne 0) { Write-Host "sweep: preserving branch that changed during cleanup: $($w.Branch)" }
+            }
         }
     }
 
@@ -210,7 +195,7 @@ try {
         if ($parent) { $roots[$parent.ToLowerInvariant()] = $parent }
     }
 
-    $orphansRemoved = 0
+    $orphansPreserved = 0
     foreach ($root in $roots.Values) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($dir in (Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
@@ -223,31 +208,26 @@ try {
                 # registration is gone. A live marker (gitdir exists) is someone else's.
                 if ($gitdir -notlike "$mainNorm/.git/worktrees/*") { continue }
                 if (Test-Path -LiteralPath $gitdir) { continue }
-                [void](Preserve-OrphanedDirectory -Path $dir.FullName -Reason "dangling gitdir: $gitdir")
+                Preserve-OrphanedDirectory -Path $dir.FullName -Reason "dangling gitdir: $gitdir"
+                $orphansPreserved++
                 continue
             }
 
             # A .git directory is a standalone repository, never a failed linked worktree.
             if (Test-Path -LiteralPath $marker) { continue }
 
-            # Legacy partial removals can lose .git before deletion fails. Recover only
-            # canonical PR dirs whose PR is merged and whose meaningful files all predate
-            # that merge. This catches abandoned source/build remnants without deleting
-            # post-merge edits that can no longer be inspected by git.
+            # Markerless canonical remnants also need manual recovery; timestamps cannot
+            # establish ownership, so do not walk their files just to vary a log message.
             if (-not (Test-SameNativePath -Left $root -Right $canonicalWorktreeRoot)) { continue }
             $pathPr = Get-PrNumberFromWorktreePath -Path $dir.FullName
             if (-not $pathPr -or -not $mergedPrByNumber.ContainsKey($pathPr)) { continue }
-            $mergedAt = [DateTimeOffset]$mergedPrByNumber[$pathPr].mergedAt
-            if (Test-HasMeaningfulFileNewerThan -Path $dir.FullName -Cutoff $mergedAt) {
-                Write-Host "sweep: preserving markerless merged-PR dir with files newer than merge: $($dir.FullName)"
-                continue
-            }
-            [void](Preserve-OrphanedDirectory -Path $dir.FullName -Reason "markerless remnant of merged PR #$pathPr")
+            Preserve-OrphanedDirectory -Path $dir.FullName -Reason "markerless remnant of merged PR #$pathPr"
+            $orphansPreserved++
         }
     }
 
     if (-not $WhatIf) { git -C $mainRepo worktree prune }
-    Write-Host "sweep: removed $removed merged worktree(s), $orphansRemoved orphaned dir(s)."
+    Write-Host "sweep: removed $removed merged worktree(s); preserved $orphansPreserved orphaned dir(s) for manual recovery."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"

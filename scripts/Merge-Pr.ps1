@@ -140,7 +140,7 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
 $remoteRef = "refs/heads/$headRef"
 git -C $mainRepo ls-remote --exit-code origin $remoteRef 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    git -C $mainRepo push origin --delete $headRef 2>$null
+    git -C $mainRepo push "--force-with-lease=${remoteRef}:$mergedHead" origin ":$remoteRef" 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "WARNING: merged #${Pr}, but could not delete remote branch '$headRef'"
     }
@@ -148,7 +148,7 @@ if ($LASTEXITCODE -eq 0) {
 
 git -C $mainRepo show-ref --verify --quiet "refs/heads/$headRef"
 if ($LASTEXITCODE -eq 0) {
-    git -C $mainRepo branch -D -- $headRef 2>$null
+    git -C $mainRepo update-ref -d "refs/heads/$headRef" $mergedHead 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "WARNING: merged #${Pr}, but could not delete local branch '$headRef'"
     }

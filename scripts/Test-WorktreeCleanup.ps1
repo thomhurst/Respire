@@ -46,6 +46,14 @@ function global:git {
 try {
     . $cleanupScript
 
+    $issueIdentity = Get-WorktreeIdentity -Name 'codex/issue-3045-follow-up'
+    if ($issueIdentity.LockName -ne 'issue-3045' -or $null -ne $issueIdentity.PrNumber) {
+        throw 'Issue identity was not shared consistently between branch and ownership parsing.'
+    }
+    if ($null -ne (Get-WorktreeIdentity -Name 'not-pr-3045')) {
+        throw 'An embedded non-canonical identity was accepted.'
+    }
+
     if ((Get-PrNumberFromWorktreePath -Path (Join-Path $testRoot 'pr-3045-review')) -ne 3045) {
         throw 'Canonical PR worktree number was not parsed.'
     }

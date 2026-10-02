@@ -116,14 +116,21 @@ function Test-SameNativePath {
     }
 }
 
-function Get-PrNumberFromWorktreePath {
-    param([Parameter(Mandatory)][string]$Path)
+function Get-WorktreeIdentity {
+    param([AllowNull()][string]$Name)
 
-    $leaf = Split-Path -Path $Path -Leaf
-    if ($leaf -match '^pr-(?<Number>\d+)(?:-|$)') {
-        return [int]$Matches.Number
+    if ($Name -match '(?:^|/)(?<Kind>pr|issue)-(?<Number>\d+)(?:$|[-/])') {
+        return [pscustomobject]@{
+            PrNumber = if ($Matches.Kind -eq 'pr') { [int]$Matches.Number } else { $null }
+            LockName = "$($Matches.Kind)-$($Matches.Number)"
+        }
     }
     return $null
+}
+
+function Get-PrNumberFromWorktreePath {
+    param([Parameter(Mandatory)][string]$Path)
+    return (Get-WorktreeIdentity -Name (Split-Path -Path $Path -Leaf)).PrNumber
 }
 
 function Test-BranchIdentifiesPrNumber {
@@ -132,7 +139,7 @@ function Test-BranchIdentifiesPrNumber {
         [Parameter(Mandatory)][int]$PrNumber
     )
 
-    return $Branch -match "(?:^|/)pr-$PrNumber(?:$|[-/])"
+    return (Get-WorktreeIdentity -Name $Branch).PrNumber -eq $PrNumber
 }
 
 function Test-IsCanonicalPrWorktree {
@@ -222,8 +229,9 @@ function Get-WorktreeOwnershipBlocker {
     # Also cover the short interval between checkout creation and marker registration.
     $branch = git -C $Worktree symbolic-ref --quiet --short HEAD 2>$null
     if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree branch' }
-    foreach ($identity in @((Split-Path $Worktree -Leaf), $branch)) {
-        if ($identity -match '(?:^|/)((?:pr|issue)-\d+)(?:$|[-/])') { [void]$lockNames.Add($Matches[1]) }
+    foreach ($name in @((Split-Path $Worktree -Leaf), $branch)) {
+        $identity = Get-WorktreeIdentity -Name $name
+        if ($identity) { [void]$lockNames.Add($identity.LockName) }
     }
     foreach ($lockName in $lockNames) {
         $blocker = Get-AgentLockBlocker -Repo $Repo -LockName $lockName
