@@ -59,15 +59,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
-    internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
-        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true))
+    internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary, Func<long>? migrationClock = null)
+        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true), migrationClock)
     {
     }
 
     internal ClusterRouter(
         RespireOptions options,
         RespireConnectionMultiplexer primary,
-        RespireConnectionOptions commandConnectionOptions)
+        RespireConnectionOptions commandConnectionOptions,
+        Func<long>? migrationClock = null)
     {
         _options = options;
         _logger = options.CreateLogger("Respire.Cluster");
@@ -76,6 +77,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ? [new RespireEndpoint("localhost")]
             : options.Endpoints.ToArray();
         _primary = primary;
+        _migrations = new(migrationClock);
         _smigratedNotifications = CreateSmigratedChannel();
         _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         _topologyRefreshClock = options.ClusterTopologyRefreshClock;
@@ -1618,7 +1620,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             if (change.State == RespireConnectionState.Reconnecting)
             {
-                lock (_nodesGate) _smigratedSequences.Remove(node);
+                lock (_nodesGate) _migrations.ForgetSequence(node);
             }
             SlotStateChanged?.Invoke(node, slot, change);
             // A primary reports Disconnected for every slot it owns, on every reconnect attempt.
@@ -2097,7 +2099,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
             _correctionPools.Clear();
-            _deferredSmigratedMigrations.Clear();
+            _migrations.ClearDeferred();
         }
 
         _smigratedNotifications.Writer.TryComplete();
