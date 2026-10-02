@@ -66,10 +66,10 @@ public class ClusterNodeIdentityTests
         var connection = node.GetConnection();
         var enteredWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var send = Task.Run(async () =>
+        var send = Task.Factory.StartNew(async () =>
         {
             using var reply = await connection.SendAsync(new BlockedWriteCommand(enteredWrite, releaseWrite));
-        });
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
         await enteredWrite.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var retirement = node.RetireAsync();
