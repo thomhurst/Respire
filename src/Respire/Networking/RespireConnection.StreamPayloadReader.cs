@@ -15,10 +15,12 @@ internal sealed partial class RespireConnection
         private ReadOnlyMemory<byte> _consumedPrefix;
         private Task<int>? _pendingRead;
         private int _filledBeforePendingRead;
+        private Exception? _unknownPositionReadError;
 
         internal bool IsComplete => _remaining == 0;
         internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
         internal bool HasPendingRead => _pendingRead is not null;
+        internal Exception? UnknownPositionReadError => _unknownPositionReadError;
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
         {
@@ -38,7 +40,7 @@ internal sealed partial class RespireConnection
                     if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
                     filled += read;
                 }
-                catch
+                catch (Exception error)
                 {
                     if (filled > 0) _consumedPrefix = chunk.AsMemory(0, filled).ToArray();
                     if (pendingRead is { IsCompleted: false })
@@ -52,6 +54,12 @@ internal sealed partial class RespireConnection
                     {
                         var completedRead = pendingRead.GetAwaiter().GetResult();
                         if (completedRead > 0) _consumedPrefix = chunk.AsMemory(0, filled + completedRead).ToArray();
+                    }
+                    else
+                    {
+                        // A failed read has no byte count. The source may have advanced before
+                        // throwing, so a retirement retry cannot safely replay it.
+                        _unknownPositionReadError = error;
                     }
                     throw;
                 }
@@ -72,10 +80,11 @@ internal sealed partial class RespireConnection
                 read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException error)
             {
-                // Retirement canceled the source read. Preserve prior completed reads; the
-                // source API exposes no count for the canceled read itself.
+                // The canceled source read may have advanced before throwing. Stream.ReadAsync
+                // exposes no count, so its position is unknown and the payload cannot be replayed.
+                readError = error;
                 read = 0;
             }
             catch (Exception error)

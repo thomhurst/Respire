@@ -32,7 +32,9 @@ stream. A seekable stream with fewer remaining bytes than the declared length is
 source that fails, ends, is cancelled or times out within that chunk throws without affecting the
 connection. The stream has still been read, so retry with a fresh or rewound source. On a cluster
 client, if the node loses its slots while that first chunk is being read, Respire keeps the chunk
-and sends the upload to the new owner without reading those bytes again. The
+and sends the upload to the new owner without reading those bytes again when every completed read
+reported its byte count. A canceled or faulted read with an unknown byte count fails instead of
+retrying a potentially shifted payload. The
 `ReadOnlySequence<byte>` overload copies its segments straight into
 the write buffer in 32 KiB chunks without combining them first; keep its memory unchanged until the
 returned task completes. Both overloads always take the streaming path, which costs a few small
@@ -40,9 +42,9 @@ allocations per call, so use the ordinary `SetAsync` overloads for small values.
 
 Respire holds that connection's write path for the complete RESP frame. This causes head-of-line
 blocking: every later command on that physical connection waits for the upload, and may exceed its
-`CommandTimeout`. Use a separate client or connection for bulk uploads and slow sources. After the
-first chunk, cancellation, a read failure or a timeout before the complete frame has been written
-to the socket closes the connection to prevent later bytes from being parsed as another command.
+`CommandTimeout`. Use a separate client or connection for bulk uploads and slow sources. Once the
+header is queued, cancellation, a read failure or a timeout before the complete frame has been
+written to the socket closes the connection to prevent later bytes from being parsed as another command.
 That also fails other commands pipelined on it, even when only the frame terminator was still
 waiting to be written. Prefer seekable or in-memory sources. `CommandTimeout` covers the whole
 upload, including every source read and socket write, so raise it (or pass a longer-lived

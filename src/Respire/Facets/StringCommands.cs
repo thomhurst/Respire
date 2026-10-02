@@ -88,7 +88,9 @@ public partial interface IStringCommands
     /// (<see cref="EndOfStreamException"/>), is cancelled or times out within that chunk throws
     /// without affecting the connection. The source has still been read, so the call is not
     /// retryable with the same stream. On a cluster client, if the node loses its slots during that
-    /// first read, the held chunk is sent to the new owner rather than read again. A failure after the
+    /// first read, the held chunk is sent to the new owner only when each completed read reported
+    /// its byte count. A canceled or faulted read with an unknown byte count fails instead of retrying
+    /// a potentially shifted payload. A failure after the
     /// first chunk closes the connection.
     /// </para>
     /// <para>
@@ -97,8 +99,8 @@ public partial interface IStringCommands
     /// unrelated traffic. Use a separate client for slow sources.
     /// </para>
     /// <para>
-    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the first
-    /// chunk has been sent, cancellation, a source read failure or a timeout before the complete
+    /// <b><paramref name="cancellationToken"/> closes the connection mid-upload.</b> Once the header
+    /// is queued, cancellation, a source read failure or a timeout before the complete
     /// RESP frame has been written to the socket closes the connection to preserve framing, even if
     /// the frame terminator is already
     /// queued. That fails every other command pipelined on the connection. After the frame is

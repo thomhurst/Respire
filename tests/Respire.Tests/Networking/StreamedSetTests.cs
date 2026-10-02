@@ -854,7 +854,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task RetirementCancellingPartialFirstChunkRestoresEveryConsumedByte()
+    public async Task RetirementCancellingPartialFirstChunkReadDoesNotRetryUnknownPosition()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -878,11 +878,8 @@ public sealed class StreamedSetTests
         _ = connection.RetireAsync();
         await connection.DisposeAsync(); // The retired socket's close cancels the blocked third read.
         await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<RespireConnectionRetiredException>();
-
-        var replayed = new byte[payload.Length];
-        await command.SourceStream!.ReadExactlyAsync(replayed);
-        await Assert.That(replayed).IsEquivalentTo(payload);
+            .Throws<RespireConnectionException>();
+        await Assert.That(source.Position).IsEqualTo(12);
         await Assert.That(peer.Available).IsEqualTo(0);
     }
 

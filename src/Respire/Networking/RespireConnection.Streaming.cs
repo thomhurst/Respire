@@ -26,8 +26,8 @@ internal sealed partial class RespireConnection
         /// <summary>
         /// Reading the first chunk of a stream source before the header is queued. Nothing is on the
         /// wire, so a failure (including early EOF) reclaims the request without closing the
-        /// connection. The source has been consumed, so only a retirement rejection is retryable:
-        /// it restores the consumed chunk in front of the source for the replacement connection.
+        /// connection. A retirement rejection is retryable only when every completed source read
+        /// reported its byte count; the known consumed chunk is then restored for the replacement.
         /// </summary>
         ReadingFirstChunk,
 
@@ -166,6 +166,15 @@ internal sealed partial class RespireConnection
                 : null;
             if (phase == StreamedSetPhase.ReadingFirstChunk
                 && translated is RespireConnectionRetiredException
+                && payloadReader?.UnknownPositionReadError is { } unknownPositionError)
+            {
+                failure = unknownPositionError;
+                translated = unknownPositionError is OperationCanceledException unknownPositionCancellation
+                    ? ClosedDuringStreamedSet(unknownPositionCancellation)
+                    : unknownPositionError;
+            }
+            if (phase == StreamedSetPhase.ReadingFirstChunk
+                && translated is RespireConnectionRetiredException
                 && payloadReader?.HasPendingRead == true
                 && !cancellationToken.IsCancellationRequested
                 && timeoutCancellation?.IsCancellationRequested != true)
@@ -181,10 +190,12 @@ internal sealed partial class RespireConnection
                         .ConfigureAwait(false);
                     if (retryReadError is not null)
                     {
-                        // The source may have consumed bytes before faulting. Surface its failure
-                        // so routing cannot replay an incomplete prefix as a full payload.
+                        // A failed read has unknown source position. Surface its failure so
+                        // routing cannot replay an incomplete or shifted payload.
                         failure = retryReadError;
-                        translated = retryReadError;
+                        translated = retryReadError is OperationCanceledException readCancellation
+                            ? ClosedDuringStreamedSet(readCancellation)
+                            : retryReadError;
                     }
                     else
                     {
