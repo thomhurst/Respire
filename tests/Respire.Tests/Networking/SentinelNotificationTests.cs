@@ -170,7 +170,7 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task DelayedFailbackCopyKeepsLatestTargetAndBothSwitchSources()
+    public async Task ConflictingFailbackOrderingRequiresUntargetedDiscovery()
     {
         var a = OldPrimary;
         var bToAReporter = new RespireEndpoint("10.0.1.1", 26379);
@@ -182,10 +182,29 @@ public class SentinelNotificationTests
 
         var pending = coalescer.Pending!.Value;
         await Assert.That(pending.MustRediscover).IsTrue();
-        await Assert.That(pending.Target).IsEqualTo(NewPrimary);
-        await Assert.That(pending.ReportingSentinel).IsEqualTo(delayedReporter);
+        await Assert.That(pending.Target).IsNull();
+        await Assert.That(pending.ReportingSentinel).IsEqualTo(bToAReporter);
+        await Assert.That(pending.AdditionalReportingSentinels).IsEquivalentTo([delayedReporter]);
         await Assert.That(pending.OldPrimary).IsEqualTo(a);
         await Assert.That(pending.AdditionalOldPrimaries!).Contains(NewPrimary);
+    }
+
+    [Test]
+    public async Task MergeKeepsReporterForNewTargetWhenItIsAlsoAnEarlierSwitchSource()
+    {
+        var third = new RespireEndpoint("10.0.0.3", 6381);
+        var reporterForB = new RespireEndpoint("10.0.1.2", 26379);
+        var reporterForA = new RespireEndpoint("10.0.1.1", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("a-to-b", NewPrimary, OldPrimary, ReportingSentinel: reporterForB), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("c-to-a", OldPrimary, third, ReportingSentinel: reporterForA), targetIsCurrent: false);
+
+        var merged = coalescer.Pending!.Value;
+
+        await Assert.That(merged.ReportingSentinel).IsEqualTo(reporterForB);
+        await Assert.That(merged.AdditionalReportingSentinels).IsEquivalentTo([reporterForA]);
+        await Assert.That(merged.MustRediscover).IsTrue();
     }
 
     [Test]
@@ -217,7 +236,7 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task CoalescedFailbackDropsSupersededPrimaryFromAnnouncedTargets()
+    public async Task CoalescedFailbackDoesNotInferChronologyFromSwitchEdges()
     {
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(new SentinelHint("active"), targetIsCurrent: false);
@@ -226,8 +245,27 @@ public class SentinelNotificationTests
         coalescer.Offer(new SentinelHint("b-to-a", a, NewPrimary), targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
-        await Assert.That(coalescer.Pending!.Value.Target).IsEqualTo(a);
+        await Assert.That(coalescer.Pending!.Value.Target).IsNull();
+        await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
         await Assert.That(coalescer.Pending!.Value.AdditionalTargets).IsNull();
+    }
+
+    [Test]
+    public async Task DuplicateDeliveryGapRetainsEveryReportingSentinelForCatchUpDiscovery()
+    {
+        var first = new RespireEndpoint("10.0.1.1", 26379);
+        var second = new RespireEndpoint("10.0.1.2", 26379);
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: first), targetIsCurrent: false);
+        coalescer.Offer(new SentinelHint("gap", MustRediscover: true, ReportingSentinel: second), targetIsCurrent: false);
+
+        var catchUp = coalescer.TakePending();
+
+        await Assert.That(catchUp!.Value.ReportingSentinel).IsEqualTo(first);
+        await Assert.That(catchUp.Value.AdditionalReportingSentinels).IsEquivalentTo([second]);
+        var secondPass = coalescer.TakePending();
+        await Assert.That(secondPass!.Value.ReportingSentinel).IsEqualTo(second);
+        await Assert.That(secondPass.Value.AdditionalReportingSentinels).IsNull();
     }
 
     [Test]

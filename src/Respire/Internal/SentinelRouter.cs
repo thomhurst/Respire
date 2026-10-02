@@ -312,7 +312,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
                 attempt = 0;
-                Volatile.Write(ref rearm, RefreshMonitorRearm(Volatile.Read(ref rearm)));
+                // A publication that completed this reconnect epoch is now reflected by the
+                // recovered subscription. Use the fresh epoch for any later disconnect.
+                Volatile.Write(ref rearm, CurrentMonitorRearm());
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
@@ -511,8 +513,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && IsSwitchSource(current, hint with { OldPrimaryAddresses = addresses }))
                 {
                     Invalidate(current!);
-                    if (_coalescer.ActiveKey != hint.Key && _coalescer.Pending?.Key != hint.Key)
-                        QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
+                    QueueNotificationRediscoveryCore(hint with { MustRediscover = true });
                 }
             }
         }

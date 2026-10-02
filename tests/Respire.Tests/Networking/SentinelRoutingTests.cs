@@ -408,6 +408,32 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task RetiredSwitchSourceResolutionQueuesFreshDiscoveryBehindActiveHint()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var current = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
+        typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        var hint = new SentinelHint("switch", new("127.0.0.1", 6380), current.Endpoint);
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter)
+            .GetField("_coalescer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(router)!;
+        coalescer.Offer(in hint, targetIsCurrent: false);
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+        await ((Task)resolve.Invoke(router, [hint, current, CancellationToken.None])!).WaitAsync(Limit);
+
+        await Assert.That(current.IsRetired).IsTrue();
+        await Assert.That(coalescer.Pending).IsNotNull();
+        await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
+    }
+
+    [Test]
     public async Task DisposalJoinsAPendingSwitchSourceResolution()
     {
         await using var original = Primary();
