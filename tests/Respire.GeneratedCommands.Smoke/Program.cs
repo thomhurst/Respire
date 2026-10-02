@@ -3,11 +3,13 @@ using Respire;
 using Respire.Extensions.Json;
 using Redis.Search;
 using Respire.Extensions.TimeSeries;
+using Respire.Extensions.Probabilistic;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
 {
     await using var client = await RespireClient.ConnectAsync($"redis://{endpoint}?protocol={(int)protocol}");
+    await RunProbabilisticSmokeAsync(client);
     var commands = new ISmokeCommandsImplementation(client);
     var key = "respire:generator-smoke:" + Guid.NewGuid().ToString("N");
     var seriesKey = key + ":series";
@@ -160,7 +162,48 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         await json.DeleteAsync("doc");
     }
 }
-Console.WriteLine("Generated commands, Respire.Json, and Respire.TimeSeries passed with RESP2 and RESP3.");
+Console.WriteLine("Generated commands and Json, Search, TimeSeries, and Probabilistic packages passed with RESP2 and RESP3.");
+
+static async Task RunProbabilisticSmokeAsync(RespireClient client)
+{
+    await using var tenant = client.WithKeyPrefix("respire:probabilistic-smoke:" + Guid.NewGuid().ToString("N") + ":");
+    var probabilistic = new RespireProbabilisticClient(tenant);
+    try
+    {
+        await probabilistic.BloomReserveAsync("bloom", 0.01, 100);
+        await probabilistic.BloomMultiAddAsync("bloom", ["one", "two"]);
+        if (!await probabilistic.BloomExistsAsync("bloom", "two"))
+            throw new InvalidOperationException("Respire.Probabilistic Bloom commands failed.");
+
+        await probabilistic.CuckooReserveAsync("cuckoo", 100);
+        var inserted = await probabilistic.CuckooInsertAsync("cuckoo", ["one", "two"]);
+        if (inserted.Length != 2 || inserted[0] != RespireCuckooInsertResult.Inserted
+            || !await probabilistic.CuckooExistsAsync("cuckoo", "two"))
+            throw new InvalidOperationException("Respire.Probabilistic Cuckoo commands failed.");
+
+        await probabilistic.CountMinInitializeByDimensionsAsync("cms", 100, 5);
+        await probabilistic.CountMinIncrementAsync("cms", new Dictionary<RespireValue, long> { ["one"] = 7 });
+        var counts = await probabilistic.CountMinQueryAsync("cms", ["one"]);
+        if (counts.Length != 1 || counts[0] != 7)
+            throw new InvalidOperationException("Respire.Probabilistic Count-Min commands failed.");
+
+        await probabilistic.TopKReserveAsync("topk", 2);
+        var evicted = await probabilistic.TopKAddAsync("topk", ["one", "two"]);
+        var top = await probabilistic.TopKQueryAsync("topk", ["one"]);
+        if (evicted.Length != 2 || evicted[0] is not null || top.Length != 1 || !top[0])
+            throw new InvalidOperationException("Respire.Probabilistic Top-K commands failed.");
+
+        await probabilistic.TDigestCreateAsync("digest");
+        await probabilistic.TDigestAddAsync("digest", [1, 2, 3]);
+        var quantiles = await probabilistic.TDigestQuantileAsync("digest", [0, 1]);
+        if (quantiles.Length != 2 || quantiles[0] != 1 || quantiles[1] != 3)
+            throw new InvalidOperationException("Respire.Probabilistic t-digest commands failed.");
+    }
+    finally
+    {
+        await tenant.Keys.DeleteAsync("bloom", "cuckoo", "cms", "topk", "digest");
+    }
+}
 
 public sealed record SmokeDocument(string Name, int Count);
 

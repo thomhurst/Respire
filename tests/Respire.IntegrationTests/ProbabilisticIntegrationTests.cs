@@ -131,12 +131,32 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
             .Should().ThrowAsync<RespireServerException>();
         await probabilistic.Awaiting(p => p.CountMinQueryAsync($"{key}:missing", ["item"]).AsTask())
             .Should().ThrowAsync<RespireServerException>();
+        await probabilistic.Awaiting(p => p.CuckooAddAsync(key, "item").AsTask())
+            .Should().ThrowAsync<RespireServerException>();
+        await probabilistic.Awaiting(p => p.CountMinIncrementAsync(key, new Dictionary<RespireValue, long> { ["item"] = 1 }).AsTask())
+            .Should().ThrowAsync<RespireServerException>();
+        await probabilistic.Awaiting(p => p.TopKAddAsync(key, ["item"]).AsTask())
+            .Should().ThrowAsync<RespireServerException>();
+        await probabilistic.Awaiting(p => p.TDigestAddAsync(key, [1]).AsTask())
+            .Should().ThrowAsync<RespireServerException>();
 
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
-        await probabilistic.Awaiting(p => p.BloomAddAsync($"{key}:filter", "item", cancelled.Token).AsTask())
-            .Should().ThrowAsync<OperationCanceledException>();
-        (await client.Keys.ExistsAsync($"{key}:filter")).Should().BeFalse();
+        Func<Task>[] canceledWrites =
+        [
+            async () => { await probabilistic.BloomAddAsync($"{key}:bloom", "item", cancelled.Token); },
+            async () => { await probabilistic.CuckooAddAsync($"{key}:cuckoo", "item", cancelled.Token); },
+            async () => { await probabilistic.CountMinInitializeByDimensionsAsync($"{key}:cms", 100, 5, cancelled.Token); },
+            async () => { await probabilistic.TopKReserveAsync($"{key}:topk", 2, cancellationToken: cancelled.Token); },
+            async () => { await probabilistic.TDigestCreateAsync($"{key}:digest", cancellationToken: cancelled.Token); },
+        ];
+        foreach (var write in canceledWrites)
+        {
+            var error = await write.Should().ThrowAsync<OperationCanceledException>();
+            error.Which.CancellationToken.Should().Be(cancelled.Token);
+        }
+        foreach (var family in new[] { "bloom", "cuckoo", "cms", "topk", "digest" })
+            (await client.Keys.ExistsAsync($"{key}:{family}")).Should().BeFalse();
     }
 
     private Task<RespireClient> ConnectAsync(int protocol)

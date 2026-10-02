@@ -9,12 +9,14 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
     internal string Host => container.Hostname;
     internal int Port(int node) => container.GetMappedPublicPort(7000 + node);
 
-    internal static async Task<RedisClusterTestContainer> StartAsync()
+    internal static async Task<RedisClusterTestContainer> StartAsync(string image = "redis:7.0.15", bool loadBloomModule = false)
     {
-        var container = new ContainerBuilder("redis:7.0.15")
+        // This fixture starts server binaries directly, bypassing Redis 8's module-loading entrypoint.
+        var moduleArguments = loadBloomModule ? " --loadmodule /usr/local/lib/redis/modules/redisbloom.so" : "";
+        var container = new ContainerBuilder(image)
             .WithPortBinding(7000, true).WithPortBinding(7001, true).WithPortBinding(7002, true)
             .WithEntrypoint("sh", "-c")
-            .WithCommand("for port in 7000 7001 7002; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no & done; wait")
+            .WithCommand("for port in 7000 7001 7002; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no" + moduleArguments + " & done; wait")
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000)
                 .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002))
             .Build();
