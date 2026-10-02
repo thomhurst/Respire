@@ -185,8 +185,12 @@ internal static class SentinelResolver
                         && (preferredTarget is not null || notificationHint is { Sources.Length: > 0 })
                         && (preferredTarget is not { } target || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary))
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
+                    var contradictsRecovery = notificationHint?.ReconciliationPrimary is { } recovered
+                        && !recovered.Matches(primary, primaryAddresses)
+                        && !discoveryState.IsNewerConfiguration(observation.Epoch);
                     if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
-                    if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
+                    if (contradictsSwitch || contradictsRecovery
+                        || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
                     {
                         // A rejected view consumes the same fallback budget as a failed ROLE check.
                         throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");

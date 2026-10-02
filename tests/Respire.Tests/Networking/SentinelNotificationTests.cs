@@ -484,17 +484,30 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task RepeatedActiveSwitchAfterInterveningSwitchRemainsPending()
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RepeatedActiveSwitchCannotInvertIndependentPendingSourceFence(bool unqueriedActiveReporter, bool aliasSpelling)
     {
-        var aToB = SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary);
+        var aToB = SentinelHintBuilder.Create("a-to-b", NewPrimary, OldPrimary) with
+        {
+            Reporters = unqueriedActiveReporter ? [new("first", 26379), new("second", 26379)] : [],
+        };
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(in aToB, targetIsCurrent: false);
         coalescer.Offer(SentinelHintBuilder.Create("b-to-a", OldPrimary, NewPrimary), targetIsCurrent: false);
-        coalescer.Offer(in aToB, targetIsCurrent: false);
+        var repeated = aliasSpelling ? aToB with
+        {
+            Key = "same-switch-with-mapped-address",
+            Sources = [new(new("::ffff:10.0.0.1", OldPrimary.Port), null)],
+        } : aToB;
+        coalescer.Offer(in repeated, targetIsCurrent: false);
 
         await Assert.That(coalescer.Pending!.Value.MustRediscover).IsTrue();
-        await Assert.That(coalescer.Pending!.Value.OldPrimary).IsEqualTo(OldPrimary);
-        await Assert.That(coalescer.Pending!.Value.Sources.Select(static source => source.Endpoint)).Contains(NewPrimary);
+        var next = coalescer.TakePending(validatedPrimary: NewPrimary, validatedPeer: NewPrimary)!.Value;
+        await Assert.That(next.Target).IsEqualTo(OldPrimary);
+        await Assert.That(next.Sources.Select(static source => source.Endpoint)).IsEquivalentTo([NewPrimary]);
     }
 
     [Test]

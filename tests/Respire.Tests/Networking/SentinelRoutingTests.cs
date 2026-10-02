@@ -667,6 +667,7 @@ public class SentinelRoutingTests
     [Arguments(false, true, false)]
     [Arguments(true, false, false)]
     [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
     [Arguments(true, false, true)]
     [Arguments(true, true, true)]
     public async Task AlternateReporterUsesEpochInsteadOfArrivalOrder(bool switchHint, bool laterPromotion, bool denyEpoch)
@@ -715,6 +716,47 @@ public class SentinelRoutingTests
         await WaitForCommandCountAsync(second, query, secondQueries + 1);
         if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
         await Assert.That(client.Endpoint.Port).IsEqualTo(laterPromotion ? latest.Port : intermediate.Port);
+    }
+
+    [Test]
+    public async Task IndependentFailbackSurvivesDelayedActiveSwitchWithoutEpochs()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var firstPort = original.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => original.Port);
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        var router = client.Core.Sentinel!;
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var queries = first.ReceivedCommands.Count(command => command == query);
+        first.SuppressReply = command => command == query;
+        Volatile.Write(ref firstPort, promoted.Port);
+        var outbound = SentinelHint.FromSwitchMaster("a-to-b", new("127.0.0.1", original.Port),
+            new("127.0.0.1", promoted.Port), new("127.0.0.1", first.Port));
+        router.QueueNotificationRediscovery(in outbound);
+        await WaitForCommandCountAsync(first, query, queries + 1);
+        var queryIndex = first.ReceivedCommands.ToList().FindLastIndex(command => command == query);
+        router.QueueNotificationRediscovery(SentinelHint.FromSwitchMaster("b-to-a", outbound.Target,
+            outbound.OldPrimary, new("127.0.0.1", second.Port)));
+        router.QueueNotificationRediscovery(in outbound);
+        var worker = router.NotificationRediscovery!;
+        first.SuppressReply = null;
+        await first.SendRawAsync(AddressReply(promoted.Port), first.ReceivedConnectionIds[queryIndex]);
+        await worker.WaitAsync(Limit);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(original.Port);
+        await Assert.That(router.Current!.IsRetired).IsFalse();
     }
 
     [Test]
@@ -1533,6 +1575,67 @@ public class SentinelRoutingTests
         var queryIndex = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command == discovery);
         await sentinel.SendRawAsync(AddressReply(promoted.Port), sentinel.ReceivedConnectionIds[queryIndex]);
         await WaitForEndpointAsync(client, promoted.Port);
+    }
+
+    [Test]
+    public async Task HostnameSourceFencesItsConnectedPeerBeforeAnyDnsLookup()
+    {
+        await using var original = Primary();
+        await using var target = Primary();
+        var reportAlias = false;
+        await using var sentinel = Sentinel(() => original.Port);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? "-NOPERM configuration metadata denied\r\n"u8.ToArray()
+            : command.StartsWith("SENTINEL GET-MASTER-ADDR")
+                ? AddressReply(Volatile.Read(ref reportAlias) ? "127.0.0.1" : "localhost", original.Port)
+                : reply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
+        });
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var originalGeneration = router.Current!;
+        var roles = original.ReceivedCommands.Count(command => command == "ROLE");
+        router.HostResolver = (_, _) => throw new InvalidOperationException("The connected peer needs no DNS lookup.");
+        var monitorIndex = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var queued = router.QueuedNotificationCount;
+        Volatile.Write(ref reportAlias, true);
+        await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
+            $"mymaster localhost {original.Port} 127.0.0.1 {target.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 1);
+        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+        await Assert.That(originalGeneration.IsRetired).IsTrue();
+        await Assert.That(router.Current).IsSameReferenceAs(originalGeneration);
+        await Assert.That(original.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(roles);
+    }
+
+    [Test]
+    public async Task ResolvedHostnameTargetSurvivesFailedCycleRediscovery()
+    {
+        await using var current = Primary();
+        await using var other = Primary();
+        await using var sentinel = Sentinel(() => current.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
+        });
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var generation = router.Current!;
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? "-ERR discovery unavailable\r\n"u8.ToArray() : reply(id, command);
+        var hostname = new RespireEndpoint("current.internal", current.Port);
+        var different = new RespireEndpoint("127.0.0.1", other.Port);
+        router.QueueNotificationRediscovery(SentinelHintBuilder.Create("cycle", [hostname, different],
+            [new(hostname, ["127.0.0.1"]), new(different, null)], [new("127.0.0.1", sentinel.Port)], true));
+        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+        await Assert.That(generation.IsRetired).IsFalse();
+        await Assert.That(router.Current).IsSameReferenceAs(generation);
+        await client.PingAsync().AsTask().WaitAsync(Limit);
     }
 
     [Test]

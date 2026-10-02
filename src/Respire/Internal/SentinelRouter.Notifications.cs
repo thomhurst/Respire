@@ -243,6 +243,9 @@ internal sealed partial class SentinelRouter
                 lock (_gate)
                 {
                     var arrivedDuring = Current;
+                    if (hint.OldPrimary is { } announcedSource && arrivedDuring?.ValidatedPeer is { } peer
+                        && SameEndpoint(arrivedDuring.Endpoint, announcedSource))
+                        hint = hint.WithSourceAddresses(announcedSource, [SentinelResolver.NormalizeHost(peer.Host)]);
                     QueueNotificationRediscovery(in hint);
                     if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
                         && !SameEndpoint(arrivedDuring.Endpoint, source))
@@ -543,7 +546,13 @@ internal sealed partial class SentinelRouter
     {
         if (current is not { IsRetired: false }) return false;
         foreach (var endpoint in hint.Targets)
+        {
             if (IsCurrentPeer(current, endpoint, null)) return true;
+            // In a cycle the same hostname can be both source and target. Its resolved
+            // addresses must protect a target just as they identify a demoted source.
+            foreach (var source in hint.Sources)
+                if (SameEndpoint(endpoint, source.Endpoint) && IsCurrentPeer(current, endpoint, source.Addresses)) return true;
+        }
         return false;
     }
 

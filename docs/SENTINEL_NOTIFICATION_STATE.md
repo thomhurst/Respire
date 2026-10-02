@@ -10,7 +10,9 @@ router gate. Network queries and DNS resolution happen outside that gate.
 | --- | --- |
 | Idle, relevant notification | Make the hint active and start one worker. |
 | Active, notification arrives | Retain new evidence in the pending hint. Arrival order does not establish failover order. |
-| Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer; source DNS aliases must be unambiguous. |
+| Active+pending, duplicate of active switch | Retain the duplicate's reporter without adding the active switch's source to the independent pending switch. |
+| Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer only in reconciliation of that completed evidence; independent pending switches keep their fences. Source DNS aliases must be unambiguous. |
+| Discovery succeeds without remaining source evidence | Bind reporter-only reconciliation to the validated owner and socket peer. A different owner requires a strictly newer configuration epoch. |
 | Discovery fails | Retain source evidence and prioritize unqueried reporters before retrying with bounded backoff. |
 | Another discovery publishes a different generation | Discard superseded active evidence, preserve pending notifications, and continue from the published generation. |
 | No pending evidence or reporter | Complete the worker; a later relevant event starts another. |
@@ -30,13 +32,22 @@ the record. DNS evidence remains paired with its endpoint and port.
 - When `SENTINEL MASTER` is unavailable, source/target evidence still fences a stale
   reporter whose old primary continues to answer `ROLE master`. A wake-up-only event
   model loses that evidence and cannot preserve this supported fallback contract.
-  Conflicting targets do not disable source fences. When a successful discovery confirms
-  an announced target in a conflicting cycle, reconciliation consumes only that target's
-  source fence; a source demoted toward one distinct target remains fenced.
+  Conflicting targets do not disable source fences. A completed A-to-B switch cannot
+  invert an independent pending B-to-A switch's fence when another A-to-B report arrives.
+  Reconciliation of a completed conflicting cycle consumes only the validated target's
+  source fence; a source demoted toward one distinct pending target remains fenced.
+- A gap or master-down report contains no demotion evidence. After it successfully
+  recovers a primary, unqueried reporters can confirm that primary or its unambiguous
+  validated peer alias. They cannot replace it without a newer epoch. This restriction
+  belongs to that reconciliation pass; a later independent switch retains its own evidence.
 - DNS answer sets do not prove which peer answered `ROLE`. Reconciliation keeps the actual
   validated socket peer, including its port. Ambiguous DNS overlaps cannot consume another
   primary's source fence. Demotion matching may conservatively match any source address;
   consuming that fence requires the stronger identity proof.
+- When a switch names the current primary's hostname, its actual validated peer is captured
+  before queuing discovery. A metadata-denied numeric alias cannot republish the demoted
+  server while DNS resolution is unavailable. In a conflicting cycle, source address
+  evidence also protects a target with the same hostname and port from premature retirement.
 - Forced discovery can reuse a healthy generation when the announced endpoint is its
   canonical endpoint without available DNS evidence, or resolves unambiguously to its
   connected peer. A stable hostname with changed DNS evidence requires a fresh connection.
@@ -52,6 +63,13 @@ the record. DNS evidence remains paired with its endpoint and port.
   does not replay accepted work or force disposal of a draining generation.
 
 ## Executable coverage
+
+`SentinelFenceTransitionTests` enumerates fifteen idle, active and active+pending
+transitions, including success and failure for switches, gaps and master-down reports.
+Every row checks retained source fences and candidate acceptance with no metadata,
+equal epochs and strictly newer epochs (90 discovery cases). Wire tests cover a delayed
+duplicate during failback, metadata-denied reporter rollback, connected hostname sources,
+and preservation of a hostname target when conflicting-cycle discovery fails.
 
 `OfferedEvidenceIsAlwaysQueuedOrDiscoveredAcrossWorkerTransitions` runs 64 seeded
 sequences of 64 transitions against an independent offered/discovered evidence model.

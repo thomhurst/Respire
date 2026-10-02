@@ -4,11 +4,24 @@ namespace Respire.Internal;
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
 internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
 
+internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
+{
+    internal bool Matches(RespireEndpoint candidate, string[]? addresses)
+        => SentinelDiscoveryState.EndpointComparer.Instance.Equals(Endpoint, candidate)
+            || Peer is { } peer && peer.Port == candidate.Port
+                && SentinelDiscoveryState.SingleAddress(candidate, addresses) is { } address
+                && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(peer.Host));
+}
+
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
 internal readonly record struct SentinelHint(
     string Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
     RespireEndpoint[] Reporters, bool MustRediscover)
 {
+    // Reporter-only reconciliation has no demotion evidence. Without a newer epoch it may
+    // confirm this owner, but must not let a stale reporter undo the successful recovery.
+    internal SentinelValidatedPrimary? ReconciliationPrimary { get; init; }
+
     internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
         RespireEndpoint? target, RespireEndpoint reporter)
         => new(key, target is { } to ? [to] : [],
@@ -99,7 +112,21 @@ internal sealed class SentinelNotificationCoalescer
             Active = hint;
             return true;
         }
-        var duplicate = ActiveKey == hint.Key || _pending?.Key == hint.Key;
+        var activeDuplicate = ActiveKey == hint.Key || SameSwitch(Active.Value, in hint);
+        var duplicate = activeDuplicate || _pending?.Key == hint.Key;
+        if (activeDuplicate && hint.Sources.Length > 0
+            && _pending is { Sources.Length: > 0 } independent && independent.Key != hint.Key)
+        {
+            // The active switch is already being validated. Repeating it must not add its
+            // source to an independent pending failback and invert that failback's fence.
+            // Keep every reporter; a newer epoch can still establish a subsequent switch.
+            _pending = independent with
+            {
+                Reporters = UnionEndpoints(independent.Reporters, hint.Reporters),
+                MustRediscover = true,
+            };
+            return false;
+        }
         // A discovery already in flight can publish a different primary. Preserve even a
         // switch confirming Current so its source fence and reporter survive that result.
         var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint);
@@ -109,6 +136,12 @@ internal sealed class SentinelNotificationCoalescer
         if (duplicate && needsAnotherPass) _pending = _pending.Value with { MustRediscover = true };
         return false;
     }
+
+    private static bool SameSwitch(in SentinelHint left, in SentinelHint right)
+        => left.Sources.Length == 1 && right.Sources.Length == 1
+            && left.Targets.Length == 1 && right.Targets.Length == 1
+            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(left.Sources[0].Endpoint, right.Sources[0].Endpoint)
+            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(left.Targets[0], right.Targets[0]);
 
     private bool HasNewReporter(in SentinelHint hint)
     {
@@ -148,7 +181,11 @@ internal sealed class SentinelNotificationCoalescer
         // Keep the switch key when a down/gap event contributes no source. This is only deduplication identity.
         var key = hint.Sources.Length > 0 || previous.Sources.Length == 0 ? hint.Key : previous.Key;
         return new(key, targets, sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray(),
-            reporters, mustRediscover);
+            reporters, mustRediscover)
+        {
+            ReconciliationPrimary = sources.Count == 0
+                ? hint.ReconciliationPrimary ?? previous.ReconciliationPrimary : null,
+        };
     }
 
     /// <summary>Retains a completed DNS lookup for its source in active and pending hints.</summary>
@@ -201,8 +238,9 @@ internal sealed class SentinelNotificationCoalescer
         {
             // Reconciliation preserves demoted sources and consumes only the validated primary's
             // source evidence, so an alternate reporter cannot retire that generation again.
-            if (!activeFailed && (next.Key == activeHint.Key
-                || next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
+            if (!activeFailed && (next.Sources.Length == 0 || next.Key == activeHint.Key
+                || activeHint.Sources.Length == 0
+                    && next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
                 next = ForReporterReconciliation(next, validatedPrimary, validatedPeer);
             if (activeFailed)
             {
@@ -226,6 +264,12 @@ internal sealed class SentinelNotificationCoalescer
                 {
                     Reporters = unqueriedReporters,
                 };
+                // An independent, unambiguous pending target can be a failback from the
+                // completed switch. Its source remains fenced; the completed switch must
+                // not contribute a contradictory fence against that pending target.
+                if (next.Target is { } pendingTarget)
+                    unqueried = unqueried with { Sources = unqueried.Sources.Where(source =>
+                        !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToArray() };
                 next = Merge(unqueried, in next);
                 next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
@@ -247,14 +291,19 @@ internal sealed class SentinelNotificationCoalescer
 
     private static SentinelHint ForReporterReconciliation(SentinelHint hint, RespireEndpoint? validatedPrimary,
         RespireEndpoint? validatedPeer)
-        => hint with
+    {
+        // Successful validation consumes only that primary's source evidence. Keep every
+        // other demotion fence: metadata-free reporters can still advertise a stale master.
+        var sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
+            !MatchesValidatedSource(primary, validatedPeer, source)).ToArray() : hint.Sources;
+        return hint with
         {
             MustRediscover = true,
-            // Successful validation consumes only that primary's source evidence. Keep every
-            // other demotion fence: metadata-free reporters can still advertise a stale master.
-            Sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
-                !MatchesValidatedSource(primary, validatedPeer, source)).ToArray() : hint.Sources,
+            ReconciliationPrimary = sources.Length == 0 && validatedPrimary is { } owner
+                ? new(owner, validatedPeer) : hint.ReconciliationPrimary,
+            Sources = sources,
         };
+    }
 
     private static bool MatchesValidatedSource(RespireEndpoint primary, RespireEndpoint? peer, SentinelSwitchSource source)
     {
