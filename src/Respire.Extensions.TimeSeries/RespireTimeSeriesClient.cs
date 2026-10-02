@@ -89,12 +89,14 @@ public sealed class RespireTimeSeriesClient
         ArgumentNullException.ThrowIfNull(samples);
         if (samples.Count == 0) throw new ArgumentException("At least one sample is required.", nameof(samples));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
-        // Validate every timestamp first, so invalid input never leaves earlier chunks written.
-        for (var index = 0; index < samples.Count; index++) samples[index].Timestamp.RequireWrite(nameof(samples));
+        // Validate and normalize every timestamp first, so invalid input never leaves earlier chunks written.
+        var validatedTimestamps = new string[samples.Count];
+        for (var index = 0; index < samples.Count; index++)
+            validatedTimestamps[index] = samples[index].Timestamp.RequireWrite(nameof(samples));
 
         var timestamps = new long[samples.Count];
         string?[]? errors = null;
-        for (var start = 0; start < samples.Count; start += Math.Min(maxBatchSize, samples.Count - start))
+        for (var start = 0; start < samples.Count;)
         {
             var count = Math.Min(maxBatchSize, samples.Count - start);
             var arguments = new RespireValue[checked(count * 3)];
@@ -102,7 +104,7 @@ public sealed class RespireTimeSeriesClient
             {
                 var sample = samples[start + index];
                 arguments[index * 3] = sample.Key;
-                arguments[index * 3 + 1] = sample.Timestamp.RequireWrite(nameof(samples));
+                arguments[index * 3 + 1] = validatedTimestamps[start + index];
                 arguments[index * 3 + 2] = sample.Value;
             }
             using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
@@ -119,6 +121,8 @@ public sealed class RespireTimeSeriesClient
                 }
                 timestamps[start + index] = reply.AsInteger();
             }
+
+            start += count;
         }
         if (errors is null) return timestamps;
 
