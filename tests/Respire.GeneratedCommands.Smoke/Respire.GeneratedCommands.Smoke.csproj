@@ -14,5 +14,7 @@
     <!-- Also proves Respire.Json publishes and runs under Native AOT, and does not ship a second generator. -->
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
+    <!-- Validates that an extension package built on generated commands stays AOT- and trim-safe. -->
+    <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
   </ItemGroup>
 </Project>

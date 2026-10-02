@@ -44,8 +44,31 @@ public class ProbabilisticClientTests
         await using var client = RespireClient.Create(DisconnectedOptions());
         var prefixed = client.WithKeyPrefix("tenant:");
 
-        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.GET"), "series"))
+        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.MGET"), "FILTER", "sensor=1"))
             .Throws<NotSupportedException>();
+        // Core commands have layouts for routing, but only explicitly prefixable layouts may be rewritten.
+        await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "GET"), "key"))
+            .Throws<NotSupportedException>();
+    }
+
+    [Test]
+    public async Task KeyPrefixedViewRejectsAbsentKeysInsteadOfWritingThePrefixKey()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var prefixed = client.WithKeyPrefix("tenant:");
+        var bloomAdd = RespireCommands.All.ToArray().Single(command => command.Name == "BF.ADD");
+        var countMinMerge = RespireCommands.All.ToArray().Single(command => command.Name == "CMS.MERGE");
+
+        await Assert.That(async () => await prefixed.ExecuteAsync(bloomAdd, RespireValue.Null, "item"))
+            .Throws<ArgumentNullException>();
+        await Assert.That(async () => await prefixed.ExecuteFireAndForgetAsync(bloomAdd, RespireValue.Null, "item"))
+            .Throws<ArgumentNullException>();
+        await Assert.That(async () => await prefixed.ExecuteAsync(countMinMerge, "destination", 2, "source", RespireValue.Null))
+            .Throws<ArgumentNullException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("BF.", StringComparison.Ordinal)
+                || command.StartsWith("CMS.", StringComparison.Ordinal)))
+            .IsFalse();
     }
 
     [Test]

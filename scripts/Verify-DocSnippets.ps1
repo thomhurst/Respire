@@ -47,6 +47,7 @@ $requiredPackages = @(
     'Respire.Extensions.Azure'
     'Respire.Json'
     'Respire.Search'
+    'Respire.TimeSeries'
     'Respire.Testing.Containers'
 )
 
@@ -246,6 +247,7 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using Redis.Search;')
 [void]$builder.AppendLine('using Respire.Extensions.Aws;')
 [void]$builder.AppendLine('using Respire.Extensions.Json;')
+[void]$builder.AppendLine('using Respire.Extensions.TimeSeries;')
 [void]$builder.AppendLine('using Respire.Extensions.Probabilistic;')
 [void]$builder.AppendLine('using Respire.Serialization;')
 [void]$builder.AppendLine('#pragma warning disable')

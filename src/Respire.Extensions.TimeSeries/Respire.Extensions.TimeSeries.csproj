@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <PackageId>Respire.Probabilistic</PackageId>
-    <Title>Respire.Probabilistic</Title>
-    <Description>Typed Redis probabilistic data structure commands for Respire.</Description>
-    <PackageTags>$(PackageTags);redis;probabilistic;Bloom;Cuckoo;Count-Min;Top-K;t-digest</PackageTags>
+    <PackageId>Respire.TimeSeries</PackageId>
+    <Title>Respire.TimeSeries</Title>
+    <Description>Typed RedisTimeSeries commands for Respire.</Description>
+    <PackageTags>$(PackageTags);redis-timeseries;metrics;time-series</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Respire\Respire.csproj" />

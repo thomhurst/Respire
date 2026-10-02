@@ -439,13 +439,14 @@ internal readonly struct DynamicCommand(
     int argumentOffset = 1,
     RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
     ReadCommandKind readKind = ReadCommandKind.None,
-    int cursorArgumentIndex = -1) : IRespCommand
+    int cursorArgumentIndex = -1,
+    bool hasExplicitCacheMutation = false) : IRespCommand
 {
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
-        => cacheMutation == RespireCacheMutation.Unknown
+        => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation
             ? RespireCommands.GetCacheMutation(operation)
             : cacheMutation;
 
@@ -658,9 +659,16 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     public int CursorArgumentIndex => command.CursorArgumentIndex;
 
     public RespireCacheMutation GetCacheMutation(string operation)
-        => command.CacheMutation == RespireCacheMutation.Unknown
-            ? RespireCommands.GetCacheMutation(operation)
-            : command.CacheMutation;
+    {
+        if (command.HasExplicitCacheMutation) return command.CacheMutation;
+        if (!operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase)
+            || command.CacheMutation == RespireCacheMutation.Unknown)
+        {
+            return RespireCommands.GetCacheMutation(operation);
+        }
+
+        return command.CacheMutation;
+    }
 
     public bool TryGetArgument(int index, out RespireValue value)
     {

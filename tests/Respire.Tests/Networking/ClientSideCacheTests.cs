@@ -74,6 +74,70 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task ExplicitZeroKeyMutation_FencesCacheWithoutReadingKeyArgument()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "+PONG\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+
+        using var pong = await client.ExecuteAsync(
+            RespireCommand.Create("PING", RespireCacheMutation.Mutation));
+
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
+    [Arguments(RespireCacheMutation.Unknown, 0)]
+    [Arguments(RespireCacheMutation.ReadOnly, 1)]
+    public async Task PrefixedRawDescriptor_PreservesExplicitCacheMutation(
+        RespireCacheMutation mutation, int expectedCacheCount)
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+        var view = client.WithKeyPrefix("tenant:");
+
+        using var result = await view.ExecuteAsync(
+            RespireCommand.Create("JSON.SET", mutation), ["key", "$.field", "value"]);
+
+        await Assert.That(cache.Count).IsEqualTo(expectedCacheCount);
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:key $.field value");
+    }
+
+    [Test]
+    [Arguments(RespireCacheMutation.Unknown, 0)]
+    [Arguments(RespireCacheMutation.ReadOnly, 1)]
+    public async Task PrefixedRawDescriptorFireAndForget_PreservesExplicitCacheMutation(
+        RespireCacheMutation mutation, int expectedCacheCount)
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, new RespireKey("unrelated"), "retained");
+        var view = client.WithKeyPrefix("tenant:");
+
+        await view.ExecuteFireAndForgetAsync(
+            RespireCommand.Create("JSON.SET", mutation), ["key", "$.field", "value"]);
+
+        await WaitUntilAsync(() => server.CommandsSeen >= 3);
+        await Assert.That(cache.Count).IsEqualTo(expectedCacheCount);
+        await Assert.That(server.ReceivedCommands).Contains("JSON.SET tenant:key $.field value");
+    }
+
+    [Test]
     public async Task DeterministicRead_CachesIntegerReply()
     {
         await using var server = new FakeRespServer(

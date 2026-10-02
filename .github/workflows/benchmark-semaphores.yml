@@ -78,12 +78,14 @@ jobs:
               source = source.replace(correction_marker, correction_shim + correction_marker, 1)
           assert source.count(correction_api) == 1
           marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
+          existing_marker = '    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
           shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')
           fence_api = 'TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged'
           if fence_api not in source:
-              assert source.count(marker) == 1
-              source = source.replace(marker, shim + marker, 1)
+              insertion_marker = marker if source.count(marker) == 1 else existing_marker
+              assert source.count(insertion_marker) == 1
+              source = source.replace(insertion_marker, shim + insertion_marker, 1)
           assert source.count(fence_api) == 1
           tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
           tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'

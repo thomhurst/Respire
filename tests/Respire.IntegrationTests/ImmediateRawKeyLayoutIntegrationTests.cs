@@ -29,6 +29,11 @@ public class ImmediateRawKeyLayoutIntegrationTests(ModernRedisTestContainer fixt
             ("XREADGROUP", ["GROUP", "STREAMS", "consumer", "NOACK", "STREAMS", "first", "second", ">", ">"]),
             ("MIGRATE", ["host", 6379, "", 0, 100, "AUTH2", "user", "KEYS", "KEYS", "first", "second"]),
             ("MIGRATE", ["host", 6379, "first", 0, 100]),
+            ("TS.ADD", ["first", 1, 1.5, "LABELS", "room", "1"]),
+            ("TS.MADD", ["first", 1, 1.5, "second", 2, 2.5]),
+            ("TS.CREATERULE", ["first", "second", "AGGREGATION", "avg", 10]),
+            ("TS.DELETERULE", ["first", "second"]),
+            ("TS.RANGE", ["first", "-", "+", "COUNT", 1]),
         ];
         foreach (var (name, args) in cases)
         {

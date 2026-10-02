@@ -76,8 +76,12 @@ dynamic key discovery such as SORT patterns, retain their existing routing and s
 validation; a catalog entry alone does not guarantee complete key discovery. Use typed facets
 where available and supply compatible keys for other raw commands. No caller-provided layout
 API is required or inferred. Administrative commands retain their existing node-local scope.
-Prefixed views still reject immediate catalog execution; use typed facets or supported deferred
-raw execution when the client should apply a key prefix. The deferred allowlist is unchanged.
+Prefixed views reject immediate catalog execution unless the command's layout is registered as
+prefixable, meaning it names every key position. Today that covers the RedisTimeSeries single-key,
+compaction-rule, and `TS.MADD` commands and the probabilistic (`BF.*`, `CF.*`, `CMS.*`, `TOPK.*`,
+`TDIGEST.*`) commands. Label-filter queries such as `TS.MGET` stay rejected because they could reach
+keys outside the prefix. Otherwise, use typed facets or supported deferred raw execution when the
+client should apply a key prefix. The deferred allowlist is unchanged.
 
 Key-layout references: [KeyDB 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 [MSETEX](https://redis.io/docs/latest/commands/msetex/),

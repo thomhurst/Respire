@@ -19,11 +19,16 @@ internal static class RawCommandKeyLayouts
         None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
         AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
-    private readonly record struct Definition(LayoutKind Kind, bool Deferred);
+    // Prefixable marks layouts that name every key position, so key-prefixed views may rewrite them.
+    private readonly record struct Definition(LayoutKind Kind, bool Deferred, bool Prefixable = false);
 
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
     // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
     internal static IEnumerable<string> DeferredOperations => Layouts.Where(pair => pair.Value.Deferred).Select(pair => pair.Key);
+    // Test-only enumeration lets cache tests check that every single-key cache mutation has a layout
+    // that names one written key (the first key, or the destination of a counted merge).
+    internal static IEnumerable<(string Operation, bool NamesOneWrittenKey)> AllLayouts
+        => Layouts.Select(pair => (pair.Key, pair.Value.Kind is LayoutKind.First or LayoutKind.CountedWithDestination));
 
     private static FrozenDictionary<string, Definition> CreateLayouts()
     {
@@ -67,31 +72,41 @@ internal static class RawCommandKeyLayouts
             "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
         // Immediate-only additions do not expand the conservative deferred allowlist.
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
-        AddImmediate(LayoutKind.First,
+        AddPrefixable(LayoutKind.First,
             "JSON.GET", "JSON.SET", "JSON.DEL", "JSON.FORGET", "JSON.CLEAR", "JSON.ARRAPPEND", "JSON.ARRINDEX",
             "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",
             "JSON.ARRINSERT", "JSON.ARRPOP", "JSON.ARRTRIM", "JSON.NUMINCRBY", "JSON.NUMMULTBY", "JSON.OBJKEYS",
             "JSON.OBJLEN", "JSON.STRAPPEND", "JSON.STRLEN", "JSON.TOGGLE", "JSON.TYPE", "JSON.RESP");
         // AfterFirst assumes one subcommand token before the key (JSON.DEBUG MEMORY key, JSON.DEBUG FIELDS key).
-        AddImmediate(LayoutKind.AfterFirst, "JSON.DEBUG");
-        AddImmediate(LayoutKind.None, "JSON.DEBUG HELP");
+        AddPrefixable(LayoutKind.AfterFirst, "JSON.DEBUG");
+        AddPrefixable(LayoutKind.None, "JSON.DEBUG HELP");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
-        AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
+        AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX");
+        AddPrefixable(LayoutKind.AllExceptLast, "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");
         AddImmediate(LayoutKind.CountedPairs, "MSETEX");
-        AddImmediate(LayoutKind.Triples, "JSON.MSET");
+        AddPrefixable(LayoutKind.Triples, "JSON.MSET");
         AddImmediate(LayoutKind.StreamRead, "XREAD");
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
-        AddImmediate(LayoutKind.First,
+        AddPrefixable(LayoutKind.First,
+            "TS.CREATE", "TS.ALTER", "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.GET", "TS.RANGE", "TS.REVRANGE",
+            "TS.DEL", "TS.INFO");
+        AddPrefixable(LayoutKind.FirstTwo, "TS.CREATERULE", "TS.DELETERULE");
+        AddPrefixable(LayoutKind.Triples, "TS.MADD");
+        // Label-filter queries name no keys and return series from every key namespace, so they are
+        // routed keylessly and are not prefixable.
+        AddImmediate(LayoutKind.None, "TS.MGET", "TS.MRANGE", "TS.MREVRANGE", "TS.QUERYINDEX");
+        // Probabilistic layouts name every key, including both sides of a merge, so they are prefixable.
+        AddPrefixable(LayoutKind.First,
             "BF.RESERVE", "BF.ADD", "BF.EXISTS", "BF.MADD", "BF.MEXISTS", "BF.INSERT", "BF.INFO", "BF.CARD", "BF.SCANDUMP", "BF.LOADCHUNK",
             "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.INSERT", "CF.INSERTNX", "CF.DEL", "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO", "CF.SCANDUMP", "CF.LOADCHUNK",
             "CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.QUERY", "CMS.INFO",
             "TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY", "TOPK.QUERY", "TOPK.COUNT", "TOPK.LIST", "TOPK.INFO",
             "TDIGEST.CREATE", "TDIGEST.RESET", "TDIGEST.ADD", "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK", "TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN", "TDIGEST.INFO",
             "VADD", "VREM", "VSETATTR");
-        AddImmediate(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
+        AddPrefixable(LayoutKind.CountedWithDestination, "CMS.MERGE", "TDIGEST.MERGE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)
@@ -101,6 +116,10 @@ internal static class RawCommandKeyLayouts
         void AddImmediate(LayoutKind kind, params string[] operations)
         {
             foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false));
+        }
+        void AddPrefixable(LayoutKind kind, params string[] operations)
+        {
+            foreach (var operation in operations) layouts.Add(operation, new(kind, Deferred: false, Prefixable: true));
         }
     }
 
@@ -117,6 +136,10 @@ internal static class RawCommandKeyLayouts
     /// <summary>Whether the registered layout identifies exactly one key in the first argument.</summary>
     internal static bool HasSingleFirstKeyLayout(string operation)
         => Layouts.TryGetValue(operation, out var definition) && definition.Kind == LayoutKind.First;
+
+    /// <summary>Whether <paramref name="operation"/> has an explicit layout safe for key-prefixed views.</summary>
+    internal static bool HasPrefixableLayout(string operation)
+        => Layouts.TryGetValue(operation, out var definition) && definition.Prefixable;
 
     internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
     {
@@ -199,6 +222,21 @@ internal static class RawCommandKeyLayouts
         var count = length > countIndex && args.GetArgument(countIndex).TryGetInt64(out var value)
             ? value : (long?)null;
         return TryCounted(length, countIndex, count, allowZero, stride, out layout);
+    }
+
+    /// <summary>
+    /// Gets the layout of a command whose every key position is described, so a key-prefixed view
+    /// can rewrite its keys. Commands without such a layout must be rejected by prefixed views.
+    /// </summary>
+    internal static bool TryGetPrefixableLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
+    {
+        if (Layouts.TryGetValue(operation, out var definition) && definition.Prefixable)
+        {
+            layout = Parse(definition.Kind, args);
+            return true;
+        }
+        layout = default;
+        return false;
     }
 
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)

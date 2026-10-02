@@ -30,6 +30,7 @@ const sidebars = {
         'guides/vector-sets',
         'guides/json',
         'guides/search',
+        'guides/timeseries',
         'guides/probabilistic',
         'guides/reconnect-policy',
         'guides/renewable-credentials',

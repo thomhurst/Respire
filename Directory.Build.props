@@ -11,10 +11,48 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!--
+      Projects that ship as NuGet packages, one per line. Add a new package project here.
+      Whitespace is stripped and the list gets a leading ';', so membership is an exact ';Name;' match.
+      _RespireValidatePackageProjectList (below) fails the build when a listed name has no project under
+      src/, or when a src/ project is neither listed nor in RespireNonPackageProjects.
+    -->
+    <RespirePackageProjects>
+      Respire;
+      Respire.Compression.Lz4;
+      Respire.Compression.Zstd;
+      Respire.Extensions.Aws;
+      Respire.Extensions.Azure;
+      Respire.Extensions.Caching;
+      Respire.Extensions.Caching.Hybrid;
+      Respire.Extensions.Coordination;
+      Respire.Extensions.DependencyInjection;
+      Respire.Extensions.Json;
+      Respire.Extensions.Probabilistic;
+      Respire.Extensions.Search;
+      Respire.Extensions.TimeSeries;
+      Respire.Testing;
+      Respire.Testing.Containers;
+    </RespirePackageProjects>
+    <_RespirePackageProjectList>;$([System.Text.RegularExpressions.Regex]::Replace('$(RespirePackageProjects)', '\s', ''))</_RespirePackageProjectList>
     <IsRespirePackageProject>false</IsRespirePackageProject>
-    <IsRespirePackageProject Condition="'$(MSBuildProjectName)' == 'Respire.Compression.Lz4' Or '$(MSBuildProjectName)' == 'Respire.Compression.Zstd' Or '$(MSBuildProjectName)' == 'Respire' Or '$(MSBuildProjectName)' == 'Respire.Extensions.DependencyInjection' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Coordination' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Aws' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Azure' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid' Or '$(MSBuildProjectName)' == 'Respire.Testing' Or '$(MSBuildProjectName)' == 'Respire.Testing.Containers' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Probabilistic' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Json' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Search'">true</IsRespirePackageProject>
+    <IsRespirePackageProject Condition="$(_RespirePackageProjectList.Contains(';$(MSBuildProjectName);'))">true</IsRespirePackageProject>
     <IsPackable>$(IsRespirePackageProject)</IsPackable>
+    <!-- src/ projects that deliberately do not ship as their own package. -->
+    <RespireNonPackageProjects>;Respire.Analyzers;</RespireNonPackageProjects>
   </PropertyGroup>
+
+  <!-- Runs once, in the core project, so a typo in the package list cannot silently make a project unpackable. -->
+  <Target Name="_RespireValidatePackageProjectList" BeforeTargets="Build" Condition="'$(MSBuildProjectName)' == 'Respire'">
+    <ItemGroup>
+      <_RespireListedPackageProject Include="$([MSBuild]::Unescape($(_RespirePackageProjectList)))" />
+      <_RespireSourceProject Include="$(MSBuildThisFileDirectory)src/*/*.csproj" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj')"
+           Text="RespirePackageProjects lists '%(_RespireListedPackageProject.Identity)', but src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj does not exist." />
+    <Error Condition="!$(_RespirePackageProjectList.Contains(';%(_RespireSourceProject.Filename);')) And !$(RespireNonPackageProjects.Contains(';%(_RespireSourceProject.Filename);'))"
+           Text="src project '%(_RespireSourceProject.Filename)' is not in RespirePackageProjects or RespireNonPackageProjects in Directory.Build.props." />
+  </Target>
 
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Respire.Extensions.Coordination.Tests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Azure.Tests' Or '$(MSBuildProjectName)' == 'Respire.Tests' Or '$(MSBuildProjectName)' == 'Respire.IntegrationTests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Tests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid.Tests' Or '$(MSBuildProjectName)' == 'Respire.Pipeline.Tests'">
     <IsTestProject>true</IsTestProject>

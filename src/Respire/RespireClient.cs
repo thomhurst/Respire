@@ -342,14 +342,27 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (command.IsCallerSupplied)
         {
+            if (_keyPrefix is not null && IsModuleCommand(command.Name))
+            {
+                var moduleOperation = command.Name.ToUpperInvariant();
+                var descriptorPrefixError = PrefixModuleKeysOrError(
+                    moduleOperation, args, out var descriptorPrefixedArguments);
+                if (descriptorPrefixError is not null)
+                    return ValueTask.FromException<RespireResult>(descriptorPrefixError);
+                args = descriptorPrefixedArguments;
+            }
+
             return ExecuteRawAsync(
                 command.Name, args, flags, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
+        // Catalog execution handles typed commands; explicit prefixable layouts also allow raw module commands.
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
+            if (_keyPrefix is null || !RawCommandKeyLayouts.HasPrefixableLayout(command.Name))
                 return ExecuteCatalogAsync(command, args, flags, cancellationToken);
             operation = command.Name;
             rawArguments = args;
@@ -357,11 +370,20 @@ public sealed partial class RespireClient : IRespireClient
 
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
+        var cacheMutation = command.HasExplicitCacheMutation
+            ? command.CacheMutation
+            : RespireCommands.GetCacheMutation(operation);
         if (_keyPrefix is null) return ExecuteRawAsync(
-            operation, rawArguments, flags, cancellationToken, readKind: readKind);
+            operation, rawArguments, flags, cancellationToken,
+            cacheMutation: cacheMutation,
+            hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+            readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
-            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken, readKind: readKind)
+            ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
+                cacheMutation: cacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+                readKind: readKind)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -372,14 +394,26 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (command.IsCallerSupplied)
         {
+            if (_keyPrefix is not null && IsModuleCommand(command.Name))
+            {
+                var moduleOperation = command.Name.ToUpperInvariant();
+                var descriptorPrefixError = PrefixModuleKeysOrError(
+                    moduleOperation, args, out var descriptorPrefixedArguments);
+                if (descriptorPrefixError is not null)
+                    return ValueTask.FromException(descriptorPrefixError);
+                args = descriptorPrefixedArguments;
+            }
+
             return ExecuteRawFireAndForgetAsync(
                 command.Name, args, cancellationToken,
+                cacheMutation: command.CacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args));
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
-            if (_keyPrefix is null || !IsPrefixableModuleCommand(command.Name))
+            if (_keyPrefix is null || !RawCommandKeyLayouts.HasPrefixableLayout(command.Name))
                 return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
             operation = command.Name;
             rawArguments = args;
@@ -387,12 +421,21 @@ public sealed partial class RespireClient : IRespireClient
 
         var readKind = command.ReadKind != ReadCommandKind.None
             ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(operation, rawArguments);
+        var cacheMutation = command.HasExplicitCacheMutation
+            ? command.CacheMutation
+            : RespireCommands.GetCacheMutation(operation);
         if (_keyPrefix is null) return ExecuteRawFireAndForgetAsync(
-            operation, rawArguments, cancellationToken, readKind: readKind);
+            operation, rawArguments, cancellationToken,
+            cacheMutation: cacheMutation,
+            hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+            readKind: readKind);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
-                operation, prefixedArguments, cancellationToken, readKind: readKind)
+                operation, prefixedArguments, cancellationToken,
+                cacheMutation: cacheMutation,
+                hasExplicitCacheMutation: command.HasExplicitCacheMutation,
+                readKind: readKind)
             : ValueTask.FromException(prefixError);
     }
 
@@ -405,7 +448,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         try
         {
-            return TryPrefixModuleKeys(operation, arguments, out prefixedArguments) ? null : KeyPrefixNotSupported();
+            return TryApplyKeyPrefix(operation, arguments, out prefixedArguments) ? null : KeyPrefixNotSupported();
         }
         catch (ArgumentException exception)
         {
@@ -415,14 +458,24 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Rewrites the keys of a known module command for this key-prefixed view. The caller's array is
-    /// copied, never mutated. Returns false for core commands, which must use the typed facets, and for
-    /// module commands without a registered key layout.
+    /// Applies a key-prefixed view's prefix to a catalog command whose key layout names every key.
+    /// Other commands are rejected because their keys cannot be located reliably.
     /// </summary>
-    private bool TryPrefixModuleKeys(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    private RespireValue[] PrefixCatalogKeys(string operation, RespireValue[] arguments)
     {
-        if (!IsPrefixableModuleCommand(operation)
-            || !RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        if (_keyPrefix is null) return arguments;
+        return TryApplyKeyPrefix(operation, arguments, out var prefixed) ? prefixed : throw KeyPrefixNotSupported();
+    }
+
+    /// <summary>
+    /// Rewrites every key of a command whose layout is marked prefixable in
+    /// <see cref="RawCommandKeyLayouts"/>, the single source of truth for key-prefixed views. The
+    /// caller's array is copied, never mutated. Returns false for commands without such a layout.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">A key position holds <see cref="RespireValue.Null"/>.</exception>
+    private bool TryApplyKeyPrefix(string operation, RespireValue[] arguments, out RespireValue[] prefixedArguments)
+    {
+        if (!RawCommandKeyLayouts.TryGetPrefixableLayout(operation, arguments, out var layout))
         {
             prefixedArguments = [];
             return false;
@@ -433,31 +486,19 @@ public sealed partial class RespireClient : IRespireClient
         for (var index = 0; index < layout.Count; index++)
         {
             var keyIndex = layout.Start + index * layout.Stride;
-            prefixedArguments[keyIndex] = PrefixModuleKey(arguments[keyIndex]);
+            prefixedArguments[keyIndex] = PrefixKey(arguments[keyIndex]);
         }
         if (layout.Extra >= 0)
-            prefixedArguments[layout.Extra] = PrefixModuleKey(arguments[layout.Extra]);
+            prefixedArguments[layout.Extra] = PrefixKey(arguments[layout.Extra]);
         return true;
     }
 
-    // A null key would otherwise become the bare prefix and address a real, unintended key.
-    private RespireValue PrefixModuleKey(RespireValue key)
+    private RespireValue PrefixKey(RespireValue key)
     {
+        // An absent key would otherwise become the empty key, and so the prefix itself.
         RespireValue.ThrowIfNull(key, "args");
         return Key(key.AsKey());
     }
-
-    /// <summary>
-    /// Module families whose key layouts are registered in <see cref="RawCommandKeyLayouts"/> and may
-    /// therefore run through a key-prefixed view. Matching is ordinal, like the layout table.
-    /// </summary>
-    private static bool IsPrefixableModuleCommand(string operation)
-        => operation.StartsWith("BF.", StringComparison.Ordinal)
-            || operation.StartsWith("CF.", StringComparison.Ordinal)
-            || operation.StartsWith("CMS.", StringComparison.Ordinal)
-            || operation.StartsWith("TOPK.", StringComparison.Ordinal)
-            || operation.StartsWith("TDIGEST.", StringComparison.Ordinal)
-            || operation.StartsWith("JSON.", StringComparison.Ordinal);
 
     /// <summary>
     /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a
@@ -500,6 +541,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         ValidateResultFlags(flags);
         ValidateCatalogCommand(command);
+        args = PrefixCatalogKeys(command.Name, args);
 
         var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
@@ -544,6 +586,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ValidateCatalogCommand(command);
+        args = PrefixCatalogKeys(command.Name, args);
         if (command.IsBlocking(args))
         {
             throw new NotSupportedException(
@@ -575,12 +618,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandFlags flags,
         CancellationToken cancellationToken,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         ValidateResultFlags(flags);
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
         var isBlocking = RespireCommand.IsBlocking(
             operation,
             RespireCommand.Classify(operation),
@@ -627,13 +671,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         CancellationToken cancellationToken,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
         var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
@@ -754,8 +799,6 @@ public sealed partial class RespireClient : IRespireClient
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
         }
 
-        ValidateCatalogKeyPrefix();
-
         if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
         {
             throw new NotSupportedException(
@@ -764,18 +807,11 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private void ValidateCatalogKeyPrefix()
-    {
-        if (_keyPrefix is not null)
-        {
-            throw KeyPrefixNotSupported();
-        }
-    }
-
     private static NotSupportedException KeyPrefixNotSupported()
         => new(
-            "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
-            "Use the typed command facets instead.");
+            "This command cannot run through a key-prefixed view because its key positions are not known, " +
+            "or because it selects keys by label or pattern and could reach keys outside the prefix. " +
+            "Use the typed command facets, or run the command through an unprefixed client.");
 
     private static void ValidateResultFlags(RespireCommandFlags flags)
     {
@@ -880,6 +916,7 @@ public sealed partial class RespireClient : IRespireClient
         int firstArgumentIndex,
         RespireValue[] args,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
+        bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None)
     {
         var tokens = new RespireValue[words.Length + args.Length];
@@ -896,7 +933,7 @@ public sealed partial class RespireClient : IRespireClient
             operation, tokens, firstArgumentIndex);
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
-                Verb.GetCursorArgumentIndex(operation)));
+                Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -910,7 +947,7 @@ public sealed partial class RespireClient : IRespireClient
             return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
         // Registered module commands route by their layout even outside Cluster validation, so commands whose
         // key is not the first argument (JSON.DEBUG MEMORY, CMS.MERGE) still pick the right key.
-        if (IsPrefixableModuleCommand(operation)
+        if (IsModuleCommand(operation)
             && RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
             // Same precedence as RawCommandKeyLayouts.ValidateClusterKeys: a destination key comes first.
             return layout.Extra >= 0 ? firstArgumentIndex + layout.Extra
@@ -918,6 +955,15 @@ public sealed partial class RespireClient : IRespireClient
                 : RawCommandKeyLayouts.KeyRouting.NoKeyIndex;
         return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
     }
+
+    private static bool IsModuleCommand(string operation)
+        => operation.StartsWith("BF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CF.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("CMS.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TOPK.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TDIGEST.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("JSON.", StringComparison.OrdinalIgnoreCase)
+            || operation.StartsWith("TS.", StringComparison.OrdinalIgnoreCase);
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
         => arguments.Length > 0 &&

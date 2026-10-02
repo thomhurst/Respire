@@ -77,6 +77,27 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task MultiKeyMutationFenceIncludesExtraDestinationKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "source-one", "old");
+        Insert(cache, "source-two", "old");
+        Insert(cache, "destination", "old");
+        Insert(cache, "unrelated", "retained");
+        RespireValue[] args = ["destination", 2, "source-one", "source-two"];
+        var command = new MultiKeyCacheCommand(args);
+
+        var fence = cache.BeforeCommand("CMS.MERGE", in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        await Assert.That(cache.TryGet(new RespireKey("source-one"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("source-two"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("destination"), out _)).IsFalse();
+    }
+
+    [Test]
     public async Task JsonMSetFencesTripletKeysAndLeavesUnrelatedEntries()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
@@ -408,6 +429,53 @@ public class ClientSideCacheCoordinatorTests
             await Assert.That(cache.TryGet(new RespireKey("sketch"), out _)).IsFalse();
             cache.CompleteMutation(in fence);
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+    }
+
+    [Test]
+    public async Task TimeSeriesMutationsFenceTheirKeyOrFlushWhenTheyWriteSeveralKeys()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        foreach (var operation in new[] { "TS.CREATE", "TS.ALTER" })
+        {
+            Insert(cache, "unrelated", "retained");
+            Insert(cache, "series", "old");
+            var command = new Cmd1N(new Verb(operation), "series", [1]);
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Key);
+            await Assert.That(cache.TryGet(new RespireKey("series"), out _)).IsFalse();
+            cache.CompleteMutation(in fence);
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+
+        // Sample writes and deletes can update compaction destinations that are not present in
+        // the command, so they must flush the cache. TS.MADD can affect any number of such rules.
+        foreach (var operation in new[] { "TS.ADD", "TS.INCRBY", "TS.DECRBY", "TS.DEL", "TS.MADD" })
+        {
+            Insert(cache, "unrelated", "dropped");
+            var command = new Cmd1N(new Verb(operation), "series", ["other"]);
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.All)
+                .Because($"{operation} writes more than its first key");
+            await Assert.That(cache.Count).IsEqualTo(0);
+            cache.CompleteMutation(in fence);
+        }
+
+        foreach (var operation in new[] { "TS.CREATERULE", "TS.DELETERULE" })
+        {
+            Insert(cache, "unrelated", "retained");
+            var command = new Cmd1N(new Verb(operation), "series", ["other"]);
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+            await Assert.That(cache.TryGet(new RespireKey("series"), out _)).IsFalse();
+            await Assert.That(cache.TryGet(new RespireKey("other"), out _)).IsFalse();
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+            cache.CompleteMutation(in fence);
+        }
+
+        foreach (var operation in new[] { "TS.GET", "TS.RANGE", "TS.REVRANGE", "TS.MGET", "TS.MRANGE", "TS.INFO", "TS.QUERYINDEX" })
+        {
+            await Assert.That(ClientSideCacheCoordinator.CanCacheOperation(operation)).IsFalse();
         }
     }
 
@@ -792,5 +860,20 @@ public class ClientSideCacheCoordinatorTests
 
         var token = cache.BeginRead("STRLEN", in request);
         cache.CompleteRead(in token, in response, allowInsert: true);
+    }
+
+    private readonly struct MultiKeyCacheCommand(RespireValue[] arguments) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+
+        public void Write(ref RespWriter writer) { }
+
+        public RespireCacheMutation GetCacheMutation(string operation) => RespireCacheMutation.MultiKey;
+
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+        {
+            key = new ClientCacheCommandKey(operation, arguments);
+            return true;
+        }
     }
 }
