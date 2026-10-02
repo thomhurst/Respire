@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Respire;
@@ -197,8 +199,56 @@ public sealed class StreamedSetTests
         await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
 
+        var rented = new List<byte[]>();
+        try
+        {
+            for (var i = 0; i < 64; i++)
+            {
+                var buffer = ArrayPool<byte>.Shared.Rent(source.CapturedBufferLength);
+                rented.Add(buffer);
+                await Assert.That(ReferenceEquals(buffer, source.CapturedBuffer)).IsFalse();
+            }
+        }
+        finally
+        {
+            foreach (var buffer in rented) ArrayPool<byte>.Shared.Return(buffer);
+        }
+
         source.ContinueReading.TrySetResult();
         await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task DisposeKeepsPartialChunkBufferPooledOutUntilFillTaskSettles()
+    {
+        var source = new ShortReadThenBlockedStream();
+        var readerType = typeof(RespireConnection).GetNestedType("StreamPayloadReader", BindingFlags.NonPublic)!;
+        var reader = Activator.CreateInstance(readerType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+            [source, (long)RespireConnection.StreamChunkSize * 2], null)!;
+        var readChunk = readerType.GetMethod("ReadChunkAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        _ = await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!;
+
+        var fillingChunk = Task.Run(async () =>
+            await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!);
+        await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var pendingBuffer = (byte[])readerType.GetField("_alternateChunk", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(reader)!;
+
+        ((IDisposable)reader).Dispose();
+        var probe = ArrayPool<byte>.Shared.Rent(RespireConnection.StreamChunkSize);
+        try
+        {
+            await Assert.That(ReferenceEquals(probe, pendingBuffer)).IsFalse();
+        }
+        finally
+        {
+            source.ContinueThirdRead.TrySetResult();
+            await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
+            ArrayPool<byte>.Shared.Return(probe);
+        }
+
+        await Assert.That(pendingBuffer[1]).IsEqualTo((byte)'c');
     }
 
     [Test]
@@ -1244,6 +1294,46 @@ public sealed class StreamedSetTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
+    private sealed class ShortReadThenBlockedStream : Stream
+    {
+        private int _readCount;
+        internal TaskCompletionSource ThirdReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ContinueThirdRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => RespireConnection.StreamChunkSize * 2L;
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            switch (Interlocked.Increment(ref _readCount))
+            {
+                case 1:
+                    buffer.Span.Fill((byte)'a');
+                    return ValueTask.FromResult(buffer.Length);
+                case 2:
+                    buffer.Span[0] = (byte)'b';
+                    return ValueTask.FromResult(1);
+                case 3:
+                    ThirdReadStarted.TrySetResult();
+                    ContinueThirdRead.Task.GetAwaiter().GetResult();
+                    buffer.Span[0] = (byte)'c';
+                    return ValueTask.FromResult(1);
+                default:
+                    buffer.Span.Fill((byte)'d');
+                    return ValueTask.FromResult(buffer.Length);
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class SynchronouslyBlockingStream(TimeSpan delay) : Stream
     {
         private bool _read;
@@ -1345,6 +1435,8 @@ public sealed class StreamedSetTests
         internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? CapturedBuffer { get; private set; }
+        internal int CapturedBufferLength => CapturedBuffer?.Length ?? throw new InvalidOperationException("No source buffer captured.");
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -1353,6 +1445,7 @@ public sealed class StreamedSetTests
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
             if (_position >= pauseAfter && Interlocked.Exchange(ref _blocked, 1) == 0)
             {
                 Paused.TrySetResult();

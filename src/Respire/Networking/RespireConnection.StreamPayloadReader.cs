@@ -10,9 +10,17 @@ internal sealed partial class RespireConnection
     /// </summary>
     private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
     {
+        private sealed class ActiveChunkRead(byte[] buffer)
+        {
+            internal byte[] Buffer { get; } = buffer;
+            internal TaskCompletionSource Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
         private byte[]? _chunk;
         private byte[]? _alternateChunk;
+        private ActiveChunkRead? _activeChunkRead;
         private byte[]? _pendingBuffer;
+        private int _disposed;
         private bool _useAlternate;
         private long _remaining = length;
         private ReadOnlyMemory<byte> _consumedPrefix;
@@ -22,7 +30,7 @@ internal sealed partial class RespireConnection
 
         internal bool IsComplete => _remaining == 0;
         internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
-        internal bool HasPendingRead => _pendingRead is not null;
+        internal bool HasPendingRead => Volatile.Read(ref _pendingRead) is not null;
         internal Exception? UnknownPositionReadError => _unknownPositionReadError;
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
@@ -31,65 +39,80 @@ internal sealed partial class RespireConnection
                 ? _alternateChunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize)
                 : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
             _useAlternate = !_useAlternate;
+            // Ownership spans all partial reads, including gaps between ReadAsync calls.
+            var activeChunkRead = new ActiveChunkRead(chunk);
+            Volatile.Write(ref _activeChunkRead, activeChunkRead);
             // Fill the chunk before returning it so sources that return small reads (network
             // streams, for example) do not cost one socket write and flush wait per read.
             var target = (int)Math.Min(StreamChunkSize, _remaining);
             var filled = 0;
-            while (filled < target)
+            try
             {
-                Task<int>? pendingRead = null;
-                try
+                while (filled < target)
                 {
-                    pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
-                    // Publish buffer ownership before yielding. Dispose can run as soon as the
-                    // concurrent socket write fails, before WaitAsync resumes with cancellation.
-                    _pendingRead = pendingRead;
-                    _pendingBuffer = chunk;
-                    _filledBeforePendingRead = filled;
-                    // WaitAsync also bounds streams that ignore their cancellation token.
-                    var read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    if (ReferenceEquals(_pendingRead, pendingRead))
+                    Task<int>? pendingRead = null;
+                    try
                     {
-                        _pendingRead = null;
-                        _pendingBuffer = null;
+                        pendingRead = source.ReadAsync(chunk.AsMemory(filled, target - filled), cancellationToken).AsTask();
+                        // Publish buffer ownership before yielding. Dispose can run as soon as the
+                        // concurrent socket write fails, before WaitAsync resumes with cancellation.
+                        Volatile.Write(ref _pendingBuffer, chunk);
+                        Volatile.Write(ref _filledBeforePendingRead, filled);
+                        Volatile.Write(ref _pendingRead, pendingRead);
+                        // WaitAsync also bounds streams that ignore their cancellation token.
+                        var read = await pendingRead.WaitAsync(cancellationToken).ConfigureAwait(false);
+                        if (ReferenceEquals(Volatile.Read(ref _pendingRead), pendingRead))
+                        {
+                            Volatile.Write(ref _pendingRead, null);
+                            Volatile.Write(ref _pendingBuffer, null);
+                        }
+                        if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
+                        filled += read;
                     }
-                    if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
-                    filled += read;
+                    catch (Exception error)
+                    {
+                        if (filled > 0) _consumedPrefix = chunk.AsMemory(0, filled).ToArray();
+                        if (pendingRead is { IsCompleted: false })
+                        {
+                            // Retirement retry must wait for a non-cooperative read before replaying
+                            // the source. It may consume more bytes and still write into this buffer.
+                            Volatile.Write(ref _pendingBuffer, chunk);
+                            Volatile.Write(ref _filledBeforePendingRead, filled);
+                            Volatile.Write(ref _pendingRead, pendingRead);
+                        }
+                        else if (pendingRead is { Status: TaskStatus.RanToCompletion })
+                        {
+                            var completedRead = pendingRead.GetAwaiter().GetResult();
+                            if (completedRead > 0) _consumedPrefix = chunk.AsMemory(0, filled + completedRead).ToArray();
+                        }
+                        else
+                        {
+                            // A failed read has no byte count. The source may have advanced before
+                            // throwing, so a retirement retry cannot safely replay it.
+                            _unknownPositionReadError = error;
+                        }
+                        throw;
+                    }
                 }
-                catch (Exception error)
-                {
-                    if (filled > 0) _consumedPrefix = chunk.AsMemory(0, filled).ToArray();
-                    if (pendingRead is { IsCompleted: false })
-                    {
-                        // Retirement retry must wait for a non-cooperative read before replaying
-                        // the source. It may consume more bytes and still write into this buffer.
-                        _pendingRead = pendingRead;
-                        _pendingBuffer = chunk;
-                        _filledBeforePendingRead = filled;
-                    }
-                    else if (pendingRead is { Status: TaskStatus.RanToCompletion })
-                    {
-                        var completedRead = pendingRead.GetAwaiter().GetResult();
-                        if (completedRead > 0) _consumedPrefix = chunk.AsMemory(0, filled + completedRead).ToArray();
-                    }
-                    else
-                    {
-                        // A failed read has no byte count. The source may have advanced before
-                        // throwing, so a retirement retry cannot safely replay it.
-                        _unknownPositionReadError = error;
-                    }
-                    throw;
-                }
-            }
 
-            _remaining -= filled;
-            return chunk.AsMemory(0, filled);
+                _remaining -= filled;
+                return chunk.AsMemory(0, filled);
+            }
+            finally
+            {
+                var pendingRead = Volatile.Read(ref _pendingRead);
+                if (pendingRead is { IsCompleted: false })
+                    _ = SettleChunkReadAfterSourceReadAsync(activeChunkRead, pendingRead);
+                else
+                    activeChunkRead.Settled.TrySetResult();
+                Interlocked.CompareExchange(ref _activeChunkRead, null, activeChunkRead);
+            }
         }
 
         internal async ValueTask<Exception?> CompletePendingReadForRetryAsync(CancellationToken cancellationToken)
         {
-            if (_pendingRead is not { } pendingRead) return null;
-            var chunk = _pendingBuffer!;
+            if (Volatile.Read(ref _pendingRead) is not { } pendingRead) return null;
+            var chunk = Volatile.Read(ref _pendingBuffer)!;
             int read;
             Exception? readError = null;
             try
@@ -111,30 +134,48 @@ internal sealed partial class RespireConnection
                 readError = error;
                 read = 0;
             }
-            _pendingRead = null;
-            _pendingBuffer = null;
+            Volatile.Write(ref _pendingRead, null);
+            Volatile.Write(ref _pendingBuffer, null);
             if (read > 0) _consumedPrefix = chunk.AsMemory(0, _filledBeforePendingRead + read).ToArray();
             return readError;
         }
 
         public void Dispose()
         {
-            var pendingBuffer = _pendingBuffer;
-            if (_pendingRead is { } pendingRead && pendingBuffer is not null)
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            var activeChunkRead = Volatile.Read(ref _activeChunkRead);
+            var pendingBuffer = Volatile.Read(ref _pendingBuffer);
+            var pendingRead = Volatile.Read(ref _pendingRead);
+            byte[]? retainedBuffer = null;
+            Task? bufferSettled = null;
+            if (activeChunkRead is not null)
             {
-                _pendingRead = null;
-                _pendingBuffer = null;
-                _ = ReturnChunkAfterReadAsync(pendingRead, pendingBuffer);
+                retainedBuffer = activeChunkRead.Buffer;
+                bufferSettled = activeChunkRead.Settled.Task;
             }
-            if (_chunk is { } chunk && !ReferenceEquals(chunk, pendingBuffer)) ArrayPool<byte>.Shared.Return(chunk);
-            if (_alternateChunk is { } alternate && !ReferenceEquals(alternate, pendingBuffer)) ArrayPool<byte>.Shared.Return(alternate);
+            else if (pendingRead is { IsCompleted: false } && pendingBuffer is not null)
+            {
+                retainedBuffer = pendingBuffer;
+                bufferSettled = pendingRead;
+            }
+            if (_chunk is { } chunk && !ReferenceEquals(chunk, retainedBuffer)) ArrayPool<byte>.Shared.Return(chunk);
+            if (_alternateChunk is { } alternate && !ReferenceEquals(alternate, retainedBuffer)) ArrayPool<byte>.Shared.Return(alternate);
+            if (retainedBuffer is not null && bufferSettled is not null)
+                _ = ReturnChunkAfterReadAsync(bufferSettled, retainedBuffer);
             _chunk = null;
             _alternateChunk = null;
         }
 
-        private static async Task ReturnChunkAfterReadAsync(Task<int> pendingRead, byte[] chunk)
+        private static async Task SettleChunkReadAfterSourceReadAsync(ActiveChunkRead activeChunkRead, Task<int> pendingRead)
         {
             try { _ = await pendingRead.ConfigureAwait(false); }
+            catch { /* The original streamed SET owns its failure. */ }
+            finally { activeChunkRead.Settled.TrySetResult(); }
+        }
+
+        private static async Task ReturnChunkAfterReadAsync(Task bufferSettled, byte[] chunk)
+        {
+            try { await bufferSettled.ConfigureAwait(false); }
             catch { /* The original streamed SET owns its failure. */ }
             finally { ArrayPool<byte>.Shared.Return(chunk); }
         }
