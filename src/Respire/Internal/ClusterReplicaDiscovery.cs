@@ -1,6 +1,11 @@
 namespace Respire.Internal;
 
 /// <summary>Shares unknown-slot probes without treating another slot's partial reply as coverage.</summary>
+/// <remarks>
+/// The coverage callback runs under this coordinator's gate and must remain a lock-free read.
+/// Topology publication takes the router node gate before calling ForgetCoveredSlots, so taking
+/// that node gate from the callback would invert the lock order.
+/// </remarks>
 internal sealed class ClusterReplicaDiscovery(
     Func<int, Task> refresh, Func<int, bool> hasCoverage, Func<long>? clock = null)
 {
@@ -43,6 +48,8 @@ internal sealed class ClusterReplicaDiscovery(
             if (attemptedSlot == slot) return;
             // Recheck this slot after shared work. A partial reply for another slot neither
             // completes this discovery nor consumes this slot's refresh interval.
+            // Persistently uncovered distinct slots intentionally probe sequentially: each
+            // needs its own coverage attempt, at the cost of one probe round per missing slot.
         }
     }
 
@@ -68,7 +75,11 @@ internal sealed class ClusterReplicaDiscovery(
     private async Task RunAsync(int slot, TaskCompletionSource<int> completion)
     {
         try { await refresh(slot).ConfigureAwait(false); }
-        catch { /* The router logs probe failures; callers inspect their slot's routes. */ }
+        catch
+        {
+            // RefreshReplicaRoutesAsync reports failed rounds through its rate-limited warning
+            // (excluding expected router disposal). Waiters report unavailable routes themselves.
+        }
         finally
         {
             lock (_gate)
