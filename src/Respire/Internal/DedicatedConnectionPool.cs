@@ -8,12 +8,22 @@ internal enum DedicatedLeaseKind { Ordinary, Streaming }
 
 /// <summary>
 /// A small pool of dedicated (non-multiplexed) connections for commands that occupy a
-/// connection for their whole duration: BLPOP-style blocking waits and blocking stream reads.
+/// connection for their whole duration: BLPOP-style blocking waits, blocking stream reads, and
+/// streamed uploads whose source or socket can stall while writing a frame.
 /// Multiplexed connections must never run these — one blocking command would stall every
 /// pipelined command behind it — so they rent from here instead. Connections are created on
 /// demand and a few idle ones are kept for reuse. Rented connections are tracked so client
 /// disposal can abort a command blocked server-side (even a BLPOP with an infinite wait).
 /// </summary>
+/// <remarks>
+/// A renter owns its lease until returning or discarding it. Retirement rejects new rentals and
+/// drains accepted leases; disposal aborts every owned connection, including closing entries.
+/// Failed application sends discard their leases. The router may retry an upload before its
+/// header is accepted, preserving the consumed prefix and original deadline. After acceptance,
+/// only an explicit server redirect permits replay, and only when the source is replayable.
+/// Streaming leases negotiate maintenance independently of ordinary blocking/correction leases;
+/// both kinds share the idle-capacity bound and the connection ownership ledger.
+/// </remarks>
 internal sealed partial class DedicatedConnectionPool(
     string host, int port, RespireConnectionOptions options, ILogger? logger,
     Action<RespireConnectionStateChange>? stateChanged = null,

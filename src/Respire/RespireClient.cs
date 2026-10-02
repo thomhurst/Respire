@@ -3390,7 +3390,8 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     private Exception? TranslateDedicatedAcquisitionCancellation(
-        Exception error, DedicatedAcquisitionCancellation? source, CancellationToken callerToken, string operation)
+        Exception error, DedicatedAcquisitionCancellation? source, CancellationToken callerToken, string operation,
+        CommandDeadline deadline)
     {
         if (source is null || error is not OperationCanceledException cancelled
             || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested) return null;
@@ -3398,8 +3399,9 @@ public sealed partial class RespireClient : IRespireClient
         // CommandTimeout. The client's options are immutable for this operation.
         return callerToken.IsCancellationRequested
             ? new OperationCanceledException(cancelled.Message, cancelled, callerToken)
-            : new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, cancelled,
-                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+            : new RespireTimeoutException(operation,
+                deadline.IsRelaxed ? _core.Options.MaintenanceRelaxedTimeout : _core.Options.CommandTimeout!.Value,
+                cancelled, RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
     }
 
     /// <summary>
@@ -3490,7 +3492,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception ex)
             {
-                var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation)
+                var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation, commandDeadline)
                     ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                     && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                     ? new RespireTimeoutException(operation, timeout, cancelled,
@@ -3551,7 +3553,7 @@ public sealed partial class RespireClient : IRespireClient
                 routeVersion = default;
             }
         }
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation) is { } timeout)
+        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
         {
             throw timeout;
         }
@@ -3718,7 +3720,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (Exception ex)
                 {
-                    var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation)
+                    var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation, commandDeadline)
                         ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                         && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                         ? new RespireTimeoutException(operation, timeout, cancelled,
@@ -3739,7 +3741,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
             }
         }
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation) is { } timeout)
+        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
         {
             throw timeout;
         }

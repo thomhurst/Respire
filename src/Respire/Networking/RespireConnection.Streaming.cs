@@ -204,6 +204,10 @@ internal sealed partial class RespireConnection
 
             await WriteStreamedPayloadAsync(command, payloadReader, firstChunk, effectiveCancellation)
                 .ConfigureAwait(false);
+            // The final fill and socket write can finish before a delayed timer callback runs.
+            // Recheck the absolute deadline before completing the frame and accepting a reply.
+            timeoutCancellation?.ThrowIfDue();
+            effectiveCancellation.ThrowIfCancellationRequested();
 
             var finalWrite = AppendStreamingEnd(command, source, requestWriteStart, out startedBatch);
             phase = StreamedSetPhase.ResponseQueued;

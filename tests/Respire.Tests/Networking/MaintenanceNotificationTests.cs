@@ -385,6 +385,58 @@ public class MaintenanceNotificationTests
         await Assert.That(target.ReceivedCommands).Contains("SET moved-upload payload");
     }
 
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("cluster")]
+    [Arguments("sentinel")]
+    public async Task ReroutedUploadAcquisitionReportsMaintenanceRelaxedTimeout(string mode)
+    {
+        await using var source = Server(maxConnections: 4);
+        await using var target = Server(maxConnections: 4);
+        ConfigureMaintenanceRouting(source);
+        ConfigureMaintenanceRouting(target);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        var relaxed = TimeSpan.FromSeconds(3);
+        var stallAcquisition = false;
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            MaintenanceRelaxedTimeout = relaxed,
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (Volatile.Read(ref stallAcquisition)) await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                try { await socket.ConnectAsync(host, port, token); }
+                catch { socket.Dispose(); throw; }
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var originalPool = await MaintenancePoolAsync(client, "moved-upload");
+        var lease = await originalPool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        await source.SendRawAsync(Start("MIGRATING", 1), source.ReceivedConnectionIds.Last());
+        await WaitForMaintenance(lease);
+        originalPool.Return(lease);
+
+        await using var payload = new PausedFirstReadStream();
+        var upload = client.Strings.SetAsync("moved-upload", payload, payload.Length,
+            cancellationToken: timeout.Token).AsTask();
+        await payload.Started.Task.WaitAsync(timeout.Token);
+        await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
+        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        // The command connection has completed handoff. Stall only the replacement upload lease.
+        Volatile.Write(ref stallAcquisition, true);
+        payload.Resume.TrySetResult();
+
+        var error = await Assert.That(async () => await upload.WaitAsync(timeout.Token))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Timeout).IsEqualTo(relaxed);
+        await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+    }
+
     private static void ConfigureMaintenanceRouting(FakeRespServer server)
     {
         var original = server.ReplyOverride!;
