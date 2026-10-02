@@ -15,9 +15,17 @@ internal sealed partial class RespireConnection
     internal bool HasOtherIncompleteCommandThanMaintenanceBarrier
         => _inflight.HasOtherIncompleteCommand(MaintenanceDrainCommandName);
 
+    internal bool HasActiveBulkStream => Volatile.Read(ref _activeBulkStreamSource) is not null;
+
     internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
     {
         while (HasOtherIncompleteCommandThanMaintenanceBarrier)
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task WaitForActiveBulkStreamToCompleteAsync(CancellationToken cancellationToken)
+    {
+        while (HasActiveBulkStream)
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
     }
 

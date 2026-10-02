@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
@@ -38,6 +39,97 @@ public class ClusterNodeIdentityTests
         await node.RetireAsync();
 
         await Assert.That(server.ReceivedCommands).Contains("PING");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementWaitsThroughMaintenanceRelaxedCommandDeadline(bool disableCommandTimeout)
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                "ECHO x" => "+x\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+            SuppressReply = static command => command == "PING",
+        };
+        server.DelayCommand("ECHO", 250);
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(600),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var connection = node.GetConnection();
+        await server.SendRawAsync(">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray());
+        using var pushTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!connection.HasMaintenanceWindow) await Task.Delay(10, pushTimeout.Token);
+
+        var acceptedCommand = connection.SendAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray())).AsTask();
+        using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.ReceivedCommands.Count(command => command == "ECHO x") == 0)
+            await Task.Delay(10, commandTimeout.Token);
+
+        var retirement = node.RetireAsync();
+        using var reply = await acceptedCommand.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.IsError).IsFalse();
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task RetirementBarrierTimeoutWaitsForActiveBulkStream()
+    {
+        var partialPayload = "$10\r\nhello"u8.ToArray();
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                "GET key" => partialPayload,
+                _ => FakeRespServer.OkReply,
+            },
+            SuppressReply = static command => command == "PING",
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var connection = node.GetConnection();
+        var get = new Cmd1(Verbs.Get, "key");
+        var stream = await connection.SendBulkStreamAsync(in get, commandName: "GET")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(stream).IsNotNull();
+
+        var connectionId = server.ReceivedConnectionIds[^1];
+        var retirement = node.RetireAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(400));
+        await Assert.That(retirement.IsCompleted).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+
+        await server.SendRawAsync("world\r\n"u8.ToArray(), connectionId);
+        using var reader = new StreamReader(stream!);
+        await Assert.That(await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+            .IsEqualTo("helloworld");
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]

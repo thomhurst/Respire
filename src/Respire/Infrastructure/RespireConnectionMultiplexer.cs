@@ -1323,18 +1323,29 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             // The barrier may time out behind an accepted command. Let those callers finish or
             // reach their own command deadlines before aborting the connection to release the
-            // barrier, which has no reply once its timeout has elapsed. Keep this grace bounded
-            // even when CommandTimeout is disabled.
+            // barrier, which has no reply once its timeout has elapsed. Respect disabled command
+            // deadlines and include the longest configured maintenance relaxation when enabled.
             using var drainTimeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
-            drainTimeout.CancelAfter(_options.CommandTimeout ?? _options.ConnectTimeout);
+            if (_options.CommandTimeout is { } commandTimeout)
+            {
+                var relaxedCommandTimeout = _options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+                    ? _options.MaintenanceRelaxedTimeout : commandTimeout;
+                var maximumCommandTimeout = relaxedCommandTimeout > commandTimeout
+                    ? relaxedCommandTimeout : commandTimeout;
+                drainTimeout.CancelAfter(maximumCommandTimeout);
+            }
             try
             {
                 await connection.WaitForOtherCommandsToCompleteAsync(drainTimeout.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (drainTimeout.IsCancellationRequested)
             {
-                // Preserve accepted commands only through their own deadline or this grace.
+                // Preserve accepted commands through their deadline, including maintenance relaxation.
             }
+
+            // A streamed reply has left the in-flight ring but remains accepted work. Its lifetime
+            // follows the caller's stream ownership and is not bounded by CommandTimeout.
+            await connection.WaitForActiveBulkStreamToCompleteAsync(_abortCancellation.Token).ConfigureAwait(false);
 
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception disposeError)
