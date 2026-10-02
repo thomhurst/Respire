@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Respire.Commands;
@@ -489,6 +490,58 @@ public class TimeSeriesClientTests
         await Assert.That(progress.Timestamps).IsEquivalentTo([(long?)11, null]);
         await Assert.That(progress.Errors).IsEquivalentTo([null, "ERR missing series"]);
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task MultiAdd_DisposalBetweenChunksPreservesOriginalException()
+    {
+        await using var server = new FakeRespServer(Frame("*1\r\n:11\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        Task? disposal = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "TS.MADD"
+                ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
+            ActivityStopped = _ => disposal ??= client.DisposeAsync().AsTask(),
+        };
+        ActivitySource.AddActivityListener(listener);
+        var error = await Assert.That(async () => await timeSeries.MultiAddAsync(
+            [new("first", 11, 1), new("second", 12, 2)], 1)).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(RespireTimeSeriesMultiAddProgress.FromException(error!)).IsNull();
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await disposal!.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MultiAdd_UnexpectedFailureAfterConfirmedChunkPreservesOriginalException(bool resourceFailure)
+    {
+        await using var server = new FakeRespServer(Frame("*1\r\n:11\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        Exception failure = resourceFailure ? new OutOfMemoryException("Simulated allocation failure")
+            : new InvalidOperationException("Simulated programming failure");
+        var sampled = 0;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                if (options.Name != "TS.MADD") return ActivitySamplingResult.None;
+                if (++sampled == 2) throw failure;
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var error = await Assert.That(async () => await timeSeries.MultiAddAsync(
+            [new("first", 11, 1), new("second", 12, 2)], 1)).Throws<Exception>();
+        await Assert.That(ReferenceEquals(error, failure)).IsTrue();
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 
     [Test]

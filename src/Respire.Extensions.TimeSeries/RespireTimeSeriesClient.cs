@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using Respire.Protocol;
 
 namespace Respire.Extensions.TimeSeries;
@@ -91,7 +92,8 @@ public sealed class RespireTimeSeriesClient
     /// timestamp or error of every sample, across all chunks.
     /// </exception>
     /// <exception cref="RespireTimeSeriesMultiAddInterruptedException">
-    /// A later chunk failed. Progress records confirmed outcomes and the uncertain chunk; InnerException is the original failure.
+    /// A later chunk had a transport, server, or malformed-reply failure. Progress records confirmed outcomes
+    /// and the uncertain chunk; InnerException is the original failure. Programming and resource failures retain their original type.
     /// </exception>
     /// <exception cref="RespireTimeSeriesMultiAddCanceledException">
     /// Cancellation occurred after a confirmed chunk. The exception retains the original cancellation token and reports progress.
@@ -117,6 +119,7 @@ public sealed class RespireTimeSeriesClient
         var start = 0;
         var completedChunks = 0;
         var uncertainCount = 0;
+        Exception? malformedReply = null;
         try
         {
             while (start < sampleCount)
@@ -133,7 +136,8 @@ public sealed class RespireTimeSeriesClient
                 cancellationToken.ThrowIfCancellationRequested();
                 uncertainCount = count;
                 using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
-                if (result.Type != RespDataType.Array || result.Count != count) throw TimeSeriesReplyParser.UnexpectedReply();
+                if (result.Type != RespDataType.Array || result.Count != count)
+                    throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
 
                 for (var index = 0; index < count; index++)
                 {
@@ -144,7 +148,8 @@ public sealed class RespireTimeSeriesClient
                         errors[start + index] = reply.ErrorMessage;
                         continue;
                     }
-                    if (reply.Type != RespDataType.Integer) throw TimeSeriesReplyParser.UnexpectedReply();
+                    if (reply.Type != RespDataType.Integer)
+                        throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
                     timestamps[start + index] = reply.AsInteger();
                 }
 
@@ -153,7 +158,10 @@ public sealed class RespireTimeSeriesClient
                 uncertainCount = 0;
             }
         }
-        catch (Exception error) when (start > 0)
+        // The parser's existing InvalidOperationException is an expected protocol failure;
+        // unrelated InvalidOperationException and resource failures must keep their original type.
+        catch (Exception error) when (start > 0 && (ReferenceEquals(error, malformedReply)
+            || error is RespireException or IOException or SocketException or OperationCanceledException))
         {
             var progress = new RespireTimeSeriesMultiAddProgress(sampleCount, completedChunks,
                 start, uncertainCount, timestamps, errors);
