@@ -171,9 +171,10 @@ internal sealed partial class ClusterRouter
             var budget = _options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout);
             timeout.CancelAfter(budget);
             var replicas = GetKnownReplicas(slot)?.Nodes ?? [];
-            var candidates = replicas.Count(static node => node.IsConnected && !node.IsRetired)
-                + Volatile.Read(ref _masters).Length;
-            var candidateTimeout = TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, budget.Ticks / Math.Max(1, candidates)));
+            // Do not shrink a healthy command's configured timeout as the cluster grows.
+            // This cap still leaves the smaller configured budget for another candidate.
+            var candidateTimeout = TimeSpan.FromTicks(Math.Max(_options.ConnectTimeout.Ticks,
+                (_options.CommandTimeout ?? _options.ConnectTimeout).Ticks));
             // A connected replica may be the only reachable node after its primary fails.
             // Query it first so a failed primary cannot consume the shared refresh deadline.
             foreach (var replica in replicas)

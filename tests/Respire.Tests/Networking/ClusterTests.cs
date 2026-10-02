@@ -15,6 +15,54 @@ namespace Respire.Tests.Networking;
 public class ClusterTests
 {
     [Test]
+    public async Task ReadFrom_ParsedReplicaCannotBeItsRangePrimary()
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? ClusterTopology(primary.Port, primary.Port) : FakeRespServer.OkReply;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        await Assert.That(ReplicaRoutes(client)[0]!.Nodes).IsEmpty();
+        await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key"))
+            .Throws<RespireConnectionException>();
+        await Assert.That(primary.ReceivedCommands.Any(command => command == "READONLY" || command.StartsWith("GET "))).IsFalse();
+    }
+
+    [Test]
+    public async Task ReadFrom_HealthyRefreshTimeoutDoesNotShrinkWithMasterCount()
+    {
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
+        };
+        await using var first = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var third = new FakeRespServer(8, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes("*3\r\n" +
+            $"*3\r\n:0\r\n:5000\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:5001\r\n:10000\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n" +
+            $"*3\r\n:10001\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{third.Port}\r\n");
+        first.ReplyOverride = (_, _) => Volatile.Read(ref topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(1),
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+        Volatile.Write(ref topology, ClusterTopology(first.Port, replica.Port));
+        foreach (var server in new[] { first, second, third })
+        {
+            server.DelayCommand("CLUSTER SLOTS", 750);
+            server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
+        }
+        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+    }
+
+    [Test]
     [Arguments("HSCAN")]
     [Arguments("SSCAN")]
     [Arguments("ZSCAN")]

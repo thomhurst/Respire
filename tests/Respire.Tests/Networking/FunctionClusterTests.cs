@@ -101,6 +101,41 @@ public class FunctionClusterTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplicaFunctionPropagationHonorsConfiguredTimeout(bool disabled)
+    {
+        var source = "#!lua name=sample\nreturn 1";
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply,
+            "-ERR Function not found\r\n"u8.ToArray());
+        await using var primary = new FakeRespServer(FunctionLibraryList(source));
+        await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            CommandTimeout = disabled ? null : TimeSpan.FromMilliseconds(100),
+            ClusterTopologyRefreshInterval = null,
+        });
+        var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
+        using var cancellation = new CancellationTokenSource();
+        var pending = client.WithReadFrom(RespireReadFrom.Replica).Functions
+            .ExecuteIntegerAsync(function, ["{foo}:key"], cancellationToken: cancellation.Token).AsTask();
+        if (disabled)
+        {
+            // Exceed the former hard-coded ten-second fallback, then stop via the caller.
+            await Task.Delay(TimeSpan.FromSeconds(11));
+            await Assert.That(pending.IsCompleted).IsFalse();
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireTimeoutException>();
+        }
+    }
+
+    [Test]
     public async Task RegisteredLibraryMissingRequestedFunctionDoesNotPollReplica()
     {
         var source = "#!lua name=sample\nreturn 1";

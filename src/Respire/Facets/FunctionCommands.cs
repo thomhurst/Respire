@@ -106,17 +106,17 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             var reply = readFrom == RespireReadFrom.Primary
                 ? await client.PrimaryReadView.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false)
                 : await RetryUntilFunctionAvailableAsync(function.Operation, command, cancellationToken,
-                    client.Core.Options.CommandTimeout ?? TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                    client.Core.Options.CommandTimeout).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
     }
 
     private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan timeout)
+        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan? timeout)
         where TCommand : struct, IRespCommand
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
+        if (timeout is { } configuredTimeout) deadline.CancelAfter(configuredTimeout);
         var delay = TimeSpan.FromMilliseconds(25);
         try
         {
@@ -135,9 +135,9 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             }
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
-            && deadline.IsCancellationRequested)
+            && deadline.IsCancellationRequested && timeout.HasValue)
         {
-            throw new RespireTimeoutException(operation, timeout, error);
+            throw new RespireTimeoutException(operation, timeout.Value, error);
         }
     }
 

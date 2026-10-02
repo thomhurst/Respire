@@ -2191,11 +2191,6 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     List<ClusterTopologyReplica> replicas = [];
                     for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
                     {
-                        if (TryParseReplica(values[replicaIndex], seed.Host) is { } replica) replicas.Add(replica);
-                    }
-
-                    for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
-                    {
                         if (TryParseReplica(values[replicaIndex], seed.Host) is not { } replica
                             || RespireEndpointComparer.Instance.Equals(replica.Endpoint, preferred)
                             || replicas.Any(existing => RespireEndpointComparer.Instance.Equals(existing.Endpoint, replica.Endpoint)))
