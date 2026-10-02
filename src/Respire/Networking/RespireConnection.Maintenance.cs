@@ -10,6 +10,7 @@ internal sealed partial class RespireConnection
     private static readonly RawCommand EnableMaintenance = new(
         "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
     private const string MaintenanceDrainCommandName = "RESP3 maintenance drain PING";
+    private const int UnpublishedMigrationCapacity = 128;
 
     private readonly struct MaintenanceDrainBarrierCommand : IRespCommand
     {
@@ -26,7 +27,7 @@ internal sealed partial class RespireConnection
 
     internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
     {
-        while (HasOtherIncompleteCommandThanMaintenanceBarrier)
+        while (Volatile.Read(ref _streamingActive) || HasOtherIncompleteCommandThanMaintenanceBarrier)
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
     }
 
@@ -43,6 +44,24 @@ internal sealed partial class RespireConnection
     private readonly RespireConnectionOptions? _maintenanceOptions;
     // Serializes maintenance-window publication with streamed-upload deadline cancellation.
     private readonly object _maintenancePublicationGate = new();
+    private Queue<(MaintenanceNotification Notification, long Token)>? _unpublishedMigrations;
+
+    // Publication and receive-side dispatch share this gate so a newer sequence cannot overtake
+    // a push received during negotiation. The bounded backlog keeps handshake memory finite.
+    internal void ReplayUnpublishedMigrations()
+    {
+        lock (_maintenancePublicationGate)
+            ReplayUnpublishedMigrationsLocked();
+    }
+
+    private void ReplayUnpublishedMigrationsLocked()
+    {
+        if (Multiplexer is not { } multiplexer || _unpublishedMigrations is null) return;
+        while (_unpublishedMigrations.TryDequeue(out var pending))
+            multiplexer.PublishMaintenanceNotification(
+                multiplexer.CaptureMaintenanceHandlers(pending.Token), this, pending.Notification, pending.Token);
+        _unpublishedMigrations = null;
+    }
     // Created lazily and only by the receive loop; other threads read the state volatilely.
     private MaintenanceTimeoutState? _maintenanceState;
     private MaintenanceTelemetry? _maintenanceTelemetry;
@@ -136,10 +155,12 @@ internal sealed partial class RespireConnection
         // Capture the handler set and slot-mutation fence atomically before parsing, which can
         // scan up to 16384 triplets. A concurrent retirement cannot split these observations.
         MaintenanceNotificationHandler? migrationHandlers = null;
+        var receivedBeforePublication = false;
         long slotMutationToken = 0;
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
             var multiplexer = Multiplexer;
+            receivedBeforePublication = multiplexer is null;
             using var capture = ClusterSlotMutationClock.BeginCapture(multiplexer);
             slotMutationToken = capture.Token;
             migrationHandlers = multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
@@ -150,10 +171,25 @@ internal sealed partial class RespireConnection
         if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
         // Dispatch before the window and diagnostics work below, so the migration reaches the
         // topology queue as early as possible.
-        if (notification.IsSlotMigration)
-            Multiplexer?.PublishMaintenanceNotification(migrationHandlers, this, notification, slotMutationToken);
         lock (_maintenancePublicationGate)
         {
+            if (notification.IsSlotMigration)
+            {
+                if (Multiplexer is { } multiplexer)
+                {
+                    ReplayUnpublishedMigrationsLocked();
+                    multiplexer.PublishMaintenanceNotification(
+                        receivedBeforePublication ? multiplexer.CaptureMaintenanceHandlers(slotMutationToken) : migrationHandlers,
+                        this, notification, slotMutationToken);
+                }
+                else
+                {
+                    var pending = _unpublishedMigrations ??= new();
+                    // Match the router's DropOldest policy; MOVED/discovery repairs overflow.
+                    if (pending.Count == UnpublishedMigrationCapacity) pending.Dequeue();
+                    pending.Enqueue((notification, slotMutationToken));
+                }
+            }
             var state = Volatile.Read(ref _maintenanceState);
             if (state is null)
             {

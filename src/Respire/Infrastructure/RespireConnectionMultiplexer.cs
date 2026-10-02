@@ -1035,6 +1035,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     private void ObservePublishedConnection(int slot, RespireConnection connection)
     {
+        connection.ReplayUnpublishedMigrations();
         connection.MovingNotification += announcement => QueueMovingHandoff(slot, connection, announcement);
         // Replay a MOVING parsed before this handler existed (for example during the handshake).
         // The handler is attached first, so a MOVING parsed between these two lines is delivered

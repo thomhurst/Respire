@@ -14,6 +14,95 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityTests
 {
     [Test]
+    public async Task HandshakeMigrationsReplayInReceiveOrderAfterPublication()
+    {
+        var pushes = "+OK\r\n>3\r\n+SMIGRATED\r\n:1\r\n*1\r\n*3\r\n+source:7000\r\n+target:7001\r\n+0\r\n"
+            + ">3\r\n+SMIGRATED\r\n:2\r\n*1\r\n*3\r\n+target:7001\r\n+last:7002\r\n+0\r\n";
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => Encoding.ASCII.GetBytes(pushes),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        };
+        var connectionOptions = options.ToConnectionOptions(enableMaintenanceNotifications: true);
+        await using var node = RespireConnectionMultiplexer.Create("127.0.0.1", server.Port, options: connectionOptions);
+        var sequences = new List<long>();
+        node.MaintenanceNotificationReceived += (_, _, notification, _) => sequences.Add(notification.SequenceId);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, connectionOptions);
+        // The reply establishes that both preceding pushes have passed the receive loop.
+        await connection.DrainPendingMaintenanceNotificationsAsync(CancellationToken.None);
+        await Assert.That(sequences.Count).IsEqualTo(0);
+        connection.Multiplexer = node;
+        connection.ReplayUnpublishedMigrations();
+        connection.ReplayUnpublishedMigrations();
+        await Assert.That(sequences).IsEquivalentTo(new long[] { 1, 2 });
+        await Assert.That(sequences[0]).IsEqualTo(1L);
+    }
+
+    [Test]
+    public async Task RetirementBarrierTimeoutPreservesActiveUpload()
+    {
+        await using var server = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3"
+                ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply,
+            SuppressReply = static command => command == "PING",
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(10),
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+        };
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        var connection = node.GetConnection();
+        await using var payload = new PausedUploadStream();
+        var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, SetWhen.Always);
+        var upload = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await payload.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            var retirement = node.RetireAsync();
+            await Task.Delay(300);
+            await Assert.That(connection.IsConnected).IsTrue();
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            payload.Resume.TrySetResult();
+            using var reply = await upload.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(reply.AsString()).IsEqualTo("OK");
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { payload.Resume.TrySetResult(); }
+    }
+
+    private sealed class PausedUploadStream() : MemoryStream(new byte[RespireConnection.StreamChunkSize * 2])
+    {
+        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position > 0)
+            {
+                Paused.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Test]
     public async Task RetirementSendsMaintenanceBarrierBeforeRetiringConnections()
     {
         await using var server = new FakeRespServer
@@ -379,6 +468,9 @@ public class ClusterNodeIdentityTests
         await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(firstTargetEndpoint.Port);
         await Assert.That(primary.IsRetired).IsFalse();
+
+        // Discovery omits the seed now that it owns no slots; retention must preserve its handler.
+        router.ApplyTopology([new(0, 1, firstTargetEndpoint, "first-target", [])], router.TopologyVersion, 1L);
 
         changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
@@ -832,6 +924,57 @@ public class ClusterNodeIdentityTests
 
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(bEndpoint.Port);
         await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(cEndpoint.Port);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeferredSkipMetricKeepsOriginalSender(bool evict)
+    {
+        var options = Options(6379);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
+            options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var router = new ClusterRouter(options, primary);
+        var original = router.GetMultiplexer(new("original-metric-sender", 7100));
+        var later = router.GetMultiplexer(new("later-metric-sender", 7101));
+        var now = 1_000L;
+        router.SmigratedClock = () => now;
+        var recorded = new List<(string? Host, int? Port)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == RespireTelemetry.SourceName
+                    && instrument.Name == "respire.cluster.slot_migrations.skipped")
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string? reason = null;
+            string? host = null;
+            int? port = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "reason") reason = tag.Value as string;
+                if (tag.Key == "server.address") host = tag.Value as string;
+                if (tag.Key == "server.port") port = tag.Value as int?;
+            }
+            if (reason == (evict ? "deferral_evicted" : "deferral_expired")) recorded.Add((host, port));
+        });
+        listener.Start();
+        var migration = new MaintenanceSlotMigration(new("absent-source", 7200), new("target", 7201), "0");
+        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(original, new object(),
+            new("SMIGRATED", 1, Migrations: [migration])));
+        if (!evict) now += 30_000;
+        for (var i = 0; i < (evict ? 64 : 1); i++)
+            router.ApplySmigratedNotification(router.CaptureSmigratedNotification(later, new object(),
+                new("SMIGRATED", 1, Migrations: [migration])));
+
+        await Assert.That(recorded.Count).IsEqualTo(1);
+        await Assert.That(recorded[0].Host).IsEqualTo(original.Host);
+        await Assert.That(recorded[0].Port).IsEqualTo(original.Port);
     }
 
     [Test]

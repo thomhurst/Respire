@@ -1846,8 +1846,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 node.SlotStateChanged -= _nodeStateHandlers[node];
                 _nodeStateHandlers.Remove(node);
-                if (_nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler))
-                    node.MaintenanceNotificationReceived -= maintenanceHandler;
+                // RetireInactiveLocked decides whether this is a retained seed/ASK node.
+                // Actual retirement detaches maintenance handlers after its receive barrier.
             }
         }
         return retiredNodes;

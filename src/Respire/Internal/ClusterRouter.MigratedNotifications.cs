@@ -45,12 +45,13 @@ internal sealed partial class ClusterRouter
     // under its original fence token, so a MOVED, discovery change or newer migration still
     // rejects it. Entries expire after DeferredSmigratedLifetimeMilliseconds. Slots are sorted.
     private sealed class DeferredSmigratedMigration(
-        RespireEndpoint source, RespireEndpoint target, int[] slots, long token, long deferredAt)
+        RespireEndpoint source, RespireEndpoint target, int[] slots, long token, long deferredAt, RespireConnectionMultiplexer sender)
     {
         internal readonly RespireEndpoint Source = source;
         internal readonly RespireEndpoint Target = target;
         internal readonly long Token = token;
         internal readonly long DeferredAt = deferredAt;
+        internal readonly RespireConnectionMultiplexer Sender = sender;
         internal int[] Slots = slots;
     }
 
@@ -268,7 +269,7 @@ internal sealed partial class ClusterRouter
 
         List<RespireConnectionMultiplexer>? retiredNodes = null;
         List<RetiredGeneration>? retirements = null;
-        var skippedMetrics = new List<(string Reason, long Count)>();
+        var skippedMetrics = new List<(string Reason, RespireConnectionMultiplexer Sender)>();
         var topologyChanged = false;
         long topologyVersion = 0;
         RespireEndpoint[]? topologyEndpoints = null;
@@ -291,7 +292,7 @@ internal sealed partial class ClusterRouter
                 }
                 if (waiting is not null)
                     DeferMigrationLocked(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
-                        SmigratedClock()), skippedMetrics);
+                        SmigratedClock(), item.Sender), skippedMetrics);
             }
             if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
 
@@ -310,7 +311,7 @@ internal sealed partial class ClusterRouter
         // synchronously would otherwise wait for a drain that this thread has not started yet.
         if (retirements is not null)
             foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
-        foreach (var (reason, count) in skippedMetrics) RecordSmigratedSkipped(reason, item.Sender, count);
+        foreach (var (reason, sender) in skippedMetrics) RecordSmigratedSkipped(reason, sender);
         if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
@@ -408,32 +409,37 @@ internal sealed partial class ClusterRouter
     }
 
     private void DeferMigrationLocked(DeferredSmigratedMigration deferred,
-        List<(string Reason, long Count)> skippedMetrics)
+        List<(string Reason, RespireConnectionMultiplexer Sender)> skippedMetrics)
     {
         _deferredSmigratedMigrations.Add(deferred);
         _deferredSmigratedSlots += deferred.Slots.Length;
         while (_deferredSmigratedMigrations.Count > DeferredSmigratedMigrationLimit
                || _deferredSmigratedSlots > ClusterHash.SlotCount)
         {
-            _deferredSmigratedSlots -= _deferredSmigratedMigrations[0].Slots.Length;
+            var evicted = _deferredSmigratedMigrations[0];
+            _deferredSmigratedSlots -= evicted.Slots.Length;
             _deferredSmigratedMigrations.RemoveAt(0);
-            skippedMetrics.Add(("deferral_evicted", 1));
+            skippedMetrics.Add(("deferral_evicted", evicted.Sender));
         }
     }
 
     // Drops entries whose dependency has not arrived within DeferredSmigratedLifetimeMilliseconds.
+    // Expiry is lazy on the next notification; retained state stays bounded in the meantime.
     // The list is oldest first, so expiry stops at the first entry that is still young.
-    private void ExpireDeferredMigrationsLocked(List<(string Reason, long Count)> skippedMetrics)
+    private void ExpireDeferredMigrationsLocked(List<(string Reason, RespireConnectionMultiplexer Sender)> skippedMetrics)
     {
         if (_deferredSmigratedMigrations.Count == 0) return;
         var now = SmigratedClock();
         var expired = 0;
         while (expired < _deferredSmigratedMigrations.Count
                && now - _deferredSmigratedMigrations[expired].DeferredAt >= DeferredSmigratedLifetimeMilliseconds)
-            _deferredSmigratedSlots -= _deferredSmigratedMigrations[expired++].Slots.Length;
+        {
+            var deferred = _deferredSmigratedMigrations[expired++];
+            _deferredSmigratedSlots -= deferred.Slots.Length;
+            skippedMetrics.Add(("deferral_expired", deferred.Sender));
+        }
         if (expired == 0) return;
         _deferredSmigratedMigrations.RemoveRange(0, expired);
-        skippedMetrics.Add(("deferral_expired", expired));
     }
 
     // Retries only the entries a move made runnable: those whose source is the node that just
@@ -485,9 +491,11 @@ internal sealed partial class ClusterRouter
     private static int[] MergeSortedSlots(int[] first, int[] second)
     {
         var merged = new int[first.Length + second.Length];
-        first.CopyTo(merged, 0);
-        second.CopyTo(merged, first.Length);
-        Array.Sort(merged);
+        var a = 0;
+        var b = 0;
+        for (var i = 0; i < merged.Length; i++)
+            merged[i] = b == second.Length || (a < first.Length && first[a] <= second[b])
+                ? first[a++] : second[b++];
         return merged;
     }
 
