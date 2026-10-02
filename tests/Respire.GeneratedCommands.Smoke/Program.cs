@@ -84,8 +84,8 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
 
             if (pagedRows != 2) throw new InvalidOperationException($"Respire.Search AggregatePagesAsync returned {pagedRows} rows.");
 
-            var info = await search.GetIndexInfoAsync(index);
-            if (info.Name != index || info.DocumentCount != 2 || info.Attributes.Count != 3 || info.Attributes[2].Type != "VECTOR")
+            var searchInfo = await search.GetIndexInfoAsync(index);
+            if (searchInfo.Name != index || searchInfo.DocumentCount != 2 || searchInfo.Attributes.Count != 3 || searchInfo.Attributes[2].Type != "VECTOR")
                 throw new InvalidOperationException("Respire.Search FT.INFO parsing failed.");
 
             var nearest = await search.VectorSearchAsync(index, new("embedding", vector, 1));
