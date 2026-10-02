@@ -22,8 +22,8 @@ internal sealed record MovingAnnouncement(
 /// then drain the old sockets in the background within the advertised grace period.
 /// </summary>
 /// <remarks>
-/// Lock order: <c>_lifecycleGate</c> before <c>_movingGate</c>. No path may acquire
-/// <c>_lifecycleGate</c> while it holds <c>_movingGate</c>. Code under <c>_movingGate</c> only
+/// Lock order: <c>_lifecycleGate</c> before the coordinator gate. No path may acquire
+/// <c>_lifecycleGate</c> while it holds that gate. Code under the gate only
 /// updates handoff state and cancels superseded requests; it never awaits, never calls user code
 /// and never takes another gate. (A cancelled request's worker unwinds without taking
 /// <c>_lifecycleGate</c>, so even a continuation inlined by that cancellation keeps the order.)
@@ -35,46 +35,27 @@ internal sealed partial class RespireConnectionMultiplexer
     // socket that drains cleanly closes at once, and command timeouts bound the rest.
     private const long MaxMovingGraceSeconds = 24 * 60 * 60;
 
-    private readonly object _movingGate = new();
-    // Highest MOVING sequence seen from each physical peer, and when that fence lapses. Sequence
-    // IDs belong to the announcing server. A fence lapses at the end of the grace period it
-    // announced, so a server that restarts at the same address and numbers from 1 again is
-    // only ignored until then. Copies of one MOVING on sibling sockets arrive well before.
-    private readonly Dictionary<(string Host, int Port), (long Sequence, long ExpiresAt)> _movingSequences = new();
-    // Bumped under both gates whenever a handoff publishes replacements. A MOVING parsed two or
-    // more handoff publications ago describes a server the client has already left.
-    private long _movingHandoffEpoch;
-    private MovingRequest? _pendingMoving;
-    private MovingRequest? _activeMoving;
-    // True while a worker owns the queue. It is set and cleared together with _movingCompletion.
-    private bool _movingWorker;
-    private TaskCompletionSource? _movingCompletion;
-    // Old sockets drain off the handoff worker so a later MOVING can start immediately. Counted
-    // under _movingGate, like _activeReconnects, so a MOVING burst does not nest Task.WhenAll.
-    private int _activeMovingDrains;
-    private TaskCompletionSource? _movingDrainsIdle;
+    private readonly MovingHandoffCoordinator _moving = new();
 
     private sealed record ActiveEndpoint(string Host, int Port);
-
-    private sealed record MovingRequest(RespireEndpoint Endpoint, long Deadline, CancellationTokenSource Cancellation);
 
     internal MovingAnnouncement CaptureMovingAnnouncement(int slot, RespireConnection connection,
         MaintenanceNotification notification)
         => new(notification,
             ReferenceEquals(Volatile.Read(ref _connections[slot]), connection) ? connection.MovingPublicationGeneration : -1,
-            Volatile.Read(ref _movingHandoffEpoch),
+            _moving.HandoffEpoch,
             Environment.TickCount64);
 
     private void QueueMovingHandoff(int slot, RespireConnection connection, MovingAnnouncement announcement)
     {
         bool startWorker;
-        lock (_movingGate)
+        lock (_moving.Gate)
         {
             startWorker = QueueMovingHandoffUnderLock(slot, connection, announcement);
         }
 
         // Fire-and-forget is safe: ProcessMovingHandoffsAsync catches every exception, and
-        // retirement and disposal wait for it through _movingCompletion.
+        // retirement and disposal wait for it through the coordinator completion task.
         if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
     }
 
@@ -86,74 +67,38 @@ internal sealed partial class RespireConnectionMultiplexer
         // client uses. One later handoff publication does not either, because the push may have
         // been parsed just before that swap and handled just after it, and the newer announcement
         // must still win. Two publications later the client has left that server behind.
-        var current = announcement.PublicationGeneration >= 0
-            && announcement.PublicationGeneration == connection.MovingPublicationGeneration
-            && Volatile.Read(ref _movingHandoffEpoch) - announcement.HandoffEpoch <= 1;
-        if (!IsOperational || !current || notification.SequenceId <= connection.LastQueuedMovingSequence)
-            return false;
-        // From here on this socket has handled the sequence, even when a sibling already queued
-        // it; the pre-publication sweep in HandOffAsync must not queue it again later.
-        connection.LastQueuedMovingSequence = notification.SequenceId;
-        var peer = connection.PeerKey;
-        if (_movingSequences.TryGetValue(peer, out var seen) && notification.SequenceId <= seen.Sequence
-            && Environment.TickCount64 < seen.ExpiresAt)
-            return false;
-
         // Honor the advertised grace from the moment the push was parsed, so slow target setup
         // and a replay delayed by a sibling handshake both consume drain time.
         var grace = TimeSpan.FromSeconds(Math.Min(notification.Seconds ?? 5, MaxMovingGraceSeconds));
         var deadline = announcement.ReceivedAt + (long)grace.TotalMilliseconds;
-        _movingSequences[peer] = (notification.SequenceId, deadline);
-
-        // The newest MOVING wins. Cancelling a request that has already published is harmless:
-        // HandOffAsync makes no cancellation checks after publication, and its drain runs on its
-        // own deadline.
-        if (_activeMoving is { } active && !active.Cancellation.IsCancellationRequested)
+        var result = _moving.Queue(IsOperational,
+            _moving.IsCurrent(announcement.PublicationGeneration, connection.MovingPublicationGeneration, announcement.HandoffEpoch),
+            connection.LastQueuedMovingSequence, connection.PeerKey, notification.SequenceId,
+            notification.Target ?? new RespireEndpoint(Host, Port), deadline, Environment.TickCount64,
+            _stopConnecting.Token);
+        if (!result.MarkConnectionSequence) return false;
+        // Mark every socket that handled this sequence. Publication sweep must not queue it later.
+        connection.LastQueuedMovingSequence = notification.SequenceId;
+        if (result.HasSupersededEndpoint)
         {
+            var previous = result.SupersededEndpoint;
             _logger?.LogDebug("MOVING to {Host}:{Port} supersedes the handoff to {PreviousHost}:{PreviousPort}",
                 notification.Target?.Host ?? Host, notification.Target?.Port ?? Port,
-                active.Endpoint.Host, active.Endpoint.Port);
-            active.Cancellation.Cancel();
+                previous.Host, previous.Port);
         }
-        if (_pendingMoving is { } pending)
-        {
-            pending.Cancellation.Cancel();
-            pending.Cancellation.Dispose();
-        }
-        var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
-        _pendingMoving = new MovingRequest(notification.Target ?? new RespireEndpoint(Host, Port),
-            deadline, requestCancellation);
-        if (_movingWorker) return false;
-        _movingWorker = true;
-        _movingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        return true;
+        return result.StartWorker;
     }
 
     private async Task ProcessMovingHandoffsAsync()
     {
         while (true)
         {
-            MovingRequest request;
-            lock (_movingGate)
+            MovingHandoffCoordinator.Request? request;
+            lock (_moving.Gate)
             {
-                if (!IsOperational || _pendingMoving is null)
-                {
-                    if (_pendingMoving is { } pending)
-                    {
-                        pending.Cancellation.Cancel();
-                        pending.Cancellation.Dispose();
-                    }
-                    _pendingMoving = null;
-                    _activeMoving = null;
-                    _movingWorker = false;
-                    _movingCompletion?.TrySetResult();
-                    _movingCompletion = null;
-                    return;
-                }
-                request = _pendingMoving;
-                _pendingMoving = null;
-                _activeMoving = request;
+                request = _moving.TakeNext(IsOperational);
             }
+            if (request is null) return;
             try
             {
                 await HandOffAsync(request).ConfigureAwait(false);
@@ -170,10 +115,9 @@ internal sealed partial class RespireConnectionMultiplexer
             }
             finally
             {
-                lock (_movingGate)
+                lock (_moving.Gate)
                 {
-                    if (ReferenceEquals(_activeMoving, request)) _activeMoving = null;
-                    request.Cancellation.Dispose();
+                    _moving.Complete(request);
                 }
             }
         }
@@ -188,7 +132,7 @@ internal sealed partial class RespireConnectionMultiplexer
     /// again for the newer target. That costs one extra handshake per superseded request, which
     /// is acceptable because MOVING is rare and a burst still ends with the newest target.
     /// </remarks>
-    private async Task HandOffAsync(MovingRequest request)
+    private async Task HandOffAsync(MovingHandoffCoordinator.Request request)
     {
         var endpoint = request.Endpoint;
         RespireConnection[] replacements;
@@ -205,9 +149,9 @@ internal sealed partial class RespireConnectionMultiplexer
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
             catch (Exception error) when (IsOperational)
             {
-                lock (_movingGate)
+                lock (_moving.Gate)
                 {
-                    if (_pendingMoving is not null) return;
+                    if (_moving.HasPending) return;
                 }
                 var remaining = request.Deadline - Environment.TickCount64;
                 if (remaining <= 0)
@@ -236,7 +180,7 @@ internal sealed partial class RespireConnectionMultiplexer
         {
             lock (_lifecycleGate)
             {
-                lock (_movingGate)
+                lock (_moving.Gate)
                 {
                     // A MOVING parsed by a current socket whose callback has not run yet would be
                     // rejected after this publication. Queue it now, so it supersedes this request.
@@ -245,7 +189,7 @@ internal sealed partial class RespireConnectionMultiplexer
                         if (Volatile.Read(ref _connections[i]) is { LastMovingAnnouncement: { } pendingAnnouncement } announcing)
                             _ = QueueMovingHandoffUnderLock(i, announcing, pendingAnnouncement);
                     }
-                    if (!IsOperational || _pendingMoving is not null)
+                    if (!IsOperational || _moving.HasPending)
                     {
                         _logger?.LogDebug("MOVING handoff to {Host}:{Port} superseded before publication",
                             endpoint.Host, endpoint.Port);
@@ -257,7 +201,7 @@ internal sealed partial class RespireConnectionMultiplexer
                     Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
                     // Bump the epoch before any slot changes, so a MOVING parsed by a replacement
                     // after its publication is captured as current.
-                    Interlocked.Increment(ref _movingHandoffEpoch);
+                    _moving.PublishHandoffEpoch();
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         var generation = Interlocked.Increment(ref _movingPublicationGenerations[i]);
@@ -295,9 +239,9 @@ internal sealed partial class RespireConnectionMultiplexer
         // each socket's write gate, so it runs after the multiplexer locks are released.
         var retiredConnections = old.OfType<RespireConnection>().ToArray();
         var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
-        lock (_movingGate)
+        lock (_moving.Gate)
         {
-            _activeMovingDrains++;
+            _moving.BeginDrain();
             _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
 
@@ -332,9 +276,9 @@ internal sealed partial class RespireConnectionMultiplexer
         finally
         {
             ForgetMovingSequences(connectedOnly: false);
-            lock (_movingGate)
+            lock (_moving.Gate)
             {
-                if (--_activeMovingDrains == 0) _movingDrainsIdle?.TrySetResult();
+                _moving.EndDrain();
             }
         }
     }
@@ -342,10 +286,9 @@ internal sealed partial class RespireConnectionMultiplexer
     /// <summary>Completes when no old MOVING socket is still draining.</summary>
     private Task WaitForMovingDrainsAsync()
     {
-        lock (_movingGate)
+        lock (_moving.Gate)
         {
-            return _activeMovingDrains == 0 ? Task.CompletedTask
-                : (_movingDrainsIdle ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+            return _moving.WaitForDrains();
         }
     }
 
@@ -396,19 +339,15 @@ internal sealed partial class RespireConnectionMultiplexer
     /// </summary>
     private void ForgetMovingSequences(bool connectedOnly)
     {
-        lock (_movingGate)
+        lock (_moving.Gate)
         {
-            if (_movingSequences.Count == 0) return;
             var live = new HashSet<(string Host, int Port)>();
             for (var slot = 0; slot < _connections.Length; slot++)
             {
                 if (Volatile.Read(ref _connections[slot]) is { } published && (!connectedOnly || published.IsConnected))
                     live.Add(published.PeerKey);
             }
-            foreach (var peer in _movingSequences.Keys.ToArray())
-            {
-                if (!live.Contains(peer)) _movingSequences.Remove(peer);
-            }
+            _moving.ForgetSequences(live);
         }
     }
 
