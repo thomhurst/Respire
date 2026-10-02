@@ -10,6 +10,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 {
     internal const int Capacity = 256;
     internal const int WorkerCount = 4;
+    internal const int MaximumAdmissionWaiters = Capacity;
 
     private readonly Channel<Cleanup> _queue = Channel.CreateBounded<Cleanup>(new BoundedChannelOptions(Capacity)
     {
@@ -26,13 +27,14 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     private readonly List<Task> _scheduledRetries = [];
     private Task[]? _workers;
     private int _disposed;
+    private int _admissionWaiters;
 
     internal CoordinationCleanupQueue() => _stoppingToken = _stopping.Token;
     internal int StartedWorkerCount => _workers?.Length ?? 0;
 
     /// <summary>
-    /// Enqueues one retrying cleanup. A full queue applies asynchronous backpressure so cleanup
-    /// work is never discarded.
+    /// Enqueues one retrying cleanup. A full queue applies asynchronous backpressure up to the
+    /// admission waiter limit; excess work is reported as overloaded.
     /// </summary>
     internal async Task<bool> EnqueueAsync(
         Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
@@ -44,6 +46,14 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(onAbandoned);
+        var enqueuedAt = Stopwatch.GetTimestamp();
+        if (Interlocked.Increment(ref _admissionWaiters) > MaximumAdmissionWaiters)
+        {
+            Interlocked.Decrement(ref _admissionWaiters);
+            try { onAbandoned("overloaded"); }
+            catch { /* Diagnostics must not stop cleanup callers. */ }
+            return false;
+        }
         try { await _outstanding.WaitAsync(_stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException)
         {
@@ -51,9 +61,10 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
             catch { /* Diagnostics must not stop cleanup callers. */ }
             return false;
         }
+        finally { Interlocked.Decrement(ref _admissionWaiters); }
         var cleanup = new Cleanup(attempt, shouldContinue, retryLimit, initialDelay, maximumDelay, onAbandoned,
             () => _outstanding.Release(),
-            Stopwatch.GetTimestamp());
+            enqueuedAt);
         if (Volatile.Read(ref _disposed) != 0)
         {
             cleanup.Report("client_disposed");
@@ -145,6 +156,8 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
             { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
 
             var remaining = cleanup.RetryLimit - Stopwatch.GetElapsedTime(cleanup.EnqueuedAt);
+            if (remaining <= TimeSpan.Zero)
+            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
             var delay = WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
             if (delay > remaining) delay = remaining;
             cleanup.NextDelay = TimeSpan.FromTicks(Math.Min(
