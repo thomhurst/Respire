@@ -1321,23 +1321,25 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
         catch (Exception error)
         {
-            // A timed-out barrier can sit behind a command already accepted by this connection.
-            // Preserve such commands; connection retirement below drains them and the barrier.
-            // Abort only when no other accepted command can be failed by that cleanup.
-            if (!connection.HasOtherPendingCommandThanMaintenanceBarrier)
+            // The barrier may time out behind an accepted command. Let those callers finish or
+            // reach their own command deadlines before aborting the connection to release the
+            // barrier, which has no reply once its timeout has elapsed.
+            try
             {
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception disposeError)
-                {
-                    try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
-                    catch { /* Logging must not stop retirement. */ }
-                }
+                await connection.WaitForOtherCommandsToCompleteAsync(_abortCancellation.Token).ConfigureAwait(false);
             }
-            else
+            catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested)
             {
-                try { _logger?.LogDebug(error, "Maintenance drain barrier timed out behind accepted commands at {Host}:{Port}; preserving them for graceful retirement", Host, Port); }
+                // Multiplexer disposal aborts every physical connection independently.
+            }
+
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception disposeError)
+            {
+                try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
                 catch { /* Logging must not stop retirement. */ }
             }
+
             try { _logger?.LogDebug(error, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", Host, Port); }
             catch { /* Logging must not stop retirement. */ }
         }

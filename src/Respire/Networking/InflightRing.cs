@@ -104,16 +104,18 @@ internal sealed class InflightRing
         return true;
     }
 
-    internal bool HasOtherPendingCommand(string commandName)
+    internal bool HasOtherIncompleteCommand(string commandName)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask].Source);
-            if (source is not null && (ReferenceEquals(source, DiscardSentinel) || source.CommandName != commandName))
-                return true;
+            if (source is null || ReferenceEquals(source, DiscardSentinel) || source.CommandName == commandName)
+                continue;
+            if (!PendingResponse.IsCompleted(source.State)) return true;
         }
+
         return false;
     }
 

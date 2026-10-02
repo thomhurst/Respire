@@ -12,8 +12,15 @@ internal sealed partial class RespireConnection
     private static readonly RawCommand MaintenanceDrainBarrier = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
     private const string MaintenanceDrainCommandName = "RESP3 maintenance drain PING";
 
-    internal bool HasOtherPendingCommandThanMaintenanceBarrier
-        => _inflight.HasOtherPendingCommand(MaintenanceDrainCommandName);
+    internal bool HasOtherIncompleteCommandThanMaintenanceBarrier
+        => _inflight.HasOtherIncompleteCommand(MaintenanceDrainCommandName);
+
+    internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
+    {
+        while (HasOtherIncompleteCommandThanMaintenanceBarrier)
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+    }
+
     private readonly RespireConnectionOptions? _maintenanceOptions;
     // Serializes maintenance-window publication with streamed-upload deadline cancellation.
     private readonly object _maintenancePublicationGate = new();
