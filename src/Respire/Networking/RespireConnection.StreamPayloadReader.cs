@@ -32,14 +32,17 @@ internal sealed partial class RespireConnection
 
         internal async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(CancellationToken cancellationToken)
         {
-            var chunk = _useAlternate
-                ? _alternateChunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize)
-                : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
-            _useAlternate = !_useAlternate;
-            // Ownership spans all partial reads, including gaps between ReadAsync calls.
+            byte[] chunk;
+            // Allocate and publish ownership together. Dispose must not return the buffer between
+            // the disposed check and assignment of the active fill.
             lock (_bufferOwnershipGate)
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                chunk = _useAlternate
+                    ? _alternateChunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize)
+                    : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
+                _useAlternate = !_useAlternate;
+                // Ownership spans all partial reads, including gaps between ReadAsync calls.
                 _readingChunk = true;
                 _activeChunkBuffer = chunk;
             }
@@ -90,6 +93,8 @@ internal sealed partial class RespireConnection
                         {
                             // A failed read has no byte count. The source may have advanced before
                             // throwing, so a retirement retry cannot safely replay it.
+                            Volatile.Write(ref _pendingRead, null);
+                            Volatile.Write(ref _pendingBuffer, null);
                             _unknownPositionReadError = error;
                         }
                         throw;
