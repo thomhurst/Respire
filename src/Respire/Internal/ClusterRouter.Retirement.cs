@@ -7,7 +7,7 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     private readonly Dictionary<RespireConnectionMultiplexer, RetiredGeneration> _retiringNodes = [];
-    private readonly HashSet<DedicatedConnectionPool> _ownedPools = [];
+    private readonly DedicatedPoolLedger _ownedPools;
     private readonly CancellationTokenSource _stopRetirement = new();
 
     private sealed class RetiredGeneration(RespireConnectionMultiplexer node, DedicatedConnectionPool? dedicatedPool,
@@ -151,12 +151,7 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private async Task DrainPoolAsync(DedicatedConnectionPool pool)
-    {
-        await pool.RetireAsync().ConfigureAwait(false);
-        // Failed cleanup stays owned so explicit client disposal can still visit it.
-        lock (_nodesGate) _ownedPools.Remove(pool);
-    }
+    private Task DrainPoolAsync(DedicatedConnectionPool pool) => _ownedPools.RetireAsync(pool);
 
     internal Task WaitForRetirementAsync()
     {

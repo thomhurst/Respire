@@ -358,7 +358,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         private readonly ClientCore _core;
         private readonly object _connectionsGate = new();
         private readonly object _poolsGate = new();
-        private readonly HashSet<DedicatedConnectionPool> _pools = [];
+        private readonly DedicatedPoolLedger _pools;
         private DedicatedConnectionPool _pool;
         private readonly HashSet<RespireConnection> _connections = [];
         private int _retired;
@@ -374,6 +374,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         internal Generation(SentinelRouter owner, ClientCore core, RespireOptions options)
         {
+            _pools = new(_poolsGate);
             _owner = owner;
             _core = core;
             Endpoint = options.PrimaryEndpoint;
@@ -429,8 +430,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                await pool.RetireAsync().ConfigureAwait(false);
-                lock (_poolsGate) _pools.Remove(pool);
+                await _pools.RetireAsync(pool).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -439,12 +439,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
         }
 
-        internal Task RetirePoolsAsync()
-        {
-            DedicatedConnectionPool[] pools;
-            lock (_poolsGate) pools = _pools.ToArray();
-            return Task.WhenAll(pools.Select(pool => pool.RetireAsync().AsTask()));
-        }
+        internal Task RetirePoolsAsync() => _pools.RetireAllAsync();
 
         public bool IsRetired => Volatile.Read(ref _retired) != 0;
         internal bool TryRetire() => Interlocked.Exchange(ref _retired, 1) == 0;
@@ -538,10 +533,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             Multiplexer.MovingHandoffPublished -= RefreshPool;
             RespireConnection[] connections;
             lock (_connectionsGate) connections = _connections.ToArray();
-            DedicatedConnectionPool[] pools;
-            lock (_poolsGate) pools = _pools.ToArray();
             await Task.WhenAll(connections.Select(connection => connection.DisposeAsync().AsTask())
-                .Concat(pools.Select(pool => pool.DisposeAsync().AsTask()))
+                .Append(_pools.DisposeAllAsync())
                 .Append(Multiplexer.DisposeAsync().AsTask())).ConfigureAwait(false);
         }
     }
