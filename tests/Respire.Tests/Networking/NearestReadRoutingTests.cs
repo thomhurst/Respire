@@ -16,7 +16,10 @@ public class NearestReadRoutingTests
     {
         await using var primary = Server("primary");
         primary.DelayCommand("PING", 250);
-        await using var client = RespireClient.Create(Options(primary));
+        await using var replica = Server("replica");
+        replica.ReplyOverride = (_, command) => command == "PING"
+            ? "-NOPERM ping denied\r\n"u8.ToArray() : Reply(command, "replica");
+        await using var client = RespireClient.Create(Options(primary, replica));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         using var cancellation = new CancellationTokenSource();
         var first = nearest.GetStringAsync("first", cancellation.Token).AsTask();
@@ -46,6 +49,57 @@ public class NearestReadRoutingTests
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("primary");
         Volatile.Write(ref wrongRole, false);
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
+    }
+
+    [Test]
+    public async Task NearestUsesHealthyReplicaWhenPrimaryCannotConnect()
+    {
+        using var unavailable = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        unavailable.Start();
+        var port = ((System.Net.IPEndPoint)unavailable.LocalEndpoint).Port;
+        unavailable.Stop();
+        await using var replica = Server("replica");
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            Endpoints = [new("127.0.0.1", port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
+        await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
+    }
+
+    [Test]
+    public async Task RoleInvalidatedDuringSamplingCannotWinSelection()
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var wrongRole = false;
+        replica.ReplyOverride = (_, command) => command == "ROLE" && Volatile.Read(ref wrongRole)
+            ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Reply(command, "replica");
+        await using var client = RespireClient.Create(Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(async (connection, token) =>
+        {
+            if (connection.Port != replica.Port) return 100L;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return 10L;
+        });
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        var pending = nearest.GetStringAsync("key").AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref wrongRole, true);
+            await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key"))
+                .Throws<RespireConnectionException>();
+        }
+        finally { release.TrySetResult(); }
+        await Assert.That(await pending).IsEqualTo("primary");
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
     }
 
     [Test]

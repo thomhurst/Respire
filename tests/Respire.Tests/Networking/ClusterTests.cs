@@ -1464,9 +1464,11 @@ public class ClusterTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry(bool partial)
+    [Arguments(false, RespireReadFrom.Replica)]
+    [Arguments(true, RespireReadFrom.Replica)]
+    [Arguments(false, RespireReadFrom.Nearest)]
+    [Arguments(true, RespireReadFrom.Nearest)]
+    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry(bool partial, RespireReadFrom policy)
     {
         var key = "{moved}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1493,7 +1495,10 @@ public class ClusterTests
 
         var otherSlot = (slot + 1) % ClusterHash.SlotCount;
         var otherRoutes = ReplicaRoutes(client)[otherSlot];
-        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == oldReplica.Port || connection.Port == newReplica.Port ? 10L : 100L));
+        await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("replicated");
         if (partial) await Assert.That(ReplicaRoutes(client)[otherSlot]).IsSameReferenceAs(otherRoutes);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
@@ -1645,7 +1650,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_StrictReplicaFailsOnAskWhilePreferredFollowsIt()
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    [Arguments(RespireReadFrom.Nearest)]
+    public async Task ReadFrom_StrictReplicaFailsOnAskWhilePreferredFollowsIt(RespireReadFrom policy)
     {
         var key = "{asked}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1670,7 +1677,10 @@ public class ClusterTests
         await Assert.That(error!.Message).Contains("ASK");
         await Assert.That(importing.ReceivedCommands).IsEmpty();
 
-        await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("importing");
         await Assert.That(importing.ReceivedCommands).IsEquivalentTo(["ASKING", $"GET {key}"]);
     }

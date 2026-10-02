@@ -400,6 +400,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         internal bool IsCoolingDown => _health.IsCoolingDown(router.FailedReplicaCooldown);
 
+        internal bool IsRoleEligible(RespireConnection connection)
+            => !_closed && !IsCoolingDown && _health.WasValidated(connection);
+
         /// <summary>True when the last ROLE check found the replica's link to its primary down.</summary>
         internal bool IsReplicationLinkDown => _health.IsReplicationLinkDown;
 
