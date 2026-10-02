@@ -157,44 +157,44 @@ internal static class SentinelResolver
                         cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
-                var primary = observation.Endpoint;
-                string[]? primaryAddresses = null;
-                if (!IPAddress.TryParse(primary.Host, out _))
-                {
-                    try
-                    {
-                        var addresses = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, discoveryTimeoutSource.Token)
-                            .ConfigureAwait(false);
-                        primaryAddresses = Array.ConvertAll(addresses, NormalizeAddress);
-                    }
-                    catch (System.Net.Sockets.SocketException) { /* Retain the textual owner fence if DNS is unavailable. */ }
-                }
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                // Switch evidence names its source, not whichever healthy generation application
-                // traffic may have published while the notification was waiting to retry.
-                var matchesSwitchSource = notificationHint is { } hint
-                    ? MatchesSwitchSource(primary, in hint)
-                    : previouslyValidatedPrimary is { } previous && RespireEndpointComparer.Instance.Equals(primary, previous);
-                var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
-                    && !RespireEndpointComparer.Instance.Equals(target, primary)
-                    && !discoveryState.IsNewerConfiguration(observation.Epoch);
-                if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
-                if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
-                {
-                    // A rejected view consumes the same fallback budget as a failed ROLE check.
-                    throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
-                }
-                var primaryOptions = options with
-                {
-                    Endpoints = new List<RespireEndpoint> { primary },
-                    SentinelPrimaryName = null,
-                };
+                // Owner resolution is part of primary setup, after the Sentinel query deadline.
                 using var connectTimeoutSource = CommandTimeoutCancellation.Create(
-                    cancellationToken,
-                    options.ConnectTimeout);
+                    cancellationToken, options.ConnectTimeout);
                 try
                 {
+                    var primary = observation.Endpoint;
+                    string[]? primaryAddresses = null;
+                    if (!IPAddress.TryParse(primary.Host, out _))
+                    {
+                        try
+                        {
+                            var addresses = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, connectTimeoutSource.Token)
+                                .ConfigureAwait(false);
+                            primaryAddresses = Array.ConvertAll(addresses, NormalizeAddress);
+                        }
+                        catch (System.Net.Sockets.SocketException) { /* Retain the textual owner fence if DNS is unavailable. */ }
+                    }
+                    // Switch evidence names its source, not whichever healthy generation application
+                    // traffic may have published while the notification was waiting to retry.
+                    var matchesSwitchSource = notificationHint is { } hint
+                        ? MatchesSwitchSource(primary, in hint)
+                        : previouslyValidatedPrimary is { } previous && RespireEndpointComparer.Instance.Equals(primary, previous);
+                    var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
+                        && !RespireEndpointComparer.Instance.Equals(target, primary)
+                        && !discoveryState.IsNewerConfiguration(observation.Epoch);
+                    if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
+                    if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
+                    {
+                        // A rejected view consumes the same fallback budget as a failed ROLE check.
+                        throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
+                    }
+                    var primaryOptions = options with
+                    {
+                        Endpoints = new List<RespireEndpoint> { primary },
+                        SentinelPrimaryName = null,
+                    };
                     var result = await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
                     discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses);
                     return result;

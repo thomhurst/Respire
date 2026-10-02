@@ -397,11 +397,12 @@ dedicated and subscription connections. A reachable replica, malformed response,
 is rejected and the candidate is disposed. Grant `ROLE` to the data-node credentials.
 
 Respire also requests `SENTINEL SENTINELS` and can try up to 64 learned peers after the
-configured endpoints. Duplicate hosts/ports and invalid peer addresses are ignored;
-configured seeds are retained. Newly learned peers do not recursively expand discovery
+configured endpoints. Duplicate hosts/ports and invalid peer addresses are ignored.
+Configured seeds and learned peers remain known for the client lifetime; the learned-peer
+cap also bounds their event monitors. Newly learned peers do not recursively expand discovery
 within the same attempt. ACL errors, timeouts, protocol errors, or disconnects during this
 optional peer-list command do not discard an already completed primary reply. Discovery (including the peer-list request) uses
-its existing bounded deadline; primary setup and role validation receive a fresh connection
+its existing bounded deadline; primary hostname resolution, setup, and role validation receive a fresh connection
 deadline. Caller cancellation applies throughout. These checks follow the
 [Redis Sentinel client specification](https://redis.io/docs/latest/develop/reference/sentinel-clients/).
 

@@ -408,7 +408,19 @@ internal sealed partial class SentinelRouter
                 if (delay > 0) await Task.Delay(TimeSpan.FromMilliseconds(delay), _lifetime.Token).ConfigureAwait(false);
                 _notificationDiscoveryNotBefore = Environment.TickCount64 + MinimumNotificationDiscoveryIntervalMilliseconds;
                 SentinelHint? hint;
-                lock (_gate) hint = _coalescer.Active;
+                lock (_gate)
+                {
+                    // Evidence can arrive after TakePending, during backoff or its wake-up.
+                    // Spend the remaining retry on that evidence, not the failed reporter again.
+                    if (failures > 0 && _coalescer.Pending is not null)
+                    {
+                        var next = _coalescer.TakePending(activeFailed: true)!.Value;
+                        _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        var current = Current;
+                        if (!IsAnnouncedTarget(current, in next) && IsSwitchSource(current, in next)) Invalidate(current!);
+                    }
+                    hint = _coalescer.Active;
+                }
                 await GetGenerationAsync(_lifetime.Token, forceDiscovery: true, notificationHint: hint).ConfigureAwait(false);
                 succeeded = true;
                 if (consecutiveFailures > 0)

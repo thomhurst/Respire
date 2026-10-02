@@ -49,6 +49,102 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task OwnerAliasLookupUsesThePrimaryConnectDeadline()
+    {
+        const int primaryPort = 7001;
+        await using var sentinel = HostnameSentinel(primaryPort);
+        var options = Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(1) };
+        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Host), CancellationToken.None,
+            hostResolver: async (_, token) =>
+            {
+                // Alias lookup belongs to the separately bounded primary connection stage.
+                await Task.Delay(TimeSpan.FromMilliseconds(1250), token);
+                return [IPAddress.Loopback];
+            });
+        await Assert.That(result).IsEqualTo("owner.test");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OwnerAliasLookupPreservesConnectTimeoutAndCallerCancellation(bool cancelCaller)
+    {
+        await using var sentinel = HostnameSentinel(7001);
+        using var cancellation = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = Options(sentinel.Port) with { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(200) };
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options,
+            (_, _) => throw new InvalidOperationException("No transport should be attempted before resolution."),
+            cancellation.Token, hostResolver: async (_, token) =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return Array.Empty<IPAddress>();
+            }).AsTask();
+        await entered.Task.WaitAsync(Limit);
+        if (cancelCaller)
+        {
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
+            await Assert.That(error!.InnerException is RespireTimeoutException).IsTrue();
+            var timeout = (RespireTimeoutException)error.InnerException!;
+            await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
+            await Assert.That(timeout.Timeout).IsEqualTo(options.ConnectTimeout);
+        }
+    }
+
+    [Test]
+    public async Task ReporterArrivingDuringBackoffUsesTheRemainingRetry()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        await using var first = Sentinel(() => original.Port, () => 1);
+        await using var unavailable = Sentinel(() => original.Port, () => 1);
+        var secondPort = original.Port;
+        await using var second = Sentinel(() => Volatile.Read(ref secondPort), () => secondPort == original.Port ? 1 : 2);
+        var retryDelay = TimeSpan.FromMilliseconds(200);
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", unavailable.Port), new("127.0.0.1", second.Port)],
+            ReconnectPolicy = new() { InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1 },
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, unavailable);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        var router = client.Core.Sentinel!;
+        var clock = new FenceClock();
+        router.Clock = clock;
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var before = first.ReceivedCommands.Count(command => command == query);
+        var secondBefore = second.ReceivedCommands.Count(command => command == query);
+        foreach (var reporter in new[] { first, unavailable })
+        {
+            var reply = reporter.ReplyOverride!;
+            reporter.ReplyOverride = (id, command) => command == query
+                ? "-ERR reporter unavailable\r\n"u8.ToArray() : reply(id, command);
+        }
+        var hint = new SentinelHint("backoff-reporters", new("127.0.0.1", promoted.Port),
+            new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", first.Port));
+        router.QueueNotificationRediscovery(hint);
+        await ReadFenceTimerAsync(clock, retryDelay);
+        var worker = router.NotificationRediscovery!;
+        Volatile.Write(ref secondPort, promoted.Port);
+        router.QueueNotificationRediscovery(hint with { Reporters = [new("127.0.0.1", second.Port)] });
+        await worker.WaitAsync(Limit);
+
+        // A successful epoch-aware discovery brackets metadata with two address reads.
+        await Assert.That(second.ReceivedCommands.Count(command => command == query)).IsEqualTo(secondBefore + 2);
+        await Assert.That(first.ReceivedCommands.Count(command => command == query)).IsEqualTo(before + 1);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(promoted.Port);
+    }
+
+    [Test]
     public async Task RepeatedSuccessfulFaultHintsHaveAMinimumDiscoveryInterval()
     {
         await using var primary = Primary();
@@ -3329,6 +3425,18 @@ public class SentinelRoutingTests
                     _ => "*0\r\n"u8.ToArray(),
                 },
         };
+    }
+
+    private static FakeRespServer HostnameSentinel(int primaryPort)
+    {
+        var sentinel = Sentinel(() => primaryPort, () => 6);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? AddressReply("owner.test", primaryPort)
+            : command == "SENTINEL MASTER mymaster"
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primaryPort, 6)).Replace("127.0.0.1", "owner.test"))
+                : reply(id, command);
+        return sentinel;
     }
 
     private static byte[] ConfigurationReply(int port, long epoch, string flags = "master")
