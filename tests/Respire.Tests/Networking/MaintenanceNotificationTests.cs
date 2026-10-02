@@ -1225,6 +1225,8 @@ public class MaintenanceNotificationTests
     {
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 4);
+        // Keep the original sockets current until both duplicate announcements arrive.
+        target.DelayCommand("HELLO", 1000);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             connectionCount: 2, options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
 
