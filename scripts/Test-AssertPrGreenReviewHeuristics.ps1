@@ -1221,6 +1221,13 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks legacy review with period before findings suffix'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. findings`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks legacy code review with exclamation after heading'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review!`n`n1. A concrete finding.")
@@ -1329,6 +1336,13 @@ $claudeCommentCases = @(
         Name = 'ignores late automation heading with comma after Review'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review, apps deployed`n`nDeployment completed.")
+        )
+        Blocks = $false
+    },
+    @{
+        Name = 'ignores late automation heading with period after Review'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review. apps deployed`n`nDeployment completed.")
         )
         Blocks = $false
     },
