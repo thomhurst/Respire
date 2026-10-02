@@ -2,7 +2,7 @@ name: Client cache tracking benchmarks
 
 on:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled]
     paths:
       - 'src/Respire/RespireClientSideCache.cs'
       - 'src/Respire/RespireClient.cs'
@@ -18,13 +18,13 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  # Reapplying the benchmark label supersedes older runs on the same PR.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   tracking:
-    if: contains(github.event.pull_request.labels.*.name, 'run-benchmarks')
+    if: github.event.label.name == 'run-benchmarks'
     name: Compare cache tracking (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 25

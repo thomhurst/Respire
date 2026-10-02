@@ -3,7 +3,7 @@ name: Value codec benchmarks
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
     paths:
       - 'Directory.Packages.props'
       - 'src/Respire/Compression/**'
@@ -26,10 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 -m unittest discover -s .github/scripts -p test_value_codec_report.py
   codecs:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs') &&
-       (github.event.action != 'labeled' || github.event.label.name == 'benchmark-value-codecs'))
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'benchmark-value-codecs'
     name: Value codecs (${{ matrix.framework }}, ${{ matrix.direction }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
