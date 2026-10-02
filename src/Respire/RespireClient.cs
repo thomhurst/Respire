@@ -1376,7 +1376,7 @@ public sealed partial class RespireClient : IRespireClient
         // The owning pool must follow the lease through commit/disposal, even if topology changes.
         RespireConnection connection;
         if (cluster is null)
-            connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+            (pool, connection) = await _core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
         else
             (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken, discovery: null).ConfigureAwait(false);
         try
@@ -3457,18 +3457,36 @@ public sealed partial class RespireClient : IRespireClient
                 ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
             try
             {
-                var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
-                connection = await pool.RentAsync(acquisitionToken,
-                    kind: policy == DedicatedSendPolicy.Streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).ConfigureAwait(false);
-                acquisitionCancellation?.Disarm();
-                if (core.Sentinel is not null)
-                    telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                        core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
-                var response = policy == DedicatedSendPolicy.Streaming
-                    ? await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                        commandDeadline: commandDeadline).ConfigureAwait(false)
-                    : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                RespValue response;
+                for (var attempt = 0; ; attempt++)
+                {
+                    var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
+                    pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
+                    (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken,
+                        kind: policy == DedicatedSendPolicy.Streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).ConfigureAwait(false);
+                    acquisitionCancellation?.Disarm();
+                    if (core.Sentinel is not null)
+                        telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                            core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
+                    try
+                    {
+                        response = policy == DedicatedSendPolicy.Streaming
+                            ? await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
+                                validateStreamingRoute: () => core.IsDedicatedStreamRouteCurrent(pool, connection)).ConfigureAwait(false)
+                            : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (RespireConnectionRetiredException) when (policy == DedicatedSendPolicy.Streaming
+                        && attempt < ClusterRouter.RedirectLimit && !core.Disposed && !cancellationToken.IsCancellationRequested)
+                    {
+                        // The header was rejected before acceptance; the streaming command retains
+                        // any prefetched bytes. Retry the same command under the original deadline.
+                        commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
+                        pool.Return(connection);
+                        connection = null;
+                    }
+                }
                 pool.Return(connection);
                 returned = true;
                 if (response.IsError)
@@ -4412,8 +4430,10 @@ public sealed partial class RespireClient : IRespireClient
         await using var sentinelCorrection = core.Sentinel is { } sentinel
             ? sentinel.GetCorrectionLease(identity.Connection
                 ?? throw new InvalidOperationException("Sentinel corrections require the original connection identity.")) : null;
-        var pool = sentinelCorrection?.Pool ?? correction?.Pool ?? (core.Cluster is { } routerPool
-            ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
+        await using var standaloneCorrection = core.Cluster is null && core.Sentinel is null
+            ? core.GetCorrectionLease(identity.Endpoint, identity.Connection) : null;
+        var pool = standaloneCorrection?.Pool ?? sentinelCorrection?.Pool ?? correction?.Pool
+            ?? core.Cluster!.GetDedicatedPool(identity.Endpoint);
         // Cleanup callers bound each attempt. They retire a canceled control connection and
         // retry; no caller may release the owner token before an acknowledged fence.
         var control = await pool.RentAsync(cancellationToken, armHandshakeDeadline: false).ConfigureAwait(false);

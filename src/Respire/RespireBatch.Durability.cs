@@ -114,7 +114,7 @@ public sealed partial class RespireBatch
                 (pool, connection) = await router.RentDedicatedConnectionAsync(
                     pool, slot, cancellationToken, discovery: null, reuseIdle: false).ConfigureAwait(false);
             else
-                connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, reuseIdle: false).ConfigureAwait(false);
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     operation, _ops, static op => op.Operation,

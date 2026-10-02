@@ -119,6 +119,58 @@ internal sealed class ClientCore : IAsyncDisposable
         return Volatile.Read(ref _dedicatedPool);
     }
 
+    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+        DedicatedConnectionPool pool, CancellationToken cancellationToken, bool reuseIdle = true,
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Disposed, this);
+            try
+            {
+                var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind).ConfigureAwait(false);
+                return (pool, connection);
+            }
+            catch (Exception error) when (!Disposed && !cancellationToken.IsCancellationRequested
+                && pool.IsStopping && error is ObjectDisposedException or OperationCanceledException)
+            {
+                // Publication can retire the selected pool before rental or during its handshake.
+                // No application command has been sent. Keep the caller's acquisition deadline
+                // and return the replacement owner together with its lease.
+                var replacement = await GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                if (ReferenceEquals(replacement, pool)) throw;
+                pool = replacement;
+            }
+        }
+    }
+
+    internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
+        => !pool.IsStopping && ReferenceEquals(pool, DedicatedPool)
+            && (Sentinel is not null || _multiplexer.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port));
+
+    internal sealed class CorrectionLease(ClientCore owner, DedicatedConnectionPool pool) : IAsyncDisposable
+    {
+        internal DedicatedConnectionPool Pool => pool;
+        public ValueTask DisposeAsync() => owner.ReleaseServerPoolAsync(pool);
+    }
+
+    internal CorrectionLease GetCorrectionLease(RespireEndpoint endpoint, RespireConnection? original)
+    {
+        var options = Options.ToConnectionOptions();
+        if (options.UseTls)
+            options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original?.Host ?? endpoint.Host) };
+        // Client IDs belong to the original physical server, not the current MOVING destination.
+        lock (_hubGate)
+        {
+            ObjectDisposedException.ThrowIf(Disposed, this);
+            var pool = new DedicatedConnectionPool(original?.NetworkPeerAddress ?? endpoint.Host,
+                original?.NetworkPeerPort ?? endpoint.Port, options, Logger);
+            (_serverPools ??= []).Add(pool);
+            return new(this, pool);
+        }
+    }
+
     private void RefreshStandaloneDedicatedPool()
     {
         DedicatedConnectionPool previous;
