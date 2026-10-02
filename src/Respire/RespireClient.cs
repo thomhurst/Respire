@@ -2028,7 +2028,8 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRejection(ref discovery, connection, retirement);
-                    _core.ClientCache?.FlushForContinuityLoss();
+                    if (!ReadFallbackPolicy.IsReplicaConnection(connection))
+                        _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
@@ -2570,7 +2571,8 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                     cluster.RecordRejection(ref discovery, connection, retirement);
-                    _core.ClientCache?.FlushForContinuityLoss();
+                    if (!ReadFallbackPolicy.IsReplicaConnection(connection))
+                        _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
@@ -3142,7 +3144,8 @@ public sealed partial class RespireClient : IRespireClient
                     when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRejection(ref discovery, connection, retirement);
-                    _core.ClientCache?.FlushForContinuityLoss();
+                    if (!ReadFallbackPolicy.IsReplicaConnection(connection))
+                        _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)

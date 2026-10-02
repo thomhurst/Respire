@@ -183,7 +183,7 @@ internal sealed partial class ClusterRouter
             var candidates = replicas.Where(static node => node.IsConnected && !node.IsRetired)
                 .Concat(Volatile.Read(ref _masters)).Distinct().ToArray();
             var version = CaptureTopologyVersion();
-            var refreshRound = new ReplicaRefreshRound(slot);
+            var refreshRound = new ReplicaRefreshRound(slot, GetKnownSlotOwner(slot));
             // Each known candidate gets the shared deadline. Parallel probes prevent stalled
             // nodes from consuming healthy nodes' time; one snapshot batch fences late replies.
             var attempts = candidates.Select(node => TryRefreshReplicaCandidateAsync(
@@ -231,7 +231,7 @@ internal sealed partial class ClusterRouter
 
     // Empty replica snapshots remain useful evidence (for example, a promotion), but must not
     // publish or fence out another candidate that can still supply replicas for this slot.
-    private sealed class ReplicaRefreshRound(int slot)
+    private sealed class ReplicaRefreshRound(int slot, RespireConnectionMultiplexer? originalOwner)
     {
         internal readonly object SnapshotBatch = new();
         private readonly object _gate = new();
@@ -258,10 +258,29 @@ internal sealed partial class ClusterRouter
             (List<ClusterTopologyRange> Ranges, long Version, long Generation)? candidate;
             lock (_gate) candidate = _empty;
             if (candidate is not { } snapshot) return false;
-            // Only this slot exhausted its candidates. An empty fallback is not evidence
-            // that unrelated shards lost their replicas or changed their primary.
-            var ranges = snapshot.Ranges.Where(range => range.Start <= slot && slot <= range.End)
-                .Select(range => range with { Start = slot, End = slot }).ToList();
+            // Apply empty evidence to sibling slots of the shard that triggered discovery.
+            // A full reply from this candidate cannot overwrite unrelated shards, but a
+            // promotion must remove the old replica role throughout the advertised range.
+            List<ClusterTopologyRange> ranges = [];
+            lock (router._nodesGate)
+            {
+                foreach (var range in snapshot.Ranges)
+                {
+                    if (range.Start > slot || range.End < slot) continue;
+                    var start = -1;
+                    for (var current = range.Start; current <= range.End + 1; current++)
+                    {
+                        var sibling = current <= range.End && (current == slot || originalOwner is not null
+                            && ReferenceEquals(router._slots[current], originalOwner));
+                        if (sibling && start < 0) start = current;
+                        if (!sibling && start >= 0)
+                        {
+                            ranges.Add(range with { Start = start, End = current - 1 });
+                            start = -1;
+                        }
+                    }
+                }
+            }
             router.ApplyTopologyCore(ranges, snapshot.Version, snapshot.Generation,
                 keepUncoveredOwners: true, snapshotBatch: SnapshotBatch);
             return true;

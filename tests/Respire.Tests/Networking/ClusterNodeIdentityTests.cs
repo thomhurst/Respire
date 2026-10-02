@@ -296,7 +296,8 @@ public class ClusterNodeIdentityTests
         var retirement = node.RetireAsync();
         using var reply = await acceptedCommand.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reply.IsError).IsFalse();
-        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        // The suppressed PING consumes ConnectTimeout before retirement cleanup begins.
+        await retirement.WaitAsync(options.ConnectTimeout + TimeSpan.FromSeconds(5));
     }
 
     [Test]

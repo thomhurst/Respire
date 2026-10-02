@@ -241,8 +241,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
 
         // Batch commands bypass the client's per-command mutation classifier. Conservatively
-        // fence older reads before any queued operation can reach Redis.
-        core.ClientCache?.FlushForUnknownCommand();
+        // fence older reads unless the complete policy-routed batch is known to be read-only.
+        var cacheToInvalidate = core.ClientCache;
+        if (cacheToInvalidate is not null && core.Cluster is not null
+            && GetGroupReadFrom(_ops) != RespireReadFrom.Primary)
+            cacheToInvalidate = null;
+        cacheToInvalidate?.FlushForUnknownCommand();
 
         if (core.Cluster is not null)
         {
@@ -275,7 +279,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
             finally
             {
-                core.ClientCache?.FlushForUnknownCommand();
+                cacheToInvalidate?.FlushForUnknownCommand();
             }
 
             var failures = CollectFailures(_ops);
@@ -332,7 +336,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
         finally
         {
-            core.ClientCache?.FlushForUnknownCommand();
+            cacheToInvalidate?.FlushForUnknownCommand();
         }
 
         var batchFailures = CollectFailures(_ops);
