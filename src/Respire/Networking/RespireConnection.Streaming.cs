@@ -127,7 +127,16 @@ internal sealed partial class RespireConnection
                 // after the frame is open on the wire, have to abort it.
                 payloadReader = new StreamPayloadReader(stream, command.Length, _streamPayloadPool);
                 phase = StreamedSetPhase.ReadingFirstChunk;
-                firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
+                var firstChunkRead = StartStreamChunkRead(payloadReader, effectiveCancellation);
+                try
+                {
+                    firstChunk = await firstChunkRead.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+                }
+                catch
+                {
+                    ObserveStreamReadFailure(firstChunkRead);
+                    throw;
+                }
             }
 
             // A source that ignored the token can complete its read after the caller, the deadline
@@ -433,19 +442,24 @@ internal sealed partial class RespireConnection
 
             // AppendStreamingBytes copies the chunk into the connection buffer, so the reader can
             // reuse its single pooled chunk while the socket drains that copy.
-            var nextChunk = reader.ReadChunkAsync(cancellationToken);
+            var nextChunk = StartStreamChunkRead(reader, cancellationToken);
             try
             {
                 await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+                chunk = await nextChunk.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                ObserveStreamReadFailure(nextChunk.AsTask());
+                ObserveStreamReadFailure(nextChunk);
                 throw;
             }
-            chunk = await nextChunk.ConfigureAwait(false);
         }
     }
+
+    private static Task<ReadOnlyMemory<byte>> StartStreamChunkRead(
+        StreamPayloadReader reader, CancellationToken cancellationToken)
+        => Task.Run(async () => await reader.ReadChunkAsync(cancellationToken).ConfigureAwait(false),
+            CancellationToken.None);
 
     private static void ObserveStreamReadFailure(Task read)
         => _ = read.ContinueWith(static task => _ = task.Exception, CancellationToken.None,

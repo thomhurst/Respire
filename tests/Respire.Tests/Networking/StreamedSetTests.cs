@@ -19,6 +19,13 @@ public sealed class StreamedSetTests
 {
     private const int MaximumStreamingBufferCapacity = 256 * 1024;
 
+    private static byte[] PatternedPayload(int length)
+    {
+        var payload = new byte[length];
+        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
+        return payload;
+    }
+
     [Test]
     public async Task SetStreamSendsFiftyMegabytesWithBoundedBufferMemory()
     {
@@ -187,7 +194,7 @@ public sealed class StreamedSetTests
                 return transport = new GatedWriteStream(client);
             },
         });
-        var source = new PartialThenIgnoringCancellationStream(new byte[length],
+        var source = new PartialThenIgnoringCancellationStream(PatternedPayload(length),
             maxRead: RespireConnection.StreamChunkSize, pauseAfter: RespireConnection.StreamChunkSize);
         transport!.GateSecondWrite();
         using var cancellation = new CancellationTokenSource();
@@ -671,6 +678,41 @@ public sealed class StreamedSetTests
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.Commands.Contains("SET")).IsFalse();
+    }
+
+    [Test]
+    public async Task CancellationDuringSynchronouslyBlockedPrefetchReturnsAndRetainsBufferUntilReadSettles()
+    {
+        await using var server = new CountingSetServer();
+        var pool = new TrackingArrayPool();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new RespireConnectionOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            StreamPayloadPool = pool,
+        });
+        using var cancellation = new CancellationTokenSource();
+        using var source = new SynchronouslyBlockedSecondReadStream();
+        var command = new StreamedSetCommand((RespireValue)"sync-block", source, source.Length, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
+
+        byte[]? buffer = null;
+        try
+        {
+            await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            buffer = source.CapturedBuffer!;
+            await Assert.That(pool.Returned.Contains(buffer)).IsFalse();
+        }
+        finally
+        {
+            source.ContinueSecondRead.Set();
+        }
+        if (buffer is null) return;
+        await source.SecondReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pool.WaitForReturnAsync(buffer).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pool.Returned.Contains(buffer)).IsTrue();
     }
 
     [Test]
@@ -1388,6 +1430,49 @@ public sealed class StreamedSetTests
             Returned.Add(array);
             _returnSignals.GetOrAdd(array, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
         }
+    }
+
+    private sealed class SynchronouslyBlockedSecondReadStream : Stream
+    {
+        private int _readCount;
+        private int _position;
+        internal ManualResetEventSlim ContinueSecondRead { get; } = new();
+        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource SecondReadCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? CapturedBuffer { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => RespireConnection.StreamChunkSize * 2L;
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _readCount) == 2)
+            {
+                MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment);
+                CapturedBuffer = segment.Array;
+                SecondReadStarted.TrySetResult();
+                ContinueSecondRead.Wait();
+                Fill(buffer.Span);
+                SecondReadCompleted.TrySetResult();
+                return ValueTask.FromResult(buffer.Length);
+            }
+            Fill(buffer.Span);
+            return ValueTask.FromResult(buffer.Length);
+        }
+
+        private void Fill(Span<byte> buffer)
+        {
+            for (var index = 0; index < buffer.Length; index++) buffer[index] = (byte)((_position + index) % 251);
+            _position += buffer.Length;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class ShortReadThenBlockedStream : Stream
