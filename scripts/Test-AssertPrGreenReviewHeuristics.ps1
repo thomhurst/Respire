@@ -1221,6 +1221,34 @@ $claudeCommentCases = @(
         Blocks = $true
     },
     @{
+        Name = 'blocks late legacy review with emoji and bold heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "### 🔍 **Review**`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with findings suffix'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Review findings`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with Code Review findings suffix'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## Code Review — findings`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
+        Name = 'blocks late legacy review with PR Review heading'
+        Comments = @(
+            (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "## PR Review`n`n1. A concrete finding.")
+        )
+        Blocks = $true
+    },
+    @{
         Name = 'blocks late legacy review with five-level heading'
         Comments = @(
             (New-TestComment 'github-actions[bot]' '2026-10-02T10:00:00Z' "##### Review`n`n1. A concrete finding.")

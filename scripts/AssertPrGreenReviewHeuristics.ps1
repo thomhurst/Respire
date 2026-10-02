@@ -380,14 +380,16 @@ function Test-IsClaudeReviewComment {
         $rawTitle = $firstLine[0].Trim()
         $hasFormattedTitle = $rawTitle -match '^(?:#{1,6}\s+|\*\*.+\*\*|__.+__)'
         if ($hasFormattedTitle) {
-            $title = $rawTitle -replace '^#{1,6}\s*', '' -replace '^(?:\*\*|__)\s*', ''
+            $title = $rawTitle -replace '^#{1,6}\s*', ''
             $title = $title -replace '^[^\p{L}\p{N}*_#-]+', ''
+            $title = $title -replace '^(?:\*\*|__)\s*', ''
             $title = $title -replace '(?:\*\*|__).*$' , ''
+            $reviewTitleTail = '(?:$|:|\s+(?:of|for|PR\b|#|\d)|\s*[-—–:]\s*(?:findings?|issues?|concerns?|summary)\b|\s+(?:findings?|issues?|concerns?|summary)\b)'
             $isLegacyReviewTitle = if ($beforeMarkerRollout) {
-                $title -match '(?i)^(?:[\p{L}\p{N}-]+\s+){0,2}Review(?:$|:|\s+(?:of|for|PR\b|#|\d))'
+                $title -match "(?i)^(?:[\p{L}\p{N}-]+\s+){0,2}Review$reviewTitleTail"
             }
             else {
-                $title -match '(?i)^(?:(?:Claude|Code)\s+){0,2}Review(?:$|:|\s+(?:of|for|PR\b|#|\d))'
+                $title -match "(?i)^(?:(?:Claude|Code|PR)\s+){0,2}Review$reviewTitleTail"
             }
             if ($isLegacyReviewTitle) { return $true }
         }
