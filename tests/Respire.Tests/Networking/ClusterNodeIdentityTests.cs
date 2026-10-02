@@ -244,12 +244,13 @@ public class ClusterNodeIdentityTests
         await router.DisposeAsync();
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task QueueOverflowDropsOldestAndCountsTheDrops()
     {
         using var logger = new WarningCaptureLogger();
-        var overflowCallerThread = Environment.CurrentManagedThreadId;
-        var metricCallbackThread = 0;
+        using var inReceiveCallback = new ThreadLocal<bool>(() => false);
+        var metricRanOnReceiveThread = 0;
+        var metricHadSenderTags = 0;
         long metricDroppedCount = 0;
         var metricReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseMetricCallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -264,17 +265,18 @@ public class ClusterNodeIdentityTests
         };
         listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
         {
-            var isSource = false;
             var isQueueDrop = false;
+            var hasSenderTags = false;
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.address" && Equals(tag.Value, "source")) isSource = true;
                 if (tag.Key == "reason" && Equals(tag.Value, "queue_full")) isQueueDrop = true;
+                if (tag.Key is "server.address" or "server.port") hasSenderTags = true;
             }
-            if (isSource && isQueueDrop)
+            if (isQueueDrop)
             {
                 Interlocked.Add(ref metricDroppedCount, measurement);
-                Interlocked.Exchange(ref metricCallbackThread, Environment.CurrentManagedThreadId);
+                if (hasSenderTags) Interlocked.Exchange(ref metricHadSenderTags, 1);
+                if (inReceiveCallback.Value) Interlocked.Exchange(ref metricRanOnReceiveThread, 1);
                 metricReported.TrySetResult();
                 releaseMetricCallback.Task.GetAwaiter().GetResult();
             }
@@ -285,10 +287,13 @@ public class ClusterNodeIdentityTests
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         await using var router = new ClusterRouter(options, primary);
         var sourceEndpoint = new RespireEndpoint("source", 7000);
+        var secondSourceEndpoint = new RespireEndpoint("second-source", 7002);
         var targetEndpoint = new RespireEndpoint("target", 7001);
         var source = router.GetMultiplexer(sourceEndpoint);
+        var secondSource = router.GetMultiplexer(secondSourceEndpoint);
         router.GetMultiplexer(targetEndpoint);
-        for (var slot = 0; slot <= 501; slot++) router.SetSlotOwner(slot, source);
+        for (var slot = 0; slot <= 501; slot++)
+            router.SetSlotOwner(slot, slot % 2 == 0 ? source : secondSource);
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lastApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -298,16 +303,38 @@ public class ClusterNodeIdentityTests
             if (router.GetKnownSlotOwner(500)?.Port == targetEndpoint.Port) lastApplied.TrySetResult();
         };
         var connection = new object();
+        var secondConnection = new object();
 
         // The worker takes slot 0 and blocks, leaving the whole 128-item queue empty.
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        inReceiveCallback.Value = true;
+        try
+        {
+            source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
+                [new(sourceEndpoint, targetEndpoint, "0")]));
+        }
+        finally
+        {
+            inReceiveCallback.Value = false;
+        }
         try
         {
             await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
             for (var slot = 1; slot <= 500; slot++)
-                source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
-                    [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+            {
+                var notificationSource = slot % 2 == 0 ? source : secondSource;
+                var notificationSourceEndpoint = slot % 2 == 0 ? sourceEndpoint : secondSourceEndpoint;
+                var notificationConnection = slot % 2 == 0 ? connection : secondConnection;
+                inReceiveCallback.Value = true;
+                try
+                {
+                    notificationSource.PublishMaintenanceNotification(notificationConnection, new("SMIGRATED", slot, Migrations:
+                        [new(notificationSourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+                }
+                finally
+                {
+                    inReceiveCallback.Value = false;
+                }
+            }
             const long expectedDrops = 372;
             await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(expectedDrops);
             try
@@ -321,8 +348,9 @@ public class ClusterNodeIdentityTests
             }
             await WaitUntilAsync(() => Interlocked.Read(ref metricDroppedCount) == expectedDrops);
             await WaitUntilAsync(() => logger.WarningCount == 1);
-            await Assert.That(metricCallbackThread).IsNotEqualTo(overflowCallerThread);
+            await Assert.That(metricRanOnReceiveThread).IsEqualTo(0);
             await Assert.That(metricDroppedCount).IsEqualTo(expectedDrops);
+            await Assert.That(metricHadSenderTags).IsEqualTo(0);
             await Assert.That(logger.WarningCount).IsEqualTo(1);
             await Assert.That(logger.LastWarning).Contains("Cluster SMIGRATED queue is full");
 
@@ -330,12 +358,12 @@ public class ClusterNodeIdentityTests
             await lastApplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             // The 372 oldest queued notifications were dropped; MOVED/discovery would repair them.
-            await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), source)).IsTrue();
+            await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), secondSource)).IsTrue();
             await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(2), source)).IsTrue();
             await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(372), source)).IsTrue();
             await Assert.That(router.GetKnownSlotOwner(373)?.Port).IsEqualTo(targetEndpoint.Port);
             await Assert.That(router.GetKnownSlotOwner(500)?.Port).IsEqualTo(targetEndpoint.Port);
-            await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(501), source)).IsTrue();
+            await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(501), secondSource)).IsTrue();
         }
         finally
         {

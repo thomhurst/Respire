@@ -75,7 +75,6 @@ internal sealed partial class ClusterRouter
     private long _smigratedNotificationsDropped;
     private long _pendingSmigratedDropDiagnostics;
     private int _smigratedDropDiagnosticsQueued;
-    private RespireConnectionMultiplexer? _lastSmigratedDropSender;
     private long _lastSmigratedDropWarning = long.MinValue;
     // Set only while the worker runs ApplySmigratedNotification and its callbacks. Being
     // thread-static, it does not flow into tasks a callback starts, so their disposal still
@@ -109,7 +108,6 @@ internal sealed partial class ClusterRouter
     {
         Interlocked.Increment(ref _smigratedNotificationsDropped);
         Interlocked.Increment(ref _pendingSmigratedDropDiagnostics);
-        Volatile.Write(ref _lastSmigratedDropSender, dropped.Sender);
         if (Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0) return;
         if (!ThreadPool.UnsafeQueueUserWorkItem(
                 static router => router.ReportPendingSmigratedDropDiagnostics(), this, preferLocal: false))
@@ -121,8 +119,8 @@ internal sealed partial class ClusterRouter
         while (true)
         {
             var count = Interlocked.Exchange(ref _pendingSmigratedDropDiagnostics, 0);
-            if (count > 0 && Volatile.Read(ref _lastSmigratedDropSender) is { } sender)
-                ReportSmigratedNotificationDrop(count, sender);
+            if (count > 0)
+                ReportSmigratedNotificationDrop(count);
 
             Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
             if (Interlocked.Read(ref _pendingSmigratedDropDiagnostics) == 0
@@ -131,9 +129,19 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private void ReportSmigratedNotificationDrop(long count, RespireConnectionMultiplexer sender)
+    private void ReportSmigratedNotificationDrop(long count)
     {
-        RecordSmigratedSkipped("queue_full", sender, count);
+        try
+        {
+            if (RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled)
+                RespireTelemetry.ClusterSlotMigrationsSkipped.Add(count,
+                    new KeyValuePair<string, object?>("reason", "queue_full"));
+        }
+        catch (Exception error)
+        {
+            try { _options.LoggerFactory?.CreateLogger("Respire.Cluster").LogError(error, "Error recording clustered migration-drop metric."); }
+            catch { /* A failing logger must not abandon the queue diagnostics drain. */ }
+        }
         if (_logger is null) return;
         var now = Environment.TickCount64;
         var last = Volatile.Read(ref _lastSmigratedDropWarning);
@@ -142,8 +150,8 @@ internal sealed partial class ClusterRouter
         try
         {
             _logger.LogWarning(
-                "Cluster SMIGRATED queue is full; dropped the oldest notification (from {Host}:{Port}). {Dropped} dropped so far. MOVED handling and topology discovery will correct the affected slots.",
-                sender.Host, sender.Port, SmigratedNotificationsDropped);
+                "Cluster SMIGRATED queue is full; {Dropped} notifications dropped so far. MOVED handling and topology discovery will correct the affected slots.",
+                SmigratedNotificationsDropped);
         }
         catch
         {
