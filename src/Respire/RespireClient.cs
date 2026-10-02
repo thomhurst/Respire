@@ -3337,10 +3337,13 @@ public sealed partial class RespireClient : IRespireClient
     internal sealed class TrackedScriptExecution
     {
         internal TrackedScriptExecution(
-            RespireConnection connection, TrackedConnectionIdentity connectionIdentity)
+            RespireConnection connection, TrackedConnectionIdentity connectionIdentity,
+            Action<long>? onSerialized = null, Action? onCommandNotApplied = null)
         {
             Connection = connection;
             ConnectionIdentity = connectionIdentity;
+            OnSerialized = onSerialized;
+            OnCommandNotApplied = onCommandNotApplied;
         }
 
         internal RespireConnection Connection { get; set; }
@@ -3353,6 +3356,18 @@ public sealed partial class RespireClient : IRespireClient
         /// postdates the server's execution of the script.
         /// </summary>
         internal long StartedTimestamp { get; set; }
+
+        private Action<long>? OnSerialized { get; }
+
+        private Action? OnCommandNotApplied { get; }
+
+        internal void RecordSerialized(long timestamp)
+        {
+            StartedTimestamp = timestamp;
+            OnSerialized?.Invoke(timestamp);
+        }
+
+        internal void RecordCommandNotApplied() => OnCommandNotApplied?.Invoke();
 
         internal ValueTask<RespireResult> Response { get; set; }
     }
@@ -3368,8 +3383,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         public void Write(ref RespWriter writer)
         {
-            execution.StartedTimestamp = Stopwatch.GetTimestamp();
             command.Write(ref writer);
+            execution.RecordSerialized(Stopwatch.GetTimestamp());
         }
 
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
@@ -3468,7 +3483,9 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         CancellationToken cancellationToken,
         bool requireReliableCorrectionOrdering = false,
-        bool captureSendTimestampOnly = false)
+        bool captureSendTimestampOnly = false,
+        Action<long>? onSerialized = null,
+        Action? onCommandNotApplied = null)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -3507,7 +3524,7 @@ public sealed partial class RespireClient : IRespireClient
 
             var identity = GetTrackedConnectionIdentity(
                 connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
-            var execution = new TrackedScriptExecution(connection, identity);
+            var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied);
             ValueTask<RespireResult> response;
             if (core.Cluster is { } router)
             {
@@ -3724,6 +3741,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    execution.RecordCommandNotApplied();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await GetTrackedRedirectConnectionAsync(
@@ -3797,6 +3815,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
+            execution?.RecordCommandNotApplied();
             if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
             var reply = await SendScriptCommandAsync(
                     script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),

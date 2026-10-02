@@ -633,6 +633,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             Set(pending);
             var started = Stopwatch.GetTimestamp();
             var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
+            var confirmedLease = Volatile.Read(ref _lease);
             RespireClient.TrackedScriptExecution? trackedExecution = null;
             bool renewed;
             long completed;
@@ -645,10 +646,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 {
                     trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken,
-                        requireReliableCorrectionOrdering: false, captureSendTimestampOnly: true).ConfigureAwait(false);
-                    var sentAt = trackedExecution.StartedTimestamp;
-                    ClampLocalLeaseForPendingRenewal(requestedExpiry,
-                        sentAt > 0 ? sentAt : started);
+                        requireReliableCorrectionOrdering: false, captureSendTimestampOnly: true,
+                        onSerialized: sentAt => ClampLocalLeaseForPendingRenewal(requestedExpiry, sentAt, confirmedLease),
+                        onCommandNotApplied: () => RestoreLocalLeaseAfterRejectedRenewal(confirmedLease))
+                        .ConfigureAwait(false);
                     response = await trackedExecution.Response.ConfigureAwait(false);
                 }
                 else
@@ -656,7 +657,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     // This interface has no send timestamp. Counting from before the send is
                     // conservative and prevents a delayed shortening renewal from outliving the
                     // local validity reported by this handle.
-                    ClampLocalLeaseForPendingRenewal(requestedExpiry, started);
+                    ClampLocalLeaseForPendingRenewal(requestedExpiry, started, confirmedLease);
                     response = await _client.Scripts.ExecuteAsync(
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 }
@@ -888,16 +889,26 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
     }
 
-    private void ClampLocalLeaseForPendingRenewal(TimeSpan? requestedExpiry, long sentAt)
+    private void ClampLocalLeaseForPendingRenewal(TimeSpan? requestedExpiry, long sentAt, Lease confirmedLease)
     {
         if (requestedExpiry is not { } expiry) return;
+        if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
+            | PermitState.ReleaseUncertain)) return;
         var validUntil = AddTimestampDuration(sentAt, expiry);
-        var current = Volatile.Read(ref _lease);
-        if (validUntil >= current.ValidUntil) return;
+        if (validUntil > confirmedLease.ValidUntil) validUntil = confirmedLease.ValidUntil;
 
         // A shortening renewal may already have taken effect even while its reply is pending.
-        // Keep the local estimate no later than its possible server-side expiry.
-        Volatile.Write(ref _lease, new Lease(expiry.Ticks, validUntil));
+        // Keep the local estimate no later than its possible server-side expiry. Keep Expiry at
+        // its last confirmed value until Redis confirms the renewal.
+        Volatile.Write(ref _lease, new Lease(confirmedLease.ExpiryTicks, validUntil));
+    }
+
+    private void RestoreLocalLeaseAfterRejectedRenewal(Lease confirmedLease)
+    {
+        if (!Has(PermitState.OutcomeUncertain)
+            || Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
+                | PermitState.ReleaseUncertain)) return;
+        Volatile.Write(ref _lease, confirmedLease);
     }
 
     // Saturates below long.MaxValue, which means "no expiry", so a centuries-long expiry cannot

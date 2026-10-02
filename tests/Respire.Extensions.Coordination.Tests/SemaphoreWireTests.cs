@@ -437,9 +437,116 @@ public class SemaphoreWireTests
         }
         await Task.Delay(150);
 
+        await Assert.That(permit.Expiry).IsNull();
         await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(permit.IsReleased).IsTrue();
         await Assert.That(await renewal).IsFalse();
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(100));
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ShorteningRenewalDoesNotClampWhileWaitingForInflightCapacity()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "PING" => FakeRespServer.PongReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            MaxInflightCommands = 1,
+            CommandTimeout = null,
+        });
+        var permit = (await new RespireSemaphore(client, "{renew}:queued-shortening", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromMinutes(5))).Permit;
+        var nextReply = server.ReceivedCommands.Count;
+        server.DelayReply(nextReply, 400);
+        server.DelayReply(nextReply + 1, 400);
+
+        var blocker = client.PingAsync().AsTask();
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(5, sent.Token);
+
+        var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(100)).AsTask();
+        await Task.Delay(150);
+        await Assert.That(EvalCommands(server).Length).IsEqualTo(1);
+        await Assert.That(permit.RemainingEstimate.GetValueOrDefault()).IsGreaterThan(TimeSpan.FromMinutes(4));
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
+
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            while (EvalCommands(server).Length < 2) await Task.Delay(5, sent.Token);
+        await Task.Delay(150);
+        await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
+        await Assert.That(await renewal).IsFalse();
+        await blocker;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RedirectedShorteningRenewalUsesFinalSendTimestamp()
+    {
+        var renewalSha = RespireSemaphore.RenewScript.Sha1;
+        var slot = ClusterHash.GetSlot("{renew}:redirect-shortening");
+        await using var target = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : null,
+            SuppressReply = command => command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal),
+        };
+        await using var seed = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                var eval when eval.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal) => null,
+                _ => null,
+            },
+            SuppressReply = command => command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            CommandTimeout = null,
+        });
+        var permit = (await new RespireSemaphore(client, "{renew}:redirect-shortening", capacity: 1)
+            .TryAcquireAsync(TimeSpan.FromMinutes(5))).Permit;
+
+        var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(500)).AsTask();
+        int seedIndex;
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while ((seedIndex = seed.ReceivedCommands.ToList().FindIndex(command =>
+                       command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal))) < 0)
+                await Task.Delay(5, sent.Token);
+        }
+
+        await Task.Delay(400);
+        var seedConnectionId = seed.ReceivedConnectionIds[seedIndex];
+        await seed.SendRawAsync(Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"), seedConnectionId);
+
+        int targetIndex;
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while ((targetIndex = target.ReceivedCommands.ToList().FindIndex(command =>
+                       command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal))) < 0)
+                await Task.Delay(5, sent.Token);
+        }
+        await Task.Delay(200);
+
+        await Assert.That(permit.RemainingEstimate.GetValueOrDefault()).IsGreaterThan(TimeSpan.Zero);
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
+        await target.SendRawAsync(":1\r\n"u8.ToArray(), target.ReceivedConnectionIds[targetIndex]);
+        await Assert.That(await renewal).IsTrue();
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(500));
     }
 
     [Test]
