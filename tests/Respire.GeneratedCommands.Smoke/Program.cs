@@ -45,11 +45,11 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             await client.Hashes.SetAsync(documentPrefix + "2",
                 ("title", "redis client"), ("category", "client"), ("embedding", vector));
 
-            var found = await search.SearchAsync(index, new("redis", new() { Limit = (0, 10) }));
+            var found = await search.SearchAsync(index, new(RespireSearchQueryBuilder.Text("redis"), new() { Limit = (0, 10) }));
             if (found.Total != 2 || found.Documents.Count != 2)
                 throw new InvalidOperationException("Respire.Search FT.SEARCH failed.");
 
-            var groups = await search.AggregateAsync(index, "*", new()
+            var groups = await search.AggregateAsync(index, RespireSearchExpression.FromRaw("*"), new()
             {
                 Stages =
                 [
@@ -60,7 +60,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             if (groups.Total != 2 || groups.Rows.Count != 2 || groups.Rows[0]["category"] != "cache")
                 throw new InvalidOperationException("Respire.Search FT.AGGREGATE failed.");
 
-            var page = await search.AggregateWithCursorAsync(index, "*",
+            var page = await search.AggregateWithCursorAsync(index, RespireSearchExpression.FromRaw("*"),
                 new() { Stages = [RespireSearchAggregateStage.Load("@title")] },
                 new() { Count = 1 });
             var cursorRows = page.Result.Rows.Count;
@@ -73,7 +73,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             if (cursorRows != 2) throw new InvalidOperationException($"Respire.Search cursor paging returned {cursorRows} rows.");
 
             var pagedRows = 0;
-            await foreach (var rows in search.AggregatePagesAsync(index, "*",
+            await foreach (var rows in search.AggregatePagesAsync(index, RespireSearchExpression.FromRaw("*"),
                 new() { Stages = [RespireSearchAggregateStage.Load("@title")] },
                 new() { Count = 1 }))
             {
@@ -96,13 +96,13 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
                 throw new InvalidOperationException("Respire.Search filtered vector query failed.");
 
             var hybrid = await search.HybridSearchAsync(index,
-                new("redis", "embedding", vector, 1, 2) { LoadFields = ["title"] });
+                new(RespireSearchQueryBuilder.Text("redis"), "embedding", vector, 1, 2) { LoadFields = ["title"] });
             if (hybrid.Documents.Count == 0 || !hybrid.Documents[0].Id.StartsWith(documentPrefix, StringComparison.Ordinal) || hybrid.Documents[0].Fields["title"] is null)
                 throw new InvalidOperationException($"Respire.Search hybrid query returned no documents (total {hybrid.Total}).");
 
             try
             {
-                await search.SearchAsync(index + ":missing", new("*"));
+                await search.SearchAsync(index + ":missing", new(RespireSearchExpression.FromRaw("*")));
                 throw new InvalidOperationException("Respire.Search server error was not surfaced.");
             }
             catch (RespireServerException)
@@ -113,7 +113,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             canceled.Cancel();
             try
             {
-                await search.SearchAsync(index, new("*"), canceled.Token);
+                await search.SearchAsync(index, new(RespireSearchExpression.FromRaw("*")), canceled.Token);
                 throw new InvalidOperationException("Respire.Search cancellation was not propagated.");
             }
             catch (OperationCanceledException)

@@ -5,27 +5,47 @@ using Respire;
 
 namespace Redis.Search;
 
+/// <summary>Redis Search query syntax with an explicit trust boundary.</summary>
+public readonly record struct RespireSearchExpression
+{
+    private RespireSearchExpression(string value) => Value = value;
+
+    /// <summary>Query syntax sent to Redis Search.</summary>
+    public string Value { get; }
+
+    /// <summary>Creates an expression from trusted native Redis Search syntax.</summary>
+    /// <remarks>Do not concatenate untrusted input into raw query syntax.</remarks>
+    public static RespireSearchExpression FromRaw(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        return new(value);
+    }
+
+    internal static RespireSearchExpression FromBuilder(string value) => new(value);
+
+    internal RespireSearchExpression RequireValid(string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Value, parameterName);
+        return this;
+    }
+
+    /// <inheritdoc/>
+    public override string ToString() => Value ?? string.Empty;
+}
+
 /// <summary>Search query with typed modifiers. The expression is validated when the query is created.</summary>
 /// <param name="Expression">
-/// Native Redis Search query syntax, sent as written. Pass raw syntax for prefix, fuzzy, wildcard,
-/// and other advanced expressions; <see cref="RespireSearchQueryBuilder"/> covers common exact
-/// matches. Never concatenate untrusted input into this text: build the value with a
-/// <see cref="RespireSearchQueryBuilder"/> helper, or reference a <c>$name</c> parameter from
-/// <see cref="RespireSearchQueryOptions.Parameters"/>.
+/// Query expression. Use a <see cref="RespireSearchQueryBuilder"/> helper for escaped values, or
+/// <see cref="RespireSearchExpression.FromRaw(string)"/> for trusted native syntax.
 /// </param>
 /// <param name="Options">Optional FT.SEARCH modifiers.</param>
-public sealed record RespireSearchQuery(string Expression, RespireSearchQueryOptions? Options = null)
+public sealed record RespireSearchQuery(RespireSearchExpression Expression, RespireSearchQueryOptions? Options = null)
 {
-    /// <summary>Native Redis Search query syntax, sent as written.</summary>
-    public string Expression { get; init => field = RequireExpression(value); } = RequireExpression(Expression);
+    /// <summary>Query expression.</summary>
+    public RespireSearchExpression Expression { get; init => field = value.RequireValid(nameof(Expression)); } = Expression.RequireValid(nameof(Expression));
 
     internal RespireValue[] ToArguments() => (Options ?? RespireSearchQueryOptions.Default).ToArguments();
 
-    private static string RequireExpression(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(Expression));
-        return value;
-    }
 }
 
 /// <summary>Composable helpers for common Redis Search query expressions.</summary>
@@ -34,28 +54,26 @@ public sealed record RespireSearchQuery(string Expression, RespireSearchQueryOpt
 /// Field names, tag values, and quoted text are escaped, and numeric bounds are formatted from typed
 /// values, so values passed to these helpers cannot change the query structure.
 /// The helpers build exact matches only. For prefix (<c>term*</c>), fuzzy (<c>%term%</c>), or
-/// wildcard queries, write native query syntax and pass it to <see cref="RespireSearchQuery"/>.
+/// wildcard queries, wrap trusted native query syntax with <see cref="RespireSearchExpression.FromRaw(string)"/>.
 /// </para>
 /// <para>
-/// <see cref="And"/> and <see cref="Or"/> take expressions, not values. They wrap each input in
-/// parentheses but do not parse or validate it, so a raw string such as <c>") | (@secret:*"</c> can still
-/// change the query. Pass only output from these helpers or trusted query text, and send untrusted values
-/// through a helper or a <c>$name</c> query parameter.
+/// <see cref="And"/> and <see cref="Or"/> accept only typed expressions. Use
+/// <see cref="RespireSearchExpression.FromRaw(string)"/> to mark trusted native syntax explicitly.
 /// </para>
 /// </remarks>
 public static class RespireSearchQueryBuilder
 {
     /// <summary>Matches an exact quoted term or phrase across indexed text fields.</summary>
-    public static string Text(string term) => Quote(term);
+    public static RespireSearchExpression Text(string term) => RespireSearchExpression.FromBuilder(Quote(term));
 
     /// <summary>Matches an exact quoted term or phrase in one text field.</summary>
-    public static string TextField(string field, string term) => $"@{EscapeField(field)}:{Quote(term)}";
+    public static RespireSearchExpression TextField(string field, string term) => RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:{Quote(term)}");
 
     /// <summary>Matches an exact tag value.</summary>
-    public static string Tag(string field, string value) => $"@{EscapeField(field)}:{{{EscapeIdentifier(value)}}}";
+    public static RespireSearchExpression Tag(string field, string value) => RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:{{{EscapeIdentifier(value)}}}");
 
     /// <summary>Matches a numeric range. Bounds are inclusive unless marked exclusive; infinities are allowed.</summary>
-    public static string NumericRange(string field, double minimum, double maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
+    public static RespireSearchExpression NumericRange(string field, double minimum, double maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
         if (double.IsNaN(minimum)) throw new ArgumentOutOfRangeException(nameof(minimum));
@@ -66,7 +84,7 @@ public static class RespireSearchQueryBuilder
 
     /// <summary>Matches an integer range without converting the bounds through <see cref="double"/> text.</summary>
     /// <remarks>Redis Search stores numeric fields as doubles, so values beyond 2^53 still lose precision on the server.</remarks>
-    public static string NumericRange(string field, long minimum, long maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
+    public static RespireSearchExpression NumericRange(string field, long minimum, long maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
         if (minimum > maximum) throw new ArgumentOutOfRangeException(nameof(minimum));
@@ -79,15 +97,15 @@ public static class RespireSearchQueryBuilder
     }
 
     /// <summary>Combines expressions with AND. Inputs are trusted query syntax and are not escaped.</summary>
-    public static string And(params string[] expressions) => Combine(" ", expressions);
+    public static RespireSearchExpression And(params RespireSearchExpression[] expressions) => Combine(" ", expressions);
 
     /// <summary>Combines expressions with OR. Inputs are trusted query syntax and are not escaped.</summary>
-    public static string Or(params string[] expressions) => Combine(" | ", expressions);
+    public static RespireSearchExpression Or(params RespireSearchExpression[] expressions) => Combine(" | ", expressions);
 
     internal static string EscapeField(string value) => EscapeIdentifier(value);
 
-    private static string FormatRange(string field, string lower, string upper, bool exclusiveMinimum, bool exclusiveMaximum)
-        => $"@{EscapeField(field)}:[{(exclusiveMinimum ? "(" : "")}{lower} {(exclusiveMaximum ? "(" : "")}{upper}]";
+    private static RespireSearchExpression FormatRange(string field, string lower, string upper, bool exclusiveMinimum, bool exclusiveMaximum)
+        => RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:[{(exclusiveMinimum ? "(" : "")}{lower} {(exclusiveMaximum ? "(" : "")}{upper}]");
 
     private static string FormatBound(double value) => value switch
     {
@@ -97,12 +115,14 @@ public static class RespireSearchQueryBuilder
         _ => value.ToString("R", CultureInfo.InvariantCulture).Replace("E+", "E", StringComparison.Ordinal),
     };
 
-    private static string Combine(string separator, string[] expressions)
+    private static RespireSearchExpression Combine(string separator, RespireSearchExpression[] expressions)
     {
         ArgumentNullException.ThrowIfNull(expressions);
         if (expressions.Length == 0) throw new ArgumentException("At least one expression is required.", nameof(expressions));
-        foreach (var expression in expressions) ArgumentException.ThrowIfNullOrWhiteSpace(expression);
-        return expressions.Length == 1 ? expressions[0] : $"({string.Join(separator, expressions.Select(value => $"({value})"))})";
+        foreach (var expression in expressions) expression.RequireValid(nameof(expressions));
+        return RespireSearchExpression.FromBuilder(expressions.Length == 1
+            ? expressions[0].Value
+            : $"({string.Join(separator, expressions.Select(value => $"({value.Value})"))})");
     }
 
     private static string Quote(string value)
@@ -253,20 +273,18 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
     public string ScoreField { get; init => field = RequireText(value, nameof(ScoreField)); } = "vector_score";
 
     /// <summary>
-    /// Optional pre-filter in native query syntax, such as <c>@category:{books}</c>. Null searches
-    /// all documents. The filter is sent as written, so build untrusted values with
-    /// <see cref="RespireSearchQueryBuilder"/> or pass them as parameters in
-    /// <see cref="RespireSearchQueryOptions.Parameters"/>.
+    /// Optional pre-filter. Build escaped values with <see cref="RespireSearchQueryBuilder"/> or mark
+    /// trusted native syntax with <see cref="RespireSearchExpression.FromRaw(string)"/>. Null searches all documents.
     /// </summary>
-    public string? Filter
+    public RespireSearchExpression? Filter
     {
         get;
-        init => field = value is null ? null : RequireText(value, nameof(Filter));
+        init => field = value?.RequireValid(nameof(Filter));
     }
 
     /// <summary>Builds the dialect 2 query expression.</summary>
-    public string Expression
-        => $"{(Filter is null ? "*" : "(" + Filter + ")")}=>[KNN {K} @{RespireSearchQueryBuilder.EscapeField(Field)} ${VectorParameterName} AS {RespireSearchQueryBuilder.EscapeField(ScoreField)}]";
+    public RespireSearchExpression Expression
+        => RespireSearchExpression.FromBuilder($"{(Filter is null ? "*" : "(" + Filter.Value.Value + ")")}=>[KNN {K} @{RespireSearchQueryBuilder.EscapeField(Field)} ${VectorParameterName} AS {RespireSearchQueryBuilder.EscapeField(ScoreField)}]");
 
     private static string RequireText(string value, string name)
     {
@@ -283,14 +301,14 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 
 /// <summary>Typed FT.HYBRID text and vector query.</summary>
 /// <param name="TextExpression">
-/// Native query syntax for the text leg, sent as written. Build untrusted values with
-/// <see cref="RespireSearchQueryBuilder"/> or reference them as <c>$name</c> entries in <see cref="Parameters"/>.
+/// Typed expression for the text leg. Use builder helpers for escaped values or
+/// <see cref="RespireSearchExpression.FromRaw(string)"/> for trusted native syntax.
 /// </param>
 /// <param name="VectorField">Vector field name; it is escaped.</param>
 /// <param name="Vector">Query vector bytes in the index's element type.</param>
 /// <param name="K">Number of nearest neighbours for the vector leg.</param>
 /// <param name="Limit">Maximum number of fused results.</param>
-public sealed record RespireHybridSearchQuery(string TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
+public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
 {
     /// <summary>Reciprocal-rank-fusion constant.</summary>
     public int RrfConstant { get; init; } = 60;
@@ -312,7 +330,7 @@ public sealed record RespireHybridSearchQuery(string TextExpression, string Vect
 
     internal RespireValue[] ToArguments()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(TextExpression);
+        TextExpression.RequireValid(nameof(TextExpression));
         ArgumentException.ThrowIfNullOrWhiteSpace(VectorField);
         if (Vector.IsEmpty) throw new ArgumentException("Vector bytes are required.", nameof(Vector));
         if (K <= 0) throw new ArgumentOutOfRangeException(nameof(K));
@@ -326,7 +344,7 @@ public sealed record RespireHybridSearchQuery(string TextExpression, string Vect
         var args = new List<RespireValue>
         {
             "SEARCH",
-            TextExpression,
+            TextExpression.Value,
             "VSIM",
             "@" + RespireSearchQueryBuilder.EscapeField(VectorField),
             "$" + RespireVectorSearchRequest.VectorParameterName,

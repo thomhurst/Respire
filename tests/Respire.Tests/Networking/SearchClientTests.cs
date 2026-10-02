@@ -54,7 +54,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var result = await search.AggregateAsync("idx", "*", new()
+        var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {
             Stages = [RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@count", RespireSearchSortDirection.Descending))],
         });
@@ -77,7 +77,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var result = await search.AggregateAsync("idx", "*");
+        var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
         var values = result.StructuredRows[0]["items"];
 
         await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
@@ -98,7 +98,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var result = await search.AggregateAsync("idx", "*");
+        var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
         var values = result.StructuredRows[0]["items"];
 
         await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
@@ -115,7 +115,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.AggregateAsync("idx", "*", new()
+        await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {
             Stages =
             [
@@ -142,7 +142,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.AggregateAsync("idx", "*", new()
+        await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {
             Stages =
             [
@@ -174,7 +174,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.AggregateAsync("idx", "*", new()
+        await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {
             Stages =
             [
@@ -216,7 +216,7 @@ public class SearchClientTests
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
             var search = new RespireSearchClient(client);
 
-            var first = await search.AggregateWithCursorAsync("idx", "*",
+            var first = await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"),
                 new() { Stages = [RespireSearchAggregateStage.Load("@n")], Dialect = 2 },
                 new() { Count = 1, MaxIdleMilliseconds = 5_000 });
             await Assert.That(LastArguments(server)[^9..]).IsEquivalentTo(
@@ -248,7 +248,7 @@ public class SearchClientTests
         await Assert.That(async () => await search.ReadCursorAsync("idx", 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await search.ReadCursorAsync("idx", 1, 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await search.DeleteCursorAsync("idx", -1)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", "*", cursor: new() { Count = 0 }))
+        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 0 }))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
     }
@@ -269,7 +269,7 @@ public class SearchClientTests
         var search = new RespireSearchClient(client);
 
         var values = new List<string?>();
-        await foreach (var page in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+        await foreach (var page in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
         {
             values.AddRange(page.Rows.Select(row => row["n"]));
         }
@@ -293,7 +293,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await foreach (var _ in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+        await foreach (var _ in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
         {
             break;
         }
@@ -321,7 +321,7 @@ public class SearchClientTests
 
         var exception = await Assert.That(async () =>
             {
-                await foreach (var _ in search.AggregatePagesAsync("idx", "*", cursor: new() { Count = 1 }))
+                await foreach (var _ in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
                 {
                     pages++;
                 }
@@ -349,10 +349,10 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", "*")).Throws<InvalidOperationException>();
+        await Assert.That(async () => await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"))).Throws<InvalidOperationException>();
         await Assert.That(async () =>
             {
-                await foreach (var _ in search.AggregatePagesAsync("idx", "*"))
+                await foreach (var _ in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*")))
                 {
                 }
             })
@@ -377,7 +377,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var first = await search.AggregateWithCursorAsync("books", "*");
+        var first = await search.AggregateWithCursorAsync("books", RespireSearchExpression.FromRaw("*"));
         await Assert.That(first.Index).IsEqualTo("books");
         var second = await search.ReadCursorAsync(first, 5);
         await Assert.That(second.Index).IsEqualTo("books");
@@ -408,7 +408,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var exception = await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+        var exception = await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<NotSupportedException>();
         await Assert.That(exception!.Message).Contains("8.4.0");
         await Assert.That(exception.InnerException).IsTypeOf<RespireServerException>();
@@ -430,7 +430,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<NotSupportedException>();
     }
 
@@ -449,7 +449,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<RespireServerException>();
     }
 
@@ -470,7 +470,7 @@ public class SearchClientTests
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+            await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
                 .Throws<RespireServerException>();
         }
 
@@ -489,7 +489,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)))
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
             .Throws<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("COMMAND", StringComparison.Ordinal))).IsFalse();
     }
@@ -508,9 +508,21 @@ public class SearchClientTests
     [Test]
     public async Task SearchQueryValidatesExpressionWhenCreated()
     {
-        await Assert.That(() => new RespireSearchQuery(" ")).Throws<ArgumentException>();
-        var query = new RespireSearchQuery("*");
-        await Assert.That(() => query with { Expression = "" }).Throws<ArgumentException>();
+        await Assert.That(() => new RespireSearchQuery(default)).Throws<ArgumentException>();
+        var query = new RespireSearchQuery(RespireSearchExpression.FromRaw("*"));
+        await Assert.That(() => query with { Expression = default }).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchExpression.FromRaw(" ")).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.And(default)).Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task SearchExpressionBuilderEscapesValuesAndComposesTypedExpressions()
+    {
+        var expression = RespireSearchQueryBuilder.And(
+            RespireSearchQueryBuilder.TextField("title", "redis search"),
+            RespireSearchQueryBuilder.Tag("category", "cache"));
+
+        await Assert.That(expression.Value).IsEqualTo("((@title:\"redis search\") (@category:{cache}))");
     }
 
     [Test]
@@ -523,13 +535,13 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var exception = await Assert.That(async () => await search.SearchAsync("idx", new("@name:$name", new()
+        var exception = await Assert.That(async () => await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("@name:$name"), new()
         {
             Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
         }))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(exception!.ParamName).IsEqualTo("Dialect");
 
-        await search.SearchAsync("idx", new("@name:$name", new()
+        await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("@name:$name"), new()
         {
             Parameters = new Dictionary<string, RespireValue> { ["name"] = "value" },
             Dialect = 3,
@@ -552,7 +564,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var plan = await search.ExplainAsync("idx", "query", new() { Cli = true });
+        var plan = await search.ExplainAsync("idx", RespireSearchExpression.FromRaw("query"), new() { Cli = true });
 
         await Assert.That(plan).IsEqualTo($"line1{Environment.NewLine}line2");
     }
@@ -567,17 +579,17 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await search.ExplainAsync("idx", "*=>[KNN 1 @embedding $vector]", new() { Dialect = 2 });
+        await search.ExplainAsync("idx", RespireSearchExpression.FromRaw("*=>[KNN 1 @embedding $vector]"), new() { Dialect = 2 });
 
         await Assert.That(server.ReceivedCommands).Contains("FT.EXPLAIN idx *=>[KNN 1 @embedding $vector] DIALECT 2");
-        await Assert.That(async () => await search.ExplainAsync("idx", "*", new() { Dialect = 0 }))
+        await Assert.That(async () => await search.ExplainAsync("idx", RespireSearchExpression.FromRaw("*"), new() { Dialect = 0 }))
             .Throws<ArgumentOutOfRangeException>();
     }
 
     [Test]
     public async Task TagQueryEscapesQuerySyntaxCharacters()
     {
-        var query = RespireSearchQueryBuilder.Tag("category", "$sale value-with punctuation");
+        var query = RespireSearchQueryBuilder.Tag("category", "$sale value-with punctuation").Value;
 
         await Assert.That(query).IsEqualTo("@category:{\\$sale\\ value\\-with\\ punctuation}");
     }
@@ -585,7 +597,7 @@ public class SearchClientTests
     [Test]
     public async Task NumericRangeUsesRedisTokensForInfiniteBounds()
     {
-        var query = RespireSearchQueryBuilder.NumericRange("price", double.NegativeInfinity, double.PositiveInfinity);
+        var query = RespireSearchQueryBuilder.NumericRange("price", double.NegativeInfinity, double.PositiveInfinity).Value;
 
         await Assert.That(query).IsEqualTo("@price:[-inf +inf]");
     }
@@ -593,11 +605,11 @@ public class SearchClientTests
     [Test]
     public async Task NumericRangeSupportsExclusiveBoundsAndServerNumberSyntax()
     {
-        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 1.5, 10.0, exclusiveMinimum: true))
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 1.5, 10.0, exclusiveMinimum: true).Value)
             .IsEqualTo("@price:[(1.5 10]");
-        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 0.0000001, 1e20, exclusiveMaximum: true))
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("price", 0.0000001, 1e20, exclusiveMaximum: true).Value)
             .IsEqualTo("@price:[1E-07 (1E20]");
-        await Assert.That(RespireSearchQueryBuilder.NumericRange("id", 9_007_199_254_740_993L, long.MaxValue))
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("id", 9_007_199_254_740_993L, long.MaxValue).Value)
             .IsEqualTo("@id:[9007199254740993 9223372036854775807]");
         await Assert.That(() => RespireSearchQueryBuilder.NumericRange("price", 5L, 1L)).Throws<ArgumentOutOfRangeException>();
     }
@@ -614,7 +626,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var result = await search.SearchAsync("idx", new("query", new() { Limit = (0, 1) }));
+        var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("query"), new() { Limit = (0, 1) }));
 
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
@@ -633,7 +645,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.SearchAsync("idx", new("*"))).Throws<InvalidOperationException>();
+        await Assert.That(async () => await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")))).Throws<InvalidOperationException>();
     }
 
     [Test]
@@ -648,7 +660,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var result = await search.SearchAsync("idx", new("*"));
+        var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")));
 
         await Assert.That(result.Documents[0].StructuredFields["vector"].Bytes!.Value.ToArray())
             .IsEquivalentTo(new byte[] { 0, 255, 128, 1 }, CollectionOrdering.Matching);
@@ -667,7 +679,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var result = await search.SearchAsync("idx", new("*"));
+        var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")));
 
         await Assert.That(result.Documents[0].DocumentKey).IsEqualTo(new RespireKey(new byte[] { 0, 255, 128 }));
     }
@@ -691,7 +703,7 @@ public class SearchClientTests
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
             var search = new RespireSearchClient(client);
 
-            var result = await search.HybridSearchAsync("idx", new("*", "embedding", new byte[] { 1, 2 }, 3));
+            var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("*"), "embedding", new byte[] { 1, 2 }, 3));
 
             await Assert.That(result.Documents[0].DocumentKey).IsEqualTo(new RespireKey(new byte[] { 0, 255, 128 }));
         }
@@ -711,7 +723,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3));
+        var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3));
 
         await Assert.That(result.Total).IsEqualTo(1);
         await Assert.That(result.Documents[0].Id).IsEqualTo("doc");
@@ -732,7 +744,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var result = await search.HybridSearchAsync("idx", new("title:$term", "embedding", new byte[] { 1, 2 }, 3)
+        var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:$term"), "embedding", new byte[] { 1, 2 }, 3)
         {
             RrfWindow = 25,
             LoadFields = ["title"],
@@ -765,7 +777,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var search = new RespireSearchClient(client);
 
-        await Assert.That(async () => await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+        await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
         {
             Parameters = new Dictionary<string, RespireValue> { ["vector"] = "x" },
         })).Throws<ArgumentException>();
@@ -841,7 +853,7 @@ public class SearchClientTests
         var search = new RespireSearchClient(client);
 
         await search.VectorSearchAsync("idx",
-            new("embedding", new byte[] { 1, 2 }, 50) { Filter = "@category:{$category}" },
+            new("embedding", new byte[] { 1, 2 }, 50) { Filter = RespireSearchExpression.FromRaw("@category:{$category}") },
             new()
             {
                 Limit = (10, 5),
@@ -896,7 +908,7 @@ public class SearchClientTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
-        var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+        var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
         {
             LoadFields = ["id", "score"],
         });
@@ -927,7 +939,7 @@ public class SearchClientTests
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
             var search = new RespireSearchClient(client);
 
-            var result = await search.HybridSearchAsync("idx", new("title:foo", "embedding", new byte[] { 1, 2 }, 3)
+            var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
             {
                 LoadFields = ["title", "extra_attributes"],
             });
