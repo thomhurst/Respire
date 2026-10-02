@@ -408,14 +408,17 @@ public class SentinelNotificationTests
         var primary = new RespireEndpoint("primary.internal", 6379);
         var numeric = new RespireEndpoint("192.0.2.1", 6379);
         var otherPort = new RespireEndpoint("192.0.2.1", 6380);
+        var ambiguous = new RespireEndpoint("ambiguous.internal", 6379);
+        var stale = new RespireEndpoint("192.0.2.9", 6379);
         var coalescer = new SentinelNotificationCoalescer();
         coalescer.Offer(new SentinelHint("switch", [primary],
-            [new(numeric, null), new(otherPort, null)], [first, delayed], true), false);
+            [new(numeric, null), new(otherPort, null), new(ambiguous, ["192.0.2.1", "192.0.2.9"]), new(stale, null)],
+            [first, delayed], true), false);
 
-        var next = coalescer.TakePending(activeFailed, primary, ["::ffff:192.0.2.1"])!.Value;
+        var next = coalescer.TakePending(activeFailed, primary, new("::ffff:192.0.2.1", 6379))!.Value;
 
         await Assert.That(next.Sources.Select(source => source.Endpoint))
-            .IsEquivalentTo(activeFailed ? new[] { numeric, otherPort } : new[] { otherPort });
+            .IsEquivalentTo(activeFailed ? new[] { numeric, otherPort, ambiguous, stale } : new[] { otherPort, ambiguous, stale });
         await Assert.That(next.ReportingSentinel).IsEqualTo(delayed);
     }
 

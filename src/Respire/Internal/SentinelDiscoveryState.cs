@@ -46,7 +46,7 @@ internal sealed partial class SentinelDiscoveryState
             && SingleAddress(current, _observedAddresses) is { } observed
             && StringComparer.OrdinalIgnoreCase.Equals(candidate, observed);
 
-    private static string? SingleAddress(RespireEndpoint endpoint, string[]? addresses)
+    internal static string? SingleAddress(RespireEndpoint endpoint, string[]? addresses)
     {
         if (System.Net.IPAddress.TryParse(endpoint.Host, out var literal)) return SentinelResolver.NormalizeAddress(literal);
         if (addresses is not { Length: > 0 }) return null;

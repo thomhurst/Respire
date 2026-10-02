@@ -37,7 +37,7 @@ public class SentinelRoutingTests
         var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
         var candidates = new List<string>();
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port) with { Endpoints = [.. endpoints] },
-            (options, _) =>
+            (options, _, _) =>
             {
                 candidates.Add(options.PrimaryEndpoint.Host);
                 if (options.PrimaryEndpoint.Host == "owner.test") throw new RespireConnectionException("Hostname transport unavailable");
@@ -55,7 +55,7 @@ public class SentinelRoutingTests
         await using var sentinel = HostnameSentinel(primaryPort);
         var options = Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(1) };
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Host), CancellationToken.None,
+            (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Host), CancellationToken.None,
             hostResolver: async (_, token) =>
             {
                 // Alias lookup belongs to the separately bounded primary connection stage.
@@ -75,7 +75,7 @@ public class SentinelRoutingTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var options = Options(sentinel.Port) with { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(200) };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options,
-            (_, _) => throw new InvalidOperationException("No transport should be attempted before resolution."),
+            (_, _, _) => throw new InvalidOperationException("No transport should be attempted before resolution."),
             cancellation.Token, hostResolver: async (_, token) =>
             {
                 entered.TrySetResult();
@@ -180,7 +180,7 @@ public class SentinelRoutingTests
         state.AcceptConfiguration(new("127.0.0.1", originalPort), 5);
         var candidates = new List<int>();
         await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(Options(sentinel.Port),
-            (candidate, _) =>
+            (candidate, _, _) =>
             {
                 candidates.Add(candidate.PrimaryEndpoint.Port);
                 throw new RespireConnectionException("Old primary is unavailable");
@@ -190,7 +190,7 @@ public class SentinelRoutingTests
         promoting = false;
         currentPort = promotedPort;
         var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(sentinel.Port),
-            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+            (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
         await Assert.That(recovered).IsEqualTo(promotedPort);
     }
 
@@ -212,7 +212,7 @@ public class SentinelRoutingTests
         state.AcceptConfiguration(new("127.0.0.1", originalPort), 5);
         var candidates = new List<int>();
         await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(Options(sentinel.Port),
-            (candidate, _) =>
+            (candidate, _, _) =>
             {
                 candidates.Add(candidate.PrimaryEndpoint.Port);
                 throw new RespireConnectionException("Old primary is unavailable");
@@ -220,7 +220,7 @@ public class SentinelRoutingTests
         await Assert.That(candidates).IsEmpty();
 
         var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(sentinel.Port),
-            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+            (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
         await Assert.That(recovered).IsEqualTo(promotedPort);
     }
 
@@ -256,7 +256,7 @@ public class SentinelRoutingTests
         var options = Options(first.Port) with { Endpoints = [.. endpoints] };
         var candidates = new List<int>();
         await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options,
-            (candidate, _) =>
+            (candidate, _, _) =>
             {
                 candidates.Add(candidate.PrimaryEndpoint.Port);
                 if (candidate.PrimaryEndpoint.Port == promotedPort) throw new RespireConnectionException("Transient promotion failure");
@@ -266,12 +266,100 @@ public class SentinelRoutingTests
         await Assert.That(candidates).IsEquivalentTo([promotedPort]);
         // A later attempt may confirm the observed generation once its transport recovers.
         var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+            (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
         await Assert.That(recovered).IsEqualTo(promotedPort);
     }
 
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
+
+    [Test]
+    public async Task ForcedDiscoveryReusesValidatedNumericAndHostnameAliases()
+    {
+        await using var primary = Primary();
+        var host = "localhost";
+        await using var sentinel = Sentinel(() => primary.Port);
+        var previous = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+            ? AddressReply(Volatile.Read(ref host), primary.Port)
+            : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        var original = router.Current!;
+        var protection = typeof(SentinelRouter).GetMethod("IsAnnouncedTarget",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var confirmation = new SentinelHint("confirmed-alias", new("127.0.0.1", primary.Port), original.Endpoint);
+        await Assert.That((bool)protection.Invoke(null, [original, confirmation])!).IsTrue();
+        Volatile.Write(ref host, "127.0.0.1");
+        var numeric = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        Volatile.Write(ref host, "localhost");
+        var named = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        await Assert.That(numeric).IsSameReferenceAs(original);
+        await Assert.That(named).IsSameReferenceAs(original);
+        await Assert.That(original.IsRetired).IsFalse();
+    }
+
+    [Test]
+    public async Task AnnouncedIpv6TargetUsesNormalizedIdentity()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        await using var current = new SentinelRouter.Generation(client.Core.Sentinel!, client.Core,
+            Options(26379) with { Endpoints = [new("2001:db8::1", 6379)] });
+        var hint = new SentinelHint("failback", new("2001:0db8:0:0:0:0:0:1", 6379), current.Endpoint);
+        var method = typeof(SentinelRouter).GetMethod("IsAnnouncedTarget",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        await Assert.That((bool)method.Invoke(null, [current, hint])!).IsTrue();
+    }
+
+    [Test]
+    public async Task ValidatedPrimaryDoesNotRetainUnconnectedDnsAddresses()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        var previous = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+            ? AddressReply("localhost", primary.Port)
+            : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var router = client.Core.Sentinel!;
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse("192.0.2.9")]);
+        var generation = await router.GetGenerationAsync(CancellationToken.None);
+        await Assert.That(generation.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DelayedSourceAddressesNeverDescribeArrivalGeneration(bool samePort, bool failback)
+    {
+        await using var primary = Primary();
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var arrived = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("192.0.2.1", samePort ? primary.Port : 1)] });
+        await using var current = new SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("127.0.0.1", primary.Port)] });
+        await current.Multiplexer.EnsureConnectedAsync();
+        typeof(SentinelRouter).GetField("_current", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, current);
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter).GetField("_coalescer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+        var hint = new SentinelHint("b-to-c", new("192.0.2.2", 6379), new("source.invalid", primary.Port));
+        coalescer.Offer(in hint, false);
+        var addresses = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.HostResolver = (_, token) => addresses.Task.WaitAsync(token);
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var pending = (Task)resolve.Invoke(router, [hint, arrived, CancellationToken.None, null])!;
+        if (failback) coalescer.Offer(new SentinelHint("c-to-b", current.Endpoint, hint.Target), true);
+        addresses.SetResult([IPAddress.Loopback]);
+        await pending.WaitAsync(Limit);
+        await Assert.That(current.IsRetired).IsEqualTo(!failback);
+    }
 
     [Test]
     public async Task SameEndpointSentinelPublicationPreservesPubSubHealth()

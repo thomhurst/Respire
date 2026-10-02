@@ -98,7 +98,7 @@ public class SentinelReconnectPolicyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(200), JitterRatio = 0, MaxAttempts = 1 },
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            static (resolved, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), cancellation.Token).AsTask();
+            static (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), cancellation.Token).AsTask();
         if (cancel)
         {
             var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -123,7 +123,7 @@ public class SentinelReconnectPolicyTests
         for (var index = 0; index < 2; index++)
         {
             var endpoint = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port, second.Port),
-                static (resolved, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), default);
+                static (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), default);
             await Assert.That(endpoint.Port).IsEqualTo(6379);
         }
         await Assert.That(metrics.Attempts.ToArray()).IsEquivalentTo(new long[] { 1, 1 }, CollectionOrdering.Matching);
@@ -144,7 +144,7 @@ public class SentinelReconnectPolicyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(20), JitterRatio = 0, MaxAttempts = 2 },
         };
         var endpoint = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            static (resolved, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), default);
+            static (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), default);
         await Assert.That(endpoint.Port).IsEqualTo(6379);
         await Assert.That(firstAttempt.Attempts.ToArray()).IsEquivalentTo(new long[] { 1 });
         await Assert.That(firstAttempt.Delays.ToArray()).IsEquivalentTo(new[] { 0.02 });

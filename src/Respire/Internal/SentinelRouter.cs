@@ -136,15 +136,14 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (!forceDiscovery && previous is not null) Invalidate(previous);
             // A forced discovery that resolves to the healthy current primary confirms it with ROLE
             // on the existing connection instead of opening and discarding a candidate generation.
-            Func<RespireOptions, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
-                ? (options, token) => ReuseOrConnectGenerationAsync(previous, options, token)
-                : ConnectGenerationAsync;
+            Func<RespireOptions, string[]?, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
+                ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, token)
+                : (options, _, token) => ConnectGenerationAsync(options, token);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
                 forceDiscovery ? previous?.Endpoint : null,
-                notificationHint?.Target, notificationHint, HostResolver,
-                static (generation, addresses) => Volatile.Write(ref generation.ValidatedAddresses, addresses)).ConfigureAwait(false);
+                notificationHint?.Target, notificationHint, HostResolver).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -238,17 +237,15 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,
-        CancellationToken cancellationToken)
+        string[]? addresses, CancellationToken cancellationToken)
     {
-        if (current.IsRetired || !current.Multiplexer.IsConnected || !SameEndpoint(current.Endpoint, options.PrimaryEndpoint))
+        var endpoint = options.PrimaryEndpoint;
+        var samePeer = SentinelDiscoveryState.SingleAddress(endpoint, addresses) is { } address
+            && current.Multiplexer.HasCurrentPeer(address, endpoint.Port);
+        if (current.IsRetired || !current.Multiplexer.IsConnected
+            || !SameEndpoint(current.Endpoint, endpoint) && !samePeer)
             return await ConnectGenerationAsync(options, cancellationToken).ConfigureAwait(false);
-        // ObserveResponse retires the generation when ROLE no longer reports a primary.
-        using var reply = await current.Multiplexer.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-        if (!Generation.IsPrimary(in reply))
-        {
-            Invalidate(current);
-            throw new RespireConnectionException($"Sentinel primary at {current.Endpoint} no longer confirms a primary ROLE.");
-        }
+        await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
         return current;
     }
 
@@ -455,9 +452,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         private readonly HashSet<RespireConnection> _connections = [];
         private int _retired;
         internal readonly RespireEndpoint Endpoint;
-        // DNS evidence from the successful discovery of this generation, refreshed on ROLE
-        // revalidation. Used only for switch-source reconciliation, never as owner identity.
-        internal string[]? ValidatedAddresses;
+        // Keep the actual socket peer from ROLE validation. A multi-address DNS result cannot
+        // prove which server answered and must never consume another source's demotion fence.
+        private RespireConnection? _validatedConnection;
+        internal RespireEndpoint? ValidatedPeer => Volatile.Read(ref _validatedConnection) is { } connection
+            ? new(connection.PeerKey.Host, connection.PeerKey.Port) : null;
         internal readonly RespireConnectionMultiplexer Multiplexer;
         internal DedicatedConnectionPool Pool
         {
@@ -552,6 +551,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (IsRetired || !connection.IsConnected)
                     throw new RespireConnectionException($"Sentinel candidate at {Endpoint} closed before validation completed.");
                 _connections.Add(connection);
+                Volatile.Write(ref _validatedConnection, connection);
             }
         }
 

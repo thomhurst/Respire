@@ -94,19 +94,18 @@ internal static class SentinelResolver
 
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
-        Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
+        Func<RespireOptions, string[]?, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken,
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? previouslyValidatedPrimary = null,
         RespireEndpoint? preferredTarget = null,
         SentinelHint? notificationHint = null,
-        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null,
-        Action<TResult, string[]?>? captureValidatedAddresses = null)
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
-            return await connectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
+            return await connectPrimaryAsync(options, null, cancellationToken).ConfigureAwait(false);
         }
 
         if (options.UseCluster)
@@ -196,9 +195,8 @@ internal static class SentinelResolver
                         Endpoints = new List<RespireEndpoint> { primary },
                         SentinelPrimaryName = null,
                     };
-                    var result = await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
+                    var result = await connectPrimaryAsync(primaryOptions, primaryAddresses, connectTimeoutSource.Token).ConfigureAwait(false);
                     discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses);
-                    captureValidatedAddresses?.Invoke(result, primaryAddresses);
                     return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(

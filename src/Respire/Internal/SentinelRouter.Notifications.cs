@@ -274,7 +274,8 @@ internal sealed partial class SentinelRouter
                 // is checked so a hostname alias is not lost across an in-flight handoff.
                 if (current is null || !ReferenceEquals(current, arrivedDuring)
                     && (SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)
-                        || IsCurrentPeer(current, arrivedDuring.Endpoint, addresses))) return;
+                        || arrivedDuring.ValidatedPeer is { } arrivedPeer
+                            && current.Multiplexer.HasCurrentPeer(arrivedPeer.Host, arrivedPeer.Port))) return;
                 if (!IsAnnouncedTarget(current, in retained) && IsSwitchSource(current, in retained))
                 {
                     Invalidate(current!);
@@ -382,7 +383,7 @@ internal sealed partial class SentinelRouter
             if (_disposed) return;
             var current = Current;
             var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
-                && SameEndpoint(current.Endpoint, target);
+                && IsCurrentPeer(current, target, null);
             var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
             if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
             // Compare the switch source with Current under the gate, immediately before retirement.
@@ -466,7 +467,7 @@ internal sealed partial class SentinelRouter
                     return;
                 }
                 if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: validated?.Endpoint,
-                    validatedAddresses: validated is null ? null : Volatile.Read(ref validated.ValidatedAddresses)) is not { } next)
+                    validatedPeer: validated?.ValidatedPeer) is not { } next)
                 {
                     // Sentinel publishes each event at most once. Retry a failed hint with backoff,
                     // because a switch may already have retired the current generation. Without a
@@ -491,7 +492,7 @@ internal sealed partial class SentinelRouter
                     else failures++;
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
-                        && SameEndpoint(current.Endpoint, target))
+                        && IsCurrentPeer(current, target, null))
                     {
                         _coalescer.Complete();
                         _notificationRediscovery = null;
@@ -542,13 +543,15 @@ internal sealed partial class SentinelRouter
     {
         if (current is not { IsRetired: false }) return false;
         foreach (var endpoint in hint.Targets)
-            if (SameEndpoint(current.Endpoint, endpoint)) return true;
+            if (IsCurrentPeer(current, endpoint, null)) return true;
         return false;
     }
 
     private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses)
     {
         if (SameEndpoint(current.Endpoint, endpoint)) return true;
+        if (IPAddress.TryParse(endpoint.Host, out var literal)
+            && current.Multiplexer.HasCurrentPeer(SentinelResolver.NormalizeAddress(literal), endpoint.Port)) return true;
         if (addresses is not null)
             foreach (var address in addresses)
                 if (current.Multiplexer.HasCurrentPeer(address, endpoint.Port)) return true;
@@ -556,6 +559,6 @@ internal sealed partial class SentinelRouter
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
-        => left.Port == right.Port && left.Host.Equals(right.Host, StringComparison.OrdinalIgnoreCase);
+        => SentinelDiscoveryState.EndpointComparer.Instance.Equals(left, right);
 
 }

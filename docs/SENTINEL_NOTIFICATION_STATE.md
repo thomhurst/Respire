@@ -10,7 +10,7 @@ router gate. Network queries and DNS resolution happen outside that gate.
 | --- | --- |
 | Idle, relevant notification | Make the hint active and start one worker. |
 | Active, notification arrives | Retain new evidence in the pending hint. Arrival order does not establish failover order. |
-| Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated primary, including DNS aliases captured by that successful discovery. |
+| Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer; source DNS aliases must be unambiguous. |
 | Discovery fails | Retain source evidence and prioritize unqueried reporters before retrying with bounded backoff. |
 | Another discovery publishes a different generation | Discard superseded active evidence, preserve pending notifications, and continue from the published generation. |
 | No pending evidence or reporter | Complete the worker; a later relevant event starts another. |
@@ -30,8 +30,16 @@ the record. DNS evidence remains paired with its endpoint and port.
 - When `SENTINEL MASTER` is unavailable, source/target evidence still fences a stale
   reporter whose old primary continues to answer `ROLE master`. A wake-up-only event
   model loses that evidence and cannot preserve this supported fallback contract.
-- Resolved addresses used to consume switch-source evidence belong to a successfully
-  validated generation. They do not establish owner identity or create a global DNS cache.
+- DNS answer sets do not prove which peer answered `ROLE`. Reconciliation keeps the actual
+  validated socket peer, including its port. Ambiguous DNS overlaps cannot consume another
+  primary's source fence. Demotion matching may conservatively match any source address;
+  consuming that fence requires the stronger identity proof.
+- Forced discovery can reuse a healthy generation when the announced endpoint is its
+  canonical endpoint or resolves unambiguously to its connected peer. Reuse still checks
+  `ROLE`. IPv6 spelling differences use the same normalized endpoint comparer as epoch state.
+- Late source resolution never combines a source's addresses with the arrival generation's
+  port. A newer generation is protected by the arrival generation's own identity or later
+  announced failback evidence; a pending B-to-C switch must still demote an intervening B.
 - A switch confirming the current primary must remain pending while discovery is active:
   the in-flight query can still publish another primary before that confirmation runs.
 - Retirement preserves accepted commands and correction fences. Notification coalescing

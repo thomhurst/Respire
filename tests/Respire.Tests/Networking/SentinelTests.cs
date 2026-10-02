@@ -262,7 +262,7 @@ public class SentinelTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _, _) =>
         {
             cancellation.Cancel();
             return ValueTask.FromException<int>(protocolFailure
@@ -284,7 +284,7 @@ public class SentinelTests
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromMilliseconds(200),
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return 0;
@@ -312,7 +312,7 @@ public class SentinelTests
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromMilliseconds(300),
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return 0;
@@ -352,7 +352,7 @@ public class SentinelTests
         var state = new SentinelDiscoveryState([endpoint]);
         var options = new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [endpoint], SentinelPrimaryName = "mymaster" };
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            static (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
+            static (primaryOptions, _, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
         await Assert.That(result).IsEqualTo(new RespireEndpoint("127.0.0.1", 6379));
         await Assert.That(state.Snapshot()).IsEquivalentTo([endpoint, new RespireEndpoint("peer.example", 26379)]);
 
@@ -771,7 +771,7 @@ public class SentinelTests
         };
 
         var resolved = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint),
+            (primaryOptions, _, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint),
             CancellationToken.None,
             new SentinelDiscoveryState([reporterEndpoint, healthyEndpoint]),
             reporterEndpoint,

@@ -43,7 +43,7 @@ public class SentinelConfigurationTests
             OldPrimaryAddresses: resolvedAlias ? [source.Host] : null);
         var validated = new List<RespireEndpoint>();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _) =>
+        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _, _) =>
         {
             // Both servers would report ROLE master; stale evidence must be rejected first.
             validated.Add(candidate.Endpoints[0]);
