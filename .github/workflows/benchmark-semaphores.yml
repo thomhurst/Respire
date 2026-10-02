@@ -52,7 +52,8 @@ jobs:
           # Keep shared feature sources identical across phases so each revision builds.
           # The copied semaphore source compiles against baseline internals (for example
           # RespireLock.NewToken and the tracked-script types); the shims below add only the
-          # client and telemetry members that this PR introduces. Baseline phases benchmark the standard lease,
+          # client and telemetry members it needs. Remove these shims once the PR base contains
+          # every API used by the candidate semaphore source. Baseline phases benchmark the standard lease,
           # which never runs the copied semaphore code, and keep the base client implementation.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
@@ -71,13 +72,19 @@ jobs:
                              '        }\n'
                              '        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;\n'
                              '    }\n\n')
-          assert source.count(correction_marker) == 1
-          source = source.replace(correction_marker, correction_shim + correction_marker, 1)
-          assert source.count('GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)') == 1
+          correction_api = 'internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)'
+          if correction_api not in source:
+              assert source.count(correction_marker) == 1
+              source = source.replace(correction_marker, correction_shim + correction_marker, 1)
+          assert source.count(correction_api) == 1
           marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
           shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)\n'
                   '        => FenceCorrectionConnectionAsync(identity);\n\n')
-          assert source.count(marker) == 1
+          fence_api = 'TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged'
+          if fence_api not in source:
+              assert source.count(marker) == 1
+              source = source.replace(marker, shim + marker, 1)
+          assert source.count(fence_api) == 1
           tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
           tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
                           '        RespireScript script, RespireKey[] keys, RespireValue[] args,\n'
@@ -88,11 +95,15 @@ jobs:
                           '        onSerialized?.Invoke(Stopwatch.GetTimestamp());\n'
                           '        return StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n'
                           '    }\n\n')
-          assert source.count(tracked_marker) == 1
-          source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
-          source = source.replace(marker, shim + marker, 1)
-          assert source.count('bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)') == 1
-          assert source.count('FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)') == 1
+          tracked_api = 'bool captureSendTimestampOnly = false,\n        Action<long>? onSerialized = null,\n        Action? onCommandNotApplied = null)'
+          if tracked_api not in source:
+              assert source.count(tracked_marker) == 1
+              source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
+              tracked_shim_api = 'bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)'
+              assert source.count(tracked_shim_api) == 1
+          else:
+              assert source.count(tracked_api) == 1
+          assert source.count(fence_api) == 1
           path.write_text(source)
 
           # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.

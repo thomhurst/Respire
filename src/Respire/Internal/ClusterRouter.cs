@@ -1030,8 +1030,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true)
         where TCommand : struct, Respire.Protocol.IRespCommand
-        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
+    {
+        if (command is StreamedSetCommand streamedSet)
+            return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline);
+
+        return connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
             commandDeadline, allowStreamingConnectionReroute);
+    }
 
     internal static ValueTask<Respire.Protocol.RespValue> SendTrackedAskingAsync<TCommand>(
         RespireConnection connection,
@@ -1040,6 +1045,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         string commandName = "(command)")
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
+        if (command is StreamedSetCommand)
+            // Streamed SET is a write; CLIENT CACHING only applies to a subsequent read.
+            return SendAskingAsync(connection, in command, cancellationToken, commandName);
+
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
             in Asking, in caching, in command, cancellationToken, commandName);

@@ -186,10 +186,17 @@ internal interface IRespCommand
 /// <summary>
 /// Marks a command whose payload the connection streams in bounded chunks instead of serializing
 /// through <see cref="IRespCommand.Write"/>. The connection owns the write path for the whole
-/// frame, so these commands cannot be pipelined with a prefix (ASKING, CLIENT CACHING), batched,
-/// or followed across cluster redirects. Every client and connection policy for streamed
-/// commands checks this marker; on struct commands the JIT folds the test to a constant.
+/// frame, so these commands cannot be batched. Replayable streamed commands can follow Cluster
+/// redirects when they can reset their source without materializing the payload.
 /// </summary>
 internal interface IStreamingRespCommand : IRespCommand
 {
+}
+
+/// <summary>A streamed command that can reset its source and resend after a Cluster redirect.</summary>
+internal interface IReplayableStreamingRespCommand : IStreamingRespCommand
+{
+    bool CanReplay { get; }
+
+    void ResetSourceForReplay();
 }

@@ -8,14 +8,41 @@ namespace Respire.Commands;
 /// or an in-memory <see cref="ReadOnlySequence{T}"/>. The connection writes the frame through its
 /// streaming path (<see cref="IStreamingRespCommand"/>); <see cref="Write"/> is never used.
 /// </summary>
-internal readonly struct StreamedSetCommand : IStreamingRespCommand
+internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand
 {
-    private sealed class StreamSource(Stream current)
+    private sealed class StreamSource
     {
-        internal Stream Current { get; private set; } = current;
+        private readonly Stream _original;
+        private readonly long _originalPosition;
+
+        internal StreamSource(Stream current)
+        {
+            _original = current;
+            Current = current;
+            if (!current.CanSeek) return;
+            try
+            {
+                _originalPosition = current.Position;
+                CanReplay = true;
+            }
+            catch (Exception error) when (error is NotSupportedException or IOException)
+            {
+                CanReplay = false;
+            }
+        }
+
+        internal Stream Current { get; private set; }
+        internal bool CanReplay { get; }
 
         internal void RestorePrefix(ReadOnlySpan<byte> prefix)
             => Current = new PrefixStream(prefix.ToArray(), Current);
+
+        internal void ResetForReplay()
+        {
+            if (!CanReplay) throw new InvalidOperationException("This SET stream cannot be replayed.");
+            _original.Position = _originalPosition;
+            Current = _original;
+        }
     }
 
     private sealed class PrefixStream(byte[] prefix, Stream remainder) : Stream
@@ -89,6 +116,7 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
 
     internal RespireValue Key => _key;
     internal long Length => _length;
+    public bool CanReplay => _stream?.CanReplay ?? true;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
@@ -96,6 +124,8 @@ internal readonly struct StreamedSetCommand : IStreamingRespCommand
 
     /// <summary>Put a consumed first chunk back for a replacement connection retry.</summary>
     internal void RestoreSourcePrefixForRetry(ReadOnlySpan<byte> prefix) => _stream?.RestorePrefix(prefix);
+
+    public void ResetSourceForReplay() => _stream?.ResetForReplay();
 
     /// <summary>The in-memory payload; only meaningful when <see cref="SourceStream"/> is <see langword="null"/>.</summary>
     internal ReadOnlySequence<byte> Sequence => _sequence;

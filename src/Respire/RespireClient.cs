@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -2139,7 +2140,9 @@ public sealed partial class RespireClient : IRespireClient
                 cluster,
                 command,
                 cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is IStreamingRespCommand);
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect)
+                    || command is IStreamingRespCommand
+                        && command is not IReplayableStreamingRespCommand { CanReplay: true });
         }
         else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
@@ -2448,12 +2451,30 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    // Learn the new owner before touching the caller-owned stream. A broken seek
+                    // must not leave later commands pinned to the stale slot owner.
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
                     discoveryPending = false;
+
+                    if (command is IReplayableStreamingRespCommand replayable)
+                    {
+                        try
+                        {
+                            replayable.ResetSourceForReplay();
+                        }
+                        catch (Exception resetError) when (resetError is not OutOfMemoryException
+                            and not AccessViolationException and not StackOverflowException)
+                        {
+                            // The caller-owned source can fail its seek with its own exception
+                            // type. Preserve the redirect when any non-fatal reset failure makes
+                            // retry unsafe; routing already learned the new owner.
+                            RethrowPreservingStackTrace(error);
+                        }
+                    }
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
             }
@@ -2465,6 +2486,10 @@ public sealed partial class RespireClient : IRespireClient
         }
         finally { discovery?.Finish(); }
     }
+
+    [DoesNotReturn]
+    private static void RethrowPreservingStackTrace(Exception error)
+        => ExceptionDispatchInfo.Capture(error).Throw();
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
