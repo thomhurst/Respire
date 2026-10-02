@@ -768,7 +768,12 @@ public class ClusterTopologyRefreshTests
         router.SignalTopologyRefresh(force: true);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!second.ReceivedCommands.Contains("CLUSTER SLOTS")
-            || router.GetSlotOwnerEndpoint(101) != secondEndpoint)
+            || router.GetSlotOwnerEndpoint(0) != secondEndpoint
+            || router.GetSlotOwnerEndpoint(100) != secondEndpoint
+            || router.GetSlotOwnerEndpoint(101) != secondEndpoint
+            || router.GetSlotOwnerEndpoint(8191) != secondEndpoint
+            || router.GetSlotOwnerEndpoint(8192) != secondEndpoint
+            || router.GetSlotOwnerEndpoint(16383) != secondEndpoint)
             await Task.Delay(10, timeout.Token);
 
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(secondEndpoint);
