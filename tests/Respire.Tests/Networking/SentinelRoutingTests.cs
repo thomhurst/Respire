@@ -286,6 +286,69 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task AlternateReporterUsesEpochInsteadOfArrivalOrder(bool switchHint, bool laterPromotion)
+    {
+        await using var original = Primary();
+        await using var intermediate = Primary();
+        await using var latest = Primary();
+        var firstPort = original.Port;
+        var secondPort = original.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort),
+            () => Volatile.Read(ref firstPort) == original.Port ? 1 : 2);
+        await using var second = Sentinel(() => Volatile.Read(ref secondPort),
+            () => Volatile.Read(ref secondPort) == original.Port ? 1 : 3);
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        var router = client.Core.Sentinel!;
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var firstQueries = first.ReceivedCommands.Count(command => command == query);
+        var secondQueries = second.ReceivedCommands.Count(command => command == query);
+        first.SuppressReply = command => command == query;
+        Volatile.Write(ref firstPort, intermediate.Port);
+        Volatile.Write(ref secondPort, laterPromotion ? latest.Port : original.Port);
+        var hint = new SentinelHint("reconcile",
+            Target: switchHint ? new("127.0.0.1", intermediate.Port) : null,
+            OldPrimary: switchHint ? new("127.0.0.1", original.Port) : null,
+            MustRediscover: !switchHint, ReportingSentinel: new("127.0.0.1", first.Port));
+        router.QueueNotificationRediscovery(in hint);
+        await WaitForCommandCountAsync(first, query, firstQueries + 1);
+        var blockedConnection = first.ReceivedConnectionIds[^1];
+        router.QueueNotificationRediscovery(hint with { ReportingSentinel = new("127.0.0.1", second.Port) });
+        first.SuppressReply = null;
+        await first.SendRawAsync(AddressReply(intermediate.Port), blockedConnection);
+        await WaitForCommandCountAsync(second, query, secondQueries + 1);
+        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(laterPromotion ? latest.Port : intermediate.Port);
+    }
+
+    [Test]
+    public async Task StaleSwitchHintAcceptsIndependentlyPublishedLaterPrimary()
+    {
+        await using var original = Primary();
+        await using var target = Primary();
+        await using var latest = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        Volatile.Write(ref port, latest.Port);
+        var current = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        var hint = new SentinelHint("old-switch", new("127.0.0.1", target.Port),
+            new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", sentinel.Port));
+        var confirmed = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true, notificationHint: hint);
+        await Assert.That(ReferenceEquals(confirmed, current)).IsTrue();
+    }
+
+    [Test]
     public async Task RepeatedMasterDownDuringRediscoveryTriggersAnotherDiscovery()
     {
         await using var original = Primary();
@@ -3057,13 +3120,26 @@ public class SentinelRoutingTests
                 ?? (command == "ROLE" ? PrimaryRole : FakeRespServer.OkReply),
         };
 
-    private static FakeRespServer Sentinel(Func<int> primaryPort)
-        => new(64, "*0\r\n"u8.ToArray())
+    private static FakeRespServer Sentinel(Func<int> primaryPort, Func<long>? configurationEpoch = null)
+    {
+        var epochs = new Dictionary<int, long>();
+        byte[] Configuration()
+        {
+            var port = primaryPort();
+            long epoch;
+            lock (epochs)
+            {
+                if (!epochs.TryGetValue(port, out epoch)) epochs[port] = epoch = epochs.Count;
+            }
+            return ConfigurationReply(port, configurationEpoch?.Invoke() ?? epoch);
+        }
+        return new(64, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
                 ? AddressReply(primaryPort())
                 : command switch
                 {
+                    "SENTINEL MASTER mymaster" => Configuration(),
                     "SUBSCRIBE +switch-master" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
                     "SUBSCRIBE +sdown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:1\r\n"u8.ToArray(),
                     "SUBSCRIBE +odown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:1\r\n"u8.ToArray(),
@@ -3071,6 +3147,10 @@ public class SentinelRoutingTests
                     _ => "*0\r\n"u8.ToArray(),
                 },
         };
+    }
+
+    private static byte[] ConfigurationReply(int port, long epoch)
+        => Encoding.ASCII.GetBytes($"*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{port}\r\n+config-epoch\r\n+{epoch}\r\n");
 
     private static byte[] AddressReply(int port) => AddressReply("127.0.0.1", port);
 

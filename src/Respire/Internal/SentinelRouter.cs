@@ -139,7 +139,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
                 forceDiscovery ? previous?.Endpoint : null,
-                notificationHint?.Target).ConfigureAwait(false);
+                notificationHint?.Target, notificationHint).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)

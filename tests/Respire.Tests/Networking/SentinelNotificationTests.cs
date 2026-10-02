@@ -11,6 +11,59 @@ public class SentinelNotificationTests
     private static readonly RespireEndpoint OldPrimary = new("10.0.0.1", 6379);
     private static readonly RespireEndpoint NewPrimary = new("10.0.0.2", 6380);
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SwitchEvidenceRejectsAnnouncedAndResolvedSourceAliases(bool resolved)
+    {
+        var hint = new SentinelHint("switch", NewPrimary,
+            resolved ? new("old.internal", OldPrimary.Port) : OldPrimary,
+            OldPrimaryAddresses: resolved ? [OldPrimary.Host] : null);
+        await Assert.That(SentinelResolver.MatchesSwitchSource(OldPrimary, in hint)).IsTrue();
+        await Assert.That(SentinelResolver.MatchesSwitchSource(NewPrimary, in hint)).IsFalse();
+    }
+
+    [Test]
+    public async Task ConfigurationEpochNeverMovesBackwardOrChangesOwnerAtTheSameEpoch()
+    {
+        var state = new SentinelDiscoveryState([]);
+        state.AcceptConfiguration(OldPrimary, 10);
+        await Assert.That(state.IsCurrentConfiguration(NewPrimary, 9)).IsFalse();
+        await Assert.That(state.IsCurrentConfiguration(NewPrimary, 10)).IsFalse();
+        await Assert.That(state.IsCurrentConfiguration(NewPrimary, null)).IsFalse();
+        await Assert.That(state.IsCurrentConfiguration(OldPrimary, null)).IsTrue();
+        await Assert.That(state.IsCurrentConfiguration(NewPrimary, 11)).IsTrue();
+        state.AcceptConfiguration(NewPrimary, 11);
+        await Assert.That(state.IsCurrentConfiguration(OldPrimary, 10)).IsFalse();
+        await Assert.That(state.IsCurrentConfiguration(OldPrimary, 12)).IsTrue();
+    }
+
+    [Test]
+    public async Task RandomMergeOrdersPreserveSourceAddressesAndEveryReporter()
+    {
+        var random = new Random(678);
+        var hints = Enumerable.Range(1, 12).Select(index => new SentinelHint($"hint-{index}",
+            NewPrimary, new($"source-{index}", 6379), MustRediscover: true,
+            OldPrimaryAddresses: [$"10.0.0.{index}"], ReportingSentinel: new($"sentinel-{index}", 26379))).ToArray();
+        for (var attempt = 0; attempt < 128; attempt++)
+        {
+            var shuffled = hints.Concat(hints).ToArray();
+            random.Shuffle(shuffled);
+            SentinelHint? merged = null;
+            foreach (var hint in shuffled) merged = SentinelNotificationCoalescer.Merge(merged, in hint);
+            var result = merged!.Value;
+            var sources = new Dictionary<RespireEndpoint, string[]?> { [result.OldPrimary!.Value] = result.OldPrimaryAddresses };
+            for (var index = 0; index < result.AdditionalOldPrimaries!.Length; index++)
+                sources[result.AdditionalOldPrimaries[index]] = result.AdditionalOldPrimaryAddresses![index];
+            var reporters = new[] { result.ReportingSentinel!.Value }.Concat(result.AdditionalReportingSentinels!).ToArray();
+            await Assert.That(sources.Count).IsEqualTo(hints.Length);
+            await Assert.That(reporters).IsEquivalentTo(hints.Select(hint => hint.ReportingSentinel!.Value));
+            foreach (var hint in hints)
+                await Assert.That(sources[hint.OldPrimary!.Value]).IsEquivalentTo(hint.OldPrimaryAddresses!);
+            await Assert.That(result.MustRediscover).IsTrue();
+        }
+    }
+
     private static SentinelEvent Parse(string channel, string text, string service = "mymaster")
         => SentinelEvent.Parse(Encoding.UTF8.GetBytes(channel), Encoding.UTF8.GetBytes(text), Encoding.UTF8.GetBytes(service));
 
@@ -192,7 +245,7 @@ public class SentinelNotificationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ConflictingFailbackReportersAreFallbacksOnlyAfterFailure(bool activeFailed)
+    public async Task ConflictingFailbackReportersRemainAvailableForEpochReconciliation(bool activeFailed)
     {
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var delayed = new RespireEndpoint("10.0.1.2", 26379);
@@ -205,12 +258,16 @@ public class SentinelNotificationTests
 
         var next = coalescer.TakePending(activeFailed);
 
-        if (activeFailed) await Assert.That(next!.Value.ReportingSentinel).IsEqualTo(delayed);
-        else await Assert.That(next).IsNull();
+        await Assert.That(next!.Value.ReportingSentinel).IsEqualTo(delayed);
+        if (!activeFailed)
+        {
+            await Assert.That(next.Value.OldPrimary).IsNull();
+            await Assert.That(next.Value.AdditionalOldPrimaries).IsNull();
+        }
     }
 
     [Test]
-    public async Task SuccessfulFailbackDoesNotCarryDelayedReporterIntoNewHint()
+    public async Task SuccessfulFailbackKeepsUnqueriedReporterAlongsideNewHint()
     {
         var first = new RespireEndpoint("10.0.1.1", 26379);
         var delayed = new RespireEndpoint("10.0.1.2", 26379);
@@ -223,7 +280,10 @@ public class SentinelNotificationTests
         var fresh = new SentinelHint("gap", MustRediscover: true, ReportingSentinel: currentReporter);
         coalescer.Offer(in fresh, false);
 
-        await Assert.That(coalescer.TakePending(activeFailed: false)).IsEqualTo(fresh);
+        var next = coalescer.TakePending(activeFailed: false)!.Value;
+        await Assert.That(next.ReportingSentinel).IsEqualTo(delayed);
+        await Assert.That(next.AdditionalReportingSentinels).Contains(currentReporter);
+        await Assert.That(next.MustRediscover).IsTrue();
     }
 
     [Test]

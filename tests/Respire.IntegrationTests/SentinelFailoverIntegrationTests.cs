@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Respire.Testing.Containers;
 using TUnit.Core;
 
@@ -19,8 +20,10 @@ public class SentinelFailoverIntegrationTests
             Topology = RespireContainerTopology.Sentinel,
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var logger = new FailoverLogger();
         var options = fixture.CreateOptions() with
         {
+            LoggerFactory = logger,
             Protocol = RespProtocol.Resp3,
             ConnectTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = TimeSpan.FromSeconds(3),
@@ -58,5 +61,18 @@ public class SentinelFailoverIntegrationTests
     {
         try { return client.Endpoint == endpoint; }
         catch (InvalidOperationException) { return false; }
+    }
+
+    // Preserve discovery and monitor failures in the test report when promotion stalls on CI.
+    private sealed class FailoverLogger : ILoggerFactory, ILogger
+    {
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => level >= LogLevel.Debug;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Console.WriteLine($"{DateTime.UtcNow:O} [{level}] {formatter(state, exception)} {exception}");
     }
 }

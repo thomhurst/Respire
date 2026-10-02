@@ -65,8 +65,8 @@ internal sealed class SentinelNotificationCoalescer
             var newReporter = HasNewReporter(in hint);
             if (hint.MustRediscover || newReporter)
                 _pending = _pending is { } pending
-                    ? Merge(pending, in hint) with { MustRediscover = pending.MustRediscover || hint.MustRediscover }
-                    : Active is { } active ? Merge(active, in hint) with { MustRediscover = active.MustRediscover || hint.MustRediscover } : hint;
+                    ? Merge(pending, in hint) with { MustRediscover = pending.MustRediscover || hint.MustRediscover || newReporter }
+                    : Active is { } active ? Merge(active, in hint) with { MustRediscover = active.MustRediscover || hint.MustRediscover || newReporter } : hint;
             return false;
         }
         if (!hint.MustRediscover && targetIsCurrent) return false;
@@ -260,9 +260,9 @@ internal sealed class SentinelNotificationCoalescer
         if (_pending is not { } next)
         {
             if (Active is not { AdditionalReportingSentinels: { Length: > 0 } reporters } active) return null;
-            if (!activeFailed && HasSwitchSource(in active)) return null;
-            next = active with
+            next = (activeFailed ? active : ForReporterReconciliation(active)) with
             {
+                MustRediscover = true,
                 ReportingSentinel = reporters[0],
                 AdditionalReportingSentinels = reporters.Length == 1 ? null : reporters[1..],
             };
@@ -271,6 +271,9 @@ internal sealed class SentinelNotificationCoalescer
         }
         if (Active is { } activeHint)
         {
+            // A successful pass consumed this switch's source evidence. An alternate reporter
+            // still needs querying, but cannot retire the generation that was just validated.
+            if (!activeFailed && next.Key == activeHint.Key) next = ForReporterReconciliation(next);
             if (activeFailed)
             {
                 var unqueriedReporters = EnumerateReportingSentinels(next)
@@ -292,10 +295,9 @@ internal sealed class SentinelNotificationCoalescer
                     };
                 }
             }
-            else if (!HasSwitchSource(in activeHint)
-                && activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
+            else if (activeHint.AdditionalReportingSentinels is { Length: > 0 } unqueriedReporters)
             {
-                var unqueried = activeHint with
+                var unqueried = ForReporterReconciliation(activeHint) with
                 {
                     ReportingSentinel = unqueriedReporters[0],
                     AdditionalReportingSentinels = unqueriedReporters.Length == 1
@@ -310,11 +312,9 @@ internal sealed class SentinelNotificationCoalescer
         return next;
     }
 
-    // A successful switch discovery consumes its old-source evidence. Replaying an alternate
-    // reporter can retire the just-published primary using a delayed copy of the earlier switch.
-    // Pure delivery-gap hints have no switch sources; each reporter still needs a catch-up query.
-    private static bool HasSwitchSource(in SentinelHint hint)
-        => hint.OldPrimary is not null || hint.AdditionalOldPrimaries is { Length: > 0 };
+    private static SentinelHint ForReporterReconciliation(SentinelHint hint)
+        => new(hint.Key, MustRediscover: true, ReportingSentinel: hint.ReportingSentinel,
+            AdditionalReportingSentinels: hint.AdditionalReportingSentinels);
 
     /// <summary>Ends the worker: no hint is active or pending.</summary>
     internal void Complete()

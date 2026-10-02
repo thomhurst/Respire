@@ -180,9 +180,9 @@ public class SentinelTests
         await Assert.That(stale.ReceivedCommands).IsEquivalentTo(["ROLE"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         // A newly learned peer is tried, but is not recursively expanded in this attempt.
-        await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL MASTER mymaster"]);
     }
 
     [Test]
@@ -537,7 +537,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -575,6 +575,7 @@ public class SentinelTests
             "AUTH sentinel-user sentinel-secret",
             "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
             "SENTINEL SENTINELS mymaster",
+            "SENTINEL MASTER mymaster",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
@@ -605,7 +606,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
@@ -646,7 +647,7 @@ public class SentinelTests
         await Assert.That(invalidSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(validSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -679,7 +680,7 @@ public class SentinelTests
         await Assert.That(unresponsiveSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
         await Assert.That(responsiveSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -712,7 +713,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
@@ -746,9 +747,9 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(staleSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(currentSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 

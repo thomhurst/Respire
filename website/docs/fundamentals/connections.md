@@ -479,6 +479,14 @@ generation before rediscovery only when its old address matches that generation,
 endpoint or by the connected peer address. Hints for other services and replica events never
 start discovery.
 
+Discovery also reads `SENTINEL MASTER` to associate the reported address with its `config-epoch`.
+After accepting an epoch, Respire rejects older configurations and conflicting addresses at the
+same epoch. All retained reporters are queried, so a later promotion can supersede an intermediate
+primary without letting a stale reporter roll the client back. Grant the Sentinel credentials
+permission to run `SENTINEL MASTER` for this reconciliation. If metadata is unavailable, an existing
+primary can still be confirmed; changing primary after a delivery gap requires fresh epoch evidence.
+Once an epoch has been accepted, an unversioned reply cannot replace that primary.
+
 Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
 independently under the client's `ReconnectPolicy`, reported with
 `respire.reconnect.scope = sentinel-monitor`. A monitor that exhausts the policy resumes with a

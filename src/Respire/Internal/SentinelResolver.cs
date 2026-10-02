@@ -8,6 +8,7 @@ namespace Respire.Internal;
 
 internal static class SentinelResolver
 {
+    private static readonly Verb SentinelMaster = new(-1, "SENTINEL", "MASTER");
     private static readonly Verb SentinelPeers = new(-1, "SENTINEL", "SENTINELS");
 
     /// <summary>
@@ -97,7 +98,8 @@ internal static class SentinelResolver
         SentinelDiscoveryState? discoveryState = null,
         RespireEndpoint? preferredSentinel = null,
         RespireEndpoint? previouslyValidatedPrimary = null,
-        RespireEndpoint? preferredTarget = null)
+        RespireEndpoint? preferredTarget = null,
+        SentinelHint? notificationHint = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -144,7 +146,7 @@ internal static class SentinelResolver
             var discoveryCompleted = false;
             try
             {
-                var primary = await QueryPrimaryAsync(
+                var observation = await QueryPrimaryAsync(
                         endpoint,
                         options.SentinelPrimaryName!,
                         sentinelOptions,
@@ -153,20 +155,23 @@ internal static class SentinelResolver
                         cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
+                var primary = observation.Endpoint;
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                // A transient target failure does not invalidate the switch evidence. Every
-                // Sentinel must avoid the prior primary while that evidence contradicts it.
-                // A different reported primary may represent a later promotion and remains eligible.
-                if (previouslyValidatedPrimary is { } previous
-                    && RespireEndpointComparer.Instance.Equals(primary, previous)
-                    && preferredTarget is { } target
-                    && !RespireEndpointComparer.Instance.Equals(target, previous))
+                // Switch evidence names its source, not whichever healthy generation application
+                // traffic may have published while the notification was waiting to retry.
+                var matchesSwitchSource = notificationHint is { } hint
+                    ? MatchesSwitchSource(primary, in hint)
+                    : previouslyValidatedPrimary is { } previous && RespireEndpointComparer.Instance.Equals(primary, previous);
+                var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
+                    && !RespireEndpointComparer.Instance.Equals(target, primary)
+                    && !discoveryState.IsNewerConfiguration(observation.Epoch);
+                var requireEpoch = notificationHint is not null
+                    && (preferredTarget is not { } announced || !RespireEndpointComparer.Instance.Equals(primary, announced));
+                if (contradictsSwitch || !discoveryState.IsCurrentConfiguration(primary, observation.Epoch, requireEpoch))
                 {
-                    logger?.LogWarning(
-                        "Sentinel {Sentinel} reported previously validated primary {Primary}, contradicting switch target {Target}",
-                        endpoint, primary, target);
-                    continue;
+                    // A rejected view consumes the same fallback budget as a failed ROLE check.
+                    throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
                 }
                 var primaryOptions = options with
                 {
@@ -178,7 +183,9 @@ internal static class SentinelResolver
                     options.ConnectTimeout);
                 try
                 {
-                    return await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
+                    var result = await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
+                    discoveryState.AcceptConfiguration(primary, observation.Epoch);
+                    return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                     error, cancellationToken, connectTimeoutSource.Token))
@@ -298,7 +305,7 @@ internal static class SentinelResolver
         };
     }
 
-    private static async ValueTask<RespireEndpoint> QueryPrimaryAsync(
+    private static async ValueTask<(RespireEndpoint Endpoint, long? Epoch)> QueryPrimaryAsync(
         RespireEndpoint sentinel,
         string serviceName,
         RespireConnectionOptions options,
@@ -359,12 +366,69 @@ internal static class SentinelResolver
                     $"Redis Sentinel returned an invalid host or port for service '{serviceName}'.");
             }
 
-            return primary;
+            // Correlate the address with its epoch. If failover changes it between commands,
+            // retry discovery instead of assigning metadata to a different primary.
+            RespireEndpoint? configuredPrimary = null;
+            long? configurationEpoch = null;
+            try
+            {
+                using var metadata = await connection.SendAsync(new Cmd1(SentinelMaster, serviceName), cancellationToken)
+                    .ConfigureAwait(false);
+                if (TryParsePrimaryConfiguration(in metadata, out var configured, out var epoch))
+                {
+                    configuredPrimary = configured;
+                    configurationEpoch = epoch;
+                }
+            }
+            catch (Exception error)
+            {
+                callerCancellationToken.ThrowIfCancellationRequested();
+                logger?.LogDebug(error, "Optional Sentinel configuration discovery failed at {Sentinel}", sentinel);
+            }
+            if (configuredPrimary is { } snapshot && !RespireEndpointComparer.Instance.Equals(primary, snapshot))
+                throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
+            return (primary, configurationEpoch);
         }
         finally
         {
             reply.Dispose();
         }
+    }
+
+    internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint)
+    {
+        if (hint.OldPrimary is { } first && Matches(first, hint.OldPrimaryAddresses)) return true;
+        if (hint.AdditionalOldPrimaries is { } additional)
+            for (var index = 0; index < additional.Length; index++)
+                if (Matches(additional[index], hint.AdditionalOldPrimaryAddresses is { } addresses && index < addresses.Length
+                    ? addresses[index] : null)) return true;
+        return false;
+
+        bool Matches(RespireEndpoint source, string[]? addresses)
+            => source.Port == candidate.Port && (RespireEndpointComparer.Instance.Equals(candidate, source)
+                || addresses is not null && addresses.Contains(candidate.Host, StringComparer.OrdinalIgnoreCase));
+    }
+
+    internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch)
+    {
+        endpoint = default;
+        epoch = -1;
+        if (reply.Type != RespDataType.Array) return false;
+        var fields = reply.AsArray();
+        if (fields.Length % 2 != 0) return false;
+        string? host = null, port = null;
+        for (var index = 0; index < fields.Length; index += 2)
+        {
+            if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+            var name = fields[index].AsString();
+            if (name is not ("ip" or "port" or "config-epoch")) continue;
+            if (fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+            var value = fields[index + 1].AsString();
+            if (name == "ip") host = value;
+            else if (name == "port") port = value;
+            else if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out epoch)) return false;
+        }
+        return epoch >= 0 && TryParseEndpoint(host, port, out endpoint);
     }
 
     private static async ValueTask DiscoverPeersAsync(RespireConnection connection, string serviceName,
@@ -416,6 +480,36 @@ internal sealed class SentinelDiscoveryState
     private readonly List<RespireEndpoint> _endpoints = [];
     private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
     private readonly int _configuredCount;
+    private RespireEndpoint? _acceptedPrimary;
+    private long? _acceptedEpoch;
+
+    internal bool IsNewerConfiguration(long? epoch)
+    {
+        lock (_gate) return epoch is { } candidate && _acceptedEpoch is { } accepted && candidate > accepted;
+    }
+
+    internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch, bool requireEpoch = false)
+    {
+        lock (_gate)
+        {
+            if (_acceptedEpoch is not { } accepted)
+                return !requireEpoch || epoch is not null || _acceptedPrimary is not { } known
+                    || EndpointComparer.Instance.Equals(primary, known);
+            if (epoch is { } candidate && candidate > accepted) return true;
+            return (epoch is null || epoch == accepted) && _acceptedPrimary is { } current
+                && EndpointComparer.Instance.Equals(primary, current);
+        }
+    }
+
+    internal void AcceptConfiguration(RespireEndpoint primary, long? epoch)
+    {
+        lock (_gate)
+        {
+            _acceptedPrimary = primary;
+            if (epoch is not null) _acceptedEpoch = epoch;
+        }
+    }
+
 
     internal SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
     {
