@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.Networking;
@@ -65,22 +66,22 @@ internal sealed partial class RespireConnection
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
         in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
-        Func<bool>? validateStreamingRoute)
+        DedicatedStreamRoute streamingRoute)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
             ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
-                validateStreamingRoute: validateStreamingRoute)
+                streamingRoute: streamingRoute)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
         in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
-        CommandDeadline commandDeadline, Func<bool>? validateStreamingRoute = null)
-        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking, validateStreamingRoute);
+        CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute = default)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking, streamingRoute);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        RawCommand? prelude = null, Func<bool>? validateStreamingRoute = null)
+        RawCommand? prelude = null, DedicatedStreamRoute streamingRoute = default)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -164,7 +165,7 @@ internal sealed partial class RespireConnection
             // would have to abort the connection for.
             timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
-            if (validateStreamingRoute is not null && !validateStreamingRoute())
+            if (!streamingRoute.IsCurrent())
                 throw new RespireConnectionRetiredException(Host, Port);
 
             if (prelude is { } prefix)
@@ -187,7 +188,7 @@ internal sealed partial class RespireConnection
                 // Check again before the SET header is queued so that write cannot start late.
                 timeoutCancellation?.ThrowIfDue();
                 effectiveCancellation.ThrowIfCancellationRequested();
-                if (validateStreamingRoute is not null && !validateStreamingRoute())
+                if (!streamingRoute.IsCurrent())
                     throw new RespireConnectionRetiredException(Host, Port);
             }
 

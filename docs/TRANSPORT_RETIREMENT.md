@@ -62,6 +62,23 @@ through every rental and reselection. `DedicatedConnectionPool.Recovery` still o
 connection retries within a rental; pool lifetime cancellation ends that recovery before the
 outer loop selects a replacement. Discovery accounting does not reset at each pool change.
 
+`RespireClient.StreamedUploads` owns standalone/Sentinel and Cluster upload orchestration,
+separately from blocking commands. Uploads retain one command deadline across acquisition,
+MOVED/ASK, pre-header retirement and maintenance relaxation. Blocking sends retain their
+response-timeout exemption and read-role fallback. Both paths use the shared rental helper
+and return or discard a lease through the pool that supplied it.
+
+`DedicatedStreamRoute` carries the owner, pool, connection, slot generation and ASK identity
+by value. The streaming writer validates it after the first source read and again after ASKING,
+immediately before admitting the SET header. A default route permits direct connection sends.
+Publication checks remain in `ClientCore` and `ClusterRouter`; a stopped pool is not the only
+invalidation signal. Pre-header retries preserve prefetched bytes, while completed redirect
+replies reset only replayable sources. One telemetry scope follows each logical upload.
+
+`DedicatedStreamRouteTests` measures construction and validation for standalone, Cluster and
+ASK routes without socket work in the measured interval. Warm no-inline loops run in the
+shared no-GC boundary; escaping legacy closures provide the positive allocation control.
+
 The shared scenario matrix is covered by these deterministic wire tests:
 
 | Scenario | Standalone / Sentinel | Cluster |

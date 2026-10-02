@@ -2177,9 +2177,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             // Large uploads must not own a multiplexed connection's write path while the
             // source or socket stalls. Keep their normal command deadline on the dedicated lease.
-            return SendBlockingAsync(operation, command, cancellationToken,
-                noRedirect: command is not IReplayableStreamingRespCommand { CanReplay: true },
-                policy: DedicatedSendPolicy.Streaming);
+            return SendStreamedUploadAsync(operation, command, cancellationToken,
+                noRedirect: command is not IReplayableStreamingRespCommand { CanReplay: true });
         }
 
         var cache = core.ClientCache;
@@ -3373,42 +3372,7 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    /// <summary>Controls command deadlines and connection reuse after a failed dedicated send.</summary>
-    internal enum DedicatedSendPolicy { Blocking, Streaming }
-
-    private CommandDeadline CreateDedicatedDeadline(DedicatedSendPolicy policy)
-        => policy == DedicatedSendPolicy.Streaming && _core.Options.CommandTimeout is { } timeout
-            ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds))
-            : CommandDeadline.None;
-
-    private static CancellationToken ArmDedicatedAcquisition(
-        DedicatedAcquisitionCancellation? source, CommandDeadline deadline, CancellationToken callerToken)
-    {
-        if (source is null) return callerToken;
-        source.Arm(deadline);
-        return source.Token;
-    }
-
-    private Exception? TranslateDedicatedAcquisitionCancellation(
-        Exception error, DedicatedAcquisitionCancellation? source, CancellationToken callerToken, string operation,
-        CommandDeadline deadline)
-    {
-        if (source is null || error is not OperationCanceledException cancelled
-            || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested) return null;
-        // A source exists only for a deadline from CreateDedicatedDeadline, which requires
-        // CommandTimeout. The client's options are immutable for this operation.
-        return callerToken.IsCancellationRequested
-            ? new OperationCanceledException(cancelled.Message, cancelled, callerToken)
-            : new RespireTimeoutException(operation,
-                deadline.IsRelaxed ? _core.Options.MaintenanceRelaxedTimeout : _core.Options.CommandTimeout!.Value,
-                cancelled, RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
-    }
-
-    /// <summary>
-    /// Sends commands that occupy their connection on a dedicated pooled connection. Blocking
-    /// commands omit the command timeout; streamed uploads keep it, so neither stalls multiplexed
-    /// traffic while the stream is read or written.
-    /// </summary>
+    /// <summary>Sends a blocking command on a dedicated lease without a response timeout.</summary>
     internal async ValueTask<RespValue> SendBlockingAsync<TCommand>(
         string operation,
         TCommand command,
@@ -3416,7 +3380,7 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null,
         bool noRedirect = false,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
-        DedicatedSendPolicy policy = DedicatedSendPolicy.Blocking, bool allowReadFrom = true)
+        bool allowReadFrom = true)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3430,7 +3394,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 return await SendBlockingClusterAsync(
                         operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
-                        cancellationTimeout, callerCancellationToken, policy, readFrom)
+                        cancellationTimeout, callerCancellationToken, readFrom)
                     .ConfigureAwait(false);
             }
 
@@ -3440,49 +3404,14 @@ public sealed partial class RespireClient : IRespireClient
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
-            var commandDeadline = CreateDedicatedDeadline(policy);
-            using var acquisitionCancellation = commandDeadline.IsSet
-                ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
             try
             {
-                RespValue response;
-                for (var attempt = 0; ; attempt++)
-                {
-                    var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                    pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
-                    (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken,
-                        kind: policy == DedicatedSendPolicy.Streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).ConfigureAwait(false);
-                    acquisitionCancellation?.Disarm();
-                    if (!telemetryStarted)
-                    {
-                        telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                            core.Options.Database, storedProcedureName: storedProcedureName, started: started);
-                        telemetryStarted = true;
-                    }
-                    else
-                    {
-                        // Keep one logical span while routing advances to a replacement lease.
-                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
-                    }
-                    try
-                    {
-                        response = policy == DedicatedSendPolicy.Streaming
-                            ? await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                                validateStreamingRoute: () => core.IsDedicatedStreamRouteCurrent(pool, connection)).ConfigureAwait(false)
-                            : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
-                        break;
-                    }
-                    catch (RespireConnectionRetiredException) when (policy == DedicatedSendPolicy.Streaming
-                        && attempt < ClusterRouter.RedirectLimit && !core.Disposed && !cancellationToken.IsCancellationRequested)
-                    {
-                        // The header was rejected before acceptance; the streaming command retains
-                        // any prefetched bytes. Retry the same command under the original deadline.
-                        commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
-                        pool.Return(connection);
-                        connection = null;
-                    }
-                }
+                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
+                telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                    core.Options.Database, storedProcedureName: storedProcedureName, started: started);
+                telemetryStarted = true;
+                var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
                 pool.Return(connection);
                 returned = true;
                 if (response.IsError)
@@ -3497,14 +3426,13 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception ex)
             {
-                var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation, commandDeadline)
-                    ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                     && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
                             core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
-                    : null);
+                    : null;
                 if (!telemetryStarted)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
                         started, timeoutError ?? ex, storedProcedureName,
@@ -3535,33 +3463,13 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         string? storedProcedureName,
         bool noRedirect,
-        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, DedicatedSendPolicy policy,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
         RespireReadFrom readFrom)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var commandDeadline = CreateDedicatedDeadline(policy);
-        using var acquisitionCancellation = commandDeadline.IsSet
-            ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
-        var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-        DedicatedConnectionPool pool;
-        ClusterRouter.StreamRouteVersion routeVersion;
-        try
-        {
-            if (command is IStreamingRespCommand)
-                (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null)
-                    .ConfigureAwait(false);
-            else
-            {
-                pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, acquisitionToken, discovery: null).ConfigureAwait(false);
-                routeVersion = default;
-            }
-        }
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
-        {
-            throw timeout;
-        }
+        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
@@ -3579,12 +3487,9 @@ public sealed partial class RespireClient : IRespireClient
                 var acquiringRedirectPool = false;
                 try
                 {
-                    acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        acquisitionToken, discovery,
-                        kind: policy == DedicatedSendPolicy.Streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).ConfigureAwait(false);
-                    acquisitionCancellation?.Disarm();
+                        cancellationToken, discovery).ConfigureAwait(false);
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -3607,26 +3512,10 @@ public sealed partial class RespireClient : IRespireClient
                     RespireServerException? serverError = null;
                     try
                     {
-                        if (policy == DedicatedSendPolicy.Streaming)
-                        {
-                            // ASK targets intentionally differ from the cached slot owner.
-                            response = await (sendAsking
-                                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
-                                    operation, commandDeadline, allowStreamingConnectionReroute: false,
-                                    validateStreamingRoute: () => !pool.IsStopping && pool.IsMovingPublicationCurrent && cluster.IsDedicatedStreamRouteCurrent(
-                                        slot, routeVersion, connection, askingPool: pool))
-                                : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                                    commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                                    validateStreamingRoute: () => !pool.IsStopping && pool.IsMovingPublicationCurrent && cluster.IsDedicatedStreamRouteCurrent(
-                                        slot, routeVersion, connection))).ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            response = await (sendAsking
-                                ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken)
-                                : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
-                                .ConfigureAwait(false);
-                        }
+                        response = await (sendAsking
+                            ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken)
+                            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
+                            .ConfigureAwait(false);
                     }
                     catch (RespireServerException error) { serverError = error; }
                     sendAsking = false;
@@ -3642,14 +3531,8 @@ public sealed partial class RespireClient : IRespireClient
                             // The source reply completed; no redirected command has been accepted yet.
                             cluster.RecordRejection(ref discovery, connection, error);
                             acquiringRedirectPool = true;
-                            commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
-                            acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                            // ASK does not publish a slot owner: preserve the topology observed before
-                            // target acquisition so a concurrent refresh invalidates this redirect.
-                            if (error.Code == RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
                             var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                    error, connection, acquisitionToken, slot, discovery)
+                                    error, connection, cancellationToken, slot, discovery)
                                 .ConfigureAwait(false);
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
@@ -3661,18 +3544,6 @@ public sealed partial class RespireClient : IRespireClient
                             pool.Return(connection);
                             returned = true;
                             pool = redirectedPool;
-                            // MOVED and READONLY recovery can publish a new owner during acquisition.
-                            if (error.Code != RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
-                            if (command is IReplayableStreamingRespCommand replayable)
-                            {
-                                try { replayable.ResetSourceForReplay(); }
-                                catch (Exception resetError) when (resetError is not OutOfMemoryException
-                                    and not AccessViolationException and not StackOverflowException)
-                                {
-                                    RethrowPreservingStackTrace(error);
-                                }
-                            }
                             sendAsking = error.Code == RespireErrorCodes.Ask;
                             askingSource = sendAsking ? connection : null;
                             askRedirect = sendAsking ? error : null;
@@ -3709,41 +3580,15 @@ public sealed partial class RespireClient : IRespireClient
                     telemetry.Complete(core, operation, storedProcedureName, connection: connection);
                     return response;
                 }
-                catch (RespireConnectionRetiredException error)
-                    when (command is IStreamingRespCommand && cluster.CanRetryRetirement(attempt, cancellationToken))
-                {
-                    core.ClientCache?.FlushForContinuityLoss();
-                    if (connection is not null)
-                    {
-                        commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
-                        cluster.RecordRejection(ref discovery, connection, error);
-                        if (!returned) pool.Return(connection);
-                    }
-                    acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                    if (sendAsking && askRedirect is not null && askingSource is not null
-                        && cluster.CaptureSlotVersion(slot) == routeVersion)
-                        pool = await cluster.GetRedirectDedicatedPoolAsync(
-                            askRedirect, askingSource, acquisitionToken, slot, discovery).ConfigureAwait(false);
-                    else
-                    {
-                        sendAsking = false;
-                        askRedirect = null;
-                        askingSource = null;
-                        (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
-                            slot, acquisitionToken, discovery).ConfigureAwait(false);
-                    }
-                    continue;
-                }
                 catch (Exception ex)
                 {
-                    var timeoutError = TranslateDedicatedAcquisitionCancellation(ex, acquisitionCancellation, cancellationToken, operation, commandDeadline)
-                        ?? (cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                    var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                         && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                         ? new RespireTimeoutException(operation, timeout, cancelled,
                             acquiringRedirectPool || connection is null
                                 ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
                                 : connection.CaptureDedicatedTimeoutDiagnostics())
-                        : null);
+                        : null;
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
                         acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
@@ -3756,10 +3601,6 @@ public sealed partial class RespireClient : IRespireClient
                     throw;
                 }
             }
-        }
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
-        {
-            throw timeout;
         }
         finally { discovery?.Finish(); }
     }

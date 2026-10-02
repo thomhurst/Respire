@@ -1144,12 +1144,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         string? commandName = null,
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
-        Func<bool>? validateStreamingRoute = null)
+        DedicatedStreamRoute streamingRoute = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand streamedSet)
             return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline,
-                validateStreamingRoute);
+                streamingRoute);
 
         return connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
             commandDeadline, allowStreamingConnectionReroute);
