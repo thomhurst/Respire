@@ -341,6 +341,7 @@ internal sealed partial class RespireConnectionMultiplexer
     {
         lock (_moving.Gate)
         {
+            if (!_moving.HasSequenceFences) return;
             var live = new HashSet<(string Host, int Port)>();
             for (var slot = 0; slot < _connections.Length; slot++)
             {

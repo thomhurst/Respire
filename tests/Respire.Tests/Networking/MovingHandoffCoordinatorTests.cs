@@ -139,16 +139,19 @@ public class MovingHandoffCoordinatorTests
         var livePeer = ("live", 6379);
         bool retiredFence;
         bool liveFence;
+        bool hasFencesBeforeForget;
         lock (coordinator.Gate)
         {
             _ = Queue(coordinator, retiredPeer, 1, "target", stop.Token, Environment.TickCount64);
             _ = Queue(coordinator, livePeer, 1, "target", stop.Token, Environment.TickCount64);
+            hasFencesBeforeForget = coordinator.HasSequenceFences;
             coordinator.ForgetSequences(new HashSet<(string Host, int Port)> { livePeer });
             retiredFence = coordinator.HasSequenceFence(retiredPeer);
             liveFence = coordinator.HasSequenceFence(livePeer);
             _ = coordinator.TakeNext(operational: false);
         }
 
+        await Assert.That(hasFencesBeforeForget).IsTrue();
         await Assert.That(retiredFence).IsFalse();
         await Assert.That(liveFence).IsTrue();
     }

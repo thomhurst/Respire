@@ -20,6 +20,15 @@ internal sealed class MovingHandoffCoordinator
 
     internal object Gate { get; } = new();
 
+    internal bool HasSequenceFences
+    {
+        get
+        {
+            AssertGateHeld();
+            return _sequences.Count != 0;
+        }
+    }
+
     internal long HandoffEpoch => Volatile.Read(ref _handoffEpoch);
 
     internal bool IsCurrent(long publicationGeneration, long connectionGeneration, long announcementEpoch)
@@ -30,6 +39,7 @@ internal sealed class MovingHandoffCoordinator
         (string Host, int Port) peer, long sequence, RespireEndpoint endpoint, long deadline,
         long now, CancellationToken stopConnecting)
     {
+        AssertGateHeld();
         if (!operational || !current || sequence <= lastConnectionSequence)
             return default;
 
@@ -58,6 +68,7 @@ internal sealed class MovingHandoffCoordinator
     /// <summary>Moves newest pending request to active, or ends worker when queue is empty/retired.</summary>
     internal Request? TakeNext(bool operational)
     {
+        AssertGateHeld();
         if (!operational || _pending is null)
         {
             if (_pending is { } pending)
@@ -80,33 +91,54 @@ internal sealed class MovingHandoffCoordinator
 
     internal void Complete(Request request)
     {
+        AssertGateHeld();
         if (ReferenceEquals(_active, request)) _active = null;
         request.Cancellation.Dispose();
     }
 
-    internal bool HasPending => _pending is not null;
+    internal bool HasPending
+    {
+        get
+        {
+            AssertGateHeld();
+            return _pending is not null;
+        }
+    }
 
-    internal Task? WorkerCompletion => _workerCompletion?.Task;
+    internal Task? WorkerCompletion
+    {
+        get
+        {
+            AssertGateHeld();
+            return _workerCompletion?.Task;
+        }
+    }
 
     internal long PublishHandoffEpoch() => Interlocked.Increment(ref _handoffEpoch);
 
     internal void BeginDrain()
     {
+        AssertGateHeld();
         if (_activeDrains++ == 0 && _drainsIdle?.Task.IsCompleted == true)
             _drainsIdle = null;
     }
 
     internal void EndDrain()
     {
+        AssertGateHeld();
         if (--_activeDrains == 0) _drainsIdle?.TrySetResult();
     }
 
     internal Task WaitForDrains()
-        => _activeDrains == 0 ? Task.CompletedTask
+    {
+        AssertGateHeld();
+        return _activeDrains == 0 ? Task.CompletedTask
             : (_drainsIdle ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+    }
 
     internal void ForgetSequences(IReadOnlySet<(string Host, int Port)> livePeers)
     {
+        AssertGateHeld();
         if (_sequences.Count == 0) return;
         foreach (var peer in _sequences.Keys.ToArray())
         {
@@ -115,5 +147,13 @@ internal sealed class MovingHandoffCoordinator
     }
 
     internal bool HasSequenceFence((string Host, int Port) peer)
-        => _sequences.ContainsKey(peer);
+    {
+        AssertGateHeld();
+        return _sequences.ContainsKey(peer);
+    }
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void AssertGateHeld()
+        => System.Diagnostics.Debug.Assert(System.Threading.Monitor.IsEntered(Gate),
+            "MovingHandoffCoordinator state must be accessed while holding Gate.");
 }
