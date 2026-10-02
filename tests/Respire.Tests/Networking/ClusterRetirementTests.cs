@@ -2045,7 +2045,7 @@ public class ClusterRetirementTests
                 var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)
                     typeof(ClusterRouter).GetField("_dedicatedPools", Private)!.GetValue(router)!;
                 pools[oldNode] = pool;
-                ((HashSet<DedicatedConnectionPool>)typeof(ClusterRouter).GetField("_ownedPools", Private)!
+                ((DedicatedPoolLedger)typeof(ClusterRouter).GetField("_ownedPools", Private)!
                     .GetValue(router)!).Add(pool);
             }
         }
