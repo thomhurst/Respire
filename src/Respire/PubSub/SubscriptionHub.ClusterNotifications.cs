@@ -424,7 +424,7 @@ internal sealed partial class SubscriptionHub
                 try
                 {
                     await SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                        cancellationToken, instrument: false).ConfigureAwait(false);
+                        connectCancellation.Token, instrument: false).ConfigureAwait(false);
                 }
                 catch (Exception error) when (ContainsServerRejection(error))
                 {

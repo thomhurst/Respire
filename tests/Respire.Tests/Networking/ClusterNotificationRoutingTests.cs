@@ -101,6 +101,33 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ValkeyClusterNotificationsSupportNonZeroDatabase()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, topology, resp3: false);
+        Configure(second, topology, resp3: false);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Database = 1,
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+
+        var key = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .First(static value => ClusterHash.GetSlot(value) is >= 8192 and <= 16383);
+        var descriptor = RespireChannel.KeySpaceSingleKey(key, 1);
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(first.ReceivedCommands).DoesNotContain($"SUBSCRIBE {descriptor}");
+        await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+    }
+
+    [Test]
     public async Task SharedNodeRouteUnsubscribesOnlyAfterLastLogicalSubscriber()
     {
         await using var first = new FakeRespServer(20);
@@ -496,6 +523,70 @@ public class ClusterNotificationRoutingTests
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(async () => await activation.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task ClientDisposalInterruptsPendingCandidateReplay()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, topology, resp3: false);
+        Configure(second, topology, resp3: false);
+        var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replayStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var suppressReplay = false;
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        second.ReplyOverride = (_, command) =>
+        {
+            if (command == "HELLO 3") return Hello;
+            if (command == "INFO SERVER") return ClusterDatabaseTests.Info();
+            if (command == "CLUSTER SLOTS") return topology;
+            if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+                return Confirmation("psubscribe", command[11..], resp3: false);
+            return FakeRespServer.OkReply;
+        };
+        second.SuppressReply = command =>
+        {
+            var suppress = Volatile.Read(ref suppressReplay) && command == $"PSUBSCRIBE {descriptor}";
+            if (suppress) replayStarted.TrySetResult();
+            return suppress;
+        };
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMinutes(1),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0,
+                MaxAttempts = 2,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        };
+        var client = RespireClient.Create(options);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port == second.Port && change.State == RespireConnectionState.Reconnecting)
+                reconnecting.TrySetResult();
+        };
+        await using var subscription = await client.SubscribeAsync(descriptor).AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var subscribeIndex = second.ReceivedCommands.ToList()
+            .FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
+        var connectionId = second.ReceivedConnectionIds[subscribeIndex];
+
+        Volatile.Write(ref suppressReplay, true);
+        second.CloseConnection(connectionId);
+        await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var activation = client.SubscribeAsync(descriptor).AsTask();
+        await replayStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await activation.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
     }
 
     [Test]

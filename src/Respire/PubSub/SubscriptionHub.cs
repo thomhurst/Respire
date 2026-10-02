@@ -39,13 +39,6 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         if (core.Cluster is not null && names.Any(static name => name.IsNotification)
             && names.Any(static name => !name.IsNotification))
             throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(names));
-        foreach (var name in names)
-        {
-            if (!name.IsNotification || core.Cluster is null) continue;
-            if (name.NotificationDatabase is not null and not 0)
-                throw new ArgumentException("Redis Cluster notifications support only database 0.", nameof(names));
-        }
-
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
