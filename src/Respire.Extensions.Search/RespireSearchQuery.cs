@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Respire;
@@ -23,7 +24,11 @@ public readonly record struct RespireSearchExpression
         return new(value);
     }
 
-    internal static RespireSearchExpression FromBuilder(string value) => new(value);
+    internal static RespireSearchExpression FromBuilder(string value)
+    {
+        Debug.Assert(!string.IsNullOrWhiteSpace(value));
+        return new(value);
+    }
 
     internal RespireSearchExpression RequireValid(string parameterName)
     {
@@ -32,7 +37,7 @@ public readonly record struct RespireSearchExpression
     }
 
     /// <inheritdoc/>
-    public override string ToString() => Value ?? string.Empty;
+    public override string ToString() => _value ?? string.Empty;
 }
 
 /// <summary>Search query with typed modifiers. The expression is validated when the query is created.</summary>
@@ -98,10 +103,10 @@ public static class RespireSearchQueryBuilder
             exclusiveMaximum);
     }
 
-    /// <summary>Combines expressions with AND. Inputs are trusted query syntax and are not escaped.</summary>
+    /// <summary>Combines already-built expressions with AND. Multiple inputs are parenthesized; inputs are not escaped.</summary>
     public static RespireSearchExpression And(params RespireSearchExpression[] expressions) => Combine(" ", expressions);
 
-    /// <summary>Combines expressions with OR. Inputs are trusted query syntax and are not escaped.</summary>
+    /// <summary>Combines already-built expressions with OR. Multiple inputs are parenthesized; inputs are not escaped.</summary>
     public static RespireSearchExpression Or(params RespireSearchExpression[] expressions) => Combine(" | ", expressions);
 
     internal static string EscapeField(string value) => EscapeIdentifier(value);

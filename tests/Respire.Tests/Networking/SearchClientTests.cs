@@ -514,6 +514,7 @@ public class SearchClientTests
         await Assert.That(() => RespireSearchExpression.FromRaw(" ")).Throws<ArgumentException>();
         await Assert.That(() => RespireSearchQueryBuilder.And(default)).Throws<ArgumentException>();
         await Assert.That(() => _ = default(RespireSearchExpression).Value).Throws<InvalidOperationException>();
+        await Assert.That(default(RespireSearchExpression).ToString()).IsEqualTo(string.Empty);
     }
 
     [Test]
@@ -541,6 +542,11 @@ public class SearchClientTests
             RespireSearchQueryBuilder.Tag("category", "cache"));
 
         await Assert.That(expression.Value).IsEqualTo("((@title:\"redis search\") (@category:{cache}))");
+
+        var disjunction = RespireSearchQueryBuilder.Or(
+            RespireSearchExpression.FromRaw("first|second"),
+            RespireSearchExpression.FromRaw("third"));
+        await Assert.That(disjunction.Value).IsEqualTo("((first|second) | (third))");
     }
 
     [Test]
