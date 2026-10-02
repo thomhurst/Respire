@@ -259,7 +259,9 @@ and [replication guarantees](https://redis.io/docs/latest/operate/oss_and_stack/
 `ResetExpiryAsync` renews only the current owner and retains its fencing token.
 `VerifyStillHeldAsync` checks ownership at one instant; it cannot promise ownership for a
 later write. `RemainingEstimate` measures elapsed time from before acquisition and is a
-local estimate. Stop protected work when the lease expires or ownership becomes uncertain.
+local estimate. A renewal accepted by Redis after this estimate expires returns `false` after
+Respire attempts owner-token cleanup. Stop protected work when the lease expires or ownership
+becomes uncertain.
 
 Renewal and release reuse the existing [managed lock lifecycle](distributed-locks.md).
 Managed renewal and concrete-client hash-field lease acquisition require `CLIENT ID` and
