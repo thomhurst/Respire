@@ -519,6 +519,10 @@ background. Reads can use that primary until replicas are known. Cluster replica
 temporary topology connections once Nearest sampling is active, so a stalled `CLUSTER SLOTS`
 reply does not block the primary's data connection. Shared discovery still coalesces requests and
 applies the existing refresh throttles and topology version checks.
+Each uncovered Cluster slot keeps its own background waiter, so a partial reply for another
+slot does not suppress its discovery. If cached Sentinel candidates all fail, selection joins
+a pending or due refresh and retries newly published endpoints before reporting failure.
+Healthy cached candidates continue serving reads while that refresh runs.
 
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular

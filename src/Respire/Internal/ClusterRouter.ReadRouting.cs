@@ -212,7 +212,7 @@ internal sealed partial class ClusterRouter
             try
             {
                 if (await FirstSuccessfulReplicaProbeAsync(attempts).ConfigureAwait(false)) return;
-                if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, error: null);
+                if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, refreshRound.Failure);
             }
             finally
             {
@@ -283,6 +283,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery: null))
         {
+            refreshRound.RecordFailure(error);
             return false;
         }
     }

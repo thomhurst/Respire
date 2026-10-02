@@ -12,6 +12,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     Func<long>? clock = null) : IAsyncDisposable where TConnection : class
 {
     internal const long Unknown = long.MaxValue;
+    // Probe cadence is independent of the selection/measurement wait budget.
     internal const long IntervalMilliseconds = 1_000;
     internal const long MaximumAgeMilliseconds = 10_000;
     internal const int MaximumConcurrentProbes = 4;
@@ -86,7 +87,7 @@ internal sealed class ReadLatencySampler<TConnection>(
             // cannot accumulate one abandoned PING per second when CommandTimeout is disabled.
             operation = measure(connection, _stop.Token).AsTask();
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-            deadline.CancelAfter(TimeSpan.FromSeconds(1));
+            deadline.CancelAfter(ReadLatencySampler.SamplingWaitMilliseconds);
             var elapsed = await operation.WaitAsync(deadline.Token).ConfigureAwait(false);
             if (elapsed >= 0 && elapsed != Unknown)
             {
@@ -152,6 +153,7 @@ internal sealed class ReadLatencySampler<TConnection>(
 
 internal static class ReadLatencySampler
 {
+    internal const int SamplingWaitMilliseconds = 1_000;
     private static readonly RawCommand s_ping = new(RespCommands.Ping);
 
     internal static ReadLatencySampler<RespireConnection> Create() => new(MeasureAsync);

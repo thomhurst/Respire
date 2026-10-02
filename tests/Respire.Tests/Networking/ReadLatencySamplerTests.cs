@@ -9,6 +9,25 @@ namespace Respire.Tests.Networking;
 public class ReadLatencySamplerTests
 {
     [Test]
+    public async Task SharedSamplingWaitDetachesEveryCandidateWithoutCancelingProbes()
+    {
+        var firstProbe = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondProbe = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wait = NearestReadSelection.CreateWaitCancellation(NearestReadSelection.CreateDeadline(), default)!;
+        var first = NearestReadSelection.GetLatencyAsync(new(firstProbe.Task), wait, default).AsTask();
+        var second = NearestReadSelection.GetLatencyAsync(new(secondProbe.Task), wait, default).AsTask();
+        await wait.CancelAsync();
+        await Assert.That(await first).IsEqualTo(long.MaxValue);
+        await Assert.That(await second).IsEqualTo(long.MaxValue);
+        await Assert.That(firstProbe.Task.IsCompleted).IsFalse();
+        await Assert.That(secondProbe.Task.IsCompleted).IsFalse();
+        firstProbe.SetResult(10);
+        secondProbe.SetResult(20);
+        await Assert.That(await firstProbe.Task).IsEqualTo(10);
+        await Assert.That(await secondProbe.Task).IsEqualTo(20);
+    }
+
+    [Test]
     public async Task FailedRefreshDiscardsPreviousEstimateBeforeItsAgeLimit()
     {
         long now = 100;
@@ -118,7 +137,7 @@ public class ReadLatencySamplerTests
             sampler.ConnectionSucceeded(candidate);
             var selection = new NearestReadSelection<object>();
             selection.QueueSample(candidate, NearestReadSelection.GetLatencyAsync(sampler.GetLatencyAsync(candidate, default),
-                NearestReadSelection.CreateDeadline(), default));
+                wait: null, default));
             if (selection.TryNextSample(out _)) throw new InvalidOperationException("Warm sample unexpectedly queued");
             if (!selection.TryGet(out var result) || !ReferenceEquals(candidate, result)) throw new InvalidOperationException();
             if (allocate) Volatile.Write(ref _escape, new byte[37]);

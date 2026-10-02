@@ -15,6 +15,10 @@ internal sealed partial class ClusterRouter
         internal readonly object SnapshotBatch = new();
         private readonly object _gate = new();
         private (List<ClusterTopologyRange> Ranges, long Version, long Generation)? _empty;
+        private Exception? _failure;
+
+        internal Exception? Failure => Volatile.Read(ref _failure);
+        internal void RecordFailure(Exception error) => Interlocked.CompareExchange(ref _failure, error, null);
 
         internal bool Accept(List<ClusterTopologyRange> ranges, long version, long generation)
         {

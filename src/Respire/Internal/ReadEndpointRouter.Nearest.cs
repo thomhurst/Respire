@@ -77,20 +77,32 @@ internal sealed partial class ReadEndpointRouter
         }
         // Start every eligible probe before waiting so a fast later candidate is visible even
         // when the first sample consumes the entire shared wait budget.
+        using var samplingWait = best.HasPendingSamples
+            ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, deadline, cancellationToken).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken).ConfigureAwait(false);
             var candidate = pending.Candidate;
             if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
                 best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);
         }
-        if (best.TryGet(out var selected))
+        var hadCandidate = best.TryGet(out var selected);
+        if (hadCandidate)
         {
             if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
                     ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
                     : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
-            if (retry) return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline).ConfigureAwait(false);
         }
+        if (retry && Core.Sentinel is { } sentinel)
+        {
+            // A healthy cached candidate never waits for discovery. Once all candidates fail,
+            // join a pending/due refresh and try a newly published endpoint set before failing.
+            try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
+            catch (Exception error) when (IsNearestCandidateFailure(error, cancellationToken)) { lastError = error; }
+        }
+        if (retry && (hadCandidate || !SameEndpoints(endpoints, Volatile.Read(ref _replicas))
+            || !ReferenceEquals(primaryCandidate, Core.Multiplexer)))
+            return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline).ConfigureAwait(false);
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }

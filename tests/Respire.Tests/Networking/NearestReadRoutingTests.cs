@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -389,6 +390,132 @@ public class NearestReadRoutingTests
         await Assert.That(primary.ReceivedCommands).Contains("PING");
         await Assert.That(replica.ReceivedCommands).Contains("PING");
     }
+
+    [Test]
+    public async Task ConcurrentUnknownSlotsEachFinishTheirBackgroundDiscovery()
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(0)!;
+        router.SetSlotOwner(0, owner);
+        router.SetSlotOwner(1, owner);
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
+            ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        primary.SuppressReply = command => command == "CLUSTER SLOTS";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That((await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(primary.Port);
+        while (primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
+            await Task.Delay(1, timeout.Token);
+        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(primary.Port);
+        var firstQuery = primary.ReceivedCommands.ToList().FindLastIndex(command => command == "CLUSTER SLOTS");
+        await primary.SendRawAsync(SlotReply(primary.Port, 0, 0), primary.ReceivedConnectionIds[firstQuery]);
+        // No second read for slot 1: its existing background waiter must request independent coverage.
+        while (primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 3)
+            await Task.Delay(1, timeout.Token);
+        var secondQuery = primary.ReceivedCommands.ToList().FindLastIndex(command => command == "CLUSTER SLOTS");
+        await primary.SendRawAsync(SlotReply(primary.Port, 1, 1, replica.Port), primary.ReceivedConnectionIds[secondQuery]);
+        while (!router.GetReplicas().Any(node => node.Endpoint.Port == replica.Port))
+            await Task.Delay(1, timeout.Token);
+        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(replica.Port);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SentinelRefreshRescuesExhaustedCandidatesWithoutDelayingHealthyReplica(bool oldUnavailable)
+    {
+        await using var primary = Server("primary");
+        await using var old = Server("old");
+        await using var replacement = Server("replacement");
+        var replicaPort = old.Port;
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sentinel = new FakeRespServer(32, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? System.Text.Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
+                : command.StartsWith("SENTINEL REPLICAS ") ? SentinelReplicaReply(replicaPort) : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel) with { SentinelPrimaryName = "mymaster" });
+        var router = client.Core.ReadRouter;
+        await router.RefreshNowAsync(CancellationToken.None);
+        router.SentinelRefreshInterval = TimeSpan.Zero;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L), () => 0);
+        router.NearestLatency.ConnectionFailed(client.Core.Multiplexer);
+        old.ReplyOverride = (_, command) => oldUnavailable && command == "ROLE"
+            ? "-LOADING stale replica\r\n"u8.ToArray() : Reply(command, "old");
+        replicaPort = replacement.Port;
+        sentinel.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SENTINEL REPLICAS ")) return false;
+            refreshStarted.TrySetResult();
+            return true;
+        };
+        var read = client.WithReadFrom(RespireReadFrom.Nearest).GetStringAsync("key").AsTask();
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (!oldUnavailable)
+            await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("old");
+        var query = sentinel.ReceivedCommands.ToList().FindLastIndex(command => command.StartsWith("SENTINEL REPLICAS "));
+        sentinel.SuppressReply = null;
+        await sentinel.SendRawAsync(SentinelReplicaReply(replacement.Port), sentinel.ReceivedConnectionIds[query]);
+        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(oldUnavailable ? "replacement" : "old");
+    }
+
+    [Test]
+    public async Task TemporaryTopologyHandshakeFailureReachesRefreshWarning()
+    {
+        await using var primary = Server("primary");
+        var rejectAuthentication = false;
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383)
+            : rejectAuthentication && command.StartsWith("AUTH ")
+                ? "-ERR injected topology handshake failure\r\n"u8.ToArray() : Reply(command, "primary");
+        var logger = new RefreshWarningLogger();
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null, Password = "test-password", LoggerFactory = logger,
+        });
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(0, router.GetKnownSlotOwner(0)!);
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        rejectAuthentication = true;
+        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, CancellationToken.None);
+        var failure = await logger.Failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Message).Contains("injected topology handshake failure");
+    }
+
+    private sealed class RefreshWarningLogger : ILoggerFactory, ILogger
+    {
+        internal readonly TaskCompletionSource<Exception?> Failure = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? error, Func<TState, Exception?, string> formatter)
+        {
+            if (level == LogLevel.Warning && formatter(state, error).StartsWith("Replica route refresh for Redis Cluster slot "))
+                Failure.TrySetResult(error);
+        }
+    }
+
+    private static byte[] SlotReply(int primaryPort, int start, int end, params int[] replicas)
+    {
+        var text = new System.Text.StringBuilder($"*1\r\n*{3 + replicas.Length}\r\n:{start}\r\n:{end}\r\n");
+        foreach (var port in new[] { primaryPort }.Concat(replicas))
+            text.Append($"*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+        return System.Text.Encoding.ASCII.GetBytes(text.ToString());
+    }
+
+    private static byte[] SentinelReplicaReply(int port)
+        => System.Text.Encoding.ASCII.GetBytes($"*1\r\n*6\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n$5\r\nflags\r\n$5\r\nslave\r\n");
 
     private static RespireOptions Options(FakeRespServer primary, params FakeRespServer[] replicas) => new()
     {

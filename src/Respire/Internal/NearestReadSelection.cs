@@ -3,23 +3,36 @@ namespace Respire.Internal;
 /// <summary>One sampling wait budget shared by every candidate and topology retry.</summary>
 internal static class NearestReadSelection
 {
-    internal static long CreateDeadline() => Environment.TickCount64 + 1_000;
+    internal static long CreateDeadline() => Environment.TickCount64 + ReadLatencySampler.SamplingWaitMilliseconds;
 
-    internal static ValueTask<long> GetLatencyAsync(ValueTask<long> latency, long deadline,
+    internal static CancellationTokenSource? CreateWaitCancellation(long deadline, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var remaining = deadline - Environment.TickCount64;
+        if (remaining <= 0) return null;
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        source.CancelAfter(TimeSpan.FromMilliseconds(remaining));
+        return source;
+    }
+
+    internal static ValueTask<long> GetLatencyAsync(ValueTask<long> latency, CancellationTokenSource? wait,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (latency.IsCompletedSuccessfully) return latency;
-        var remaining = deadline - Environment.TickCount64;
-        return remaining > 0 ? WaitAsync(latency, remaining, cancellationToken)
+        return wait is not null ? WaitAsync(latency, wait.Token, cancellationToken)
             : ValueTask.FromResult(long.MaxValue);
     }
 
-    private static async ValueTask<long> WaitAsync(ValueTask<long> latency, long remaining,
+    private static async ValueTask<long> WaitAsync(ValueTask<long> latency, CancellationToken waitToken,
         CancellationToken cancellationToken)
     {
-        try { return await latency.AsTask().WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false); }
-        catch (TimeoutException) { return long.MaxValue; }
+        try { return await latency.AsTask().WaitAsync(waitToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return long.MaxValue;
+        }
     }
 }
 
@@ -39,6 +52,7 @@ internal struct NearestReadSelection<T>
     private int _selectedOrder;
 
     internal readonly record struct PendingSample(T Candidate, ValueTask<long> Latency, bool Linked, int Order);
+    internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
 
     internal void QueueSample(T candidate, ValueTask<long> latency, bool linked = true)
     {
