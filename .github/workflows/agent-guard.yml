@@ -7,6 +7,8 @@ on:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
+      - scripts/AssertPrGreenReviewHeuristics.ps1
+      - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/workflows/agent-guard.yml
   push:
     branches: [main]
@@ -14,6 +16,8 @@ on:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
+      - scripts/AssertPrGreenReviewHeuristics.ps1
+      - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/workflows/agent-guard.yml
 
 permissions:
@@ -44,3 +48,6 @@ jobs:
       - name: Verify process containment and resource limits
         shell: pwsh
         run: ./scripts/Test-InvokeAgentDotNet.ps1
+      - name: Verify PR review gate heuristics
+        shell: pwsh
+        run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1

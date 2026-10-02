@@ -297,15 +297,9 @@ function Get-ActionableReviewBodyReason {
     return $null
 }
 
-# The Claude Code Review workflow posts its review as a plain PR issue comment
-# from the workflow token (`github-actions[bot]` in REST, `github-actions` in
-# GraphQL), not as a pull request review. Those comments never appear in
-# `latestReviews`, so they are evaluated separately here.
+# The Claude Code Review workflow posts marked review comments from
+# `github-actions[bot]`; those comments do not appear in `latestReviews`.
 $script:ClaudeReviewCommentMarker = '<!-- claude-code-review -->'
-# Remove markerless legacy detection after PRs open before this rollout have closed.
-$script:ClaudeReviewMarkerIntroducedAt = [DateTimeOffset]::Parse('2026-10-01T17:50:23Z')
-$script:NonReviewAutomationCommentMarker = '<!-- respire-automation-report -->'
-$script:LegacyStructuredReviewPattern = '(?ims)^\s*#{1,4}\s+Summary\s*\r?\n[\s\S]*?^\s*#{1,4}\s+Issues\s*\r?\n[\s\S]*?^\s*#{2,4}\s+\d+\.\s+\S'
 
 function Get-CommentAuthorLogin {
     [CmdletBinding()]
@@ -353,66 +347,13 @@ function Test-IsClaudeReviewComment {
     )
 
     $login = Get-CommentAuthorLogin $Comment
-    if ($login -notin @('github-actions[bot]', 'github-actions')) {
+    if ($login -ne 'github-actions[bot]') {
         return $false
     }
 
     $body = [string]$Comment.body
-    if ($body -match '(?im)^\s*<!--\s*claude-code-review\s*-->\s*$') {
-        return $true
-    }
-    # Keep this allowlist aligned with report headings emitted by workflows. Other markerless comments
-    # must remain eligible for legacy review detection until the fallback is removed in #715.
-    $automationMarker = [regex]::Escape($script:NonReviewAutomationCommentMarker)
-    if ($body -match "(?is)^\s*$automationMarker\s*\r?\n\s*#{1,4}\s+(?:Coverage report|🧪 Integration Test Results\b)") {
-        return $false
-    }
-
-    $createdAt = Get-CommentCreatedAt $Comment
-    $beforeMarkerRollout = $null -ne $createdAt -and $createdAt -lt $script:ClaudeReviewMarkerIntroducedAt
-    if ($body -match '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*(?:CLEAR|BLOCKING)\s*-->\s*$') {
-        return $true
-    }
-
-    # Explicit legacy review titles remain trustworthy after rollout because an
-    # in-flight run can post them later. Normalize supported Markdown title forms
-    # once, then apply the same recognition before and after the cutoff.
-    $firstLine = @($body -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
-    if ($firstLine.Count -gt 0) {
-        $rawTitle = $firstLine[0].Trim()
-        $hasFormattedTitle = $rawTitle -match '^(?:#{1,6}\s+|\*\*.+\*\*|__.+__)'
-        if ($hasFormattedTitle) {
-            $title = $rawTitle -replace '^#{1,6}\s*', ''
-            $title = $title -replace '\s+#{1,6}\s*$', ''
-            $title = [regex]::Replace($title, '(?:\*\*|__)', '')
-            $title = $title -replace '^[^\p{L}\p{N}_#-]+', ''
-            $reviewTitleTail = '(?:$|[.!?](?=$|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)|:\s*(?:$|PR\b|#|\d|(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)|\s+(?:of|for|PR\b|#|\d)|\s*[-—–]\s*(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b|\s+(?:security\s+)?(?:findings?|issues?|concerns?|summary|results?)\b)'
-            $isLegacyReviewTitle = $title -match "(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review$reviewTitleTail"
-            $hasDescriptiveColonReviewTitle = $title -match '(?i)^(?:[\p{L}\p{N}_-]+\s+){0,2}Review:\s+\S'
-            # This known deployment status heading is not a legacy review title.
-            $isKnownDeploymentStatusTitle = $title -match '(?i)^Review:\s+apps deployed[.!?]?$'
-            if (-not $isLegacyReviewTitle -and $hasDescriptiveColonReviewTitle -and -not $isKnownDeploymentStatusTitle) {
-                $isLegacyReviewTitle = $true
-            }
-            if ($isLegacyReviewTitle) { return $true }
-        }
-    }
-
-    # A pre-rollout workflow run can finish or be rerun after the marker cutoff.
-    # Preserve strong legacy review structures across that boundary; weak or unknown
-    # titles remain limited to comments posted before rollout.
-    if (-not $beforeMarkerRollout) {
-        $hasStructuredFindings = $body -match $script:LegacyStructuredReviewPattern
-        if ($hasStructuredFindings) { return $true }
-        return $false
-    }
-
-    # Legacy Claude reviews used a small set of explicit first-line headings.
-    if ($firstLine.Count -eq 0) { return $false }
-
-    # Some legacy reviews used a summary first, then an explicit issues section
-    # with numbered findings. Require all three signals to avoid report false positives.
-    return $body -match $script:LegacyStructuredReviewPattern
+    $markerPattern = "(?m)^\s*$([regex]::Escape($script:ClaudeReviewCommentMarker))\s*$"
+    return [regex]::IsMatch($body, $markerPattern)
 }
 
 # A reply only answers a blocking Claude review when it carries this marker and
@@ -460,20 +401,23 @@ function Get-UnansweredClaudeReviewReason {
         return $null
     }
 
-    # Claude reviews usually list findings as bold text or plain numbered items,
-    # which the heading heuristics do not see. Fail closed: only an explicit
-    # CLEAR verdict marker makes a Claude review comment non-actionable.
+    # The workflow emits one explicit verdict. Missing or conflicting verdicts
+    # fail closed; Claude review titles and body headings do not identify a verdict.
     $body = [string]$latestReview.body
-    if ($body -match '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*CLEAR\s*-->\s*$' -and
-        $body -notmatch '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*BLOCKING\s*-->\s*$') {
-        return $null
+    $verdicts = [regex]::Matches($body, '(?im)^\s*<!--\s*REVIEW_VERDICT:\s*(CLEAR|BLOCKING)\s*-->\s*$')
+    if ($verdicts.Count -eq 1) {
+        if ($verdicts[0].Groups[1].Value -eq 'CLEAR') {
+            return $null
+        }
+
+        return 'review verdict marker: BLOCKING'
     }
 
-    $reason = Get-ActionableReviewBodyReason -Body $body
-    if (-not $reason) {
-        $reason = 'no REVIEW_VERDICT: CLEAR marker'
+    if ($verdicts.Count -gt 0) {
+        return 'Claude review has conflicting review verdict markers'
     }
 
+    $reason = 'no REVIEW_VERDICT: CLEAR marker'
     $reviewedAt = Get-CommentCreatedAt $latestReview
     $reply = $ordered | Where-Object {
         ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
