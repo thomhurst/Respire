@@ -56,8 +56,9 @@ public partial interface IStringCommands
     /// connection's receive path until consumed or disposed, so later replies may wait behind it;
     /// always dispose it. Waiting for the caller to read does not count toward the connection's
     /// idle-read timeout. Cancelling <paramref name="cancellationToken"/> after the stream is
-    /// returned abandons its remaining payload and releases the receive path. This path bypasses
-    /// the client-side value cache. Redis: GET.
+    /// returned unblocks its reader and abandons the remaining payload. The receive loop drains
+    /// the rest of the frame to preserve reply order; a retired connection closes promptly instead.
+    /// This path bypasses the client-side value cache. Redis: GET.
     /// </summary>
     ValueTask<Stream?> GetStreamAsync(RespireKey key, CancellationToken cancellationToken = default);
 

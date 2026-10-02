@@ -13,6 +13,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private readonly string? _commandName;
     private readonly bool _hasPrefixReply;
     private readonly Action<Exception?>? _onFrameCompleted;
+    private readonly Action? _onLifetimeCancelled;
     private readonly CancellationToken _streamCancellationToken;
     private CancellationTokenRegistration _streamCancellationRegistration;
     // Threading: the receive loop owns _replyIndex and _isMissing and publishes _prefixError,
@@ -28,17 +29,23 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal BulkStreamPendingResponseSource(
         string? commandName, bool hasPrefixReply, Action<Exception?>? onFrameCompleted,
-        CancellationToken streamCancellationToken = default)
+        CancellationToken streamCancellationToken = default, Action? onLifetimeCancelled = null)
     {
         _commandName = commandName;
         _hasPrefixReply = hasPrefixReply;
         _onFrameCompleted = onFrameCompleted;
+        _onLifetimeCancelled = onLifetimeCancelled;
         _streamCancellationToken = streamCancellationToken;
         PrepareForUse(hasPrefixReply ? 2 : 1);
         if (streamCancellationToken.CanBeCanceled)
             _streamCancellationRegistration = streamCancellationToken.UnsafeRegister(
-                static (state, token) => ((BulkStreamPendingResponseSource)state!).AbortPayload(
-                    new OperationCanceledException(token)), this);
+                static (state, token) =>
+                {
+                    var source = (BulkStreamPendingResponseSource)state!;
+                    var error = new OperationCanceledException(token);
+                    source.AbortPayload(error);
+                    source._onLifetimeCancelled?.Invoke();
+                }, this);
     }
 
     internal override string? CommandName => _commandName;
@@ -90,7 +97,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     internal void AbortPayload(Exception exception)
     {
         Interlocked.CompareExchange(ref _payloadAbortError, exception, null);
-        Volatile.Read(ref _payload)?.CancelPendingFlush();
+        Volatile.Read(ref _payload)?.CancelPendingOperations();
     }
 
     internal bool IsPayloadAborted => Volatile.Read(ref _payloadAbortError) is not null;
@@ -278,13 +285,14 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         }
     }
 
-    internal void CancelPendingFlush()
+    internal void CancelPendingOperations()
     {
         lock (_flushGate)
         {
             if (_completed != 0) return;
             _flushCancelled = true;
             _pipe.Writer.CancelPendingFlush();
+            _pipe.Reader.CancelPendingRead();
         }
     }
 

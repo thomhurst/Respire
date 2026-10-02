@@ -220,6 +220,36 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    public async Task GetStream_LifetimeCancellationUnblocksPendingRead()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command is "GET key" or "PING"
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var lifetime = new CancellationTokenSource();
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("$10\r\n"u8.ToArray());
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var read = stream!.ReadAsync(new byte[16]).AsTask();
+        await Assert.That(read.IsCompleted).IsFalse();
+
+        lifetime.Cancel();
+        await Assert.That(async () => await read.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+
+        await server.SendRawAsync("abcdefghij\r\n"u8.ToArray());
+        var ping = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
+        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("+PONG\r\n"u8.ToArray());
+        using var pong = await ping.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
     public async Task GetStream_DisposingEarlyDrainsFrameAndPreservesNextReply()
     {
         var payload = new byte[256 * 1024];
