@@ -413,6 +413,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             Endpoints = [endpoint],
             UseCluster = false,
             SentinelPrimaryName = null,
+            ReplicaEndpoints = [],
+            ReadFrom = RespireReadFrom.Primary,
             Username = authDisabled ? null : options.SentinelUsername ?? options.Username,
             Password = authDisabled ? null : options.SentinelPassword ?? options.Password,
             CredentialProvider = authDisabled ? null : options.SentinelCredentialProvider
