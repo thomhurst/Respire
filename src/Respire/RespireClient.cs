@@ -2013,6 +2013,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = GetReadFromForCommand(in command);
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         // Keep the budget across sends; successful selection does not imply the final route accepts the command.
         var discoveryPending = false;
@@ -2058,7 +2059,7 @@ public sealed partial class RespireClient : IRespireClient
                 _core.ClientCache?.FlushForContinuityLoss();
                 cluster.RecordRejection(ref discovery, connection, error);
                 discoveryPending = true;
-                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                     .ConfigureAwait(false);
                 if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
@@ -2501,6 +2502,7 @@ public sealed partial class RespireClient : IRespireClient
         var cursorReadFrom = readFrom;
         var cursorContinuation = command.ReadKind == ReadCommandKind.CursorRead
             && (cursorAffinity?.IsPinned == true || CursorCommandMetadata.IsCursorContinuation(in command));
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
@@ -2542,7 +2544,7 @@ public sealed partial class RespireClient : IRespireClient
                 _core.ClientCache?.FlushForContinuityLoss();
                 discoveryPending = true;
                 connection = await cluster.GetRedirectConnectionAsync(
-                    initialRejection, connection, cancellationToken, slot, discovery).ConfigureAwait(false);
+                    initialRejection, connection, cancellationToken, slot, discovery, preferredZone).ConfigureAwait(false);
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
@@ -2601,7 +2603,7 @@ public sealed partial class RespireClient : IRespireClient
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
@@ -3139,6 +3141,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = GetReadFromForCommand(in command);
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
@@ -3172,7 +3175,7 @@ public sealed partial class RespireClient : IRespireClient
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {

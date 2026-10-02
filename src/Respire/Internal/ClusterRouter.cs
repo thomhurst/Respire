@@ -438,7 +438,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         CancellationToken cancellationToken,
-        int? commandSlot, DiscoveryRound? discovery)
+        int? commandSlot, DiscoveryRound? discovery, string? preferredZone = null)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -454,11 +454,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
                 var replacement = await RefreshReadOnlyOwnerAsync(error, source, readOnlySlot, cancellationToken, discovery)
                     .ConfigureAwait(false);
-                try { return replacement.GetConnection(readOnlySlot); }
+                try { return preferredZone is null ? replacement.GetConnection(readOnlySlot) : replacement.GetConnectionForZone(preferredZone, readOnlySlot); }
                 catch (RespireConnectionRetiredException failure) when (CanRetryRetirement(0, cancellationToken))
                 {
                     discovery?.Failed(Endpoint(replacement), failure);
-                    return await GetConnectionAsync(readOnlySlot, cancellationToken, discovery).ConfigureAwait(false);
+                    var connection = await GetConnectionAsync(readOnlySlot, cancellationToken, discovery).ConfigureAwait(false);
+                    return preferredZone is not null && connection.Multiplexer is { } owner
+                        ? owner.GetConnectionForZone(preferredZone, readOnlySlot) : connection;
                 }
             }
 
@@ -476,7 +478,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 {
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (error.Code == RespireErrorCodes.Moved) SetSlotOwner(slot, node);
-                    return node.GetConnection(slot);
+                    return preferredZone is null ? node.GetConnection(slot) : node.GetConnectionForZone(preferredZone, slot);
                 }
                 catch (Exception failure) when (CanRetryRetiredRedirect(failure, node, attempt, cancellationToken))
                 {

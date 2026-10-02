@@ -184,8 +184,16 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     // The shared primary can be healthy while its dedicated handshake fails.
                     // Exclude that primary from the next selection instead of probing it again.
-                    replicaOnly = true;
-                    continue;
+                    try
+                    {
+                        return await RentDedicatedConnectionAsync(readFrom, cancellationToken, preferredZone, replicaOnly: true)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception fallback) when (IsUnavailable(fallback, cancellationToken))
+                    {
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+                        throw;
+                    }
                 }
             }
             try

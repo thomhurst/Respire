@@ -600,6 +600,84 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    [Arguments(RespireReadFrom.PrimaryPreferred)]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task FailedDedicatedPrimaryWithNoSentinelReplicasPreservesConnectionError(RespireReadFrom policy)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var sentinel = Sentinel(primary, () => []);
+        var previous = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) =>
+        {
+            if (id > 0 && command == "HELLO 3") primary.CloseConnection(id);
+            return previous(id, command);
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false, policy)
+            with { Protocol = RespProtocol.Resp3, SentinelPrimaryName = "primary" });
+        var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.Message.Contains("No eligible read replicas", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "HELLO 3")).IsGreaterThan(1);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+    }
+
+    [Test]
+    [Arguments("ASK", 0, false)]
+    [Arguments("ASK", 0, true)]
+    [Arguments("ASK", 1, false)]
+    [Arguments("ASK", 1, true)]
+    [Arguments("ASK", 2, false)]
+    [Arguments("ASK", 2, true)]
+    [Arguments("MOVED", 0, false)]
+    [Arguments("MOVED", 0, true)]
+    [Arguments("MOVED", 1, false)]
+    [Arguments("MOVED", 1, true)]
+    [Arguments("MOVED", 2, false)]
+    [Arguments("MOVED", 2, true)]
+    public async Task ClusterRedirectKeepsLocalPhysicalSocket(string redirect, int mode, bool afterRoleFallback)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var target = Node("target", "remote", false);
+        await using var replica = Node("replica", "local", true);
+        ConfigureTopology(primary, afterRoleFallback ? [replica] : []);
+        var replicaReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("GET ")
+            ? "-LOADING replica unavailable\r\n"u8.ToArray() : replicaReply(id, command);
+        var key = Enumerable.Range(0, 100).Select(index => $"zone-key-{index}")
+            .First(value => ClusterHash.GetSlot(value) % 2 == 1);
+        var slot = ClusterHash.GetSlot(key);
+        var primaryReply = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command.StartsWith("GET ")
+            ? Encoding.ASCII.GetBytes($"-{redirect} {slot} 127.0.0.1:{target.Port}\r\n") : primaryReply(id, command);
+        var targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command switch
+        {
+            "INFO SERVER" => Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n"),
+            "CLUSTER SLOTS" => "-ERR topology unavailable\r\n"u8.ToArray(),
+            _ when command.StartsWith("GET ") => Bulk(id % 2 == 0 ? "local-socket" : "remote-socket"),
+            _ => targetReply(id, command),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+        if (mode == 1)
+        {
+            using var batch = client.CreateBatch();
+            var result = batch.Strings.GetString(key);
+            await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(await result).IsEqualTo("local-socket");
+        }
+        else if (mode == 2)
+        {
+            await using var stream = await client.Strings.GetStreamAsync(key);
+            using var reader = new StreamReader(stream!);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
+        }
+        else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task BlockingReplicaValidatesDedicatedSocketRole(bool strict)
