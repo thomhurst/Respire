@@ -346,11 +346,12 @@ internal static class SentinelResolver
             // retry discovery instead of assigning metadata to a different primary.
             RespireEndpoint? configuredPrimary = null;
             long? configurationEpoch = null;
+            var failoverInProgress = false;
             try
             {
                 using var metadata = await connection.SendAsync(new Cmd1(SentinelMaster, serviceName), cancellationToken)
                     .ConfigureAwait(false);
-                if (TryParsePrimaryConfiguration(in metadata, out var configured, out var epoch))
+                if (TryParsePrimaryConfiguration(in metadata, out var configured, out var epoch, out failoverInProgress))
                 {
                     configuredPrimary = configured;
                     configurationEpoch = epoch;
@@ -361,6 +362,10 @@ internal static class SentinelResolver
                 callerCancellationToken.ThrowIfCancellationRequested();
                 logger?.LogDebug(error, "Optional Sentinel configuration discovery failed at {Sentinel}", sentinel);
             }
+            // Sentinel advances config-epoch before replacing its old primary address.
+            // Even matching address reads must not bind that address to the new epoch.
+            if (failoverInProgress)
+                throw new RespireConnectionException("Sentinel failover is still in progress.");
             if (configuredPrimary is { } snapshot && !RespireEndpointComparer.Instance.Equals(primary, snapshot))
                 throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
             if (configurationEpoch is not null)
@@ -432,10 +437,12 @@ internal static class SentinelResolver
     internal static string NormalizeAddress(IPAddress address)
         => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
-    internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch)
+    internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch,
+        out bool failoverInProgress)
     {
         endpoint = default;
         epoch = -1;
+        failoverInProgress = false;
         if (reply.Type != RespDataType.Array) return false;
         var fields = reply.AsArray();
         if (fields.Length % 2 != 0) return false;
@@ -444,11 +451,12 @@ internal static class SentinelResolver
         {
             if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
             var name = fields[index].AsString();
-            if (name is not ("ip" or "port" or "config-epoch")) continue;
+            if (name is not ("ip" or "port" or "config-epoch" or "flags")) continue;
             if (fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
             var value = fields[index + 1].AsString();
             if (name == "ip") host = value;
             else if (name == "port") port = value;
+            else if (name == "flags") failoverInProgress = value.Split(',').Contains("failover_in_progress", StringComparer.Ordinal);
             else if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out epoch)) return false;
         }
         return epoch >= 0 && TryParseEndpoint(host, port, out endpoint);

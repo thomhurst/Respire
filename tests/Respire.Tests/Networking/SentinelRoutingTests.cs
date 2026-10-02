@@ -15,6 +15,35 @@ namespace Respire.Tests.Networking;
 public class SentinelRoutingTests
 {
     [Test]
+    public async Task InProgressFailoverDoesNotRememberNewEpochForOldAddress()
+    {
+        const int originalPort = 7001, promotedPort = 7002;
+        var currentPort = originalPort;
+        var promoting = true;
+        await using var sentinel = Sentinel(() => currentPort, () => 6);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? ConfigurationReply(currentPort, 6, promoting ? "master,failover_in_progress,disconnected" : "master")
+            : reply(id, command);
+        var state = new SentinelDiscoveryState([new("127.0.0.1", sentinel.Port)]);
+        state.AcceptConfiguration(new("127.0.0.1", originalPort), 5);
+        var candidates = new List<int>();
+        await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<int>(Options(sentinel.Port),
+            (candidate, _) =>
+            {
+                candidates.Add(candidate.PrimaryEndpoint.Port);
+                throw new RespireConnectionException("Old primary is unavailable");
+            }, CancellationToken.None, state)).Throws<RespireConnectionException>();
+        await Assert.That(candidates).IsEmpty();
+
+        promoting = false;
+        currentPort = promotedPort;
+        var recovered = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(sentinel.Port),
+            (candidate, _) => ValueTask.FromResult(candidate.PrimaryEndpoint.Port), CancellationToken.None, state);
+        await Assert.That(recovered).IsEqualTo(promotedPort);
+    }
+
+    [Test]
     public async Task PromotionDuringConfigurationReadDoesNotAssignNewEpochToOldPrimary()
     {
         const int originalPort = 7001, promotedPort = 7002;
@@ -3236,8 +3265,8 @@ public class SentinelRoutingTests
         };
     }
 
-    private static byte[] ConfigurationReply(int port, long epoch)
-        => Encoding.ASCII.GetBytes($"*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{port}\r\n+config-epoch\r\n+{epoch}\r\n");
+    private static byte[] ConfigurationReply(int port, long epoch, string flags = "master")
+        => Encoding.ASCII.GetBytes($"*8\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{port}\r\n+config-epoch\r\n+{epoch}\r\n+flags\r\n+{flags}\r\n");
 
     private static byte[] AddressReply(int port) => AddressReply("127.0.0.1", port);
 
