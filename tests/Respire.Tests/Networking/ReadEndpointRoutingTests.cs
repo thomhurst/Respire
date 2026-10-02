@@ -1040,6 +1040,72 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    [Arguments(null, false)]
+    [Arguments(null, true)]
+    [Arguments(30000, false)]
+    [Arguments(30000, true)]
+    public async Task FunctionPropagationBudgetBoundsPreSubmissionWait(int? timeoutMilliseconds, bool blockRoute)
+    {
+        const string source = "#!lua name=readlib\nredis.register_function{function_name='readfn', callback=function() return 1 end, flags={'no-writes'}}";
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("FUNCTION LIST", StringComparison.Ordinal),
+        };
+        var stallRole = false;
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            SuppressReply = command => command == "GET parked" || command == "ROLE" && Volatile.Read(ref stallRole),
+            ReplyOverride = (_, command) => command.StartsWith("FCALL_RO", StringComparison.Ordinal)
+                ? "-ERR Function not found\r\n"u8.ToArray() : command.StartsWith("GET ") ? Bulk("value") : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        await using var reader = client.WithReadFrom(RespireReadFrom.Replica);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
+        var execution = reader.Functions.ExecuteIntegerAsync(function, cancellationToken: cancellation.Token).AsTask();
+        while (!primary.ReceivedCommands.Any(command => command.StartsWith("FUNCTION LIST", StringComparison.Ordinal)))
+            await Task.Delay(5, cancellation.Token);
+        Task<string?> parked;
+        if (blockRoute)
+        {
+            client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+            Volatile.Write(ref stallRole, true);
+            parked = Task.FromResult<string?>(null);
+        }
+        else
+        {
+            parked = reader.GetStringAsync("parked", cancellation.Token).AsTask();
+            while (!replica.ReceivedCommands.Contains("GET parked")) await Task.Delay(5, cancellation.Token);
+        }
+        await primary.SendRawAsync(FunctionLibraryList("readlib", "readfn", source), primary.ReceivedConnectionIds[^1]);
+        try
+        {
+            var error = await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(7)))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(error!.Message).Contains("Replica function propagation");
+            await Assert.That(error.InnerException is RespireServerException).IsTrue();
+            Volatile.Write(ref stallRole, false);
+            await replica.SendRawAsync(blockRoute ? ReplicaRole : Bulk("value"), replica.ReceivedConnectionIds[^1]);
+            await parked.WaitAsync(cancellation.Token);
+            await reader.GetStringAsync("after", cancellation.Token);
+            await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal)))
+                .IsEqualTo(1);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await execution; } catch (OperationCanceledException) { } catch (RespireTimeoutException) { }
+            try { await parked; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
     [Arguments(null, true)]
     [Arguments(30000, true)]
     [Arguments(null, false)]

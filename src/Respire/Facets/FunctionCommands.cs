@@ -68,6 +68,7 @@ public interface IFunctionCommands
 
 internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 {
+    private static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(5);
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
     {
@@ -112,36 +113,65 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         }
     }
 
-    private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken, TimeSpan? timeout,
+    private async ValueTask<RespValue> RetryUntilFunctionAvailableAsync(
+        string operation, BatchScriptCommand command, CancellationToken cancellationToken, TimeSpan? timeout,
         RespireServerException lastMissingFunction)
-        where TCommand : struct, IRespCommand
     {
-        // Propagation recovery is finite even when ordinary command timeouts are disabled.
-        var propagationLimit = TimeSpan.FromSeconds(5);
-        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < propagationLimit
-            ? configuredTimeout : propagationLimit;
+        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < FunctionPropagationLimit
+            ? configuredTimeout : FunctionPropagationLimit;
         var started = Stopwatch.GetTimestamp();
+        using var admission = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        admission.CancelAfter(propagationTimeout);
         var delay = TimeSpan.FromMilliseconds(25);
-        while (true)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
-                throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
-            try
+            while (true)
             {
-                // An accepted attempt may already be executing the function. Its response is
-                // governed by CommandTimeout and caller cancellation, not the propagation budget.
-                return await client.SendAsync(operation, command, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
+                    throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+                try
+                {
+                    var retry = new FunctionRetryCommand(command, operation, started, propagationTimeout,
+                        lastMissingFunction, cancellationToken);
+                    return await client.SendAsync(operation, retry, admission.Token).ConfigureAwait(false);
+                }
+                catch (RespireServerException error) when (IsFunctionNotFound(error))
+                {
+                    lastMissingFunction = error;
+                }
+                var remaining = propagationTimeout - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) continue;
+                await Task.Delay(delay < remaining ? delay : remaining, admission.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
             }
-            catch (RespireServerException error) when (IsFunctionNotFound(error))
-            {
-                lastMissingFunction = error;
-            }
-            var remaining = propagationTimeout - Stopwatch.GetElapsedTime(started);
-            if (remaining <= TimeSpan.Zero) continue;
-            await Task.Delay(delay < remaining ? delay : remaining, cancellationToken).ConfigureAwait(false);
-            delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException error) when (error.CancellationToken == admission.Token
+            && admission.IsCancellationRequested)
+        {
+            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+        }
+    }
+
+    private readonly struct FunctionRetryCommand(BatchScriptCommand command, string operation, long started,
+        TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => command.ReadKind;
+        public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+        public void Write(ref RespWriter writer) => command.Write(ref writer);
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => callerToken;
+
+        public void ValidateAdmission()
+        {
+            callerToken.ThrowIfCancellationRequested();
+            // Check the clock at publication as well as using a timer for parked acquisition.
+            // A delayed timer callback must never admit an expired retry.
+            if (Stopwatch.GetElapsedTime(started) >= budget)
+                throw RespireTimeoutException.FunctionPropagation(operation, budget, lastMissingFunction);
         }
     }
 

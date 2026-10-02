@@ -552,8 +552,9 @@ replica disconnect does not flush the client-side cache. A read-only function th
 `Function not found` on a replica causes the registered library to be checked or reloaded on the
 primary, then retried under the original read policy until replication makes it available.
 The missing-function retry loop has a five-second budget. A shorter `CommandTimeout` reduces
-that budget; `null` does not disable it. No new attempt starts after the budget expires.
-An attempt already accepted by the server retains its normal `CommandTimeout` and caller
+that budget; `null` does not disable it. The budget covers route acquisition and waiting
+for connection capacity, with a final check before enqueueing. No new attempt is enqueued
+after the budget expires. An attempt already admitted to its connection retains its normal `CommandTimeout` and caller
 cancellation, so a function that exists can finish executing after the retry budget expires.
 If that attempt returns `Function not found` after expiry, no further retry is sent.
 Exhausting the retry budget throws
