@@ -173,6 +173,7 @@ public partial interface IServerCommands
 
 internal sealed partial class ServerCommands(RespireClient client) : IServerCommands
 {
+    private static readonly ReadCommandKind DbSizeReadKind = CommandReadMetadata.Get("DBSIZE").Kind;
     public ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default)
         => section is null
             ? client.StringAsync("INFO", new Cmd(Verbs.Info), cancellationToken)
@@ -180,7 +181,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 
     public ValueTask<long> DatabaseSizeAsync(CancellationToken cancellationToken = default)
         => client.Core.Cluster is null
-            ? client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize, ReadCommandKind.Read), cancellationToken)
+            ? client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken)
             : DatabaseSizeClusterAsync(cancellationToken);
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
@@ -300,7 +301,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         foreach (var connection in connections)
         {
             var reply = await client.SendToClusterTargetAsync(
-                    "DBSIZE", connection, new RawCommand(RespCommands.DbSize, ReadCommandKind.Read), cancellationToken)
+                    "DBSIZE", connection, new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken)
                 .ConfigureAwait(false);
             try
             {

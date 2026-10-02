@@ -40,6 +40,12 @@ $cacheReadOnlyOverrides = @(
 $cacheMutationOverrides = @('DELEX', 'DELIFEQ')
 $cacheUnknownOverrides = @('PFCOUNT')
 
+# Replica routing is stricter than cache invalidation. TOUCH is READONLY in provider
+# flags, but its purpose is updating access metadata on the primary. ARSCAN is a cursor
+# command without a supported cursor-affinity layout, so it keeps index -1.
+$primaryOnlyReadOverrides = @('TOUCH')
+$cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
+
 function Read-CoreCommands([string] $Path, [string] $Provider) {
     Get-ChildItem -LiteralPath $Path -Filter '*.json' | ForEach-Object {
         $json = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
@@ -247,6 +253,29 @@ foreach ($operation in $cacheUnknownOverrides) {
 [void] $builder.AppendLine()
 [void] $builder.AppendLine('    /// <summary>Every known descriptor, sorted by group and command name.</summary>')
 [void] $builder.AppendLine('    public static ReadOnlySpan<RespireCommand> All => s_all;')
+[void] $builder.AppendLine('}')
+
+# Independent of RespireCommands and Verbs initialization: both consume this table.
+# Classification is cached in descriptors; healthy typed dispatch never performs a lookup.
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('/// <summary>Audited replica-read eligibility shared by typed verbs and raw commands.</summary>')
+[void] $builder.AppendLine('internal static class CommandReadMetadata')
+[void] $builder.AppendLine('{')
+[void] $builder.AppendLine('    // No descriptor references: initializing this table cannot recursively initialize the catalog.')
+[void] $builder.AppendLine('    private static readonly FrozenDictionary<string, (ReadCommandKind Kind, int CursorArgumentIndex)> s_commands =')
+[void] $builder.AppendLine('        new Dictionary<string, (ReadCommandKind, int)>(StringComparer.OrdinalIgnoreCase)')
+[void] $builder.AppendLine('        {')
+foreach ($command in ($merged | Sort-Object Name)) {
+    if (-not $command.IsReadOnly -or $primaryOnlyReadOverrides -contains $command.Name) { continue }
+    $isCursor = $cursorArgumentIndices.ContainsKey($command.Name)
+    $kind = if ($isCursor) { 'CursorRead' } else { 'Read' }
+    $cursorIndex = if ($isCursor) { $cursorArgumentIndices[$command.Name] } else { -1 }
+    [void] $builder.AppendLine(('            ["{0}"] = (ReadCommandKind.{1}, {2}),' -f $command.Name, $kind, $cursorIndex))
+}
+[void] $builder.AppendLine('        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);')
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('    internal static (ReadCommandKind Kind, int CursorArgumentIndex) Get(string command)')
+[void] $builder.AppendLine('        => s_commands.TryGetValue(command, out var metadata) ? metadata : (ReadCommandKind.None, -1);')
 [void] $builder.AppendLine('}')
 
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)

@@ -33,6 +33,10 @@ try {
     Write-CommandFixture $redisPath 'vcard' 'VCARD' @('READONLY')
     Write-CommandFixture $redisPath 'json-get' 'JSON.GET' @('READONLY')
     Write-CommandFixture $redisPath 'slot-stats' 'SLOT-STATS' @('WRITE') 'CLUSTER'
+    Write-CommandFixture $redisPath 'touch' 'TOUCH' @('READONLY')
+    foreach ($name in @('SCAN', 'HSCAN', 'SSCAN', 'ZSCAN', 'ARSCAN')) {
+        Write-CommandFixture $redisPath $name $name @('READONLY')
+    }
 
     $generator = Join-Path $PSScriptRoot '../tools/Generate-CommandCatalog.ps1'
     & $generator -RedisCommandPath $redisPath -ValkeyCommandPath $valkeyPath -OutputPath $outputPath
@@ -55,6 +59,16 @@ try {
         if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
         $isReadOnly = $declarations[0].Groups['arguments'].Value.Contains('isReadOnly: true')
         if ($isReadOnly -ne $entry.Value) { throw "Incorrect read-only metadata for $($entry.Key)." }
+        $readEntry = '["' + $entry.Key + '"] = (ReadCommandKind.Read, -1),'
+        if ($first.Contains($readEntry) -ne $entry.Value) {
+            throw "Incorrect shared read classification for $($entry.Key)."
+        }
+    }
+    if ($first.Contains('["TOUCH"]')) { throw 'TOUCH must remain primary-only.' }
+    $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
+    foreach ($entry in $cursorIndices.GetEnumerator()) {
+        $declaration = '["' + $entry.Key + '"] = (ReadCommandKind.CursorRead, ' + $entry.Value + '),'
+        if (-not $first.Contains($declaration)) { throw "Incorrect cursor classification for $($entry.Key)." }
     }
     $mutationExpectations = @{
         GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
