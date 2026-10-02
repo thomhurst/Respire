@@ -87,7 +87,6 @@ internal sealed partial class SentinelRouter
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
                 QueueDeliveryGapRediscovery(endpoint, initialSubscription: !subscribedBefore);
-                Interlocked.Increment(ref _successfulMonitorSubscriptions);
                 if (!subscribedBefore)
                     lock (_gate) _subscribedSentinels.Add(endpoint);
                 subscribedBefore = true;
@@ -279,9 +278,8 @@ internal sealed partial class SentinelRouter
                     && (SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)
                         || arrivedDuring.ValidatedPeer is { } arrivedPeer
                             && current.Multiplexer.HasCurrentPeer(arrivedPeer.Host, arrivedPeer.Port))) return;
-                if (!IsAnnouncedTarget(current, in retained) && IsSwitchSource(current, in retained))
+                if (RetireIfSwitchSourceLocked(current, in retained))
                 {
-                    Invalidate(current!);
                     QueueNotificationRediscoveryCore(retained with { MustRediscover = true });
                 }
             }
@@ -338,12 +336,12 @@ internal sealed partial class SentinelRouter
         }
     }
 
-    // Logging is diagnostic only: a failing user logger must never stop monitoring, rediscovery or disposal.
+    // Ordinary logger failures must not stop monitoring, rediscovery or disposal. Fatal failures propagate.
     private void SafeLog<TState>(TState state, Action<ILogger, TState> log)
     {
         if (core.Logger is not { } logger) return;
         try { log(logger, state); }
-        catch (Exception) { }
+        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException) { }
     }
 
     private void LogSentinelEvent(LogLevel level, in RespireMessage message, RespireEndpoint sentinel)
@@ -354,7 +352,7 @@ internal sealed partial class SentinelRouter
                 core.Logger.Log(level, "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}",
                     message.Channel.ToString(), core.Options.SentinelPrimaryName, sentinel, message.Text);
         }
-        catch (Exception) { }
+        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException) { }
     }
 
     private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, bool initialSubscription = false)
@@ -375,7 +373,7 @@ internal sealed partial class SentinelRouter
         }
         finally
         {
-            Interlocked.Increment(ref _queuedNotifications);
+            NotificationQueuedObserver?.Invoke();
         }
     }
 
@@ -392,7 +390,7 @@ internal sealed partial class SentinelRouter
             // Compare the switch source with Current under the gate, immediately before retirement.
             // This also covers hints that wait behind an active discovery, so a direct endpoint
             // match never waits for that attempt or for DNS.
-            if (!IsAnnouncedTarget(current, in hint) && IsSwitchSource(current, in hint)) Invalidate(current!);
+            RetireIfSwitchSourceLocked(current, in hint);
             if (startWorker) _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
         }
     }
@@ -426,7 +424,7 @@ internal sealed partial class SentinelRouter
                         var next = _coalescer.TakePending(activeFailed: true)!.Value;
                         _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
                         var current = Current;
-                        if (!IsAnnouncedTarget(current, in next) && IsSwitchSource(current, in next)) Invalidate(current!);
+                        RetireIfSwitchSourceLocked(current, in next);
                     }
                     hint = _coalescer.Active;
                 }
@@ -501,7 +499,7 @@ internal sealed partial class SentinelRouter
                         _notificationRediscovery = null;
                         return;
                     }
-                    if (!IsAnnouncedTarget(current, in next) && IsSwitchSource(current, in next)) Invalidate(current!);
+                    RetireIfSwitchSourceLocked(current, in next);
                 }
             }
 
@@ -528,6 +526,14 @@ internal sealed partial class SentinelRouter
                 catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
             }
         }
+    }
+
+    // Caller holds _gate so source matching and admission retirement see one current generation.
+    private bool RetireIfSwitchSourceLocked(Generation? current, in SentinelHint hint)
+    {
+        if (IsAnnouncedTarget(current, in hint) || !IsSwitchSource(current, in hint)) return false;
+        Invalidate(current!);
+        return true;
     }
 
     // Whether a switch hint's old primary is the healthy current generation, by announced

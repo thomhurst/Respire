@@ -628,7 +628,7 @@ public class HashFieldLeaseWireTests
     {
         var router = client.Core.Sentinel!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (router.SuccessfulMonitorSubscriptions == 0) await Task.Delay(5, timeout.Token);
+        while (router.SubscribedSentinelCount == 0) await Task.Delay(5, timeout.Token);
         if (router.NotificationRediscovery is { } rediscovery) await rediscovery.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }

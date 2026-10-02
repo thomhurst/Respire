@@ -467,7 +467,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +switch-master");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SuccessfulMonitorSubscriptions < 2) await Task.Delay(5, monitorTimeout.Token);
+            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -510,7 +510,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SuccessfulMonitorSubscriptions < 2) await Task.Delay(5, monitorTimeout.Token);
+            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -554,7 +554,7 @@ public class SentinelRoutingTests
         Volatile.Write(ref port, promoted.Port);
         sentinel.SuppressReply = command => command == discovery;
         var router = client.Core.Sentinel!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {intermediate.Port}");
@@ -889,7 +889,7 @@ public class SentinelRoutingTests
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         var downMessage = $"master mymaster 127.0.0.1 {original.Port}";
         var router = client.Core.Sentinel!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         sentinel.SuppressReply = command => command == discovery;
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown", downMessage);
@@ -927,7 +927,7 @@ public class SentinelRoutingTests
         sentinel.SuppressReply = command => command == discovery;
         var switchText = $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}";
         var router = client.Core.Sentinel!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
         await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
@@ -961,7 +961,7 @@ public class SentinelRoutingTests
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         var switchText = $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {recovered.Port}";
         var router = client.Core.Sentinel!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         sentinel.SuppressReply = command => command == discovery;
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master", switchText);
@@ -996,7 +996,7 @@ public class SentinelRoutingTests
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         sentinel.SuppressReply = command => command == discovery;
         var router = client.Core.Sentinel!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 1 127.0.0.1 {promoted.Port}");
@@ -1028,7 +1028,7 @@ public class SentinelRoutingTests
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         var router = client.Core.Sentinel!;
         var current = router.Current!;
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         sentinel.SuppressReply = command => command == discovery;
 
         // A master-down hint starts a discovery that stays blocked in Sentinel.
@@ -1557,7 +1557,7 @@ public class SentinelRoutingTests
         var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var discoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         sentinel.SuppressReply = command => command == discovery;
 
         // Sentinel announces the old primary by IP while this client reached it by hostname.
@@ -1601,7 +1601,7 @@ public class SentinelRoutingTests
         router.HostResolver = (_, _) => throw new InvalidOperationException("The connected peer needs no DNS lookup.");
         var monitorIndex = sentinel.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         Volatile.Write(ref reportAlias, true);
         await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
             $"mymaster localhost {original.Port} 127.0.0.1 {target.Port}");
@@ -1664,7 +1664,7 @@ public class SentinelRoutingTests
         var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         sentinel.SuppressReply = command => command == discovery;
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
@@ -1706,7 +1706,7 @@ public class SentinelRoutingTests
         });
         var router = client.Core.Sentinel!;
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
-        var queuedBeforeDiscovery = router.QueuedNotificationCount;
+        var queuedBeforeDiscovery = QueuedNotificationCount(router);
         var discoveriesBeforeClientStart = sentinel.ReceivedCommands.Count(command => command == discovery);
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
@@ -1715,7 +1715,7 @@ public class SentinelRoutingTests
         var monitorCommand = sentinel.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
         var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
-        var queued = router.QueuedNotificationCount;
+        var queued = QueuedNotificationCount(router);
         var initialDiscoveries = sentinel.ReceivedCommands.Count(command => command == discovery);
         // Prove the subscription is established: a delivered event reaches the router and its
         // discovery (still the same primary) completes before the connection is dropped.
@@ -3786,7 +3786,7 @@ public class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         using (var timeout = new CancellationTokenSource(Limit))
-            while (router.SuccessfulMonitorSubscriptions == 0) await Task.Delay(5, timeout.Token);
+            while (router.SubscribedSentinelCount == 0) await Task.Delay(5, timeout.Token);
         var rediscovery = router.NotificationRediscovery;
         if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
     }
@@ -3798,10 +3798,32 @@ public class SentinelRoutingTests
             await Task.Delay(5, timeout.Token);
     }
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SentinelRouter, NotificationCounter> NotificationCounters = new();
+
+    private sealed class NotificationCounter
+    {
+        internal int Count;
+        internal void Observed() => Interlocked.Increment(ref Count);
+    }
+
+    private static int QueuedNotificationCount(SentinelRouter router)
+    {
+        lock (NotificationCounters)
+        {
+            var counter = NotificationCounters.GetValue(router, static owner =>
+            {
+                var created = new NotificationCounter();
+                owner.NotificationQueuedObserver = created.Observed;
+                return created;
+            });
+            return Volatile.Read(ref counter.Count);
+        }
+    }
+
     private static async Task WaitForQueuedNotificationsAsync(SentinelRouter router, int count)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (router.QueuedNotificationCount < count)
+        while (QueuedNotificationCount(router) < count)
             await Task.Delay(5, timeout.Token);
     }
 

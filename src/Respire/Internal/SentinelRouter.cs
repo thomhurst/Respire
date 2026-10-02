@@ -41,10 +41,12 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     private TaskCompletionSource _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
     // Background DNS checks for +switch-master sources. Disposal joins them with the monitors.
     private readonly HashSet<Task> _switchSourceResolutions = []; // Guarded by _gate.
-    private int _queuedNotifications;
+    // Optional observer for tests; production does not count or allocate notification test state.
+    internal volatile Action? NotificationQueuedObserver;
+    // Only the single notification worker reads/writes this deadline. _gate serializes worker
+    // publication and clearing _notificationRediscovery before a replacement worker can start.
     private long _notificationDiscoveryNotBefore;
     internal const int MinimumNotificationDiscoveryIntervalMilliseconds = 100;
-    private int _successfulMonitorSubscriptions;
     // Distinct Sentinels whose monitor has subscribed at least once. Reconnects do not add to it.
     private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance); // Guarded by _gate.
     // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
@@ -61,9 +63,6 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal ValueTask<RespireEndpoint[]> DiscoverReplicaEndpointsAsync(CancellationToken cancellationToken)
         => SentinelResolver.DiscoverReplicaEndpointsAsync(core.Options, _discovery.Snapshot(), cancellationToken);
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
-    /// <summary>Counts failover hints passed to rediscovery coalescing. Tests use it to order events.</summary>
-    internal int QueuedNotificationCount => Volatile.Read(ref _queuedNotifications);
-    internal int SuccessfulMonitorSubscriptions => Volatile.Read(ref _successfulMonitorSubscriptions);
     /// <summary>Counts distinct Sentinels with an established monitor subscription. Tests use it as readiness.</summary>
     internal int SubscribedSentinelCount
     {

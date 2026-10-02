@@ -25,11 +25,11 @@ public class SentinelFenceTransitionTests
         ("active-failure", [A], [B], false),
         ("pending-success", [B], [A], false),
         ("pending-failure", [A, B], [], false),
-        ("gap-success", [], [B], true),
+        ("gap-success", [], [A, B], false),
         ("gap-failure", [], [A, B], false),
-        ("down-success", [], [B], true),
+        ("down-success", [], [A, B], false),
         ("down-failure", [], [A, B], false),
-        ("switch-gap-success", [], [B], true),
+        ("switch-gap-success", [], [A, B], false),
         ("switch-gap-failure", [A], [B], false),
         ("switch-gap-duplicate-success", [A], [B], false),
         ("switch-gap-duplicate-failure", [A], [B], false),
@@ -107,6 +107,63 @@ public class SentinelFenceTransitionTests
         else coalescer.Offer(hint with { Reporters = [Second] }, false);
         var failed = name.EndsWith("failure");
         return coalescer.TakePending(failed, failed ? (RespireEndpoint?)null : B, failed ? (RespireEndpoint?)null : B)!.Value;
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task IndependentWakeupCanDiscoverASubsequentPrimary(bool down, bool retainedReporter)
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        var active = SentinelHint.FromSwitchMaster("a-to-b", A, B, First);
+        if (retainedReporter) active = active with { Reporters = [First, Second] };
+        coalescer.Offer(active, false);
+        coalescer.Offer(down ? SentinelHint.FromDown("down", Second) : SentinelHint.FromGap(Second), false);
+        var next = coalescer.TakePending(validatedPrimary: B, validatedPeer: B)!.Value;
+        await Assert.That(next.ReconciliationPrimary).IsNull();
+        var promoted = new RespireEndpoint("127.0.0.1", 6381);
+        await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? Encoding.ASCII.GetBytes($"*2\r\n+{promoted.Host}\r\n+{promoted.Port}\r\n") : null,
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", reporter.Port)],
+        };
+        var validations = 0;
+        await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
+        {
+            validations++;
+            return ValueTask.FromResult(primary.PrimaryEndpoint);
+        }, CancellationToken.None, notificationHint: next);
+        await Assert.That(validations).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task FreshGapDuringReporterReconciliationDoesNotInheritTheCompletedOwner()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(SentinelHint.FromGap(First) with { Reporters = [First, Second] }, false);
+        var reconciliation = coalescer.TakePending(validatedPrimary: B, validatedPeer: B)!.Value;
+        await Assert.That(reconciliation.ReconciliationPrimary.HasValue).IsTrue();
+        coalescer.Offer(SentinelHint.FromGap(Second), false);
+        var next = coalescer.TakePending(validatedPrimary: B, validatedPeer: B)!.Value;
+        await Assert.That(next.ReconciliationPrimary).IsNull();
+    }
+
+    [Test]
+    public async Task ReconciliationRequiresFreshDnsToMatchTheValidatedPeer()
+    {
+        var hostname = new RespireEndpoint("primary.internal", 6379);
+        var identity = new SentinelValidatedPrimary(hostname, A);
+        await Assert.That(identity.Matches(hostname, ["192.0.2.1"])).IsFalse();
+        await Assert.That(identity.Matches(hostname, ["127.0.0.1", "192.0.2.1"])).IsFalse();
+        await Assert.That(identity.Matches(hostname, ["::ffff:127.0.0.1"])).IsTrue();
+        await Assert.That(identity.Matches(hostname, null)).IsTrue();
     }
 
     [Test]

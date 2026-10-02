@@ -7,10 +7,16 @@ internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, s
 internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
 {
     internal bool Matches(RespireEndpoint candidate, string[]? addresses)
-        => SentinelDiscoveryState.EndpointComparer.Instance.Equals(Endpoint, candidate)
-            || Peer is { } peer && peer.Port == candidate.Port
+    {
+        // Fresh DNS evidence takes precedence over the hostname: its owner may have changed
+        // since ROLE validated the retained peer. Ambiguous address sets cannot confirm it.
+        if (Peer is { } peer && (addresses is { Length: > 0 }
+            || System.Net.IPAddress.TryParse(candidate.Host, out _)))
+            return peer.Port == candidate.Port
                 && SentinelDiscoveryState.SingleAddress(candidate, addresses) is { } address
                 && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(peer.Host));
+        return SentinelDiscoveryState.EndpointComparer.Instance.Equals(Endpoint, candidate);
+    }
 }
 
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
@@ -183,8 +189,10 @@ internal sealed class SentinelNotificationCoalescer
         return new(key, targets, sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray(),
             reporters, mustRediscover)
         {
-            ReconciliationPrimary = sources.Count == 0
-                ? hint.ReconciliationPrimary ?? previous.ReconciliationPrimary : null,
+            // An independent wake-up remains independent even when its key duplicates an
+            // active reconciliation pass. Only two reconciliation-only hints retain a bound.
+            ReconciliationPrimary = sources.Count == 0 && previous.ReconciliationPrimary is not null
+                ? hint.ReconciliationPrimary : null,
         };
     }
 
@@ -236,9 +244,12 @@ internal sealed class SentinelNotificationCoalescer
         }
         if (Active is { } activeHint)
         {
+            // A newly delivered down/gap hint can describe a later promotion. It is not
+            // merely another reporter for the attempt that just completed.
+            var freshWakeup = next.Sources.Length == 0 && next.ReconciliationPrimary is null;
             // Reconciliation preserves demoted sources and consumes only the validated primary's
             // source evidence, so an alternate reporter cannot retire that generation again.
-            if (!activeFailed && (next.Sources.Length == 0 || next.Key == activeHint.Key
+            if (!activeFailed && !freshWakeup && (next.Key == activeHint.Key
                 || activeHint.Sources.Length == 0
                     && next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
                 next = ForReporterReconciliation(next, validatedPrimary, validatedPeer);
@@ -273,6 +284,7 @@ internal sealed class SentinelNotificationCoalescer
                 next = Merge(unqueried, in next);
                 next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
+            if (!activeFailed && freshWakeup) next = next with { ReconciliationPrimary = null };
         }
         _pending = null;
         Active = next;
