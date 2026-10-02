@@ -8,8 +8,9 @@ internal sealed partial class RespireConnection
     /// Reads a stream source in filled chunks of at most <see cref="StreamChunkSize"/> bytes into
     /// two pooled buffers so the alternate chunk can fill while the caller writes the current one.
     /// </summary>
-    private sealed class StreamPayloadReader(Stream source, long length) : IDisposable
+    private sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
     {
+        private readonly ArrayPool<byte> _pool = pool ?? ArrayPool<byte>.Shared;
         private readonly object _bufferOwnershipGate = new();
         private byte[]? _chunk;
         private byte[]? _alternateChunk;
@@ -39,8 +40,8 @@ internal sealed partial class RespireConnection
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 chunk = _useAlternate
-                    ? _alternateChunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize)
-                    : _chunk ??= ArrayPool<byte>.Shared.Rent(StreamChunkSize);
+                    ? _alternateChunk ??= _pool.Rent(StreamChunkSize)
+                    : _chunk ??= _pool.Rent(StreamChunkSize);
                 _useAlternate = !_useAlternate;
                 // Ownership spans all partial reads, including gaps between ReadAsync calls.
                 _readingChunk = true;
@@ -183,8 +184,8 @@ internal sealed partial class RespireConnection
                 retainedBuffer = pendingBuffer;
                 bufferSettled = pendingRead;
             }
-            if (_chunk is { } chunk && !ReferenceEquals(chunk, retainedBuffer)) ArrayPool<byte>.Shared.Return(chunk);
-            if (_alternateChunk is { } alternate && !ReferenceEquals(alternate, retainedBuffer)) ArrayPool<byte>.Shared.Return(alternate);
+            if (_chunk is { } chunk && !ReferenceEquals(chunk, retainedBuffer)) _pool.Return(chunk);
+            if (_alternateChunk is { } alternate && !ReferenceEquals(alternate, retainedBuffer)) _pool.Return(alternate);
             if (retainedBuffer is not null && bufferSettled is not null)
                 _ = ReturnChunkAfterReadAsync(bufferSettled, retainedBuffer);
             _chunk = null;
@@ -198,11 +199,11 @@ internal sealed partial class RespireConnection
             finally { settled.TrySetResult(); }
         }
 
-        private static async Task ReturnChunkAfterReadAsync(Task bufferSettled, byte[] chunk)
+        private async Task ReturnChunkAfterReadAsync(Task bufferSettled, byte[] chunk)
         {
             try { await bufferSettled.ConfigureAwait(false); }
             catch { /* The original streamed SET owns its failure. */ }
-            finally { ArrayPool<byte>.Shared.Return(chunk); }
+            finally { _pool.Return(chunk); }
         }
     }
 }

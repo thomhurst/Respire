@@ -176,9 +176,11 @@ public sealed class StreamedSetTests
         const int length = RespireConnection.StreamChunkSize * 2;
         await using var server = new CountingSetServer();
         GatedWriteStream? transport = null;
+        var pool = new TrackingArrayPool();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp2,
+            StreamPayloadPool = pool,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
                 var client = new TcpClient();
@@ -200,21 +202,7 @@ public sealed class StreamedSetTests
             cancellation.Cancel();
             await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<OperationCanceledException>();
-
-            var rented = new List<byte[]>();
-            try
-            {
-                for (var i = 0; i < 64; i++)
-                {
-                    var buffer = ArrayPool<byte>.Shared.Rent(source.CapturedBufferLength);
-                    rented.Add(buffer);
-                    await Assert.That(ReferenceEquals(buffer, source.CapturedBuffer)).IsFalse();
-                }
-            }
-            finally
-            {
-                foreach (var buffer in rented) ArrayPool<byte>.Shared.Return(buffer);
-            }
+            await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsFalse();
         }
         finally
         {
@@ -224,46 +212,40 @@ public sealed class StreamedSetTests
         }
 
         await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
     }
 
     [Test]
     public async Task DisposeKeepsPartialChunkBufferPooledOutUntilFillTaskSettles()
     {
         var source = new ShortReadThenBlockedStream();
+        var pool = new TrackingArrayPool();
         var readerType = typeof(RespireConnection).GetNestedType("StreamPayloadReader", BindingFlags.NonPublic)!;
         var reader = Activator.CreateInstance(readerType,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
-            [source, (long)RespireConnection.StreamChunkSize * 2], null)!;
+            [source, (long)RespireConnection.StreamChunkSize * 2, pool], null)!;
         var readChunk = readerType.GetMethod("ReadChunkAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
         _ = await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!;
 
         var fillingChunk = Task.Run(async () =>
             await (ValueTask<ReadOnlyMemory<byte>>)readChunk.Invoke(reader, [CancellationToken.None])!);
         byte[]? pendingBuffer = null;
-        byte[]? probe = null;
         try
         {
             await source.ThirdReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             pendingBuffer = (byte[])readerType.GetField("_alternateChunk", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(reader)!;
             ((IDisposable)reader).Dispose();
-            probe = ArrayPool<byte>.Shared.Rent(RespireConnection.StreamChunkSize);
-            await Assert.That(ReferenceEquals(probe, pendingBuffer)).IsFalse();
+            await Assert.That(pool.Returned.Contains(pendingBuffer)).IsFalse();
             await Assert.That(pendingBuffer[0]).IsEqualTo((byte)'b');
         }
         finally
         {
-            try
-            {
-                source.ContinueThirdRead.TrySetResult();
-                ((IDisposable)reader).Dispose();
-                await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
-            }
-            finally
-            {
-                if (probe is not null) ArrayPool<byte>.Shared.Return(probe);
-            }
+            source.ContinueThirdRead.TrySetResult();
+            ((IDisposable)reader).Dispose();
+            await fillingChunk.WaitAsync(TimeSpan.FromSeconds(5));
         }
+        await Assert.That(pool.Returned.Contains(pendingBuffer!)).IsTrue();
     }
 
     [Test]
@@ -1307,6 +1289,15 @@ public sealed class StreamedSetTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class TrackingArrayPool : ArrayPool<byte>
+    {
+        internal ConcurrentBag<byte[]> Returned { get; } = [];
+
+        public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+
+        public override void Return(byte[] array, bool clearArray = false) => Returned.Add(array);
     }
 
     private sealed class ShortReadThenBlockedStream : Stream

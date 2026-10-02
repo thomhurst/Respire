@@ -125,7 +125,7 @@ internal sealed partial class RespireConnection
                 // cancelled or ends within it (the common short-stream mistake) then surfaces as a
                 // plain exception without closing the shared connection. Only later failures,
                 // after the frame is open on the wire, have to abort it.
-                payloadReader = new StreamPayloadReader(stream, command.Length);
+                payloadReader = new StreamPayloadReader(stream, command.Length, _streamPayloadPool);
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunk = await payloadReader.ReadChunkAsync(effectiveCancellation).ConfigureAwait(false);
             }
