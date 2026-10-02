@@ -61,7 +61,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(2, target);
         router.SetSeed(source);
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () => topologyChanged.TrySetResult();
+        router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
 
         source.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
@@ -128,7 +128,7 @@ public class ClusterNodeIdentityTests
         listener.Start();
 
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () => topologyChanged.TrySetResult();
+        router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
         source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0")]));
@@ -157,7 +157,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(1, firstTarget);
         router.SetSeed(primary);
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () => changed.TrySetResult();
+        router.TopologyChanged += (_, _, _) => changed.TrySetResult();
         var connection = new object();
 
         primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
@@ -249,7 +249,7 @@ public class ClusterNodeIdentityTests
             await router.DisposeAsync();
             releasedWhenDisposalReturned = Volatile.Read(ref workerReleased);
         });
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             topologyCallbackEntered.TrySetResult();
             continueWorker.Task.GetAwaiter().GetResult();
@@ -325,7 +325,7 @@ public class ClusterNodeIdentityTests
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lastApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
             if (router.GetKnownSlotOwner(500)?.Port == targetEndpoint.Port) lastApplied.TrySetResult();
@@ -414,7 +414,7 @@ public class ClusterNodeIdentityTests
         for (var slot = 0; slot <= 3; slot++) router.SetSlotOwner(slot, source);
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
         };
@@ -742,7 +742,7 @@ public class ClusterNodeIdentityTests
         var a = router.GetMultiplexer(aEndpoint);
         router.SetSlotOwner(0, a);
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             if (router.GetKnownSlotOwner(0)?.Port == cEndpoint.Port) topologyChanged.TrySetResult();
         };
@@ -798,7 +798,7 @@ public class ClusterNodeIdentityTests
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lastApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
             if (router.GetKnownSlotOwner(130)?.Port == targetEndpoint.Port) lastApplied.TrySetResult();
@@ -839,7 +839,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
         var secondApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () =>
+        router.TopologyChanged += (_, _, _) =>
         {
             if (router.GetKnownSlotOwner(1)?.Port == targetEndpoint.Port) secondApplied.TrySetResult();
             else throw new InvalidOperationException("topology callback failure");
@@ -949,7 +949,7 @@ public class ClusterNodeIdentityTests
         var retiredOnWorker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var changedOnWorker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.NodeRetired += _ => retiredOnWorker.TrySetResult(router.IsOnSmigratedWorker);
-        router.TopologyChanged += () => changedOnWorker.TrySetResult(router.IsOnSmigratedWorker);
+        router.TopologyChanged += (_, _, _) => changedOnWorker.TrySetResult(router.IsOnSmigratedWorker);
 
         source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0")]));
@@ -1006,7 +1006,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, other);
         router.SetSlotOwner(0, source);
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.TopologyChanged += () => topologyChanged.TrySetResult();
+        router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
         source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0")]), receivedAt);
@@ -2047,3 +2047,4 @@ public class ClusterNodeIdentityTests
         }
     }
 }
+

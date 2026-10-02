@@ -270,6 +270,9 @@ internal sealed partial class ClusterRouter
         List<RetiredGeneration>? retirements = null;
         var skippedMetrics = new List<(string Reason, long Count)>();
         var topologyChanged = false;
+        long topologyVersion = 0;
+        RespireEndpoint[]? topologyEndpoints = null;
+        bool topologyAuthoritative = false;
         lock (_nodesGate)
         {
             if (Volatile.Read(ref _disposed) != 0) return;
@@ -293,6 +296,13 @@ internal sealed partial class ClusterRouter
             if (applied is not null) RetryDependentMigrationsLocked(applied, ref retiredNodes);
 
             if (retiredNodes is not null) retirements = RetireInactiveLocked(_redirectVersions.Keys);
+            if (topologyChanged)
+            {
+                topologyVersion = _topologyVersion;
+                topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
+                    .Select(static master => Endpoint(master)).Distinct().ToArray();
+                topologyAuthoritative = HasCompleteTopology();
+            }
         }
 
         // Launch retirements before the disposal check and before any listener runs:
@@ -304,7 +314,7 @@ internal sealed partial class ClusterRouter
         if (Volatile.Read(ref _disposed) != 0) return;
         if (retiredNodes is not null)
             foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
-        if (topologyChanged) TopologyChanged?.Invoke();
+        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
     }
 
     private bool TryRecordSmigratedSequence(QueuedSmigratedNotification item)
@@ -537,3 +547,4 @@ internal sealed partial class ClusterRouter
         return slots.Length > 0;
     }
 }
+

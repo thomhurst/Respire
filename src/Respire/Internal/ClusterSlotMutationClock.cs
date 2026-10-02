@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 
 namespace Respire.Internal;
@@ -78,7 +79,7 @@ internal static class ClusterSlotMutationClock
             var active = new List<RespireConnectionMultiplexer>(s_multiplexers.Count);
             for (var i = s_multiplexers.Count - 1; i >= 0; i--)
             {
-                if (s_multiplexers[i].TryGetTarget(out var multiplexer)) active.Add(multiplexer);
+                if (s_multiplexers[i].TryGetTarget(out var trackedMultiplexer)) active.Add(trackedMultiplexer);
                 else s_multiplexers.RemoveAt(i);
             }
             return [.. active];
@@ -95,3 +96,4 @@ internal static class ClusterSlotMutationClock
         }
     }
 }
+

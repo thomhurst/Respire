@@ -1380,7 +1380,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
+    internal void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
         => ApplyTopologyCore(ranges, expectedVersion, discoveryGeneration, keepUncoveredOwners: false,
             snapshotBatch: null);
 
@@ -1574,7 +1574,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Every caller has just connected to, or loaded a topology from, a cluster node. The first call
     // is the router's "connected" transition, so the background refresh worker starts here and
     // nowhere else.
-    private void SetSeed(RespireConnectionMultiplexer node)
+    internal void SetSeed(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
         {
