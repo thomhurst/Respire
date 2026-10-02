@@ -165,6 +165,10 @@ internal sealed partial class RespireConnection
                 }
 
                 phase = StreamedSetPhase.AskingAccepted;
+                // The ASKING round trip can complete as the caller or deadline is cancelled.
+                // Check again before the SET header is queued so that write cannot start late.
+                timeoutCancellation?.ThrowIfDue();
+                effectiveCancellation.ThrowIfCancellationRequested();
             }
 
             // Retirement (local or cluster generation) rejects the upload until its header is
