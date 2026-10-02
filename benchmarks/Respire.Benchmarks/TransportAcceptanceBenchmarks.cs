@@ -15,6 +15,7 @@ public class TransportAcceptanceBenchmarks
     private const int StreamPayloadLength = 256 * 1024;
     private readonly ValueTask<RespValue>[] _replies = new ValueTask<RespValue>[BatchSize];
     private readonly DelayedReadStream _stream = new(new byte[StreamPayloadLength]);
+    private readonly MemoryStream _instantStream = new(new byte[StreamPayloadLength]);
     private static readonly RawCommand Ping = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
     private RespireConnectionMultiplexer _multiplexer = null!;
     private RespireClient _client = null!;
@@ -44,6 +45,7 @@ public class TransportAcceptanceBenchmarks
         await _client.DisposeAsync();
         await _multiplexer.DisposeAsync();
         _stream.Dispose();
+        _instantStream.Dispose();
     }
 
     [Benchmark]
@@ -66,6 +68,14 @@ public class TransportAcceptanceBenchmarks
     {
         _stream.Position = 0;
         if (!await _client.Strings.SetAsync("transport-acceptance:stream", _stream, StreamPayloadLength))
+            throw new InvalidOperationException("Unexpected streamed SET response.");
+    }
+
+    [Benchmark]
+    public async Task StreamedSetWithInstantSource()
+    {
+        _instantStream.Position = 0;
+        if (!await _client.Strings.SetAsync("transport-acceptance:stream", _instantStream, StreamPayloadLength))
             throw new InvalidOperationException("Unexpected streamed SET response.");
     }
 

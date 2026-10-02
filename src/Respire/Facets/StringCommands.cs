@@ -97,6 +97,11 @@ public partial interface IStringCommands
     /// first chunk closes the connection.
     /// </para>
     /// <para>
+    /// The next source read starts while the current chunk is written. A custom
+    /// <see cref="Stream.ReadAsync(Memory{byte}, CancellationToken)"/> implementation must return
+    /// promptly with its asynchronous operation; it must not block synchronously before returning.
+    /// </para>
+    /// <para>
     /// <b>The upload holds the connection.</b> Later commands on the same multiplexed connection
     /// wait for the complete frame, so a slow source (for example a network stream) delays
     /// unrelated traffic. Use a separate client for slow sources.

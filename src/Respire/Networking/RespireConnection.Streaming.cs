@@ -431,18 +431,16 @@ internal sealed partial class RespireConnection
                 return;
             }
 
-            // Read into the alternate pooled chunk while the socket drains this chunk.
-            // A Stream.ReadAsync implementation may block before returning its ValueTask.
-            // Run the speculative fill away from this continuation so write cancellation and
-            // command deadlines remain observable while a source blocks synchronously.
-            var nextChunk = Task.Run(() => reader.ReadChunkAsync(cancellationToken).AsTask());
+            // AppendStreamingBytes copies the chunk into the connection buffer, so the reader can
+            // reuse its single pooled chunk while the socket drains that copy.
+            var nextChunk = reader.ReadChunkAsync(cancellationToken);
             try
             {
                 await write.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                ObserveStreamReadFailure(nextChunk);
+                ObserveStreamReadFailure(nextChunk.AsTask());
                 throw;
             }
             chunk = await nextChunk.ConfigureAwait(false);
