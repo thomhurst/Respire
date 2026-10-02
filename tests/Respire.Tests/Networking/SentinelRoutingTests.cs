@@ -600,7 +600,7 @@ public class SentinelRoutingTests
         var clock = new FenceClock();
         router.Clock = clock;
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
-        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        await WaitForInitialSentinelValidationAsync(client, sentinel, waitForRediscovery: false);
         // The dead monitor's first subscription failed; its one retry waits on the gated clock.
         var retry = await ReadFenceTimerAsync(clock, retryDelay);
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -2961,14 +2961,15 @@ public class SentinelRoutingTests
             await Task.Delay(5, timeout.Token);
     }
 
-    private static async Task WaitForInitialSentinelValidationAsync(RespireClient client, FakeRespServer sentinel)
+    private static async Task WaitForInitialSentinelValidationAsync(
+        RespireClient client, FakeRespServer sentinel, bool waitForRediscovery = true)
     {
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         using (var timeout = new CancellationTokenSource(Limit))
             while (router.SuccessfulMonitorSubscriptions == 0) await Task.Delay(5, timeout.Token);
         var rediscovery = router.NotificationRediscovery;
-        if (rediscovery is not null) await rediscovery.WaitAsync(Limit);
+        if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
     }
 
     private static async Task WaitForCommandCountAsync(FakeRespServer server, string command, int count)
