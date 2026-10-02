@@ -41,6 +41,10 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 
 Timestamps are checked before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions, and `Align` take a non-negative millisecond timestamp, `Minimum`, or `Maximum`.
 
+## Client-side cache
+
+When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `DecrementByAsync`, `DeleteRangeAsync`, or `MultiAddAsync` call flushes the local cache. A write can also update compaction destination series, and the command does not identify every destination. The flush keeps cached reads correct when compaction rules are configured; high-volume ingestion therefore gets no cache reuse between these writes. `CreateRuleAsync` and `DeleteRuleAsync` fence their source and destination keys.
+
 ## Reads
 
 `GetAsync` returns the latest sample, or `null` for an empty series. `RangeAsync` and `ReverseRangeAsync` read one series. Their options support exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP`, and `EMPTY`.

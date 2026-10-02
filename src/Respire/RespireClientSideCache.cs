@@ -499,23 +499,38 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private MutationFence BeginMultiKeyMutation(
         in ClientCacheCommandKey arguments, RawCommandKeyLayouts.KeyLayout layout)
     {
-        if (layout.Count == 1)
+        var keyCapacity = layout.Count + (layout.Extra >= 0 ? 1 : 0);
+        if (keyCapacity == 0)
         {
-            var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
+            return BeginUnknownMutation();
+        }
+
+        if (keyCapacity == 1)
+        {
+            var key = arguments.GetArgument(layout.Extra >= 0 ? layout.Extra : layout.Start).AsKey().Snapshot();
             Invalidate(in key);
             return MutationFence.ForKey(key);
         }
 
         // Duplicate keys (DEL a a) are skipped so each key is invalidated, published and counted once.
-        var keys = new RespireKey[layout.Count];
+        var keys = new RespireKey[keyCapacity];
         var keyCount = 0;
-        var seen = layout.Count > LinearDeduplicationLimit ? new HashSet<RespireKey>(layout.Count) : null;
+        var seen = keyCapacity > LinearDeduplicationLimit ? new HashSet<RespireKey>(keyCapacity) : null;
         for (var index = 0; index < layout.Count; index++)
         {
             var key = arguments.GetArgument(layout.Start + index * layout.Stride).AsKey().Snapshot();
             if (seen is not null ? !seen.Add(key) : ContainsKey(keys, keyCount, in key)) continue;
             keys[keyCount++] = key;
             Invalidate(in key);
+        }
+        if (layout.Extra >= 0)
+        {
+            var key = arguments.GetArgument(layout.Extra).AsKey().Snapshot();
+            if (seen is not null ? seen.Add(key) : !ContainsKey(keys, keyCount, in key))
+            {
+                keys[keyCount++] = key;
+                Invalidate(in key);
+            }
         }
 
         if (keyCount == 1) return MutationFence.ForKey(keys[0]);

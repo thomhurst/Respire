@@ -77,6 +77,27 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task MultiKeyMutationFenceIncludesExtraDestinationKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "source-one", "old");
+        Insert(cache, "source-two", "old");
+        Insert(cache, "destination", "old");
+        Insert(cache, "unrelated", "retained");
+        RespireValue[] args = ["destination", 2, "source-one", "source-two"];
+        var command = new MultiKeyCacheCommand(args);
+
+        var fence = cache.BeforeCommand("CMS.MERGE", in command);
+
+        await Assert.That(fence.Kind).IsEqualTo(ClientSideCacheCoordinator.MutationFenceKind.Keys);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        await Assert.That(cache.TryGet(new RespireKey("source-one"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("source-two"), out _)).IsFalse();
+        await Assert.That(cache.TryGet(new RespireKey("destination"), out _)).IsFalse();
+    }
+
+    [Test]
     public async Task JsonMSetFencesTripletKeysAndLeavesUnrelatedEntries()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
@@ -839,5 +860,18 @@ public class ClientSideCacheCoordinatorTests
 
         var token = cache.BeginRead("STRLEN", in request);
         cache.CompleteRead(in token, in response, allowInsert: true);
+    }
+
+    private readonly struct MultiKeyCacheCommand(RespireValue[] arguments) : IRespCommand
+    {
+        public void Write(ref RespWriter writer) { }
+
+        public RespireCacheMutation GetCacheMutation(string operation) => RespireCacheMutation.MultiKey;
+
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+        {
+            key = new ClientCacheCommandKey(operation, arguments);
+            return true;
+        }
     }
 }
