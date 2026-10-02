@@ -250,6 +250,71 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    public async Task GetStream_CancellationOnRetiredConnectionPreservesOtherAcceptedReplies()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = static command => command is "GET key" or "PING",
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var lifetime = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        var connectionId = server.ReceivedConnectionIds[0];
+        await server.SendRawAsync("$8\r\na"u8.ToArray(), connectionId);
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var firstByte = new byte[1];
+        await Assert.That(await stream!.ReadAsync(firstByte)).IsEqualTo(1);
+
+        var ping = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
+        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+        var retirement = connection.RetireAsync();
+        var pendingRead = stream.ReadAsync(new byte[8]).AsTask();
+        lifetime.Cancel();
+        await Assert.That(async () => await pendingRead.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Task.Delay(50, timeout.Token);
+        await Assert.That(server.PeerClosed.IsCompleted).IsFalse();
+
+        await server.SendRawAsync("bcdefgh\r\n+PONG\r\n"u8.ToArray(), connectionId);
+        using var pong = await ping.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task GetStream_CancelledStreamDoesNotBlockLaterRetirement()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = static command => command == "GET key",
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var lifetime = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        var connectionId = server.ReceivedConnectionIds[0];
+        await server.SendRawAsync("$8\r\na"u8.ToArray(), connectionId);
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var firstByte = new byte[1];
+        await Assert.That(await stream!.ReadAsync(firstByte)).IsEqualTo(1);
+        var pendingRead = stream.ReadAsync(new byte[8]).AsTask();
+
+        lifetime.Cancel();
+        await Assert.That(async () => await pendingRead.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Task.Delay(50, timeout.Token);
+        await Assert.That(server.PeerClosed.IsCompleted).IsFalse();
+
+        await connection.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task GetStream_DisposingEarlyDrainsFrameAndPreservesNextReply()
     {
         var payload = new byte[256 * 1024];

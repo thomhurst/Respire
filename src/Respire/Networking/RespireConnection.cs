@@ -955,8 +955,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void OnBulkStreamLifetimeCancelled()
     {
-        if (Volatile.Read(ref _retired))
+        if (Volatile.Read(ref _retired) && ShouldAbortAbandonedBulkStream())
             Abort(new RespireConnectionRetiredException(Host, Port));
+    }
+
+    private bool ShouldAbortAbandonedBulkStream()
+    {
+        lock (_writeGate)
+        {
+            return Volatile.Read(ref _activeBulkStreamSource) is { IsPayloadAborted: true }
+                && _inflight.Count == 0
+                && _activeBuffer.Count == 0
+                && !Volatile.Read(ref _sending);
+        }
     }
 
 #if NET
@@ -3003,6 +3014,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Stop refresh deadlines and provider work while accepted transport frames drain.
         _credentialSession?.RequestStop();
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
+        if (ShouldAbortAbandonedBulkStream())
+            Abort(new RespireConnectionRetiredException(Host, Port));
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
         return completion.Task;
