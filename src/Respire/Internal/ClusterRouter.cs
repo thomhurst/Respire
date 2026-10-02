@@ -753,13 +753,23 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return (pool, slotVersion);
     }
 
-    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection, bool asking = false)
+    internal bool IsDedicatedStreamRouteCurrent(int? slot, long slotVersion, RespireConnection connection,
+        DedicatedConnectionPool? askingPool = null)
     {
         if (slot is not { } value) return true;
         lock (_nodesGate)
         {
             if (_slotVersions[value] != slotVersion) return false;
-            if (asking) return true;
+            if (askingPool is not null)
+            {
+                // ASK bypasses the slot owner, but never the target's MOVING publication.
+                // Pool replacement precedes retirement, so IsStopping alone is insufficient.
+                foreach (var (node, pool) in _dedicatedPools)
+                    if (ReferenceEquals(pool, askingPool))
+                        return !node.IsRetired
+                            && node.ActiveConnectionEndpoint == new RespireEndpoint(connection.Host, connection.Port);
+                return false;
+            }
             // Read the version and owner together; a half-published route must not validate.
             // With no discovered owner, the selected seed is still eligible. Learning an owner
             // changes the slot version, so that publication invalidates this provisional route.

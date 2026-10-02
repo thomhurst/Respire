@@ -3602,7 +3602,7 @@ public sealed partial class RespireClient : IRespireClient
                                 ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
                                     operation, commandDeadline, allowStreamingConnectionReroute: false,
                                     validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
-                                        slot, routeVersion, connection, asking: true))
+                                        slot, routeVersion, connection, askingPool: pool))
                                 : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
                                     commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
                                     validateStreamingRoute: () => !pool.IsStopping && cluster.IsDedicatedStreamRouteCurrent(
