@@ -361,6 +361,8 @@ function Test-IsClaudeReviewComment {
     if ($body -match '(?im)^\s*<!--\s*claude-code-review\s*-->\s*$') {
         return $true
     }
+    # Keep this allowlist aligned with report headings emitted by workflows. Other markerless comments
+    # must remain eligible for legacy review detection until the fallback is removed in #715.
     $automationMarker = [regex]::Escape($script:NonReviewAutomationCommentMarker)
     if ($body -match "(?is)^\s*$automationMarker\s*\r?\n\s*#{1,4}\s+(?:Coverage report|🧪 Integration Test Results\b)") {
         return $false
