@@ -192,6 +192,7 @@ function Get-AgentLockBlocker {
         [Parameter(Mandatory)][string]$LockName
     )
     # Repo is the primary checkout, never the potentially stale worktree copy.
+    # Do not cache FREE across checks: another agent may acquire ownership during a sweep.
     $agentLocks = Join-Path $Repo 'scripts/AgentLocks.ps1'
     if (-not (Test-Path -LiteralPath $agentLocks -PathType Leaf)) { return 'canonical lock script is unavailable' }
     $state = @(& pwsh -NoProfile -File $agentLocks status -LockName $LockName -OwnerId worktree-cleanup-observer 2>$null)

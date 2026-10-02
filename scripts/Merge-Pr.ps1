@@ -122,6 +122,8 @@ if (-not $Worktree -and -not $currentBranchWorktree) {
     git -C $mainRepo worktree prune
     exit 0
 } else {
+    # Standalone merges can clean up immediately. An owned checkout remains until
+    # the agent's explicit release; never release another caller's lock here.
     Remove-MergedWorktree -Repo $mainRepo -Worktree $cleanupWorktree -ExpectedHead $mergedHead -Label "#${Pr}"
 
     # A dirty worktree is intentionally preserved. Its local and remote branches are
