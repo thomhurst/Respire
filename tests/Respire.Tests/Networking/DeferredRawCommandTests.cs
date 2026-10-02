@@ -10,6 +10,18 @@ namespace Respire.Tests.Networking;
 public class DeferredRawCommandTests
 {
     [Test]
+    public async Task DeferredCommandsPreserveDescriptorReadAndCursorMetadata()
+    {
+        var read = DeferredRawCommands.CreateCommand(RespireCommands.String.GET, ["GET", "key"], 1, 1);
+        var cursor = DeferredRawCommands.CreateCommand(RespireCommands.Key.SCAN, ["SCAN", "17"], -1, 1);
+
+        await Assert.That(read.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(read.CursorArgumentIndex).IsEqualTo(-1);
+        await Assert.That(cursor.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
+        await Assert.That(cursor.CursorArgumentIndex).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ArgumentsAreSnapshotsAndResultsOwnNestedStorage(bool transactional)
@@ -222,4 +234,5 @@ public class DeferredRawCommandTests
             ? [FakeRespServer.OkReply, .. replies.Select(_ => "+QUEUED\r\n"u8.ToArray()),
                 Encoding.ASCII.GetBytes($"*{replies.Length}\r\n").Concat(replies.SelectMany(reply => reply)).ToArray()]
             : replies;
+
 }

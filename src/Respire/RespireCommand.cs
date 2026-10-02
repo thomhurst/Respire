@@ -22,7 +22,8 @@ public readonly struct RespireCommand
         Name = name;
         _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
             | (isReadOnly ? ReadOnlyMetadataFlag : 0);
-        _verb = new Verb(name);
+        var readKind = Verb.GetReadKind(name, isReadOnly);
+        _verb = new Verb(name, readKind);
         Behavior = Classify(name);
     }
 
@@ -53,6 +54,10 @@ public readonly struct RespireCommand
         => (RespireCacheMutation)((_sourceAndMutationMetadata & CacheMutationMask) >> CacheMutationShift);
 
     internal Verb Verb => _verb;
+
+    internal ReadCommandKind ReadKind => _verb.ReadKind;
+
+    internal int CursorArgumentIndex => _verb.Bulk is null ? -1 : _verb.CursorArgumentIndex;
 
     internal RespireCommandBehavior Behavior { get; }
 
@@ -186,6 +191,13 @@ public readonly struct RespireCommand
 internal sealed class RespireCommandCatalogNameAttribute(string name) : Attribute
 {
     public string Name { get; } = name;
+}
+
+internal enum ReadCommandKind : byte
+{
+    None,
+    Read,
+    CursorRead,
 }
 
 // Keep the behavior and read-only metadata within the descriptor's existing footprint.

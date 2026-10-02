@@ -394,6 +394,10 @@ public class HashFieldLeaseWireTests
             {
                 await Task.Delay(10, promotionTimeout.Token);
             }
+            catch (RespireConnectionRetiredException) when (!promotionTimeout.IsCancellationRequested)
+            {
+                await Task.Delay(10, promotionTimeout.Token);
+            }
         }
         await Assert.That(client.Endpoint.Port).IsEqualTo(promotedPrimary.Port);
         await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(

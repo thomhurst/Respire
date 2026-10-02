@@ -7,6 +7,9 @@ namespace Respire.Commands;
 internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemory<float> vector,
     RespireVectorEncoding encoding, RespireValue[] before, RespireValue[] after) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+    public int CursorArgumentIndex => verb.CursorArgumentIndex;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = key;

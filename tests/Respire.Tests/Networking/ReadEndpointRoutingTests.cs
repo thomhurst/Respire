@@ -51,6 +51,117 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
+    public async Task InlineRawReadsAndPreencodedDatabaseSizeUseReplicaView()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "ROLE" => ReplicaRole,
+                "GET key" => Bulk("replica"),
+                "DBSIZE" => ":42\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        using var raw = await view.ExecuteAsync("GET key");
+        await view.ExecuteFireAndForgetAsync("GET key");
+        var databaseSize = await view.Server.DatabaseSizeAsync();
+
+        await Assert.That(raw.AsString()).IsEqualTo("replica");
+        await Assert.That(databaseSize).IsEqualTo(42);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands).Contains("DBSIZE");
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task TypedDescriptorRoutesReadEvenWhenOperationLabelIsNotCanonical()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole, Bulk("encoding"));
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.Replica);
+        var result = await view.StringAsync(
+            "OBJECT", new Cmd1(RespireCommands.Key.OBJECT_ENCODING.Verb, "key"), CancellationToken.None);
+
+        await Assert.That(result).IsEqualTo("encoding");
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "OBJECT ENCODING key"]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task DescriptorSubcommandAndTypedModuleReadsUseReplicaPolicy()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReplicaRole)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "GET key" or "OBJECT ENCODING key" => Bulk("value"),
+                "MEMORY USAGE key" => ":1\r\n"u8.ToArray(),
+                "GEOSEARCH geo FROMLONLAT 0 0 BYRADIUS 1 m" => "*0\r\n"u8.ToArray(),
+                "XPENDING stream group" or "XPENDING stream group - + 10" => "*0\r\n"u8.ToArray(),
+                "XINFO STREAM stream" or "XINFO GROUPS stream" or "XINFO CONSUMERS stream group"
+                    => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        using (await view.ExecuteAsync(RespireCommand.Create("GET"), "key")) { }
+        var key = "key";
+        using (await view.ExecuteAsync($"OBJECT ENCODING {key}")) { }
+        using (await view.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key")) { }
+        await view.Geo.SearchAsync("geo", GeoSearchOrigin.FromCoordinates(0, 0), GeoSearchShape.Circle(1));
+        await view.Streams.PendingSummaryAsync("stream", "group");
+        await view.Streams.PendingAsync("stream", "group");
+        await view.Streams.InfoAsync("stream");
+        await view.Streams.GroupInfoAsync("stream");
+        await view.Streams.ConsumerInfoAsync("stream", "group");
+
+        await Assert.That(replica.ReceivedCommands.Where(command => command != "ROLE")).IsEquivalentTo(
+        [
+            "GET key",
+            "OBJECT ENCODING key",
+            "MEMORY USAGE key",
+            "GEOSEARCH geo FROMLONLAT 0 0 BYRADIUS 1 m",
+            "XPENDING stream group",
+            "XPENDING stream group - + 10",
+            "XINFO STREAM stream",
+            "XINFO GROUPS stream",
+            "XINFO CONSUMERS stream group",
+        ]);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task ReplicaPolicyRejectsWrongRoleAndReplicaPreferredFallsBackDuringCooldown()
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
@@ -78,10 +189,13 @@ public class ReadEndpointRoutingTests
     [Test]
     public async Task OnlyCatalogVerifiedReadOnlyCommandsAreEligible()
     {
-        await Assert.That(ReadOnlyCommandCatalog.Contains("GET")).IsTrue();
-        await Assert.That(ReadOnlyCommandCatalog.Contains("MGET")).IsTrue();
-        await Assert.That(ReadOnlyCommandCatalog.Contains("SET")).IsFalse();
-        await Assert.That(ReadOnlyCommandCatalog.Contains("CUSTOM.READ")).IsFalse();
+        await Assert.That(RespireCommands.String.GET.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(RespireCommands.String.MGET.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(RespireCommands.String.SET.ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(RespireCommand.Create("CUSTOM.READ").ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(new Cmd1(RespireCommands.Key.OBJECT_ENCODING.Verb, "key").ReadKind)
+            .IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(new Cmd1(Verbs.Get, "key").ReadKind).IsEqualTo(ReadCommandKind.Read);
     }
 
     [Test]
@@ -676,17 +790,17 @@ public class ReadEndpointRoutingTests
     public async Task CursorContinuationIsReadFromTheCursorArgument()
     {
         var hscan = RespireCommands.All.ToArray().First(command => command.Name == "HSCAN");
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["0", "COUNT", 10]))).IsFalse();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, [0]))).IsFalse();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SCAN", new CmdN(Verbs.Scan, ["17"]))).IsTrue();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("hscan", new CatalogCommand(hscan, ["key", "0"]))).IsFalse();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("HSCAN", new CatalogCommand(hscan, ["key", "9"]))).IsTrue();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("ZSCAN",
-            new DynamicCommand(["ZSCAN", "key", "9"], routingKeyIndex: 1))).IsTrue();
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("SSCAN",
-            new DynamicCommand(["SSCAN", "key", "0"], routingKeyIndex: 1))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, ["0", "COUNT", 10]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, [0]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CmdN(Verbs.Scan, ["17"]))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CatalogCommand(hscan, ["key", "0"]))).IsFalse();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(new CatalogCommand(hscan, ["key", "9"]))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
+            new DynamicCommand(["ZSCAN", "key", "9"], routingKeyIndex: 1, cursorArgumentIndex: 1))).IsTrue();
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
+            new DynamicCommand(["SSCAN", "key", "0"], routingKeyIndex: 1, cursorArgumentIndex: 1))).IsFalse();
         // ARSCAN's cursor position is unknown, so it is always treated as a fresh scan.
-        await Assert.That(ReadOnlyCommandCatalog.IsCursorContinuation("ARSCAN",
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(
             new DynamicCommand(["ARSCAN", "key", "9"], routingKeyIndex: 1))).IsFalse();
     }
 
@@ -856,11 +970,15 @@ public class ReadEndpointRoutingTests
     [Test]
     public async Task CursorCommandsAreClassifiedForPinning()
     {
-        foreach (var name in new[] { "SCAN", "HSCAN", "SSCAN", "ZSCAN", "ARSCAN", "scan" })
-            await Assert.That(ReadOnlyCommandCatalog.Classify(name)).IsEqualTo(ReadCommandKind.CursorRead);
-        await Assert.That(ReadOnlyCommandCatalog.Classify("GET")).IsEqualTo(ReadCommandKind.Read);
-        await Assert.That(ReadOnlyCommandCatalog.Classify("SET")).IsEqualTo(ReadCommandKind.None);
-        await Assert.That(ReadOnlyCommandCatalog.Classify("CUSTOM.READ")).IsEqualTo(ReadCommandKind.None);
+        var cursorCommands = RespireCommands.All.ToArray()
+            .Where(static command => command.Name is "SCAN" or "HSCAN" or "SSCAN" or "ZSCAN" or "ARSCAN")
+            .ToArray();
+        await Assert.That(cursorCommands.Length).IsEqualTo(5);
+        foreach (var command in cursorCommands)
+            await Assert.That(command.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
+        await Assert.That(RespireCommands.String.GET.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(RespireCommands.String.SET.ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(RespireCommand.Create("CUSTOM.READ").ReadKind).IsEqualTo(ReadCommandKind.None);
     }
 
     [Test]

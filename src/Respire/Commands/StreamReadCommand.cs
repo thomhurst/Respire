@@ -4,6 +4,8 @@ namespace Respire.Commands;
 
 internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[] ids, int? count, long? blockMilliseconds) : IRespCommand
 {
+    public ReadCommandKind ReadKind => RespireCommands.Stream.XREAD.ReadKind;
+
     // Sends are sequential. Cursors change only after a successful read's reply is fully owned;
     // failed/cancelled sends retry unchanged cursors and never mutate a still-borrowed command.
     internal void SetAfter(int index, RespireStreamId id) => ids[index] = id;

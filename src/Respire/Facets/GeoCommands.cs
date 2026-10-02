@@ -548,6 +548,8 @@ internal readonly struct GeoSearchCommand(
     Verb verb, RespireValue source, GeoSearchOrigin origin, GeoSearchShape shape,
     GeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
+    public ReadCommandKind ReadKind => verb.ReadKind;
+
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {
         primaryKey = source;
@@ -667,6 +669,8 @@ internal readonly struct GeoSearchCommand(
 internal readonly struct GeoAddCommand(
     Verb verb, RespireValue key, SetWhen when, bool changed, GeoEntry[] entries) : IRespCommand
 {
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)
