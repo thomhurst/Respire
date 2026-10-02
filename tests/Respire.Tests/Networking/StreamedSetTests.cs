@@ -920,7 +920,7 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task SynchronousReadAsyncRetirementRestoresEarlierPartialReads()
+    public async Task SynchronousReadAsyncRetirementWithUnknownPositionDoesNotRetry()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -945,11 +945,8 @@ public sealed class StreamedSetTests
         await connection.DisposeAsync();
         source.ContinueReading.TrySetResult();
         await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<RespireConnectionRetiredException>();
-
-        var replayed = new byte[payload.Length];
-        await command.SourceStream!.ReadExactlyAsync(replayed);
-        await Assert.That(replayed).IsEquivalentTo(payload);
+            .Throws<RespireConnectionException>();
+        await Assert.That(source.Position).IsEqualTo(12);
         await Assert.That(peer.Available).IsEqualTo(0);
     }
 
