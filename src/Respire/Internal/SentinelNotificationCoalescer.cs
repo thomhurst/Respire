@@ -210,7 +210,8 @@ internal sealed class SentinelNotificationCoalescer
         {
             // Reconciliation preserves demoted sources and consumes only the validated primary's
             // source evidence, so an alternate reporter cannot retire that generation again.
-            if (!activeFailed && next.Key == activeHint.Key)
+            if (!activeFailed && (next.Key == activeHint.Key
+                || next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
                 next = ForReporterReconciliation(next, validatedPrimary, validatedPeer);
             if (activeFailed)
             {
@@ -241,6 +242,16 @@ internal sealed class SentinelNotificationCoalescer
         _pending = null;
         Active = next;
         return next;
+    }
+
+    // A conflicting cycle has no unique target. A successful discovery can consume the
+    // confirmed target's source fence, but never a source demoted toward one distinct target.
+    private static bool IsValidatedTarget(SentinelHint hint, RespireEndpoint? primary, RespireEndpoint? peer)
+    {
+        if (primary is not { } endpoint) return false;
+        foreach (var target in hint.Targets)
+            if (MatchesValidatedSource(endpoint, peer, new(target, null))) return true;
+        return false;
     }
 
     private static SentinelHint ForReporterReconciliation(SentinelHint hint, RespireEndpoint? validatedPrimary,

@@ -180,9 +180,10 @@ internal static class SentinelResolver
                     // traffic may have published while the notification was waiting to retry.
                     var matchesSwitchSource = notificationHint is { } hint
                         ? MatchesSwitchSource(primary, in hint, primaryAddresses)
-                        : previouslyValidatedPrimary is { } previous && RespireEndpointComparer.Instance.Equals(primary, previous);
-                    var contradictsSwitch = matchesSwitchSource && preferredTarget is { } target
-                        && !RespireEndpointComparer.Instance.Equals(target, primary)
+                        : previouslyValidatedPrimary is { } previous && SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, previous);
+                    var contradictsSwitch = matchesSwitchSource
+                        && (preferredTarget is not null || notificationHint is { Sources.Length: > 0 })
+                        && (preferredTarget is not { } target || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary))
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
                     if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
                     if (contradictsSwitch || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))

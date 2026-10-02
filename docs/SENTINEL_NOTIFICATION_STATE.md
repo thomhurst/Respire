@@ -30,12 +30,18 @@ the record. DNS evidence remains paired with its endpoint and port.
 - When `SENTINEL MASTER` is unavailable, source/target evidence still fences a stale
   reporter whose old primary continues to answer `ROLE master`. A wake-up-only event
   model loses that evidence and cannot preserve this supported fallback contract.
+  Conflicting targets do not disable source fences. When a successful discovery confirms
+  an announced target in a conflicting cycle, reconciliation consumes only that target's
+  source fence; a source demoted toward one distinct target remains fenced.
 - DNS answer sets do not prove which peer answered `ROLE`. Reconciliation keeps the actual
   validated socket peer, including its port. Ambiguous DNS overlaps cannot consume another
   primary's source fence. Demotion matching may conservatively match any source address;
   consuming that fence requires the stronger identity proof.
 - Forced discovery can reuse a healthy generation when the announced endpoint is its
-  canonical endpoint or resolves unambiguously to its connected peer. Reuse still checks
+  canonical endpoint without available DNS evidence, or resolves unambiguously to its
+  connected peer. A stable hostname with changed DNS evidence requires a fresh connection.
+  Publication cannot discard a validated replacement merely because its hostname is unchanged:
+  reusing the old generation also requires the same validated peer and port. Reuse still checks
   `ROLE`. IPv6 spelling differences use the same normalized endpoint comparer as epoch state.
 - Late source resolution never combines a source's addresses with the arrival generation's
   port. A newer generation is protected by the arrival generation's own identity or later

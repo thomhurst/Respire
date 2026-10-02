@@ -9,6 +9,62 @@ namespace Respire.Tests.Networking;
 public class SentinelConfigurationTests
 {
     [Test]
+    public async Task SwitchConfirmationUsesCanonicalTargetIdentity()
+    {
+        await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? "*2\r\n+2001:0db8:0:0:0:0:0:1\r\n+6379\r\n"u8.ToArray() : "*0\r\n"u8.ToArray(),
+        };
+        var target = new RespireEndpoint("2001:db8::1", 6379);
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", reporter.Port)],
+        };
+        var hint = new SentinelHint("confirmation", target, target);
+        var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint), CancellationToken.None,
+            previouslyValidatedPrimary: target, preferredTarget: target, notificationHint: hint);
+        await Assert.That(selected.Port).IsEqualTo(target.Port);
+        await Assert.That(SentinelResolver.NormalizeHost(selected.Host)).IsEqualTo(target.Host);
+    }
+
+    [Test]
+    public async Task ConflictingTargetsStillFenceEveryRetainedSwitchSource()
+    {
+        var first = new RespireEndpoint("127.0.0.1", 6379);
+        var second = new RespireEndpoint("127.0.0.1", 6380);
+        var fresh = new RespireEndpoint("127.0.0.1", 6381);
+        await using var stale = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? "*2\r\n+127.0.0.1\r\n+6380\r\n"u8.ToArray() : "*0\r\n"u8.ToArray(),
+        };
+        await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? "*2\r\n+127.0.0.1\r\n+6381\r\n"u8.ToArray() : "*0\r\n"u8.ToArray(),
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", reporter.Port)],
+        };
+        var hint = SentinelNotificationCoalescer.Merge(new SentinelHint("a-b", second, first),
+            new SentinelHint("b-a", first, second));
+        await Assert.That(hint.Target).IsNull();
+        var validated = new List<RespireEndpoint>();
+        var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _, _) =>
+        {
+            validated.Add(candidate.PrimaryEndpoint);
+            return ValueTask.FromResult(candidate.PrimaryEndpoint);
+        }, CancellationToken.None, previouslyValidatedPrimary: first, notificationHint: hint);
+        await Assert.That(selected).IsEqualTo(fresh);
+        await Assert.That(validated).IsEquivalentTo([fresh]);
+    }
+
+    [Test]
     [Arguments(false, "127.0.0.1", "127.0.0.1")]
     [Arguments(true, "127.0.0.1", "127.0.0.1")]
     [Arguments(false, "0:0:0:0:0:0:0:1", "::1")]

@@ -302,6 +302,31 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task StableHostnamePublishesChangedValidatedPeer()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        var previous = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+            ? AddressReply("localhost", primary.Port)
+            : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        // Model DNS changing behind an established socket. The old socket keeps answering
+        // ROLE master; its captured peer differs from every freshly connected socket.
+        typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(original.Multiplexer.GetConnection(), "192.0.2.1");
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        var replacement = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        await Assert.That(ReferenceEquals(replacement, original)).IsFalse();
+        await Assert.That(original.IsRetired).IsTrue();
+        await Assert.That(replacement.Endpoint).IsEqualTo(original.Endpoint);
+        await Assert.That(replacement.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+    }
+
+    [Test]
     public async Task AnnouncedIpv6TargetUsesNormalizedIdentity()
     {
         await using var client = RespireClient.Create(Options(26379));
@@ -732,9 +757,11 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task FailbackReconciliationConsumesValidatedPrimaryAliases(bool hostname)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task FailbackReconciliationConsumesValidatedPrimaryAliases(bool hostname, bool staleReporterFirst)
     {
         await using var current = Primary();
         await using var stale = Primary();
@@ -766,17 +793,20 @@ public class SentinelRoutingTests
         await WaitForCommandCountAsync(first, query, queries + 1);
         var queryIndex = first.ReceivedCommands.ToList().FindLastIndex(command => command == query);
         Volatile.Write(ref secondPort, stale.Port);
-        router.QueueNotificationRediscovery(new SentinelHint("b-to-a",
+        var confirmation = new SentinelHint("b-to-a",
             new("127.0.0.1", current.Port), new("127.0.0.1", stale.Port),
-            ReportingSentinel: new("127.0.0.1", first.Port)));
-        router.QueueNotificationRediscovery(new SentinelHint("a-to-b-delayed",
+            ReportingSentinel: new("127.0.0.1", first.Port));
+        var delayed = new SentinelHint("a-to-b-delayed",
             new("127.0.0.1", stale.Port), new("127.0.0.1", current.Port),
-            ReportingSentinel: new("127.0.0.1", second.Port)));
+            ReportingSentinel: new("127.0.0.1", second.Port));
+        router.QueueNotificationRediscovery(staleReporterFirst ? delayed : confirmation);
+        router.QueueNotificationRediscovery(staleReporterFirst ? confirmation : delayed);
         var worker = router.NotificationRediscovery!;
         first.SuppressReply = null;
         await first.SendRawAsync(CurrentReply(), first.ReceivedConnectionIds[queryIndex]);
         await worker.WaitAsync(Limit);
         await Assert.That(client.Endpoint.Port).IsEqualTo(current.Port);
+        await Assert.That(stale.ReceivedCommands.Contains("ROLE")).IsFalse();
     }
 
     [Test]

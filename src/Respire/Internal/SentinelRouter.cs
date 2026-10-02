@@ -163,7 +163,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     throw new RespireConnectionException("Sentinel primary changed before its generation was published.");
                 var old = Current;
                 if (forceDiscovery && old is { IsRetired: false } && old.Multiplexer.IsConnected
-                    && SameEndpoint(old.Endpoint, replacement.Endpoint))
+                    && SameEndpoint(old.Endpoint, replacement.Endpoint)
+                    && old.ValidatedPeer is { } oldPeer && replacement.ValidatedPeer is { } replacementPeer
+                    && SameEndpoint(oldPeer, replacementPeer))
                     return old;
                 if (old is not null) Invalidate(old);
                 Volatile.Write(ref _current, replacement);
@@ -242,8 +244,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         var endpoint = options.PrimaryEndpoint;
         var samePeer = SentinelDiscoveryState.SingleAddress(endpoint, addresses) is { } address
             && current.Multiplexer.HasCurrentPeer(address, endpoint.Port);
+        // A stable DNS name is not proof that its established socket is still the owner.
+        // Only an unavailable DNS answer permits falling back to textual endpoint identity.
+        var sameEndpointWithoutAddresses = addresses is null && SameEndpoint(current.Endpoint, endpoint);
         if (current.IsRetired || !current.Multiplexer.IsConnected
-            || !SameEndpoint(current.Endpoint, endpoint) && !samePeer)
+            || !sameEndpointWithoutAddresses && !samePeer)
             return await ConnectGenerationAsync(options, cancellationToken).ConfigureAwait(false);
         await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
         return current;
