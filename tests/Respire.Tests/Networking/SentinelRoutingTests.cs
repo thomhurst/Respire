@@ -86,7 +86,8 @@ public class SentinelRoutingTests
         await using var stalePrimary = Primary();
         await using var promotedPrimary = Primary();
         await using var firstSentinel = Sentinel(() => stalePrimary.Port);
-        await using var reportingSentinel = Sentinel(() => promotedPrimary.Port);
+        var reportingPort = stalePrimary.Port;
+        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort));
         var options = Options(firstSentinel.Port) with
         {
             Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
@@ -108,6 +109,7 @@ public class SentinelRoutingTests
         var monitorCommand = reportingSentinel.ReceivedCommands.ToList().FindIndex(command =>
             command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
         var monitorConnection = reportingSentinel.ReceivedConnectionIds[monitorCommand];
+        Volatile.Write(ref reportingPort, promotedPrimary.Port);
         await SendSentinelMessageAsync(reportingSentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 {stalePrimary.Port} 127.0.0.1 {promotedPrimary.Port}");
 
