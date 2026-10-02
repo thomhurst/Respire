@@ -95,7 +95,7 @@ jobs:
                           '        onSerialized?.Invoke(Stopwatch.GetTimestamp());\n'
                           '        return StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n'
                           '    }\n\n')
-          tracked_api = 'bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)'
+          tracked_api = 'bool captureSendTimestampOnly = false,\n        Action<long>? onSerialized = null,\n        Action? onCommandNotApplied = null)'
           if tracked_api not in source:
               assert source.count(tracked_marker) == 1
               source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
