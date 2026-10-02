@@ -110,7 +110,7 @@ jobs:
           # only exercise standard leases. Add a compile-only queue stub to the pinned baseline.
           core = Path('baseline/src/Respire/Internal/ClientCore.cs')
           core_source = core.read_text()
-          core_marker = '    internal readonly ClientSideCacheCoordinator? ClientCache;\n'
+          core_marker = '    public readonly ClientSideCacheCoordinator? ClientCache;\n'
           core_shim = '    internal readonly CoordinationCleanupQueue CoordinationCleanupQueue = new();\n'
           if 'CoordinationCleanupQueue CoordinationCleanupQueue' not in core_source:
               assert core_source.count(core_marker) == 1
