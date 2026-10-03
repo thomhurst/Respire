@@ -15,23 +15,23 @@ internal static class NearestReadSelection
         return source;
     }
 
-    internal static ValueTask<long> GetLatencyAsync(ValueTask<long> latency, CancellationTokenSource? wait,
+    internal static ValueTask<ReadLatencyResult> GetLatencyAsync(ValueTask<ReadLatencyResult> latency, CancellationTokenSource? wait,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (latency.IsCompletedSuccessfully) return latency;
         return wait is not null ? WaitAsync(latency, wait.Token, cancellationToken)
-            : ValueTask.FromResult(ReadLatencySampler.Pending);
+            : ValueTask.FromResult(ReadLatencyResult.Pending);
     }
 
-    private static async ValueTask<long> WaitAsync(ValueTask<long> latency, CancellationToken waitToken,
+    private static async ValueTask<ReadLatencyResult> WaitAsync(ValueTask<ReadLatencyResult> latency, CancellationToken waitToken,
         CancellationToken cancellationToken)
     {
         try { return await latency.AsTask().WaitAsync(waitToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return ReadLatencySampler.Pending;
+            return ReadLatencyResult.Pending;
         }
     }
 }
@@ -90,10 +90,10 @@ internal struct NearestReadSelection<T>
     private int _sampleOrder;
     private int _selectedOrder;
 
-    internal readonly record struct PendingSample(T Candidate, ValueTask<long> Latency, bool Linked, int Order);
+    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order);
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
 
-    internal void QueueSample(T candidate, ValueTask<long> latency, bool linked = true)
+    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true)
     {
         var order = _sampleOrder++;
         if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order);
@@ -125,9 +125,10 @@ internal struct NearestReadSelection<T>
         return true;
     }
 
-    internal void Consider(T candidate, long latency, bool linked = true, int order = int.MaxValue)
+    internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue)
     {
-        if (latency == ReadLatencySampler.Pending) return;
+        if (sample.Kind == ReadLatencyKind.Pending) return;
+        var latency = sample.Kind == ReadLatencyKind.Measured ? sample.Ticks : long.MaxValue;
         if (_hasValue && (_linked && !linked || _linked == linked
             && (latency > _latency || latency == _latency && order >= _selectedOrder))) return;
         _selected = candidate;

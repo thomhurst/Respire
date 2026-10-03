@@ -45,7 +45,7 @@ public class NearestReadRoutingTests
         {
             await entered.Task.WaitAsync(deadline.Token);
             await Assert.That(await sampler.GetLatencyAsync(selection.Connection, deadline.Token))
-                .IsEqualTo(ReadLatencySampler.Pending);
+                .IsEqualTo(ReadLatencyResult.Pending);
             await Assert.That(sampler.SamplesStarted).IsEqualTo(0);
         }
         finally { release.Set(); }
@@ -53,7 +53,7 @@ public class NearestReadRoutingTests
             await Assert.That(async () => await validation).Throws<RespireConnectionException>();
         else
             await Assert.That(await validation).IsSameReferenceAs(selection.Connection);
-        await Assert.That(await sampler.GetLatencyAsync(selection.Connection, deadline.Token)).IsEqualTo(10);
+        await Assert.That(await sampler.GetLatencyAsync(selection.Connection, deadline.Token)).IsEqualTo(ReadLatencyResult.Measured(10));
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
     }
 
@@ -78,7 +78,7 @@ public class NearestReadRoutingTests
         await Assert.That(await entry.GetConnectionAsync(deadline.Token)).IsSameReferenceAs(blocked);
         replica.SuppressReply = command => command == "PING";
         await using var sampler = ReadLatencySampler.Create();
-        await Assert.That(await sampler.GetLatencyAsync(blocked, deadline.Token)).IsEqualTo(ReadLatencySampler.Pending);
+        await Assert.That(await sampler.GetLatencyAsync(blocked, deadline.Token)).IsEqualTo(ReadLatencyResult.Pending);
 
         await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(healthy);
         // The next selection reaches the blocked socket and excludes that exact socket.
@@ -263,8 +263,8 @@ public class NearestReadRoutingTests
         var primaryConnection = cluster
             ? client.Core.Cluster!.GetKnownSlotOwner(slot)!.GetConnection(slot)
             : client.Core.Multiplexer.GetConnection();
-        await Assert.That(await sampler.GetLatencyAsync(primaryConnection, default))
-            .IsLessThan(ReadLatencySampler<RespireConnection>.Unknown);
+        await Assert.That((await sampler.GetLatencyAsync(primaryConnection, default)).Kind)
+            .IsEqualTo(ReadLatencyKind.Measured);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         // A fresh primary probe would now miss the sampling deadline. The known sample
         // must keep this test independent of when another PONG could be processed.

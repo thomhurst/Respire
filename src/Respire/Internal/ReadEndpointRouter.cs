@@ -731,7 +731,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 using (reservation)
                 {
                     var checkedAt = Stopwatch.GetTimestamp();
-                    using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token).ConfigureAwait(false);
+                    // The reservation belongs to this physical socket. A MOVING handoff
+                    // must reject validation here, not reroute ROLE onto an unreserved socket.
+                    using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token,
+                        pinToConnection: true).ConfigureAwait(false);
                     if (!_health.Record(selected, checkedAt, in role))
                         throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
                     return selected;

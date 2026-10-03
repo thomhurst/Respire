@@ -1091,6 +1091,30 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovingCannotTransferPinnedRoleOutsideItsReservation()
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        await using var sampler = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        var reserved = multiplexer.GetConnection();
+        await Assert.That(sampler.TryReserveForValidation(reserved, out var reservation)).IsTrue();
+        using (reservation)
+        {
+            await source.SendRawAsync(Moving(1, target.Port));
+            await WaitForRetirement(reserved);
+            await Assert.That(async () => await reserved.SendAsync(new Cmd(Verbs.Role), pinToConnection: true))
+                .Throws<RespireConnectionRetiredException>();
+            await Assert.That(target.ReceivedCommands.Contains("ROLE")).IsFalse();
+            await Assert.That(await sampler.GetLatencyAsync(reserved, default)).IsEqualTo(ReadLatencyResult.Pending);
+            var replacement = multiplexer.GetConnection();
+            await Assert.That(replacement.Port).IsEqualTo(target.Port);
+            await Assert.That(await sampler.GetLatencyAsync(replacement, default)).IsEqualTo(ReadLatencyResult.Measured(10));
+        }
+    }
+
+    [Test]
     public async Task LaterMovingStartsWhileEarlierSocketsStillDrain()
     {
         await using var source = Server(maxConnections: 2);

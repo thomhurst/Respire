@@ -575,6 +575,8 @@ The first successful sample establishes the estimate. Later samples use one quar
 measurement and three quarters of the previous estimate to reduce jitter.
 
 A sample younger than ten seconds can serve selection immediately when no probe is outstanding.
+The warm cached path takes no shared sampler lock and allocates no memory. Cold or pending
+probe waits can allocate; the zero-allocation guarantee applies only to warm cached selection.
 If a new probe is pending, selection waits within the shared one-second sampling budget even
 when the previous estimate remains fresh; it cannot send a read behind an unanswered PING.
 A cold or expired sample also waits for an available shared probe within that remaining budget. Caller cancellation
