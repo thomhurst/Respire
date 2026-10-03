@@ -310,6 +310,7 @@ public class ClusterNodeIdentityTests
     public async Task RetirementBarrierTimeoutWaitsForActiveBulkStream()
     {
         var partialPayload = "$10\r\nhello"u8.ToArray();
+        var barrierReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
             ReplyOverride = (_, command) => command switch
@@ -319,19 +320,30 @@ public class ClusterNodeIdentityTests
                 "GET key" => partialPayload,
                 _ => FakeRespServer.OkReply,
             },
-            SuppressReply = static command => command == "PING",
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                barrierReceived.TrySetResult();
+                return true;
+            },
         };
+        // Connection setup must survive scheduling delays unrelated to retirement.
+        server.DelayCommand("HELLO", 300);
+        var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };
         await using var node = await RespireConnectionMultiplexer.CreateAsync(
-            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                MaintenanceDrainTimeProvider = clock,
+            });
         var connection = node.GetConnection();
         var get = new Cmd1(Verbs.Get, "key");
         var stream = await connection.SendBulkStreamAsync(in get, commandName: "GET")
@@ -340,6 +352,10 @@ public class ClusterNodeIdentityTests
 
         var connectionId = server.ReceivedConnectionIds[^1];
         var retirement = node.RetireAsync();
+        await barrierReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Expire only the retirement barrier after its PING was accepted. Setup and
+        // payload reads use normal deadlines, independently of this controlled timer.
+        (await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5))).Fire();
         await Task.Delay(TimeSpan.FromMilliseconds(400));
         await Assert.That(retirement.IsCompleted).IsFalse();
         await Assert.That(connection.IsConnected).IsTrue();
@@ -2539,6 +2555,28 @@ public class ClusterNodeIdentityTests
             Interlocked.Increment(ref _warningCount);
             WarningReported.TrySetResult();
         }
+    }
+
+    private sealed class MaintenanceDrainClock : TimeProvider
+    {
+        internal TaskCompletionSource<MaintenanceDrainTimer> Timer { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new MaintenanceDrainTimer(callback, state);
+            Timer.TrySetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class MaintenanceDrainTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private int _finished;
+        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _finished, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 
     private readonly struct BlockedWriteCommand(

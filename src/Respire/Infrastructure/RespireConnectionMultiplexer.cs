@@ -1357,8 +1357,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     private async Task DrainMaintenanceNotificationsBeforeRetirementAsync(RespireConnection connection)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
-        timeout.CancelAfter(_options.ConnectTimeout);
+        using var deadline = new CancellationTokenSource(_options.ConnectTimeout, _options.MaintenanceDrainTimeProvider);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token, deadline.Token);
         try
         {
             await connection.DrainPendingMaintenanceNotificationsAsync(timeout.Token).ConfigureAwait(false);

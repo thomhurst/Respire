@@ -37,7 +37,7 @@ public partial class RespireJsonClientTests
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ThreadPoolMonitoring = false,
         });
-        var json = new RespireJsonClient(client.WithKeyPrefix("tenant:"));
+        var json = client.WithKeyPrefix("tenant:").Json;
 
         var result = await json.GetAsync("profile", JsonTestContext.Default.Profile);
 
