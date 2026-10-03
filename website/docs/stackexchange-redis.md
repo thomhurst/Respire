@@ -167,7 +167,7 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `StringGetAsync`, `StringSetAsync` | `GetStringAsync`, `GetAsync<T>`, `SetAsync` on the client |
 | `StringIncrementAsync`, `StringDecrementAsync` | `IncrementAsync`, `DecrementAsync` |
 | `KeyDeleteAsync`, `KeyExistsAsync`, `KeyExpireAsync` | `DeleteAsync`, `ExistsAsync`, `ExpireAsync` |
-| `HashGetAsync`, `HashSetAsync`, `HashGetAllAsync` | `Hashes.GetStringAsync`, `Hashes.SetAsync`, `Hashes.GetAllAsync` |
+| `HashGetAsync`, `HashSetAsync`, `HashGetAllAsync` | `Hashes.GetStringAsync` or `Hashes.GetBytesAsync`, `Hashes.SetAsync`, `Hashes.GetAllAsync` or `Hashes.GetAllAsync<byte[]>` |
 | `ListLeftPushAsync`, `ListRightPopAsync` | `Lists.LeftPushAsync`, `Lists.RightPopAsync` |
 | `SetAddAsync`, `SetMembersAsync` | `Sets.AddAsync`, `Sets.MembersAsync` |
 | `SortedSetAddAsync`, `SortedSetRangeByScoreAsync` | `SortedSets.AddAsync`, `SortedSets.RangeByScoreAsync` |
@@ -176,6 +176,12 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `StringGetLeaseAsync` | `Strings.GetLeaseAsync` |
 | `ExecuteAsync("CMD", args)` | `ExecuteAsync("CMD", args)` or the generated `RespireCommands` catalog |
 | `CommandFlags.FireAndForget` | `ExecuteFireAndForgetAsync` |
+
+`RedisValue` results can hold arbitrary bytes. Respire's string methods, such as
+`GetStringAsync` and the non-generic `Hashes.GetAllAsync`, decode UTF-8 and replace invalid byte
+sequences. Use `GetBytesAsync`, `GetAsync<byte[]>`, or `Hashes.GetAllAsync<byte[]>` for binary
+values. `Hashes.GetAllAsync` returns string field names, so read hashes with binary field names
+through a raw `HGETALL`.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
