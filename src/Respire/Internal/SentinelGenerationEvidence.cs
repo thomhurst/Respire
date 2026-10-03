@@ -5,6 +5,9 @@ namespace Respire.Internal;
 
 // Captured under the router gate. Identity is opaque; all matching reads immutable
 // endpoint/peer facts, never a live generation or transport.
+// Socket peer hosts already use IPAddress.ToString with mapped IPv4 converted to IPv4.
+// HasPeer callers normalize numeric candidates before comparison. Custom stream transports
+// may supply a hostname fallback; only the exact host matches, never numeric target proof.
 internal readonly record struct SentinelGenerationEvidence(SentinelGenerationIdentity Identity, RespireEndpoint Endpoint,
     RespireEndpoint? ValidatedPeer, bool IsRetired, ImmutableArray<RespireEndpoint> Peers,
     RespireEndpoint? ConfirmedPeer)

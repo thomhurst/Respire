@@ -800,24 +800,17 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     // A snapshot is proof for the whole generation only when every command slot is
     // accepting commands and names the same physical peer at observation time.
     internal RespireEndpoint? GetConfirmedCurrentPeer()
-    {
-        if (!IsConnected) return null;
-        RespireEndpoint? result = null;
-        for (var slot = 0; slot < _connections.Length; slot++)
-        {
-            var connection = Volatile.Read(ref _connections[slot]);
-            if (connection is not { IsAcceptingCommands: true }) return null;
-            var peer = new RespireEndpoint(connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port);
-            if (result is { } previous && (previous.Host != peer.Host || previous.Port != peer.Port)) return null;
-            result = peer;
-        }
-        return IsRetired ? null : result;
-    }
+        => CaptureCurrentPeers(null);
 
     internal (ImmutableArray<RespireEndpoint> Peers, RespireEndpoint? ConfirmedPeer) CaptureSentinelPeers()
     {
         var peers = ImmutableArray.CreateBuilder<RespireEndpoint>(_connections.Length);
+        var confirmed = CaptureCurrentPeers(peers);
+        return IsRetired ? ([], null) : (peers.ToImmutable(), confirmed);
+    }
+
+    private RespireEndpoint? CaptureCurrentPeers(ImmutableArray<RespireEndpoint>.Builder? peers)
+    {
         var allReady = IsConnected;
         RespireEndpoint? confirmed = null;
         for (var slot = 0; slot < _connections.Length; slot++)
@@ -826,11 +819,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             if (connection is not { IsAcceptingCommands: true }) { allReady = false; continue; }
             var peer = new RespireEndpoint(connection.NetworkPeerAddress ?? connection.Host,
                 connection.NetworkPeerPort ?? connection.Port);
-            peers.Add(peer);
+            peers?.Add(peer);
             if (confirmed is { } previous && (previous.Host != peer.Host || previous.Port != peer.Port)) allReady = false;
             confirmed = peer;
         }
-        return IsRetired ? ([], null) : (peers.ToImmutable(), allReady ? confirmed : null);
+        return allReady && !IsRetired ? confirmed : null;
     }
 
     // Only these fence-entry guards produce this signal. Generic disposal failures from
