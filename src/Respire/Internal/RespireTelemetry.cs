@@ -52,6 +52,18 @@ internal static class RespireTelemetry
     public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
         "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
 
+    private static readonly Counter<long> SentinelGuardedLoggingFailures = Meter.CreateCounter<long>(
+        "respire.sentinel.guarded_logging.failures", unit: "{failure}", description: "Non-fatal logger failures caught by Sentinel notification and optional discovery logging wrappers.");
+
+    internal static void RecordSentinelGuardedLoggingFailure()
+    {
+        try { SentinelGuardedLoggingFailures.Add(1); }
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
+        {
+            // A failing metrics listener must not replace the logger failure or stop recovery.
+        }
+    }
+
     public static readonly ObservableGauge<long> SentinelRetiredGenerations = Meter.CreateObservableGauge(
         "respire.sentinel.generations.retired", () => SentinelRouter.RetiredGenerationCount, "{generation}",
         "Process-wide retired Sentinel generations still owned while commands, leases, or correction fences drain.");
@@ -206,6 +218,7 @@ internal static class RespireTelemetry
         RespireReconnectSource.Command => "command",
         RespireReconnectSource.Dedicated => "dedicated",
         RespireReconnectSource.PubSub => "pubsub",
+        RespireReconnectSource.SentinelMonitor => "sentinel-monitor",
         _ => "unspecified",
     };
 

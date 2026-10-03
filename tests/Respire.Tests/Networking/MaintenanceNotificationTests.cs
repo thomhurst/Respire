@@ -558,7 +558,11 @@ public class MaintenanceNotificationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "moved-upload");
         var lease = await originalPool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
-        await source.SendRawAsync(Start("MIGRATING", 1), source.ReceivedConnectionIds.Last());
+        // Sentinel catch-up ROLE traffic can arrive on another socket after this rental.
+        // Identify the exact upload lease instead of using the most recently active socket.
+        using var barrier = await lease.SendAsync(new Cmd1(new Verb(-1, "ECHO"), "maintenance-upload-lease"), timeout.Token);
+        var leaseCommand = source.ReceivedCommands.ToList().FindIndex(command => command == "ECHO maintenance-upload-lease");
+        await source.SendRawAsync(Start("MIGRATING", 1), source.ReceivedConnectionIds[leaseCommand]);
         await WaitForMaintenance(lease);
         originalPool.Return(lease);
 
@@ -1225,6 +1229,8 @@ public class MaintenanceNotificationTests
     {
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 4);
+        // Keep the original sockets current until both duplicate announcements arrive.
+        target.DelayCommand("HELLO", 1000);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             connectionCount: 2, options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
 

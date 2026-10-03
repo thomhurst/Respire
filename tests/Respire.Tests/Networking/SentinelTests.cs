@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
+using Respire.Networking;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,7 +12,149 @@ namespace Respire.Tests.Networking;
 
 public class SentinelTests
 {
+    [Test]
+    public async Task MonitorEpochIsCapturedBeforeConnectionClosedCompletes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        var oldEpoch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        oldEpoch.SetResult(); // A healthy-period publication must not grant a later reconnect budget.
+        var currentEpoch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? capturedEpoch = null;
+        var captured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            UnexpectedConnectionClosed = _ =>
+            {
+                capturedEpoch = currentEpoch.Task;
+                captured.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            },
+        });
+        try
+        {
+            // RESP2 has no handshake commands. Wait until the fake server has accepted the socket.
+            var ping = new Respire.Commands.RawCommand("*1\r\n$4\r\nPING\r\n"u8.ToArray());
+            using (await connection.SendAsync(in ping)) { }
+            server.CloseConnections();
+            await captured.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.Closed.IsCompleted).IsFalse();
+            await Assert.That(capturedEpoch!.IsCompleted).IsFalse();
+            var publication = currentEpoch;
+            currentEpoch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            publication.TrySetResult();
+            release.TrySetResult();
+            await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(capturedEpoch.IsCompleted).IsTrue();
+            await Assert.That(currentEpoch.Task.IsCompleted).IsFalse();
+        }
+        finally { release.TrySetResult(); }
+    }
+
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
+
+    [Test]
+    public async Task SentinelMonitorOptionsUseSentinelStaticCredentialsAndTransport()
+    {
+        var dataTls = new SslClientAuthenticationOptions { TargetHost = "redis.example" };
+        var sentinelTls = new SslClientAuthenticationOptions { TargetHost = "sentinel.example" };
+        var endpoint = new RespireEndpoint("sentinel.example", 26379);
+        var reconnectEpisodes = 0;
+        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            Endpoints = [new("redis.example", 6379)],
+            Username = "data-user",
+            Password = "data-password",
+            UseTls = true,
+            TlsOptions = dataTls,
+            SentinelUsername = "sentinel-user",
+            SentinelPassword = "sentinel-password",
+            SentinelUseTls = false,
+            SentinelTlsOptions = sentinelTls,
+            SentinelPrimaryName = "mymaster",
+        }, endpoint, () => reconnectEpisodes++);
+
+        await Assert.That(options.Endpoints).IsEquivalentTo([endpoint]);
+        await Assert.That(options.Username).IsEqualTo("sentinel-user");
+        await Assert.That(options.Password).IsEqualTo("sentinel-password");
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions).IsSameReferenceAs(sentinelTls);
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(options.SentinelPrimaryName).IsNull();
+        await Assert.That(options.ReconnectTelemetryScope).IsEqualTo("sentinel-monitor");
+        options.ReconnectEpisodeStarted?.Invoke();
+        await Assert.That(reconnectEpisodes).IsEqualTo(1);
+    }
+
+    // Each row: which credential sources are configured, and the expected monitor credentials and protocol.
+    [Test]
+    [Arguments("none", null, null, false, RespProtocol.Resp2)]
+    [Arguments("data-static", "data-user", "data-password", false, RespProtocol.Resp2)]
+    [Arguments("data-provider", null, null, true, RespProtocol.Resp3)]
+    [Arguments("sentinel-static", "sentinel-user", "sentinel-password", false, RespProtocol.Resp2)]
+    [Arguments("sentinel-static+data-provider", "sentinel-user", "sentinel-password", false, RespProtocol.Resp2)]
+    [Arguments("sentinel-username-only+data-provider", "sentinel-user", null, false, RespProtocol.Resp2)]
+    [Arguments("sentinel-provider", null, null, true, RespProtocol.Resp3)]
+    [Arguments("empty-password", null, null, false, RespProtocol.Resp2)]
+    [Arguments("empty-password+sentinel-provider", null, null, false, RespProtocol.Resp2)]
+    [Arguments("empty-password+data-provider", null, null, false, RespProtocol.Resp2)]
+    public async Task SentinelMonitorOptionsCredentialMatrix(string scenario, string? username, string? password,
+        bool hasProvider, RespProtocol protocol)
+    {
+        var dataProvider = new FixedCredentials("data-user", "data-password");
+        var sentinelProvider = new FixedCredentials("sentinel-user", "sentinel-password");
+        var options = new RespireOptions { Endpoints = [new("redis.example", 6379)], SentinelPrimaryName = "mymaster" };
+        foreach (var part in scenario.Split('+'))
+        {
+            options = part switch
+            {
+                "none" => options,
+                "data-static" => options with { Username = "data-user", Password = "data-password" },
+                "data-provider" => options with { CredentialProvider = dataProvider },
+                "sentinel-static" => options with { SentinelUsername = "sentinel-user", SentinelPassword = "sentinel-password" },
+                "sentinel-username-only" => options with { SentinelUsername = "sentinel-user" },
+                "sentinel-provider" => options with { SentinelCredentialProvider = sentinelProvider },
+                "empty-password" => options with { SentinelPassword = "" },
+                _ => throw new ArgumentOutOfRangeException(nameof(scenario), part, null),
+            };
+        }
+
+        var monitor = SentinelRouter.CreateSentinelMonitorOptions(options, new RespireEndpoint("sentinel.example", 26379));
+
+        await Assert.That(monitor.Username).IsEqualTo(username);
+        await Assert.That(monitor.Password).IsEqualTo(password);
+        await Assert.That(monitor.CredentialProvider is not null).IsEqualTo(hasProvider);
+        if (hasProvider)
+        {
+            await Assert.That(monitor.CredentialProvider).IsSameReferenceAs(
+                options.SentinelCredentialProvider is not null ? sentinelProvider : dataProvider);
+        }
+        await Assert.That(monitor.Protocol).IsEqualTo(protocol);
+        await Assert.That(monitor.SentinelUsername).IsNull();
+        await Assert.That(monitor.SentinelPassword).IsNull();
+        await Assert.That(monitor.SentinelCredentialProvider).IsNull();
+    }
+
+    [Test]
+    public async Task SentinelMonitorOptionsUseSentinelProviderWithResp3()
+    {
+        var dataCredentials = new FixedCredentials("data-user", "data-password");
+        var sentinelCredentials = new FixedCredentials("sentinel-user", "sentinel-password");
+        var endpoint = new RespireEndpoint("sentinel.example", 26379);
+        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        {
+            Endpoints = [new("redis.example", 6379)],
+            CredentialProvider = dataCredentials,
+            SentinelCredentialProvider = sentinelCredentials,
+            SentinelUseTls = true,
+            SentinelPrimaryName = "mymaster",
+        }, endpoint);
+
+        await Assert.That(options.CredentialProvider).IsSameReferenceAs(sentinelCredentials);
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(options.UseTls).IsTrue();
+    }
 
     [Test]
     [Arguments("*1\r\n$5\r\nslave\r\n")]
@@ -37,9 +180,9 @@ public class SentinelTests
         await Assert.That(stale.ReceivedCommands).IsEquivalentTo(["ROLE"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         // A newly learned peer is tried, but is not recursively expanded in this attempt.
-        await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL MASTER mymaster"]);
     }
 
     [Test]
@@ -57,11 +200,15 @@ public class SentinelTests
     }
 
     [Test]
-    [Arguments("timeout")]
-    [Arguments("disconnect")]
-    [Arguments("protocol")]
-    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure)
+    [Arguments("timeout", false)]
+    [Arguments("disconnect", false)]
+    [Arguments("protocol", false)]
+    [Arguments("timeout", true)]
+    [Arguments("disconnect", true)]
+    [Arguments("protocol", true)]
+    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure, bool throwingLogger)
     {
+        var logger = new OptionalDiscoveryLogger();
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "?invalid RESP\r\n"u8.ToArray())
         {
@@ -73,9 +220,53 @@ public class SentinelTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            LoggerFactory = throwingLogger ? logger : null,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(logger.Failures > 0).IsEqualTo(throwingLogger);
+    }
+
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("disconnect")]
+    [Arguments("protocol")]
+    public async Task ConnectAsync_OptionalMetadataLoggerFailurePreservesTheCompletedPrimaryReply(string failure)
+    {
+        var logger = new OptionalDiscoveryLogger();
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray(), "?invalid RESP\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = failure == "disconnect" ? 3 : null,
+            SuppressReply = command => failure == "timeout" && command == "SENTINEL MASTER mymaster",
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2), LoggerFactory = logger,
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await client.PingAsync();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(logger.Failures).IsGreaterThan(0);
+    }
+
+    internal sealed class OptionalDiscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
+    {
+        private int _failures;
+        internal int Failures => Volatile.Read(ref _failures);
+        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!formatter(state, exception).StartsWith("Optional Sentinel ", StringComparison.Ordinal)) return;
+            Interlocked.Increment(ref _failures);
+            throw new InvalidOperationException("Optional discovery logger failed");
+        }
     }
 
     [Test]
@@ -119,7 +310,7 @@ public class SentinelTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _, _) =>
         {
             cancellation.Cancel();
             return ValueTask.FromException<int>(protocolFailure
@@ -141,7 +332,7 @@ public class SentinelTests
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromMilliseconds(200),
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return 0;
@@ -169,7 +360,7 @@ public class SentinelTests
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromMilliseconds(300),
         };
-        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, token) =>
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return 0;
@@ -209,7 +400,7 @@ public class SentinelTests
         var state = new SentinelDiscoveryState([endpoint]);
         var options = new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [endpoint], SentinelPrimaryName = "mymaster" };
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
-            static (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
+            static (primaryOptions, _, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
         await Assert.That(result).IsEqualTo(new RespireEndpoint("127.0.0.1", 6379));
         await Assert.That(state.Snapshot()).IsEquivalentTo([endpoint, new RespireEndpoint("peer.example", 26379)]);
 
@@ -394,7 +585,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -432,6 +623,7 @@ public class SentinelTests
             "AUTH sentinel-user sentinel-secret",
             "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
             "SENTINEL SENTINELS mymaster",
+            "SENTINEL MASTER mymaster",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
@@ -462,7 +654,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
@@ -503,7 +695,7 @@ public class SentinelTests
         await Assert.That(invalidSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(validSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -536,7 +728,7 @@ public class SentinelTests
         await Assert.That(unresponsiveSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
         await Assert.That(responsiveSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
@@ -569,7 +761,7 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
@@ -603,10 +795,42 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(staleSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(currentSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments(6379)]
+    [Arguments(6380)]
+    public async Task DiscoveryKeepsReportingSentinelUnlessSwitchTargetContradictsIt(int? targetPort)
+    {
+        await using var reporter = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
+        await using var healthy = new FakeRespServer(PrimaryReply(6380), "*0\r\n"u8.ToArray());
+        var reporterEndpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
+        var healthyEndpoint = new RespireEndpoint("127.0.0.1", healthy.Port);
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [reporterEndpoint, healthyEndpoint],
+            SentinelPrimaryName = "mymaster",
+        };
+
+        var resolved = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            (primaryOptions, _, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint),
+            CancellationToken.None,
+            new SentinelDiscoveryState([reporterEndpoint, healthyEndpoint]),
+            reporterEndpoint,
+            new RespireEndpoint("127.0.0.1", 6379),
+            targetPort is { } target ? new RespireEndpoint("127.0.0.1", target) : (RespireEndpoint?)null);
+
+        var contradictory = targetPort == 6380;
+        await Assert.That(resolved).IsEqualTo(new RespireEndpoint("127.0.0.1", contradictory ? 6380 : 6379));
+        await Assert.That(reporter.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
+        await Assert.That(healthy.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER")))
+            .IsEqualTo(contradictory ? 1 : 0);
     }
 
     [Test]

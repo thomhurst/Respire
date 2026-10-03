@@ -277,8 +277,10 @@ public class ClusterNodeIdentityTests
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(600),
-            MaintenanceWindowTimeout = TimeSpan.FromSeconds(2),
+            // Keep the 250 ms reply beyond the ordinary 100 ms deadline, with scheduling
+            // headroom inside the maintenance deadline on parallel test workers.
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(5),
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
             // Connection setup is outside the maintenance deadline under test.
             ConnectTimeout = TimeSpan.FromSeconds(5),

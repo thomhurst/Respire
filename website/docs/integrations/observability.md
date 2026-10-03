@@ -191,12 +191,23 @@ the Sentinel seed is never substituted as the executing Redis server. Blocking, 
 and correction-identity timeouts before data-peer selection likewise carry endpoint-less
 connecting diagnostics; a selected physical connection retains its own diagnostic identity.
 
-`ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
-Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
+`ConnectionStateChanged` reports the retired endpoint and validated replacement for Sentinel
+handoffs triggered by events, disconnects, or `READONLY` replies. Prefix views share these events.
+Sentinel event monitors log failover hints for the configured service at Information and replica
+events at Debug. A monitor that exhausts its `ReconnectPolicy` increments
+`respire.connection.reconnect.exhausted` with `respire.reconnect.scope = sentinel-monitor` and logs
+a warning. It logs at Information when a later primary publication resumes it. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
 discovery and reconnection to the same endpoint do not increment it. Published failover
 measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run
 outside discovery and transport work; queued events are suppressed after client disposal.
+The process-wide `respire.sentinel.guarded_logging.failures` counter records non-fatal logger
+callback failures caught by the notification router's `SafeLog` and `LogSentinelEvent`
+wrappers and the resolver's `LogOptionalDiscoveryFailure` wrapper for peer/configuration
+failures, without endpoint or exception tags. Those wrappers also isolate non-fatal
+metric-listener exceptions. Other Sentinel logs are outside the counter's
+coverage; throwing loggers can still interrupt those paths. Inspect the logging provider
+when this counter increases.
 The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
 still owned while accepted work or correction fences drain. Continued growth warrants
 investigation. A persistently nonzero value after normal commands and borrowed leases have

@@ -274,6 +274,8 @@ public class DedicatedPoolLedgerTests
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
                 ? System.Text.Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{primary.Port}\r\n")
+                : command == "SUBSCRIBE +switch-master +sdown +odown"
+                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
                 : "*0\r\n"u8.ToArray(),
         };
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
@@ -282,7 +284,13 @@ public class DedicatedPoolLedgerTests
         foreach (var replica in new[] { second, third })
             replica.ReplyOverride = (_, command) => command == "ROLE"
                 ? "*5\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n+connected\r\n:0\r\n"u8.ToArray() : FakeRespServer.OkReply;
-        var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
+        var logger = new CleanupFailureLogger
+        {
+            ThrowOnDisconnect = false, DistinctDisconnectFailures = true,
+            // Inject data-owner failures only. Sentinel discovery and monitor sockets have
+            // independent best-effort cleanup and are not owned by the data generation.
+            IgnoredDisconnectPort = mode == "sentinel" ? sentinel.Port : null,
+        };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 2,
@@ -297,6 +305,13 @@ public class DedicatedPoolLedgerTests
         if (mode == "replicas")
             foreach (var replica in new[] { second, third })
                 await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", replica.Port)], CancellationToken.None);
+        if (mode == "sentinel")
+        {
+            // Ensure the monitor owns a socket before enabling data-disposal fault injection.
+            using var timeout = new CancellationTokenSource(Limit);
+            while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, timeout.Token);
+            if (client.Core.Sentinel.NotificationRediscovery is { } discovery) await discovery.WaitAsync(Limit);
+        }
         logger.ThrowOnDisconnect = true;
         try
         {
@@ -411,6 +426,7 @@ public class DedicatedPoolLedgerTests
         internal bool DistinctDisconnectFailures;
         internal bool ThrowOnWarning;
         internal bool ThrowOnDisconnect = true;
+        internal int? IgnoredDisconnectPort;
         internal int Warnings;
         internal int PoolDisposalWarnings;
         public ILogger CreateLogger(string categoryName) => this;
@@ -423,6 +439,9 @@ public class DedicatedPoolLedgerTests
         {
             if (ThrowOnDisconnect && logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
             {
+                if (IgnoredDisconnectPort is { } ignored
+                    && state is IEnumerable<KeyValuePair<string, object?>> fields
+                    && fields.Any(field => field.Key == "Port" && Equals(field.Value, ignored))) return;
                 if (!DistinctDisconnectFailures) throw Failure;
                 var failure = new InvalidOperationException("Injected distinct disconnect failure.");
                 DisconnectFailures.Add(failure);

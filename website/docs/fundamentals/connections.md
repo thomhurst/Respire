@@ -263,7 +263,7 @@ is distinct from either standalone fallback or Sentinel discovery.
 An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
 bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
 peers, and failed primary ROLE validation share that resolution budget. Each new Sentinel
-resolution uses this policy; event-driven Sentinel monitoring is separate future work.
+resolution uses this policy, and so do the Sentinel event monitors described below.
 Cluster uses the same option for
 [node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
 with one shared budget per discovery round. Periodic Cluster refresh remains separate.
@@ -398,11 +398,12 @@ dedicated and subscription connections. A reachable replica, malformed response,
 is rejected and the candidate is disposed. Grant `ROLE` to the data-node credentials.
 
 Respire also requests `SENTINEL SENTINELS` and can try up to 64 learned peers after the
-configured endpoints. Duplicate hosts/ports and invalid peer addresses are ignored;
-configured seeds are retained. Newly learned peers do not recursively expand discovery
+configured endpoints. Duplicate hosts/ports and invalid peer addresses are ignored.
+Configured seeds and learned peers remain known for the client lifetime; the learned-peer
+cap also bounds their event monitors. Newly learned peers do not recursively expand discovery
 within the same attempt. ACL errors, timeouts, protocol errors, or disconnects during this
 optional peer-list command do not discard an already completed primary reply. Discovery (including the peer-list request) uses
-its existing bounded deadline; primary setup and role validation receive a fresh connection
+its existing bounded deadline; primary hostname resolution, setup, and role validation receive a fresh connection
 deadline. Caller cancellation applies throughout. These checks follow the
 [Redis Sentinel client specification](https://redis.io/docs/latest/develop/reference/sentinel-clients/).
 
@@ -463,9 +464,54 @@ that server-side ordering obligation; a time or attempt cap could discard it bef
 server acknowledges the fence. Repeated failovers during an outage can therefore grow retained
 state until the fences succeed or client disposal aborts cleanup.
 
-This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
-remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
-monitor proactively moves an otherwise healthy connection before a failure is observed.
+Respire also subscribes to `+switch-master`, `+sdown`, and `+odown` on configured and discovered
+Sentinels after the first primary is validated. A client whose initial discovery has not yet
+succeeded has no monitors; each command runs discovery itself until one does. A Sentinel learned
+later is monitored as soon as discovery finds it.
+
+Each monitored Sentinel costs one extra TCP connection: a single-connection RESP client that
+holds only that subscription, with no client name, client-side cache or maintenance
+notifications. Discovery remembers at most 64 learned Sentinels beyond the configured ones, which
+bounds the number of monitor connections.
+
+These events are hints: Respire resolves the service again and confirms the candidate with `ROLE`
+before publishing a replacement. When Sentinel still names the current primary, `ROLE` is checked
+on the existing connection and no new connection is opened. A `+switch-master` retires the current
+generation before rediscovery only when its old address matches that generation, by announced
+endpoint or by the connected peer address. Hints for other services and replica events never
+start discovery.
+
+Notification-driven discovery starts at most once per 100 ms, even when repeated fault hints
+keep arriving and each discovery succeeds. Hints received during that interval remain coalesced.
+Command-triggered discovery is not delayed by this notification rate limit.
+
+Discovery also reads `SENTINEL MASTER` to associate the reported address with its `config-epoch`.
+After observing an epoch, Respire rejects older configurations and conflicting addresses at the
+same epoch. All retained reporters are queried, so a later promotion can supersede an intermediate
+primary without letting a stale reporter roll the client back. Grant the Sentinel credentials
+permission to run `SENTINEL MASTER` for this reconciliation. If metadata is unavailable, an existing
+primary matching the observed epoch can still be confirmed. If no epoch has ever been available,
+discovery continues using `ROLE` validation and switch evidence, including after delivery gaps.
+Missing epoch metadata emits one warning per client. Once an epoch is observed, a failed connection
+attempt does not discard it: older fallback replies cannot restore a stale primary.
+Owner comparison recognizes resolved hostname/IP aliases and canonical IPv4/IPv6 spellings,
+so an unavailable hostname transport does not fence out the same owner reported by its IP.
+Reporter reconciliation retains evidence naming demoted primaries when configuration metadata
+is unavailable; a stale reporter cannot restore one merely because it still answers `ROLE master`.
+
+Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
+independently under the client's `ReconnectPolicy`, reported with
+`respire.reconnect.scope = sentinel-monitor`. A monitor that exhausts the policy resumes with a
+fresh budget after a validated primary publication, including one that lands during its final
+retries. Pub/Sub delivery is at-most-once, so a
+monitor that subscribes, reconnects, or reports a delivery gap triggers one rediscovery to catch a
+missed switch. Sentinel sends each event only once, so a failed event-triggered rediscovery retries
+with backoff. Without a `ReconnectPolicy` it retries until discovery succeeds or the client is
+disposed, waiting at most 30 seconds between attempts. A policy's `MaxAttempts` bounds those
+retries. The first failure in a run is logged as a warning and later ones at debug level, so a
+long Sentinel outage does not repeat the warning on every attempt. Later commands also still use the reactive discovery path. Client disposal stops monitor
+work and waits up to 10 seconds for it, logging any task that does not stop. Accepted commands are
+never replayed during handoff.
 
 ## Read from replicas
 
