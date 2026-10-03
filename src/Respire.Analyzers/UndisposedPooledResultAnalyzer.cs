@@ -102,13 +102,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local)
-                || ConditionalAcquisitionsAreReleased(
-                    context, scope, declaration, variable.Initializer.Value, local)
-                || CoalescingAcquisitionsAreReleased(
-                    context, scope, declaration, variable.Initializer.Value, local)
-                || SwitchAcquisitionsAreReleased(
-                    context, scope, declaration, variable.Initializer.Value, local))
+            if (FindAcquisitions(context, variable.Initializer.Value).All(acquisition =>
+                    IsDisposedOrEscapes(context, scope, acquisition, acquisitionAssignment: null, local)))
             {
                 continue;
             }
@@ -133,10 +128,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
         if (pooledType is null
-            || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local)
-            || ConditionalAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local)
-            || CoalescingAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local)
-            || SwitchAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local))
+            || FindAcquisitions(context, assignment.Right).All(acquisition =>
+                IsDisposedOrEscapes(context, scope, acquisition, assignment, local)))
         {
             return;
         }
@@ -146,294 +139,33 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
     private static bool ContainsRespireAcquisition(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        => FindAcquisitions(context, expression).Any();
+
+    private static IEnumerable<AwaitExpressionSyntax> FindAcquisitions(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         switch (ScopeWalker.Unwrap(expression))
         {
-            case AwaitExpressionSyntax awaitExpression:
-                return IsRespireAcquisition(context, awaitExpression.Expression);
-
+            case AwaitExpressionSyntax awaited when IsRespireAcquisition(context, awaited.Expression):
+                yield return awaited;
+                break;
             case ConditionalExpressionSyntax conditional:
-                return ContainsRespireAcquisition(context, conditional.WhenTrue)
-                       || ContainsRespireAcquisition(context, conditional.WhenFalse);
-
+                foreach (var acquisition in FindAcquisitions(context, conditional.WhenTrue)
+                             .Concat(FindAcquisitions(context, conditional.WhenFalse)))
+                    yield return acquisition;
+                break;
             case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
-                return ContainsRespireAcquisition(context, coalesce.Left)
-                       || ContainsRespireAcquisition(context, coalesce.Right);
-
+                foreach (var acquisition in FindAcquisitions(context, coalesce.Left)
+                             .Concat(FindAcquisitions(context, coalesce.Right)))
+                    yield return acquisition;
+                break;
             case SwitchExpressionSyntax switchExpression:
-                return switchExpression.Arms.Any(arm =>
-                    ContainsRespireAcquisition(context, arm.Expression));
-
-            default:
-                return false;
+                foreach (var arm in switchExpression.Arms)
+                    foreach (var acquisition in FindAcquisitions(context, arm.Expression))
+                        yield return acquisition;
+                break;
         }
     }
-
-    private static bool ConditionalAcquisitionsAreReleased(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode acquisition,
-        ExpressionSyntax value,
-        ILocalSymbol local)
-    {
-        if (ScopeWalker.Unwrap(value) is not ConditionalExpressionSyntax conditional)
-        {
-            return false;
-        }
-
-        var ownsWhenTrue = ContainsRespireAcquisition(context, conditional.WhenTrue);
-        var ownsWhenFalse = ContainsRespireAcquisition(context, conditional.WhenFalse);
-        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
-        {
-            if (ifStatement.SpanStart <= acquisition.SpanStart
-                || !SyntaxFactory.AreEquivalent(
-                    ScopeWalker.Unwrap(conditional.Condition),
-                    ScopeWalker.Unwrap(ifStatement.Condition))
-                || ScopeWalker.HasWriteBetween(
-                    context.SemanticModel,
-                    scope,
-                    conditional.Condition,
-                    conditional,
-                    ifStatement,
-                    context.CancellationToken)
-                || !ScopeWalker.PostDominates(
-                    context.SemanticModel, scope, acquisition, ifStatement, context.CancellationToken))
-            {
-                continue;
-            }
-
-            if ((!ownsWhenTrue || HasUnconditionalRelease(
-                    context, scope, acquisition, ifStatement.Statement, local))
-                && (!ownsWhenFalse
-                    || ifStatement.Else is { Statement: { } falseBranch }
-                    && HasUnconditionalRelease(context, scope, acquisition, falseBranch, local)))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool CoalescingAcquisitionsAreReleased(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode acquisition,
-        ExpressionSyntax value,
-        ILocalSymbol local)
-    {
-        if (ScopeWalker.Unwrap(value) is not BinaryExpressionSyntax coalesce
-            || !coalesce.IsKind(SyntaxKind.CoalesceExpression)
-            || ContainsRespireAcquisition(context, coalesce.Left)
-            || !ContainsRespireAcquisition(context, coalesce.Right))
-        {
-            return false;
-        }
-
-        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
-        {
-            if (ifStatement.SpanStart <= acquisition.SpanStart
-                || GetNullBranch(coalesce.Left, ifStatement) is not { } owningBranch
-                || ScopeWalker.HasWriteBetween(
-                    context.SemanticModel,
-                    scope,
-                    coalesce.Left,
-                    coalesce,
-                    ifStatement,
-                    context.CancellationToken)
-                || !ScopeWalker.PostDominates(
-                    context.SemanticModel, scope, acquisition, ifStatement, context.CancellationToken))
-            {
-                continue;
-            }
-
-            if (HasUnconditionalRelease(context, scope, acquisition, owningBranch, local))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static StatementSyntax? GetNullBranch(
-        ExpressionSyntax expression, IfStatementSyntax ifStatement)
-    {
-        var condition = ScopeWalker.Unwrap(ifStatement.Condition);
-        if (condition is IsPatternExpressionSyntax isPattern
-            && SyntaxFactory.AreEquivalent(
-                ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(isPattern.Expression))
-            && IsNullPattern(isPattern.Pattern))
-        {
-            return ifStatement.Statement;
-        }
-
-        if (condition is not BinaryExpressionSyntax comparison
-            || !comparison.IsKind(SyntaxKind.EqualsExpression)
-            && !comparison.IsKind(SyntaxKind.NotEqualsExpression)
-            || !IsNullComparison(expression, comparison.Left, comparison.Right))
-        {
-            return null;
-        }
-
-        return comparison.IsKind(SyntaxKind.EqualsExpression)
-            ? ifStatement.Statement
-            : ifStatement.Else?.Statement;
-    }
-
-    private static bool IsNullComparison(
-        ExpressionSyntax expression, ExpressionSyntax left, ExpressionSyntax right)
-        => SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(left))
-           && ScopeWalker.Unwrap(right).IsKind(SyntaxKind.NullLiteralExpression)
-           || SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(right))
-           && ScopeWalker.Unwrap(left).IsKind(SyntaxKind.NullLiteralExpression);
-
-    private static bool IsNullPattern(PatternSyntax pattern)
-        => pattern is ConstantPatternSyntax constant
-           && ScopeWalker.Unwrap(constant.Expression).IsKind(SyntaxKind.NullLiteralExpression);
-
-    private static bool HasUnconditionalRelease(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode acquisition,
-        SyntaxNode branch,
-        ILocalSymbol local)
-    {
-        var reassignments = ScopeWalker.FindReferences(
-                scope, local, context.SemanticModel, context.CancellationToken)
-            .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
-                                && ScopeWalker.IsSame(assignment.Left, reference)
-                                && !assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
-            .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
-            .ToArray();
-        var releases = ScopeWalker.FindReferences(
-                branch, local, context.SemanticModel, context.CancellationToken)
-            .Where(reference => !ScopeWalker.IsNestedInLambda(reference, scope)
-                                && IsImmediatelyReleasedOrTransferred(context, reference)
-                                && !IsReassignedBefore(
-                                    context, scope, acquisition, reference, reassignments))
-            .Select(ScopeWalker.GetOutermostTransparentExpression)
-            .ToArray();
-
-        return ScopeWalker.CollectivelyPostDominates(
-            context.SemanticModel, scope, branch, releases, context.CancellationToken);
-    }
-
-    private static bool SwitchAcquisitionsAreReleased(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode acquisition,
-        ExpressionSyntax value,
-        ILocalSymbol local)
-    {
-        if (ScopeWalker.Unwrap(value) is not SwitchExpressionSyntax switchExpression)
-        {
-            return false;
-        }
-
-        var owningArms = switchExpression.Arms
-            .Where(arm => ContainsRespireAcquisition(context, arm.Expression))
-            .ToArray();
-        return owningArms.Length > 0
-               && owningArms.All(arm => SwitchArmHasRelease(
-                   context, scope, acquisition, switchExpression, arm, local));
-    }
-
-    private static bool SwitchArmHasRelease(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode acquisition,
-        SwitchExpressionSyntax switchExpression,
-        SwitchExpressionArmSyntax arm,
-        ILocalSymbol local)
-    {
-        if (arm.Pattern is not ConstantPatternSyntax constant || arm.WhenClause is not null)
-        {
-            return false;
-        }
-
-        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
-        {
-            if (ifStatement.SpanStart <= acquisition.SpanStart
-                || !IsUnconditionallyReached(acquisition, ifStatement)
-                || ScopeWalker.HasWriteBetween(
-                    context.SemanticModel,
-                    scope,
-                    switchExpression.GoverningExpression,
-                    switchExpression,
-                    ifStatement,
-                    context.CancellationToken)
-                || GetSelectedBranch(
-                    switchExpression.GoverningExpression,
-                    constant.Expression,
-                    ifStatement) is not { } selectedBranch)
-            {
-                continue;
-            }
-
-            if (HasUnconditionalRelease(context, scope, acquisition, selectedBranch, local))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsUnconditionallyReached(SyntaxNode acquisition, StatementSyntax releaseStatement)
-    {
-        if (acquisition.FirstAncestorOrSelf<StatementSyntax>() is not { } acquisitionStatement
-            || acquisitionStatement.Parent is not BlockSyntax block
-            || !ReferenceEquals(releaseStatement.Parent, block))
-        {
-            return false;
-        }
-
-        var acquisitionIndex = block.Statements.IndexOf(acquisitionStatement);
-        var releaseIndex = block.Statements.IndexOf(releaseStatement);
-        if (acquisitionIndex < 0 || releaseIndex <= acquisitionIndex)
-        {
-            return false;
-        }
-
-        return !block.Statements
-            .Skip(acquisitionIndex + 1)
-            .Take(releaseIndex - acquisitionIndex - 1)
-            .SelectMany(statement => statement.DescendantNodesAndSelf())
-            .Any(static node => node is ReturnStatementSyntax
-                or ThrowStatementSyntax
-                or GotoStatementSyntax
-                or YieldStatementSyntax);
-    }
-
-    private static StatementSyntax? GetSelectedBranch(
-        ExpressionSyntax governingExpression,
-        ExpressionSyntax constant,
-        IfStatementSyntax ifStatement)
-    {
-        if (ScopeWalker.Unwrap(ifStatement.Condition) is not BinaryExpressionSyntax comparison
-            || !comparison.IsKind(SyntaxKind.EqualsExpression)
-            && !comparison.IsKind(SyntaxKind.NotEqualsExpression)
-            || !ExpressionsMatchEitherOrder(
-                governingExpression, constant, comparison.Left, comparison.Right))
-        {
-            return null;
-        }
-
-        return comparison.IsKind(SyntaxKind.EqualsExpression)
-            ? ifStatement.Statement
-            : ifStatement.Else?.Statement;
-    }
-
-    private static bool ExpressionsMatchEitherOrder(
-        ExpressionSyntax first,
-        ExpressionSyntax second,
-        ExpressionSyntax candidateFirst,
-        ExpressionSyntax candidateSecond)
-        => SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(first), ScopeWalker.Unwrap(candidateFirst))
-           && SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(second), ScopeWalker.Unwrap(candidateSecond))
-           || SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(first), ScopeWalker.Unwrap(candidateSecond))
-           && SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(second), ScopeWalker.Unwrap(candidateFirst));
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
     {

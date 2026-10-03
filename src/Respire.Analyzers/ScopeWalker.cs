@@ -11,7 +11,7 @@ namespace Respire.Analyzers;
 /// one method body (or one lambda body) and stay silent the moment a value crosses that boundary,
 /// because ownership is then someone else's to prove.
 /// </summary>
-internal static class ScopeWalker
+internal static partial class ScopeWalker
 {
     internal enum BarrierStartPolicy { Exclude, Include }
 
@@ -117,20 +117,15 @@ internal static class ScopeWalker
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false);
         }
 
-        if (FindBlock(graph, before) is not { } beforeBlock
+        if (FindBlock(graph, before) is null
             || FindBlock(graph, after) is not { } afterBlock)
         {
             return false;
         }
 
-        if (beforeBlock.Ordinal == afterBlock.Ordinal)
-        {
-            return before.SpanStart < after.SpanStart;
-        }
-
         var systemException = GetSystemException(semanticModel);
-        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
-               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
+        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken)
+               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before], cancellationToken: cancellationToken);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -148,17 +143,13 @@ internal static class ScopeWalker
         }
 
         if (FindBlock(graph, before) is not { } beforeBlock
-            || FindBlock(graph, after) is not { } afterBlock)
+            || FindBlock(graph, after) is null)
         {
             return false;
         }
 
-        if (beforeBlock.Ordinal == afterBlock.Ordinal)
-        {
-            return before.SpanStart < after.SpanStart;
-        }
-
-        return ComputeDominators(graph, reverse: true)[beforeBlock.Ordinal].Contains(afterBlock.Ordinal);
+        return !PathExistsAvoiding(graph, GetSystemException(semanticModel), beforeBlock, before.SpanStart,
+            graph.Blocks[graph.Blocks.Length - 1], int.MaxValue, [after], cancellationToken: cancellationToken);
     }
 
     /// <summary>True when control can flow from <paramref name="before"/> to <paramref name="after"/>.</summary>
@@ -183,7 +174,7 @@ internal static class ScopeWalker
 
         return PathExistsAvoiding(
             graph, GetSystemException(semanticModel),
-            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -215,7 +206,7 @@ internal static class ScopeWalker
 
         return PathExistsAvoiding(
             graph, GetSystemException(semanticModel),
-            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy, cancellationToken);
     }
 
     /// <summary>True when every path to <paramref name="after"/> crosses one of <paramref name="barriers"/>.</summary>
@@ -246,7 +237,7 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph, GetSystemException(semanticModel),
-            graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
+            graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray, cancellationToken: cancellationToken);
     }
 
     /// <summary>True when every path from <paramref name="before"/> to exit crosses one of <paramref name="barriers"/>.</summary>
@@ -282,58 +273,7 @@ internal static class ScopeWalker
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
             int.MaxValue,
-            barrierArray);
-    }
-
-    /// <summary>True when a local or parameter used by a condition is written between two nodes.</summary>
-    public static bool HasWriteBetween(
-        SemanticModel semanticModel,
-        SyntaxNode scope,
-        ExpressionSyntax condition,
-        SyntaxNode before,
-        SyntaxNode after,
-        CancellationToken cancellationToken)
-    {
-        var symbols = condition.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
-            .Select(identifier => semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol)
-            .Where(static symbol => symbol is ILocalSymbol or IParameterSymbol)
-            .Distinct(SymbolEqualityComparer.Default);
-
-        foreach (var symbol in symbols)
-        {
-            foreach (var reference in FindReferences(scope, symbol!, semanticModel, cancellationToken))
-            {
-                if (reference.SpanStart > before.Span.End
-                    && reference.SpanStart < after.SpanStart
-                    && IsWrite(reference))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsWrite(IdentifierNameSyntax reference)
-    {
-        if (reference.FirstAncestorOrSelf<AssignmentExpressionSyntax>() is { } assignment
-            && assignment.Left.Span.Contains(reference.Span))
-        {
-            return true;
-        }
-
-        return reference.Parent switch
-        {
-            PrefixUnaryExpressionSyntax prefix =>
-                prefix.IsKind(SyntaxKind.PreIncrementExpression)
-                || prefix.IsKind(SyntaxKind.PreDecrementExpression),
-            PostfixUnaryExpressionSyntax postfix =>
-                postfix.IsKind(SyntaxKind.PostIncrementExpression)
-                || postfix.IsKind(SyntaxKind.PostDecrementExpression),
-            ArgumentSyntax argument => !argument.RefKindKeyword.IsKind(SyntaxKind.None),
-            _ => false,
-        };
+            barrierArray, cancellationToken: cancellationToken);
     }
 
     private static INamedTypeSymbol? GetSystemException(SemanticModel semanticModel)
@@ -347,248 +287,10 @@ internal static class ScopeWalker
         BasicBlock targetBlock,
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
-        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude,
+        CancellationToken cancellationToken = default)
         => new ReachabilityWalker(graph, systemException, startBlock, startPosition, targetBlock,
-            targetPosition, barriers, startPolicy).Search();
-
-    private sealed class ReachabilityWalker(
-        ControlFlowGraph graph,
-        INamedTypeSymbol? systemException,
-        BasicBlock startBlock,
-        int startPosition,
-        BasicBlock targetBlock,
-        int targetPosition,
-        IEnumerable<SyntaxNode> barriers,
-        BarrierStartPolicy startPolicy)
-    {
-        private readonly INamedTypeSymbol? _systemException = systemException;
-        private readonly Dictionary<int, List<int>> _barrierPositions = new();
-        // Interned continuations keep each finally's return destination in the search state.
-        private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
-        private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
-        private readonly Stack<(BasicBlock Block, int EntryPosition, int Continuation, bool Started)> _pending = new();
-        private readonly Dictionary<(int Block, int Continuation, bool Started), int> _earliestEntries = new();
-
-        internal bool Search()
-        {
-            foreach (var barrier in barriers)
-            {
-                if (FindBlock(graph, barrier) is not { } block)
-                {
-                    continue;
-                }
-
-                if (!_barrierPositions.TryGetValue(block.Ordinal, out var positions))
-                {
-                    positions = [];
-                    _barrierPositions.Add(block.Ordinal, positions);
-                }
-
-                positions.Add(barrier.SpanStart);
-            }
-
-            var startsInFinally = false;
-            for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-            {
-                startsInFinally |= region.Kind == ControlFlowRegionKind.Finally;
-            }
-
-            // Discover the actual continuation when the origin itself is inside a finally.
-            _pending.Push(startsInFinally
-                ? (graph.Blocks[0], int.MinValue, 0, false)
-                : (startBlock, startPosition, 0, true));
-            while (_pending.Count > 0)
-            {
-                var (block, entryPosition, continuation, started) = _pending.Pop();
-                if (!started && block.Ordinal == startBlock.Ordinal)
-                {
-                    started = true;
-                    entryPosition = startPosition;
-                }
-
-                var state = (block.Ordinal, continuation, started);
-                if (_earliestEntries.TryGetValue(state, out var earliestEntry)
-                    && earliestEntry <= entryPosition)
-                {
-                    continue;
-                }
-
-                _earliestEntries[state] = entryPosition;
-
-                var firstBarrier = started && _barrierPositions.TryGetValue(block.Ordinal, out var positions)
-                    ? positions.Where(position => position > entryPosition
-                                                   || startPolicy == BarrierStartPolicy.Include && block.Ordinal == startBlock.Ordinal
-                                                   && entryPosition == startPosition && position == entryPosition)
-                        .DefaultIfEmpty(int.MaxValue).Min()
-                    : int.MaxValue;
-
-                if (started && block.Ordinal == targetBlock.Ordinal
-                    && targetPosition > entryPosition
-                    && targetPosition <= firstBarrier)
-                {
-                    return true;
-                }
-
-                if (firstBarrier != int.MaxValue)
-                {
-                    continue;
-                }
-
-                Follow(block.FallThroughSuccessor, continuation, started);
-                Follow(block.ConditionalSuccessor, continuation, started);
-            }
-
-            return false;
-        }
-
-        private int Prepend(BasicBlock? destination, int continuation, ControlFlowRegion finalizer)
-        {
-            var key = (destination?.Ordinal ?? -1, continuation, finalizer);
-            if (!_continuationIds.TryGetValue(key, out var id))
-            {
-                id = _continuations.Count;
-                _continuations.Add(key);
-                _continuationIds.Add(key, id);
-            }
-
-            return id;
-        }
-
-        private void Enqueue(BasicBlock? destination, IEnumerable<ControlFlowRegion> finalizers, int continuation, bool started)
-        {
-            foreach (var finalizer in finalizers.Reverse())
-            {
-                continuation = Prepend(destination, continuation, finalizer);
-                destination = graph.Blocks[finalizer.FirstBlockOrdinal];
-            }
-
-            if (destination is not null && (destination.IsReachable || destination.Kind == BasicBlockKind.Exit))
-            {
-                _pending.Push((destination, int.MinValue, continuation, started));
-            }
-        }
-
-        private void Follow(ControlFlowBranch? branch, int continuation, bool started)
-        {
-            if (branch is null)
-            {
-                return;
-            }
-
-            if (branch.Semantics == ControlFlowBranchSemantics.StructuredExceptionHandling)
-            {
-                // A rejected exception filter also uses this branch kind. It does not
-                // complete an active finally; other handlers are explored separately.
-                if (branch.Source.EnclosingRegion.Kind == ControlFlowRegionKind.Filter)
-                {
-                    return;
-                }
-
-                var resume = _continuations[continuation];
-                if (resume.Block >= 0)
-                {
-                    _pending.Push((graph.Blocks[resume.Block], int.MinValue, resume.Next, started));
-                }
-
-                return;
-            }
-
-            var finalizers = branch.FinallyRegions.AsEnumerable();
-            if (branch.Semantics is ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow)
-            {
-                // Throw branches have no destination or FinallyRegions. Their enclosing
-                // protected regions still unwind, from the innermost finally outward.
-                var unwind = new List<ControlFlowRegion>();
-                var exception = branch.Source.BranchValue;
-                while (exception is IConversionOperation conversion)
-                {
-                    exception = conversion.Operand;
-                }
-
-                for (var region = branch.Source.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-                {
-                    if (region.Kind == ControlFlowRegionKind.Try
-                        && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndCatch)
-                    {
-                        foreach (var handler in region.EnclosingRegion.NestedRegions.Where(static nested =>
-                                     nested.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler))
-                        {
-                            var (possible, certain) = GetCatchApplicability(handler, exception, _systemException);
-                            if (possible)
-                            {
-                                var catchContinuation = continuation;
-                                while (catchContinuation != 0)
-                                {
-                                    var activeFinally = _continuations[catchContinuation].Finally!;
-                                    if (handler.FirstBlockOrdinal >= activeFinally.FirstBlockOrdinal
-                                        && handler.LastBlockOrdinal <= activeFinally.LastBlockOrdinal)
-                                    {
-                                        break;
-                                    }
-
-                                    catchContinuation = _continuations[catchContinuation].Next;
-                                }
-
-                                Enqueue(graph.Blocks[handler.FirstBlockOrdinal], unwind, catchContinuation, started);
-                            }
-
-                            if (certain && handler.Kind == ControlFlowRegionKind.Catch)
-                            {
-                                return;
-                            }
-                        }
-                    }
-
-                    if (region.Kind == ControlFlowRegionKind.Try
-                        && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
-                    {
-                        unwind.Add(region.EnclosingRegion.NestedRegions.Last());
-                    }
-                }
-
-                finalizers = unwind;
-                continuation = 0;
-            }
-
-            var destination = branch.Semantics is ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow
-                ? graph.Blocks[graph.Blocks.Length - 1]
-                : branch.Destination;
-            Enqueue(destination, finalizers, continuation, started);
-        }
-
-        private static (bool Possible, bool Certain) GetCatchApplicability(
-            ControlFlowRegion handler, IOperation? exception, INamedTypeSymbol? systemException)
-        {
-            // A filtered region wraps separate filter/catch regions. The catch type still
-            // restricts entry to the filter; a filter does not make incompatible types reachable.
-            var catchRegion = handler.Kind == ControlFlowRegionKind.FilterAndHandler
-                ? handler.NestedRegions.FirstOrDefault(static region => region.Kind == ControlFlowRegionKind.Catch)
-                : handler;
-            var catchType = catchRegion?.ExceptionType;
-            var catchesAll = catchType is null || catchType.SpecialType == SpecialType.System_Object
-                || SymbolEqualityComparer.Default.Equals(catchType, systemException);
-            var exceptionType = exception?.Type;
-            var certain = catchesAll || HasBaseType(exceptionType, catchType);
-            // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
-            // handlers. A fresh construction has an exact type; other values may be derived.
-            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
-                || catchType is ITypeParameterSymbol
-                || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
-            return (possible, certain);
-        }
-
-        private static bool HasBaseType(ITypeSymbol? type, ITypeSymbol? expected)
-        {
-            for (; type is not null; type = type.BaseType)
-            {
-                if (SymbolEqualityComparer.Default.Equals(type, expected))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
+            targetPosition, barriers, startPolicy, cancellationToken).Search();
 
     private static bool IsUnconditionalTopLevelSequence(
         SyntaxNode scope, SyntaxNode before, SyntaxNode after, bool requireExitCoverage)
@@ -729,68 +431,11 @@ internal static class ScopeWalker
     private static BasicBlock? FindBlock(ControlFlowGraph graph, SyntaxNode node)
         => graph.Blocks.FirstOrDefault(block =>
             block.Operations.Any(operation => operation.Syntax.FullSpan.IntersectsWith(node.Span))
-            || block.BranchValue?.Syntax.FullSpan.IntersectsWith(node.Span) == true);
-
-    private static HashSet<int>[] ComputeDominators(ControlFlowGraph graph, bool reverse)
-    {
-        var blocks = graph.Blocks;
-        var all = new HashSet<int>(
-            blocks.Where(static block => block.IsReachable).Select(static block => block.Ordinal));
-        var root = reverse ? blocks[blocks.Length - 1].Ordinal : blocks[0].Ordinal;
-        var dominators = new HashSet<int>[blocks.Length];
-
-        foreach (var block in blocks)
-        {
-            dominators[block.Ordinal] = block.Ordinal == root ? [root] : new HashSet<int>(all);
-        }
-
-        bool changed;
-        do
-        {
-            changed = false;
-            foreach (var block in blocks)
-            {
-                if (!block.IsReachable || block.Ordinal == root)
-                {
-                    continue;
-                }
-
-                var adjacent = reverse ? GetSuccessors(block) : block.Predecessors.Select(static branch => branch.Source);
-                var sets = adjacent.Where(static candidate => candidate.IsReachable)
-                    .Select(candidate => dominators[candidate.Ordinal]).ToArray();
-                var next = sets.Length == 0 ? [] : new HashSet<int>(sets[0]);
-                foreach (var set in sets.Skip(1))
-                {
-                    next.IntersectWith(set);
-                }
-
-                next.Add(block.Ordinal);
-                if (!dominators[block.Ordinal].SetEquals(next))
-                {
-                    dominators[block.Ordinal] = next;
-                    changed = true;
-                }
-            }
-        }
-        while (changed);
-
-        return dominators;
-    }
-
-    private static IEnumerable<BasicBlock> GetSuccessors(BasicBlock block)
-    {
-        var fallThrough = block.FallThroughSuccessor?.Destination;
-        if (fallThrough is not null)
-        {
-            yield return fallThrough;
-        }
-
-        if (block.ConditionalSuccessor?.Destination is { } conditional
-            && conditional.Ordinal != fallThrough?.Ordinal)
-        {
-            yield return conditional;
-        }
-    }
+            || block.BranchValue is { } value && value.Syntax.FullSpan.IntersectsWith(node.Span)
+            // Roslyn attaches the whole arm to its pattern test. The selected expression
+            // executes in a later block and must inherit the successful pattern constraint.
+            && !(value is IIsPatternOperation && value.Syntax is SwitchExpressionArmSyntax arm
+                 && arm.Expression.Span.Contains(node.Span)));
 
     /// <summary>The receiver of <c>receiver.Name(...)</c> / <c>receiver.Name</c>, or null.</summary>
     public static ExpressionSyntax? GetReceiver(ExpressionSyntax expression)
