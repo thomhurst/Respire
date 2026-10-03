@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Redis.Search;
 using Respire.Extensions.Json;
 using Respire.Extensions.Probabilistic;
@@ -65,6 +66,45 @@ public class ModuleClientExtensionsTests
     public async Task NullReceiverThrowsArgumentNullException(string module)
     {
         await Assert.That(() => GetModule(null!, module)).Throws<ArgumentNullException>();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("Json")]
+    [Arguments("Search")]
+    [Arguments("TimeSeries")]
+    [Arguments("Probabilistic")]
+    public async Task CacheDoesNotRetainUnreachableClientOrWrapper(string module)
+    {
+        var (client, wrapper, retainedWhileRooted) = CreateWeakReferences(module);
+        CollectUnreachableObjects();
+
+        await Assert.That(retainedWhileRooted).IsTrue();
+        await Assert.That(client.IsAlive).IsFalse();
+        await Assert.That(wrapper.IsAlive).IsFalse();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (WeakReference Client, WeakReference Wrapper, bool RetainedWhileRooted) CreateWeakReferences(string module)
+    {
+        var client = CreateClient();
+        var wrapper = GetModule(client, module);
+        var clientReference = new WeakReference(client);
+        var wrapperReference = new WeakReference(wrapper);
+        // Dispose the unconnected client before testing the cache's lifetime, so no owned
+        // resources survive this helper. Its stack frame must end before the collection test.
+        client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        CollectUnreachableObjects();
+        var retainedWhileRooted = clientReference.IsAlive && wrapperReference.IsAlive;
+        GC.KeepAlive(wrapper);
+        return (clientReference, wrapperReference, retainedWhileRooted);
+    }
+
+    private static void CollectUnreachableObjects()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
     }
 
     private static object GetModule(IRespireClient client, string module) => module switch
