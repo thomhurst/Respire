@@ -167,6 +167,34 @@ enter the retry loop for unacknowledged fences. The generation remains owned unt
 disposal aborts its transports and observes the original failure. Retrying an already faulted,
 memoized transport cleanup task cannot restart cleanup or prove a successful drain.
 
+## Tracked correction dispatch
+
+`RespireClient.ExecuteWithCorrectionAsync` awaits a tracked script or native lock execution.
+It reads submission state and the final connection identity only after the response settles,
+so redirects cannot leave cleanup targeting the identity captured before the final send.
+Callers pass value state and static cleanup callbacks; successful operations allocate no
+identity accessor or cleanup closure through this dispatch boundary.
+Definitive Redis errors and transport proof of non-submission skip uncertain-outcome cleanup.
+An uncertain managed lock operation notifies ownership loss before waiting for a fence.
+
+Each caller declares its ordering contract:
+
+- `FenceFirst` waits for the captured connection's barrier before invoking a dependent
+  correction. Fence failure propagates and prevents that correction.
+- `OrderedCorrection` delegates to an existing ordered cleanup: cache TTL convergence and
+  hash-field lease cleanup use FIFO/route-aware scripts; semaphore cleanup owns a queued
+  fence-then-release operation. This mode does not fabricate a fence acknowledgement.
+- `BestEffortLockFence` preserves compatible lock release behavior: fence failures are logged
+  without replacing the original uncertain release error. It cannot run a dependent correction.
+- `NotifyOnly` reports ownership loss for a compatible release without CLIENT permissions.
+  It also cannot run a dependent correction.
+
+The dispatcher does not cancel cleanup with the abandoned command's token. Each cleanup
+retains its existing foreground bound, background ownership, TTL convergence, and retry policy.
+Consolidating those policies is tracked separately in #764; this boundary only centralizes
+outcome classification and correction dispatch. Untracked `IRespireClient` implementations
+retain best-effort cleanup because they cannot provide a physical connection identity.
+
 ## Dedicated pool ownership
 
 `DedicatedPoolLedger` keeps the dedicated pools owned by `ClientCore`, `ClusterRouter`,

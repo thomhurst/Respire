@@ -3747,7 +3747,7 @@ public sealed partial class RespireClient : IRespireClient
         return !ReferenceEquals(current.Multiplexer, identity.Connection.Multiplexer);
     }
 
-    internal sealed class TrackedScriptExecution
+    internal sealed class TrackedScriptExecution : ITrackedCorrectionExecution<RespireResult>
     {
         internal TrackedScriptExecution(
             RespireConnection connection, TrackedConnectionIdentity connectionIdentity,
@@ -3791,6 +3791,9 @@ public sealed partial class RespireClient : IRespireClient
         internal void RecordCommandNotApplied() => OnCommandNotApplied?.Invoke();
 
         internal ValueTask<RespireResult> Response { get; set; }
+        ValueTask<RespireResult> ITrackedCorrectionExecution<RespireResult>.Response => Response;
+        TrackedConnectionIdentity ITrackedCorrectionExecution<RespireResult>.ConnectionIdentity => ConnectionIdentity;
+        bool ITrackedCorrectionExecution<RespireResult>.CommandMayBeOutstanding => true;
     }
 
     /// <summary>

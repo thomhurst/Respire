@@ -115,7 +115,14 @@ public sealed class RespireSemaphore
                     AcquireScript, [Key], args, cancellationToken,
                     requireReliableCorrectionOrdering: requiresReliableOrdering || milliseconds == 0,
                     captureSendTimestampOnly: trackedWire is null).ConfigureAwait(false);
-                using var response = await trackedExecution.Response.ConfigureAwait(false);
+                using var response = await concreteClient.ExecuteWithCorrectionAsync(
+                    trackedExecution,
+                    // Queue one cleanup that retains its acknowledged fence across retries.
+                    // The caller waits only the existing bounded foreground cleanup interval.
+                    ordering: RespireClient.CorrectionOrdering.OrderedCorrection,
+                    state: (Semaphore: this, Wire: trackedWire, Execution: trackedExecution, Owner: owner),
+                    correct: static (state, _) => state.Semaphore.CleanupUncertainAcquisitionAsync(
+                        state.Wire, state.Execution, state.Owner)).ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;
             }
         }
@@ -133,7 +140,8 @@ public sealed class RespireSemaphore
         }
         catch
         {
-            await CleanupUncertainAcquisitionAsync(trackedWire, trackedExecution, owner).ConfigureAwait(false);
+            if (concreteClient is null)
+                await CleanupUncertainAcquisitionAsync(trackedWire, trackedExecution, owner).ConfigureAwait(false);
             throw;
         }
         if (!acquired) return default;
