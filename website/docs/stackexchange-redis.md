@@ -63,8 +63,10 @@ switch.
 
 - **No synchronous API.** Every command returns `ValueTask` or `ValueTask<T>`. Replace sync calls
   with `await`; do not block on `.Result`.
-- **Missing values are `null`.** `GetStringAsync` returns `string?` and `GetAsync<T>` returns
-  `T?`. There is no `RedisValue.IsNull` check.
+- **Missing values are `null` or `default`.** `GetStringAsync` returns `string?` and
+  `GetAsync<T>` returns `T?`. There is no `RedisValue.IsNull` check. For a value type,
+  `GetAsync<int>` returns `0` for a missing key. Use `TryGetAsync<T>` and check `Found` when a
+  missing key must differ from a stored default.
 - **Server errors throw.** A Redis error reply throws `RespireServerException`; its `Code`
   carries the Redis error class.
 - **Timeouts are longer by default.** `CommandTimeout` defaults to 10 seconds; StackExchange.Redis
@@ -77,7 +79,8 @@ switch.
   `ExecuteAsync` throws instead of deadlocking.
 - **RESP3 changes raw reply shapes.** Typed methods hide the difference. Raw `RespireResult`
   callers can receive maps, sets, and doubles. Set `Protocol = RespProtocol.Resp2` if raw callers
-  need RESP2 shapes. See [protocol negotiation](./fundamentals/connections#protocol-negotiation).
+  need RESP2 shapes. Client-side caching always uses RESP3, so use a separate client without
+  `ClientSideCache` for those callers. See [protocol negotiation](./fundamentals/connections#protocol-negotiation).
 - **One database per client.** Create one client per database index, or use key prefixes.
   `SELECT` cannot switch a shared connection.
 - **Multiple endpoints need a mode.** A comma-delimited string with several endpoints must set
@@ -250,9 +253,13 @@ channel or payload. Disposing the subscription unsubscribes. See
 | `LockReleaseAsync` | `Locks.ReleaseAsync` |
 | `LockQueryAsync` | `Locks.GetOwnerTokenAsync` |
 | — | `Locks.AcquireAsync` for managed handles with keep-alive |
-| `LuaScript.Prepare(source)` | `RespireScript.Create(source)` |
+| `LuaScript.Prepare(source)` | `RespireScript.Create(source)`; rewrite `@name` parameters as `KEYS[n]` and `ARGV[n]` |
 | `ScriptEvaluateAsync(script, keys, values)` | `Scripts.ExecuteAsync(script, keys, args)` (`EVALSHA` with `EVAL` fallback) |
 | `db.WithKeyPrefix("tenant:")` | `redis.WithKeyPrefix("tenant:")` |
+
+Respire sends script source unchanged. It does not support StackExchange.Redis named `@parameter`
+binding. Rewrite each `@key` reference as `KEYS[n]` and each `@value` reference as `ARGV[n]`, then
+pass the keys and arguments as arrays in the same order.
 
 See [distributed locks](./guides/distributed-locks) and
 [Lua scripting](https://github.com/thomhurst/Respire/blob/main/docs/SCRIPTING.md).
