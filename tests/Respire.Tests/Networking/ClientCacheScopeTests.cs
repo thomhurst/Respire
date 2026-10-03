@@ -84,6 +84,34 @@ public class ClientCacheScopeTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OptInRawMixedMgetTracksAndCachesCoveredKeysOnlyWithCoalescing(bool coalesce)
+    {
+        var replies = new List<byte[]> { Hello, FakeRespServer.OkReply };
+        if (coalesce) replies.Add(FakeRespServer.OkReply);
+        replies.Add("*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(replies.ToArray());
+        var options = Options(server, ["hot:"]);
+        options = options with
+        {
+            ClientSideCache = options.ClientSideCache! with { CoalesceConcurrentMisses = coalesce },
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+
+        using var result = await client.ExecuteAsync(RespireCommands.String.MGET, "hot:a", "cold:b");
+
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0].AsString()).IsEqualTo("a");
+        await Assert.That(result[1].AsString()).IsEqualTo("b");
+        string[] expectedCommands = coalesce
+            ? ["CLIENT CACHING YES", "MGET hot:a cold:b"]
+            : ["MGET hot:a cold:b"];
+        await Assert.That(server.ReceivedCommands.Skip(2)).IsEquivalentTo(expectedCommands);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(coalesce ? 1 : 0);
+    }
+
+    [Test]
     public async Task WithoutClientCacheReadsRedisAndWritesStillInvalidate()
     {
         await using var server = new FakeRespServer(
