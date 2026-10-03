@@ -329,6 +329,8 @@ public sealed record RespireOptions
     /// before the kernel starts probing. Whole seconds, minimum one second. Null (the default)
     /// leaves keepalive off. Recommended (e.g. 60 seconds) when connections idle behind NATs
     /// or load balancers that silently drop stale flows.
+    /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
+    /// the OS range can fail connection creation with a SocketException.
     /// </summary>
     public TimeSpan? TcpKeepAliveTime { get; init; }
 
@@ -336,12 +338,16 @@ public sealed record RespireOptions
     /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
     /// without traffic. Whole seconds, minimum one second. Null keeps the OS default; requires
     /// <see cref="TcpKeepAliveTime"/>.
+    /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
+    /// the OS range can fail connection creation with a SocketException.
     /// </summary>
     public TimeSpan? TcpKeepAliveInterval { get; init; }
 
     /// <summary>
     /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
     /// the OS default; requires <see cref="TcpKeepAliveTime"/>.
+    /// The upper bound is OS-dependent: Linux permits at most 127 probes. Values outside
+    /// the OS range can fail connection creation with a SocketException.
     /// </summary>
     public int? TcpKeepAliveRetryCount { get; init; }
 
