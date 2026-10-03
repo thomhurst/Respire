@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 
@@ -55,7 +56,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
         }
 
-        return TryParseResumable(buffer, ref pos, out value, out directFill);
+        var status = TryParseResumable(buffer, ref pos, out value, out directFill);
+        Debug.Assert(stopAfterAttributes || status != RespParseStatus.SkippedAttribute,
+            "Only parsers that opt in may yield after an attribute.");
+        return status;
     }
 
     internal RespParseStatus TryParseResumable(

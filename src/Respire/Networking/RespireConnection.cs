@@ -2175,7 +2175,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     RespParseStatus status;
                     RespValue value;
                     RespDirectFillRequest directFill = default;
-                    if (parser.IsIdle && bufferedData[start] != (byte)'|')
+                    if (parser.IsIdle && !RespParser.IsAttributeStart(bufferedData[start]))
                     {
                         var hasBulkHeader = RespParser.TryPeekBulkHeader(
                             bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
