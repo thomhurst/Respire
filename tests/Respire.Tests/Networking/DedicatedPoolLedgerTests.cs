@@ -310,6 +310,52 @@ public class DedicatedPoolLedgerTests
         finally { logger.ThrowOnDisconnect = false; }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClientDisposalPreservesEveryFailedClusterRetirement(bool abortAlsoFails)
+    {
+        await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var first = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
+        var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
+        });
+        var router = client.Core.Cluster!;
+        router.ApplyTopology([
+            new(0, 8191, new("127.0.0.1", first.Port), "first", []),
+            new(8192, 16383, new("127.0.0.1", second.Port), "second", []),
+        ], 0, 1);
+        foreach (var server in new[] { first, second })
+        {
+            var pool = router.GetDedicatedPool(new("127.0.0.1", server.Port));
+            var lease = await pool.RentAsync(CancellationToken.None);
+            pool.Return(lease);
+        }
+        logger.ThrowOnDisconnect = true;
+        router.ApplyTopology([new(0, 16383, new("127.0.0.1", replacement.Port), "replacement", [])], 0, 2);
+        try { await router.WaitForRetirementAsync().WaitAsync(Limit); }
+        catch (InvalidOperationException) { }
+        logger.ThrowOnDisconnect = false;
+        await Assert.That(logger.DisconnectFailures.Count).IsEqualTo(2);
+        if (abortAlsoFails)
+            await router.GetConnectionAsync(0, CancellationToken.None, discovery: null);
+        logger.ThrowOnDisconnect = abortAlsoFails;
+        try
+        {
+            var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                .ThrowsExactly<AggregateException>();
+            await Assert.That(error!.InnerExceptions.Count).IsEqualTo(abortAlsoFails ? 3 : 2);
+            foreach (var failure in logger.DisconnectFailures)
+                await Assert.That(error.InnerExceptions.Contains(failure)).IsTrue();
+        }
+        finally { logger.ThrowOnDisconnect = false; }
+    }
+
     private sealed class CleanupFailureLogger : ILogger, ILoggerFactory
     {
         internal readonly InvalidOperationException Failure = new("Injected pool cleanup failure.");

@@ -103,9 +103,13 @@ internal sealed partial class ClusterRouter
             // Empty or exhausted routes refresh at most once per interval for this range. Callers
             // that arrive while a refresh runs wait for it instead of failing against stale routes.
             var refresh = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
-            if (refresh is null) break;
-            await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
-            routes = GetKnownReplicas(slot);
+            if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var current = GetKnownReplicas(slot);
+            // A fast refresh can finish and retire the selected node before selection fails.
+            // Its old range is throttled, but the already-published replacement still gets
+            // the same bounded second selection attempt as an in-flight refresh.
+            if (refresh is null && ReferenceEquals(current, routes)) break;
+            routes = current;
         }
 
         var detail = attempted == 0 ? "no replica available" : "no healthy replica";

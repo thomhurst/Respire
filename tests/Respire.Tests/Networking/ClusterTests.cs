@@ -756,6 +756,44 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_CompletedRefreshReplacesRetiredSelection()
+    {
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var oldReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "READONLY") return false;
+                handshake.TrySetResult();
+                return true;
+            },
+        };
+        await using var newReplica = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        List<ClusterTopologyRange> Topology(int port) => [new(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
+        {
+            Replicas = [new(new("127.0.0.1", port), port.ToString(), [])],
+        }];
+        router.ApplyTopology(Topology(oldReplica.Port), 0, 1);
+        var previous = new ClusterReplicaSet(ReplicaRoutes(client)[0]!.Nodes, TimeSpan.FromMinutes(1), static () => 0);
+        ReplicaRoutes(client)[0] = previous;
+        // Keep the old range throttled after its refresh completes. Selection already holds
+        // this range when publication retires its candidate during the READONLY handshake.
+        await previous.JoinOrStartRefresh(() => Task.CompletedTask)!;
+        var selection = router.GetReadConnectionAsync(0, RespireReadFrom.Replica, CancellationToken.None).AsTask();
+        await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        router.ApplyTopology(Topology(newReplica.Port), 0, 2);
+        var connection = await selection.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.Port).IsEqualTo(newReplica.Port);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]

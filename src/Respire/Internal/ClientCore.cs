@@ -741,9 +741,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         await DisposeOwnerAsync(_multiplexer.DisposeAsync).ConfigureAwait(false);
-        if (disposeErrors is { Count: 1 })
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeErrors[0]).Throw();
-        if (disposeErrors is { Count: > 1 }) throw new AggregateException(disposeErrors).Flatten();
+        CleanupTasks.Rethrow(disposeErrors);
 
         async ValueTask DisposeOwnerAsync(Func<ValueTask> dispose)
         {
