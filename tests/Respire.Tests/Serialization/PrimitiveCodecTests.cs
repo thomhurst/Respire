@@ -11,6 +11,39 @@ namespace Respire.Tests.Serialization;
 public class PrimitiveCodecTests
 {
     [Test]
+    [Arguments("+1")]
+    [Arguments("01")]
+    [Arguments("-01")]
+    [Arguments(".5")]
+    [Arguments("1.")]
+    [Arguments("\v1\v")]
+    [Arguments("\f1\f")]
+    [Arguments("1 2")]
+    [Arguments("1e")]
+    [Arguments("1e+")]
+    public async Task NumericReadsRejectNonJsonSyntax(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<int>(bytes, out _)).Throws<FormatException>();
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<int?>(bytes, out _)).Throws<FormatException>();
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<float>(bytes, out _)).Throws<FormatException>();
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<double>(bytes, out _)).Throws<FormatException>();
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<decimal>(bytes, out _)).Throws<FormatException>();
+    }
+
+    [Test]
+    [Arguments("0", 0d)]
+    [Arguments("-0", 0d)]
+    [Arguments(" \t\r\n-12.5 \t\r\n", -12.5d)]
+    [Arguments("1e+2", 100d)]
+    [Arguments("1E-2", 0.01d)]
+    public async Task NumericReadsPreserveJsonWhitespaceFractionsAndExponents(string value, double expected)
+    {
+        await Assert.That(PrimitiveCodec.TryDeserialize<double>(Encoding.UTF8.GetBytes(value), out var actual)).IsTrue();
+        await Assert.That(actual).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task NumericPrimitives_BypassSerializer_OnWrite()
     {
         var serializer = new CountingSerializer();

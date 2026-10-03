@@ -336,6 +336,7 @@ internal static class PrimitiveCodec
     private static TValue Parse<TValue>(ReadOnlySpan<byte> payload)
         where TValue : IUtf8SpanParsable<TValue>
     {
+        payload = ValidateNumber<TValue>(payload);
         if (TValue.TryParse(payload, CultureInfo.InvariantCulture, out var value))
         {
             return value;
@@ -346,6 +347,7 @@ internal static class PrimitiveCodec
 
     private static float ParseFiniteSingle(ReadOnlySpan<byte> payload)
     {
+        payload = ValidateNumber<float>(payload);
         if (float.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             && float.IsFinite(value))
         {
@@ -357,6 +359,7 @@ internal static class PrimitiveCodec
 
     private static double ParseFiniteDouble(ReadOnlySpan<byte> payload)
     {
+        payload = ValidateNumber<double>(payload);
         if (double.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             && double.IsFinite(value))
         {
@@ -368,12 +371,29 @@ internal static class PrimitiveCodec
 
     private static decimal ParseDecimal(ReadOnlySpan<byte> payload)
     {
+        payload = ValidateNumber<decimal>(payload);
         if (decimal.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
         {
             return value;
         }
 
         throw InvalidValue<decimal>();
+    }
+
+    private static ReadOnlySpan<byte> ValidateNumber<T>(ReadOnlySpan<byte> payload)
+    {
+        payload = TrimJsonWhitespace(payload);
+        try
+        {
+            var reader = new Utf8JsonReader(payload);
+            if (reader.Read() && reader.TokenType == JsonTokenType.Number && reader.BytesConsumed == payload.Length)
+                return payload;
+        }
+        catch (JsonException)
+        {
+            // Keep the primitive codec's FormatException contract for malformed payloads.
+        }
+        throw InvalidValue<T>();
     }
 
     private static FormatException InvalidValue<T>()
