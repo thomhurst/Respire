@@ -1,5 +1,5 @@
 // @ts-check
-import {themes as prismThemes} from 'prism-react-renderer';
+import {respireDark, respireLight} from './src/prism-themes.js';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -35,7 +35,16 @@ const config = {
 };`,
     },
   ],
+  stylesheets: [
+    {rel: 'preconnect', href: 'https://fonts.googleapis.com'},
+    {rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: 'anonymous'},
+    {
+      rel: 'stylesheet',
+      href: 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Martian+Mono:wdth,wght@75..112.5,100..800&family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&display=swap',
+    },
+  ],
   scripts: [{src: 'https://tluma.ai/widget.js', async: true}],
+  clientModules: ['./src/client/resp-headings.js'],
   presets: [
     [
       'classic',
@@ -56,20 +65,20 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       metadata: [
-        {name: 'theme-color', content: '#091b1a'},
+        {name: 'theme-color', content: '#f7f7f5'},
         {name: 'keywords', content: 'Redis, Valkey, RESP, .NET, C#, async, client'},
       ],
-      colorMode: {defaultMode: 'dark', respectPrefersColorScheme: true},
+      colorMode: {defaultMode: 'light', respectPrefersColorScheme: true},
       navbar: {
         title: 'Respire',
-        logo: {alt: 'Respire logo', src: 'img/logo.svg'},
+        logo: {alt: 'Respire logo', src: 'img/logo.svg', srcDark: 'img/logo-dark.svg'},
         items: [
           {type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs'},
           {to: '/docs/guides/blocking-queues', label: 'Guides', position: 'left'},
           {to: '/docs/performance', label: 'Performance', position: 'left'},
           {href: 'https://www.nuget.org/packages/Respire', label: 'NuGet', position: 'right'},
-          {href: 'https://github.com/thomhurst/Respire', label: 'GitHub', position: 'right', className: 'navbar-github-link'},
-          {href: 'https://github.com/sponsors/thomhurst', label: '❤️ Sponsor', position: 'right'},
+          {href: 'https://github.com/thomhurst/Respire', label: 'GitHub', position: 'right'},
+          {href: 'https://github.com/sponsors/thomhurst', label: 'Sponsor', position: 'right'},
         ],
       },
       footer: {
@@ -93,11 +102,11 @@ const config = {
             ],
           },
         ],
-        copyright: `Respire · Built in the open · ${new Date().getFullYear()}`,
+        copyright: `Respire is MIT licensed and built in the open. © ${new Date().getFullYear()} Tom Longhurst.`,
       },
       prism: {
-        theme: prismThemes.github,
-        darkTheme: prismThemes.dracula,
+        theme: respireLight,
+        darkTheme: respireDark,
         additionalLanguages: ['csharp', 'bash', 'json'],
       },
     }),

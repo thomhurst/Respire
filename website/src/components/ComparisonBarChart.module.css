@@ -1,10 +1,10 @@
 .chart {
-  --chart-respire: #168d71;
-  --chart-respire-server: #4fb99d;
-  --chart-other: #718096;
-  background: color-mix(in srgb, var(--ifm-background-surface-color) 88%, var(--ifm-color-primary) 12%);
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 0.75rem;
+  --chart-respire: var(--resp-bulk);
+  --chart-respire-server: color-mix(in srgb, var(--resp-bulk) 55%, var(--resp-surface));
+  --chart-other: var(--resp-ink-soft);
+  background: var(--resp-surface);
+  border: 1px solid var(--resp-rule);
+  border-radius: 0;
   margin: 1.5rem 0 2rem;
   padding: 1.25rem;
 }
@@ -69,7 +69,7 @@
 
 .track {
   background: var(--ifm-color-emphasis-200);
-  border-radius: 999px;
+  border-radius: 0;
   height: 0.55rem;
   overflow: hidden;
 }
@@ -101,12 +101,6 @@
   color: var(--ifm-font-color-base);
   text-align: right;
   white-space: nowrap;
-}
-
-[data-theme='dark'] .chart {
-  --chart-respire: #73e0c0;
-  --chart-respire-server: #35a98b;
-  --chart-other: #a0aec0;
 }
 
 @media (max-width: 576px) {
