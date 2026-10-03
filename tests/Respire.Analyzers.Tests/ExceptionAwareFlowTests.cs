@@ -7,6 +7,49 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("[1, 2]", "InvalidOperationException", false)]
+    [Arguments("[1, 2]", "OutOfMemoryException", true)]
+    [Arguments("[Throw()]", "InvalidOperationException", true)]
+    [Arguments("[..source]", "InvalidOperationException", true)]
+    public async Task ArrayCollectionExceptionsRespectCatchType(string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                int Throw() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, IEnumerable<int> source)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { int[] copy = {{expression}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                int Throw() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, IEnumerable<int> source)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { int[] copy = {{expression}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("int[] copy = [..source];", false)]
     [Arguments("int[] copy = [1, 2];", false)]
     [Arguments("System.Collections.Generic.List<int> copy = [..source];", false)]

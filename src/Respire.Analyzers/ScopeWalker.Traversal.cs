@@ -28,7 +28,7 @@ internal static partial class ScopeWalker
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
         private readonly List<CatchDispatch?> _dispatches = [null];
-        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool ArrayAllocation), int> _dispatchIds = new();
         private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
         private readonly Dictionary<IOperation, bool> _throwingOperations = new();
         private readonly Stack<SearchState> _pending = new();
@@ -286,7 +286,15 @@ internal static partial class ScopeWalker
                     // The runtime treats a throwing filter as a rejected filter.
                     Dispatch(_dispatches[dispatch]!.Next, started, known, values);
                 else if (block.FallThroughSuccessor is { } successor)
-                    Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+                {
+                    // Element expressions have their own exception paths. A fixed array
+                    // literal itself only allocates; spreads can execute arbitrary code.
+                    var arrayAllocation = exceptionSource.Type is IArrayTypeSymbol
+                        && exceptionSource.Syntax is CollectionExpressionSyntax collection
+                        && !collection.Elements.Any(static element => element is SpreadElementSyntax);
+                    Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                        arrayAllocation: arrayAllocation), started, known, values);
+                }
             }
             // Construction/allocation can fail before any initializer runs.
             if (initializer is not null)
@@ -406,9 +414,10 @@ internal static partial class ScopeWalker
             internal bool Certain { get; } = certain;
         }
 
-        private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false, bool implicitException = false)
+        private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false,
+            bool implicitException = false, bool arrayAllocation = false)
         {
-            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException);
+            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, arrayAllocation);
             if (_dispatchIds.TryGetValue(key, out var existing))
                 return existing;
 
@@ -435,8 +444,9 @@ internal static partial class ScopeWalker
             }
             if (implicitException)
             {
-                exceptionType = null;
-                exactType = false;
+                exceptionType = arrayAllocation
+                    ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException") : null;
+                exactType = exceptionType is not null;
             }
 
             var unwind = CollectFinallyRegions(branch.Source.EnclosingRegion);
