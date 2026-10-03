@@ -511,9 +511,28 @@ internal static partial class ScopeWalker
             var possible = certain || exceptionType is null or IDynamicTypeSymbol
                 || catchType is ITypeParameterSymbol
                 || !exactType && (exceptionType is ITypeParameterSymbol parameter
-                    ? parameter.ConstraintTypes.All(constraint => HasBaseType(catchType, constraint))
+                    ? SatisfiesClassConstraints(catchType, parameter)
                     : HasBaseType(catchType, exceptionType));
             return (possible, certain);
+        }
+
+        private static bool SatisfiesClassConstraints(ITypeSymbol? catchType, ITypeParameterSymbol parameter, int depth = 0)
+        {
+            // A runtime subclass can add interfaces that the catch type does not implement.
+            // Only class constraints restrict which catch hierarchies can overlap.
+            if (depth == 32)
+                return true;
+            foreach (var constraint in parameter.ConstraintTypes)
+            {
+                if (constraint is ITypeParameterSymbol inherited)
+                {
+                    if (!SatisfiesClassConstraints(catchType, inherited, depth + 1))
+                        return false;
+                }
+                else if (constraint.TypeKind == TypeKind.Class && !HasBaseType(catchType, constraint))
+                    return false;
+            }
+            return true;
         }
 
         private static bool HasBaseType(ITypeSymbol? type, ITypeSymbol? expected, int depth = 0)
