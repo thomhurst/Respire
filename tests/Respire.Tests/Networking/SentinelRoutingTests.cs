@@ -12,7 +12,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class SentinelRoutingTests
+public partial class SentinelRoutingTests
 {
     [Test]
     [Arguments(549)]

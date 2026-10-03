@@ -14,13 +14,15 @@ internal sealed class SentinelMonitoring(
     RespireOptions options, ILogger? logger, object gate, SentinelDiscoveryState discovery,
     CancellationTokenSource lifetime,
     Func<RespireEndpoint, SentinelEvent, string?, CancellationToken, ValueTask> received,
-    Action<RespireEndpoint, long> deliveryGap)
+    Action<RespireEndpoint, long, CancellationToken> deliveryGap,
+    SentinelBackgroundWork? background = null)
 {
     private readonly object _gate = gate;
     private readonly SentinelDiscoveryState _discovery = discovery;
     private readonly CancellationTokenSource _lifetime = lifetime;
     private bool _disposed;
-    private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelEndpointIdentity.EndpointComparer.Instance);
+    private readonly SentinelBackgroundWork _background = background ?? new(gate);
+    private readonly Dictionary<RespireEndpoint, EndpointMonitor> _notificationMonitors = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private readonly HashSet<RespireEndpoint> _readySentinels = new(SentinelEndpointIdentity.EndpointComparer.Instance);
@@ -28,11 +30,35 @@ internal sealed class SentinelMonitoring(
     private long _subscriptionVersion;
     private readonly Dictionary<RespireEndpoint, long> _validatedSubscriptions = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(options.SentinelPrimaryName ?? "");
+    private TaskCompletionSource _readinessChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private sealed class EndpointMonitor(CancellationToken lifetime)
+    {
+        internal readonly CancellationTokenSource Lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+        internal Task Task = Task.CompletedTask;
+    }
 
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
+    internal Func<RespireOptions, ISentinelMonitorClient> ClientFactory { get; set; }
+        = static options => new SentinelMonitorClient(options);
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
     internal int SubscribedCount { get { lock (_gate) return _readySentinels.Count; } }
     internal long SubscriptionVersion { get { lock (_gate) return _subscriptionVersion; } }
+    internal async Task WaitForSubscriptionsAsync(int count, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        while (true)
+        {
+            Task changed;
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_readySentinels.Count >= count) return;
+                changed = _readinessChanged.Task;
+            }
+            await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
     internal bool NeedsStartupValidation(RespireEndpoint reporter, long version)
     {
         lock (_gate) return !_validatedSubscriptions.TryGetValue(reporter, out var validated) || version > validated;
@@ -49,22 +75,33 @@ internal sealed class SentinelMonitoring(
         }
     }
 
-    internal void SubscriptionEstablished(RespireEndpoint endpoint, bool first)
+    internal void SubscriptionEstablished(RespireEndpoint endpoint, bool first, CancellationToken cancellationToken = default)
     {
         long startupVersion = 0;
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed || cancellationToken.IsCancellationRequested) return;
             // A replacement monitor task has fresh local state, but this endpoint's
             // earlier subscription means the restart is a real delivery gap.
             if (first && _subscribedSentinels.Add(endpoint)) startupVersion = ++_subscriptionVersion;
         }
         // If the callback throws, deliberately leave a new endpoint unready. The monitor
         // recovery loop retries the subscription; a finally block must not publish readiness.
-        deliveryGap(endpoint, startupVersion);
+        deliveryGap(endpoint, startupVersion, cancellationToken);
         // Readiness must not become visible before the router queues this subscription's
         // validation. Moving the callback outside gate must preserve that startup fence.
-        lock (_gate) if (!_disposed) _readySentinels.Add(endpoint);
+        lock (_gate)
+        {
+            if (_disposed || cancellationToken.IsCancellationRequested) return;
+            if (_readySentinels.Add(endpoint)) SignalReadinessChanged();
+        }
+    }
+
+    private void SignalReadinessChanged()
+    {
+        var changed = _readinessChanged;
+        _readinessChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        changed.TrySetResult();
     }
 
     // The same gate serializes router disposal, publication, and monitor registration.
@@ -85,7 +122,11 @@ internal sealed class SentinelMonitoring(
         lock (_gate)
         {
             _disposed = true;
-            return [_notificationMonitorSupervisor, .. _notificationMonitors.Values];
+            SignalReadinessChanged();
+            foreach (var monitor in _notificationMonitors.Values)
+                _ = monitor.Task.ContinueWith(static (_, state) => ((EndpointMonitor)state!).Lifetime.Dispose(),
+                    monitor, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return _background.Stop();
         }
     }
 
@@ -93,8 +134,8 @@ internal sealed class SentinelMonitoring(
     {
         if (message.Kind == RespireMessageKind.Gap)
         {
-            lock (_gate) if (_disposed) return ValueTask.CompletedTask;
-            deliveryGap(sentinel, 0);
+            lock (_gate) if (_disposed || token.IsCancellationRequested) return ValueTask.CompletedTask;
+            deliveryGap(sentinel, 0, token);
             return ValueTask.CompletedTask;
         }
         if (message.Kind != RespireMessageKind.Message || _serviceNameUtf8.Length == 0)
@@ -105,7 +146,7 @@ internal sealed class SentinelMonitoring(
         var malformed = parsed.Kind == SentinelEventKind.SwitchMaster
             && (parsed.OldPrimary is null || parsed.NewPrimary is null) ? message.Text : null;
         lock (_gate)
-            return _disposed ? ValueTask.CompletedTask : received(sentinel, parsed, malformed, token);
+            return _disposed || token.IsCancellationRequested ? ValueTask.CompletedTask : received(sentinel, parsed, malformed, token);
     }
 
     private static readonly TimeSpan SentinelMonitorSupervisorFallbackInterval = TimeSpan.FromSeconds(30);
@@ -116,7 +157,8 @@ internal sealed class SentinelMonitoring(
     private void Start()
     {
         if (_notificationMonitorSupervisor != Task.CompletedTask) return;
-        _notificationMonitorSupervisor = Task.Run(MonitorSentinelsAsync);
+        _notificationMonitorSupervisor = _background.TryStart(SentinelWorkKind.Supervisor, MonitorSentinelsAsync)
+            ?? Task.CompletedTask;
     }
 
     private async Task MonitorSentinelsAsync()
@@ -130,19 +172,42 @@ internal sealed class SentinelMonitoring(
                 lock (_gate)
                 {
                     if (_disposed) return;
+                    var current = new HashSet<RespireEndpoint>(endpoints, SentinelEndpointIdentity.EndpointComparer.Instance);
+                    foreach (var removed in _notificationMonitors.Keys.Where(endpoint => !current.Contains(endpoint)).ToArray())
+                    {
+                        var monitor = _notificationMonitors[removed];
+                        _notificationMonitors.Remove(removed);
+                        _readySentinels.Remove(removed);
+                        // CancelAsync marks the token before running callbacks asynchronously.
+                        // Late messages/readiness now fail the token check under this gate.
+                        var cancellation = monitor.Lifetime.CancelAsync();
+                        _background.TryStart(SentinelWorkKind.MonitorRemoval, async () =>
+                        {
+                            try { await CleanupTasks.WhenAllAsync([cancellation, monitor.Task]).ConfigureAwait(false); }
+                            finally { monitor.Lifetime.Dispose(); }
+                        });
+                        SignalReadinessChanged();
+                    }
                     foreach (var endpoint in endpoints)
                     {
-                        if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.IsCompleted) continue;
+                        if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.Task.IsCompleted) continue;
                         if (monitor is not null)
-                            (restarted ??= []).Add((endpoint, monitor.Exception));
-                        _notificationMonitors[endpoint] = Task.Run(() => MonitorSentinelAsync(endpoint, _lifetime.Token));
+                        {
+                            (restarted ??= []).Add((endpoint, monitor.Task.Exception));
+                            monitor.Lifetime.Dispose();
+                        }
+                        monitor = new(_lifetime.Token);
+                        var started = monitor;
+                        monitor.Task = _background.TryStart(SentinelWorkKind.Monitor,
+                            () => MonitorSentinelAsync(endpoint, started.Lifetime.Token)) ?? Task.CompletedTask;
+                        _notificationMonitors[endpoint] = monitor;
                     }
                 }
                 if (restarted is not null)
                     foreach (var restart in restarted)
                         SafeLog(restart, static (logger, state) => logger.LogWarning(state.Error,
                             "Restarting an unexpectedly completed Sentinel event monitor at {Endpoint}", state.Endpoint));
-                // Wake as soon as discovery learns a Sentinel; no periodic polling of the endpoint set.
+                // Wake on additions and removals, without periodically polling membership.
                 try
                 {
                     await changed.WaitAsync(SentinelMonitorSupervisorFallbackInterval, Clock, _lifetime.Token)
@@ -164,11 +229,11 @@ internal sealed class SentinelMonitoring(
         while (!cancellationToken.IsCancellationRequested)
         {
             var subscriptionReconnectExhausted = false;
-            RespireClient? client = null;
-            RespireSubscription? subscription = null;
+            ISentinelMonitorClient? client = null;
+            ISentinelMonitorSubscription? subscription = null;
             try
             {
-                client = RespireClient.Create(CreateOptions(options, endpoint,
+                client = ClientFactory(CreateOptions(options, endpoint,
                     () =>
                     {
                         // Temporary clients that close before SUBSCRIBE succeeds belong to
@@ -176,15 +241,14 @@ internal sealed class SentinelMonitoring(
                         if (budget.Attempts == 0)
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
                     }));
-                subscription = await client.SubscribeAsync(
-                    ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
+                subscription = await client.SubscribeAsync(cancellationToken).ConfigureAwait(false);
                 budget.Reset();
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
                 // may already have completed that captured epoch before this continuation runs.
                 // The first subscription follows initial discovery; reconnects can miss events
                 // while disconnected. Revalidate after either subscription is established.
-                SubscriptionEstablished(endpoint, !subscribedBefore);
+                SubscriptionEstablished(endpoint, !subscribedBefore, cancellationToken);
                 subscribedBefore = true;
                 await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
                     await ObserveMessageAsync(endpoint, message, cancellationToken).ConfigureAwait(false);
@@ -203,8 +267,18 @@ internal sealed class SentinelMonitoring(
                 // The single disposal path. On shutdown, close the client first so the subscription's
                 // UNSUBSCRIBE cannot wait on a live socket; otherwise unsubscribe before closing.
                 var shutdown = cancellationToken.IsCancellationRequested;
-                await DisposeMonitorResourceAsync(shutdown ? client : subscription, endpoint).ConfigureAwait(false);
-                await DisposeMonitorResourceAsync(shutdown ? subscription : client, endpoint).ConfigureAwait(false);
+                try
+                {
+                    await DisposeMonitorResourcesAsync(shutdown ? client : subscription,
+                        shutdown ? subscription : client, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error)
+                    && (error is not AggregateException aggregate
+                        || aggregate.Flatten().InnerExceptions.All(SentinelExceptionPolicy.IsRecoverable)))
+                {
+                    SafeLog((error, endpoint), static (logger, state)
+                        => logger.LogDebug(state.error, "Sentinel event monitor cleanup failed at {Endpoint}", state.endpoint));
+                }
             }
             if (cancellationToken.IsCancellationRequested) return;
 
@@ -244,14 +318,23 @@ internal sealed class SentinelMonitoring(
     internal Task CurrentMonitorRearm()
         => Volatile.Read(ref _monitorRearm).Task;
 
-    private async ValueTask DisposeMonitorResourceAsync(IAsyncDisposable? resource, RespireEndpoint endpoint)
+    private static async ValueTask DisposeMonitorResourcesAsync(IAsyncDisposable? first, IAsyncDisposable? second,
+        CancellationToken cancellationToken)
     {
-        if (resource is null) return;
-        try { await resource.DisposeAsync().ConfigureAwait(false); }
-        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
+        var firstCleanup = Dispose(first);
+        if (!cancellationToken.IsCancellationRequested)
         {
-            SafeLog((error, endpoint), static (logger, state)
-                => logger.LogDebug(state.error, "Sentinel event monitor cleanup failed at {Endpoint}", state.endpoint));
+            // Normally unsubscribe before closing the client. If shutdown interrupts a
+            // stalled unsubscribe, start client cleanup too, without losing the first task.
+            try { await firstCleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
+            catch (Exception) { /* The join below retains every cleanup failure. */ }
+        }
+        await CleanupTasks.WhenAllAsync([firstCleanup, Dispose(second)]).ConfigureAwait(false);
+
+        static Task Dispose(IAsyncDisposable? resource)
+        {
+            try { return resource?.DisposeAsync().AsTask() ?? Task.CompletedTask; }
+            catch (Exception error) { return Task.FromException(error); }
         }
     }
 

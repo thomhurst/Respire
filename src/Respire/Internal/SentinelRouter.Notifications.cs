@@ -7,7 +7,7 @@ using Respire.Protocol;
 
 namespace Respire.Internal;
 
-// Monitor supervision, event evidence, and the single notification discovery worker.
+// Event evidence and the single notification discovery worker.
 internal sealed partial class SentinelRouter
 {
     private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
@@ -91,7 +91,7 @@ internal sealed partial class SentinelRouter
 
             lock (_gate)
             {
-                if (_disposed) return;
+                if (_disposed || cancellationToken.IsCancellationRequested) return;
                 var current = Current;
                 _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
                 var retained = resolution.Hint.WithSourceAddresses(oldPrimary, addresses);
@@ -120,24 +120,17 @@ internal sealed partial class SentinelRouter
         }
     }
 
-    // Starts and registers the resolution in one step under the gate. Disposal sets _disposed before
-    // it snapshots this set under the same gate, so every started resolution is either joined by
-    // disposal or never started. Task.Run keeps the resolver from running while the gate is held.
+    // Evidence capture and task registration share disposal's gate. The background owner
+    // starts asynchronous work without running the resolver inline under the gate.
     private void StartSwitchSourceResolution(SentinelHint hint, Generation arrivedDuring, CancellationToken cancellationToken)
     {
-        Task resolution;
         lock (_gate)
         {
             if (_disposed) return;
             var evidence = _coalescer.BeginSourceResolution(in hint);
-            resolution = Task.Run(() => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, evidence), CancellationToken.None);
-            _switchSourceResolutions.Add(resolution);
+            Background.TryStart(SentinelWorkKind.SourceResolution,
+                () => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, evidence));
         }
-        _ = resolution.ContinueWith(static (completed, state) =>
-        {
-            var router = (SentinelRouter)state!;
-            lock (router._gate) router._switchSourceResolutions.Remove(completed);
-        }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     // Ordinary logger failures must not stop monitoring, rediscovery or disposal. Fatal failures propagate.
@@ -151,7 +144,7 @@ internal sealed partial class SentinelRouter
         }
     }
 
-    private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, long startupVersion)
+    private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, long startupVersion, CancellationToken cancellationToken)
     {
         var initialSubscription = startupVersion > 0;
         SafeLog((sentinel, initialSubscription), static (logger, state) => logger.LogInformation(state.initialSubscription
@@ -159,10 +152,14 @@ internal sealed partial class SentinelRouter
             : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
         // Only first-subscription gaps can be covered by a discovery begun after attachment.
         // Reconnect and overflow gaps remain independent, mandatory rediscovery hints.
-        QueueNotificationRediscovery(SentinelHint.FromGap(sentinel) with
+        lock (_gate)
         {
-            StartupSubscriptionVersion = startupVersion,
-        });
+            if (_disposed || cancellationToken.IsCancellationRequested) return;
+            QueueNotificationRediscovery(SentinelHint.FromGap(sentinel) with
+            {
+                StartupSubscriptionVersion = startupVersion,
+            });
+        }
     }
 
     internal void QueueNotificationRediscovery(in SentinelHint hint)
@@ -191,7 +188,7 @@ internal sealed partial class SentinelRouter
             // This also covers hints that wait behind an active discovery, so a direct endpoint
             // match never waits for that attempt or for DNS.
             RetireIfSwitchSourceLocked(current, in hint);
-            if (startWorker) _notificationRediscovery = Task.Run(RediscoverFromNotificationAsync);
+            if (startWorker) _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
         }
     }
 

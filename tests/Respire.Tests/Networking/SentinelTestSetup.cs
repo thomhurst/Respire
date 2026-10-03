@@ -18,11 +18,7 @@ internal static class SentinelTestSetup
         if (refreshReplicas) await client.Core.ReadRouter.RefreshNowAsync(setup.Token);
     }
 
-    internal static async Task WaitForSubscriptionsAsync(
+    internal static Task WaitForSubscriptionsAsync(
         SentinelRouter sentinel, int expectedSubscriptions, CancellationToken cancellationToken)
-    {
-        // The router exposes a synchronized readiness count, not a subscription-ready task.
-        while (sentinel.SubscribedSentinelCount < expectedSubscriptions)
-            await Task.Delay(5, cancellationToken);
-    }
+        => sentinel.Monitoring.WaitForSubscriptionsAsync(expectedSubscriptions, cancellationToken);
 }

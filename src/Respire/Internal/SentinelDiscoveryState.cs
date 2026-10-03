@@ -106,8 +106,7 @@ internal sealed partial class SentinelDiscoveryState
 
     internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
 
-    // Returns the endpoints and a task that completes when a later TryAdd learns a new endpoint.
-    // Endpoints are never removed, so consumers only need to react to additions.
+    // Returns the endpoints and a task that completes after a membership change.
     internal RespireEndpoint[] Snapshot(out Task changed)
     {
         lock (_gate)
@@ -130,4 +129,24 @@ internal sealed partial class SentinelDiscoveryState
         changed.TrySetResult();
         return true;
     }
+
+    // Configured endpoints occupy the immutable prefix. Removal only affects learned
+    // membership; evidence about accepted owners and epochs remains intact.
+    internal bool TryRemove(RespireEndpoint endpoint)
+    {
+        TaskCompletionSource changed;
+        lock (_gate)
+        {
+            var index = _endpoints.FindIndex(_configuredCount,
+                candidate => SentinelEndpointIdentity.EndpointComparer.Instance.Equals(candidate, endpoint));
+            if (index < 0) return false;
+            _known.Remove(_endpoints[index]);
+            _endpoints.RemoveAt(index);
+            changed = _changed;
+            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        changed.TrySetResult();
+        return true;
+    }
+
 }
