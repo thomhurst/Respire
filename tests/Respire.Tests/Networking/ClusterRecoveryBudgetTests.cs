@@ -8,6 +8,25 @@ namespace Respire.Tests.Networking;
 public class ClusterRecoveryBudgetTests
 {
     [Test]
+    public async Task TestClockTimersCanBeDisabledAndRearmedAfterFiring()
+    {
+        var clock = new RecoveryTestClock();
+        var fired = 0;
+        using var timer = clock.CreateTimer(_ => fired++, null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(fired).IsEqualTo(0);
+        timer.Change(TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(fired).IsEqualTo(1);
+        timer.Change(TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(fired).IsEqualTo(2);
+        timer.Dispose();
+        await Assert.That(timer.Change(TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan)).IsFalse();
+    }
+
+    [Test]
     public async Task PrimaryExpiryReservesSeedTimeUntilOverallDeadline()
     {
         var clock = new RecoveryTestClock();
@@ -16,11 +35,14 @@ public class ClusterRecoveryBudgetTests
         await Assert.That(budget.PrimaryToken.IsCancellationRequested).IsTrue();
         await Assert.That(budget.Token.IsCancellationRequested).IsFalse();
         var early = budget.GetFallbackToken(last: false);
-        clock.Advance(TimeSpan.FromMilliseconds(500));
+        clock.Advance(TimeSpan.FromMilliseconds(499));
+        await Assert.That(early.IsCancellationRequested).IsFalse();
+        clock.Advance(TimeSpan.FromMilliseconds(1));
         await Assert.That(early.IsCancellationRequested).IsTrue();
         await Assert.That(budget.GetFallbackToken(last: true).IsCancellationRequested).IsFalse();
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await Assert.That(budget.Token.IsCancellationRequested).IsTrue();
+        await Assert.That(budget.IsCallerCancellation(new OperationCanceledException(budget.Token), default)).IsFalse();
     }
 
     [Test]
@@ -61,60 +83,5 @@ public class ClusterRecoveryBudgetTests
             await Assert.That(token.IsCancellationRequested).IsTrue();
             await Assert.That(budget.IsCallerCancellation(new OperationCanceledException(token), caller.Token)).IsTrue();
         }
-    }
-}
-
-/// <summary>Advances deadlines only when the test has observed the relevant network operation.</summary>
-internal sealed class RecoveryTestClock : TimeProvider
-{
-    private readonly object _gate = new();
-    private readonly List<RecoveryTimer> _timers = [];
-    private long _ticks;
-
-    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-    public override long GetTimestamp() { lock (_gate) return _ticks; }
-
-    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-    {
-        lock (_gate)
-        {
-            var timer = new RecoveryTimer(this, callback, state, _ticks + dueTime.Ticks);
-            _timers.Add(timer);
-            return timer;
-        }
-    }
-
-    internal void Advance(TimeSpan elapsed)
-    {
-        RecoveryTimer[] due;
-        lock (_gate)
-        {
-            _ticks += elapsed.Ticks;
-            due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
-            foreach (var timer in due) _timers.Remove(timer);
-        }
-        foreach (var timer in due) timer.Fire();
-    }
-
-    private sealed class RecoveryTimer(RecoveryTestClock clock, TimerCallback callback, object? state, long due) : ITimer
-    {
-        private int _disposed;
-        internal long Due { get; private set; } = due;
-        internal void Fire() { if (Volatile.Read(ref _disposed) == 0) callback(state); }
-        public bool Change(TimeSpan dueTime, TimeSpan period)
-        {
-            lock (clock._gate)
-            {
-                if (Volatile.Read(ref _disposed) != 0) return false;
-                Due = clock._ticks + dueTime.Ticks;
-                return true;
-            }
-        }
-        public void Dispose()
-        {
-            Interlocked.Exchange(ref _disposed, 1);
-            lock (clock._gate) clock._timers.Remove(this);
-        }
-        public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 }
