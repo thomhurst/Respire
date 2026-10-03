@@ -143,8 +143,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// further hop therefore needs another handoff to retire that socket before the send is
     /// admitted, so the chain is bounded by handoff publications and cannot loop.</para>
     /// </remarks>
+    // Every caller must choose its zone explicitly. Keep retries at the admission boundary:
+    // fast sends still own their unpublished source, while most capacity waits reclaimed it.
     private bool TryReroute(bool pinToConnection, CommandDeadline deadline, out RespireConnection target,
-        out CommandDeadline reroutedDeadline, string? preferredZone = null)
+        out CommandDeadline reroutedDeadline, string? preferredZone)
     {
         target = null!;
         reroutedDeadline = default;
@@ -887,7 +889,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueue(in command, source, out startedBatch);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
             return target.SendConvertedAsync(in command, state, converter,
@@ -932,7 +934,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueue(in command, source, out startedBatch);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
             return target.SendStringAsync(in command, cancellationToken, commandName,
@@ -1092,7 +1094,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             startedBatch = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted).ConfigureAwait(false);
         }
@@ -1362,7 +1364,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(
-            pinToConnection, commandDeadline, out var target, out var reroutedDeadline))
+            pinToConnection, commandDeadline, out var target, out var reroutedDeadline, preferredZone: null))
         {
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
                     allowConnectionReroute, streamingRoute)
@@ -1841,7 +1843,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             startedBatch = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             return await target.SendConvertedAsync(in command, state, converter,
                 transferOwnership, cancellationToken, commandName, rerouted).ConfigureAwait(false);

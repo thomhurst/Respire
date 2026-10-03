@@ -234,38 +234,44 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(false, RespireReadFrom.AzAffinity)]
-    [Arguments(true, RespireReadFrom.AzAffinity)]
-    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
-    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
-    public async Task SameZoneReplicaWinsAndWritesStayPrimary(bool cluster, RespireReadFrom policy)
+    // One ordering table covers both routers and policies: local replica, eligible local
+    // primary, then remote replica. A remote primary never outranks a healthy replica.
+    [Arguments(false, RespireReadFrom.AzAffinity, true, true, "local")]
+    [Arguments(true, RespireReadFrom.AzAffinity, true, true, "local")]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, true, true, "local")]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, true, true, "local")]
+    [Arguments(false, RespireReadFrom.AzAffinity, true, false, "local")]
+    [Arguments(true, RespireReadFrom.AzAffinity, true, false, "local")]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, true, false, "local")]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, true, false, "local")]
+    [Arguments(false, RespireReadFrom.AzAffinity, false, true, "remote")]
+    [Arguments(true, RespireReadFrom.AzAffinity, false, true, "remote")]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, false, true, "primary")]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, false, true, "primary")]
+    [Arguments(false, RespireReadFrom.AzAffinity, false, false, "remote")]
+    [Arguments(true, RespireReadFrom.AzAffinity, false, false, "remote")]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, false, false, "remote")]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, false, false, "remote")]
+    public async Task ZoneFallbackOrderingKeepsWritesPrimary(bool cluster, RespireReadFrom policy,
+        bool includeLocalReplica, bool localPrimary, string expected)
     {
-        await using var primary = Node("primary", "local", false);
+        await using var primary = Node("primary", localPrimary ? "local" : "remote", false);
         await using var local = Node("local", "local", true);
         await using var remote = Node("remote", "remote", true);
-        ConfigureTopology(primary, local, remote);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [local, remote], cluster, policy));
+        FakeRespServer[] replicas = includeLocalReplica ? [local, remote] : [remote];
+        ConfigureTopology(primary, replicas);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, cluster, policy));
         for (var index = 0; index < 8; index++)
-            await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo("local");
+            await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo(expected);
         using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, "{zone}:key"))
-            await Assert.That(reply.AsString()).IsEqualTo("local");
+            await Assert.That(reply.AsString()).IsEqualTo(expected);
         await Assert.That(await client.SetAsync("{zone}:key", "value")).IsTrue();
         await Assert.That(primary.ReceivedCommands.Contains("SET {zone}:key value")).IsTrue();
-        await Assert.That(remote.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
-    }
-
-    [Test]
-    [Arguments(false, RespireReadFrom.AzAffinity, "remote")]
-    [Arguments(true, RespireReadFrom.AzAffinity, "remote")]
-    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, "primary")]
-    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, "primary")]
-    public async Task LocalPrimaryPrecedesRemoteReplicaOnlyWhenRequested(bool cluster, RespireReadFrom policy, string expected)
-    {
-        await using var primary = Node("primary", "local", false);
-        await using var remote = Node("remote", "remote", true);
-        ConfigureTopology(primary, remote);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [remote], cluster, policy));
-        await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo(expected);
+        foreach (var (node, name) in new[] { (primary, "primary"), (local, "local"), (remote, "remote") })
+            await Assert.That(node.ReceivedCommands.Count(command => command.StartsWith("GET ")))
+                .IsEqualTo(name == expected ? 9 : 0);
+        await Assert.That(local.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
+        await Assert.That(remote.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
     }
 
     [Test]
@@ -790,6 +796,55 @@ public class AvailabilityZoneRoutingTests
         await Assert.That(reply.AsString()).IsEqualTo("replica");
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
         await Assert.That(client.Core.Multiplexer.GetConnection().IsConnected).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NearestDedicatedPrimaryFailureReselectsByLatencyAndRecovers(bool useSentinel)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var slow = Node("slow", "local", true);
+        await using var fast = Node("fast", "remote", true);
+        await using var sentinel = Sentinel(primary, () => [slow, fast]);
+        var failDedicated = true;
+        var previous = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) =>
+        {
+            if (id > 0 && command == "HELLO 3" && Volatile.Read(ref failDedicated)) primary.CloseConnection(id);
+            return previous(id, command);
+        };
+        await using var client = await RespireClient.ConnectAsync(
+            Options(useSentinel ? sentinel : primary, useSentinel ? [] : [slow, fast], false, RespireReadFrom.Nearest)
+            with { Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null });
+        long now = 0;
+        var router = client.Core.ReadRouter;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
+            ValueTask.FromResult(connection.Port == primary.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
+            () => Volatile.Read(ref now));
+        if (useSentinel) await router.RefreshNowAsync(default);
+        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
+        await Assert.That(selected.Connection.Port).IsEqualTo(primary.Port);
+
+        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo("fast");
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
+        await Assert.That(slow.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        // Sentinel invalidates the whole generation when any of its sockets fails. The
+        // configured deployment retains its healthy shared socket despite this lease failure.
+        if (useSentinel) await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsTrue();
+        else await Assert.That(selected.Connection.IsConnected).IsTrue();
+        await Assert.That(router.NearestLatency.CanConnect(selected.Primary!)).IsFalse();
+
+        Volatile.Write(ref failDedicated, false);
+        Volatile.Write(ref now, ReadLatencySampler<RespireConnection>.IntervalMilliseconds);
+        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo("primary");
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+
+        Task<RespireResult> ReadAsync() => client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]

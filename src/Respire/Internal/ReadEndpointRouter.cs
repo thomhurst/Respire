@@ -180,8 +180,17 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     return (lease.Pool, lease.Connection, false);
                 }
                 catch (Exception error) when (replicaOnly is null && IsUnavailable(error, cancellationToken)
-                    && (readFrom == RespireReadFrom.PrimaryPreferred || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)))
+                    && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
+                        || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)))
                 {
+                    if (readFrom == RespireReadFrom.Nearest)
+                    {
+                        if (attempt >= ClusterRouter.RedirectLimit) throw;
+                        // Its shared socket can remain healthy while a dedicated handshake fails.
+                        // Cool down this owner and rank the remaining candidates by latency again.
+                        NearestLatency!.ConnectionFailed(selection.Primary!);
+                        continue;
+                    }
                     // The shared primary can be healthy while its dedicated handshake fails.
                     // Exclude that primary from the next selection instead of probing it again.
                     try
@@ -328,9 +337,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     lastError = error;
-                    entry.MarkFailed();
-                    try { core.Logger?.LogDebug(error, "Read replica unavailable at {Endpoint}", endpoint); }
-                    catch (Exception) { }
+                    TryRecordFailure(entry, error, "Read replica unavailable at {Endpoint}");
                 }
             }
 
@@ -353,6 +360,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     "Every read replica failed recently and is skipped until its ReplicaRefreshInterval cooldown ends.");
         }
         finally { candidates.Dispose(); }
+    }
+
+    private void TryRecordFailure(Entry entry, Exception error, string message)
+    {
+        entry.MarkFailed();
+        try { core.Logger?.LogDebug(error, message, entry.Endpoint); }
+        catch (Exception) { }
     }
 
     private bool IsSentinelRefreshDue()
