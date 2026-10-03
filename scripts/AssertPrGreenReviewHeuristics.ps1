@@ -9,6 +9,14 @@ function Test-ClaudeReviewRequired {
     }).Count -gt 0
 }
 
+function Test-ClaudeReviewSkipped {
+    [CmdletBinding()]
+    param([AllowNull()]$Checks)
+
+    return @($Checks | Where-Object { $_.name -eq 'claude-review' }).Count -gt 0 -and
+        -not (Test-ClaudeReviewRequired -Checks $Checks)
+}
+
 function ConvertTo-UtcDateTimeOffset {
     [CmdletBinding()]
     param(
@@ -391,7 +399,8 @@ function Get-UnansweredClaudeReviewReason {
         [AllowNull()][object[]]$Comments,
         [AllowNull()][string[]]$AuthorizedLogins,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$HeadSha,
-        [switch]$RequireReview
+        [switch]$RequireReview,
+        [switch]$ReviewSkipped
     )
 
     $present = @($Comments | Where-Object { $null -ne $_ })
@@ -418,6 +427,9 @@ function Get-UnansweredClaudeReviewReason {
     }
     $latestReview = $reviews | Where-Object { & $matchesHead $_ } | Select-Object -Last 1
     if ($null -eq $latestReview) {
+        # An explicitly skipped dependency review cannot replace older comments.
+        # A current manual review, when present, still governs this head.
+        if ($ReviewSkipped -and -not $RequireReview) { return $null }
         if ($RequireReview -or $reviews.Count -gt 0) {
             return "no Claude review matches current head $HeadSha; run the Claude Code Review workflow manually (workflow_dispatch with pr_number) to request a current-head review"
         }

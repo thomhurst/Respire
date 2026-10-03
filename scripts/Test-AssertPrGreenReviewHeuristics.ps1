@@ -1379,4 +1379,22 @@ foreach ($case in $reviewRequirementCases) {
     if ([bool]$reason -ne $case.Required) { throw "Missing comment case '$($case.Name)' failed: $reason" }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, 1 manual review recovery case)."
+$skippedReviewCases = @(
+    @{ Name = 'skipped job ignores stale clearance'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $false },
+    @{ Name = 'skipped job ignores stale findings'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $blockingReview; ReviewHead = $staleHead; Blocks = $false },
+    @{ Name = 'skipped job ignores unstamped review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = ''; Blocks = $false },
+    @{ Name = 'skipped job retains current manual findings'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $blockingReview; ReviewHead = $reviewHead; Blocks = $true },
+    @{ Name = 'skipped job accepts current manual clearance'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = $reviewHead; Blocks = $false },
+    @{ Name = 'manual successful job still requires current review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }, @{ name = 'claude-review'; conclusion = 'SUCCESS' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true },
+    @{ Name = 'absent job does not excuse stale review'; Checks = @(); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true },
+    @{ Name = 'unknown conclusion does not excuse stale review'; Checks = @(@{ name = 'claude-review' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true }
+)
+foreach ($case in $skippedReviewCases) {
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks
+    $skipped = Test-ClaudeReviewSkipped -Checks $case.Checks
+    $comment = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $case.Body $case.ReviewHead
+    $reason = Get-UnansweredClaudeReviewReason -Comments @($comment) -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required -ReviewSkipped:$skipped
+    if ([bool]$reason -ne $case.Blocks) { throw "Skipped review case '$($case.Name)' failed: $reason" }
+}
+
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, $($skippedReviewCases.Count) skipped review cases, 1 manual review recovery case)."

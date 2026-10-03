@@ -201,8 +201,9 @@ foreach ($login in $candidateLogins) {
 }
 
 $requiresClaude = Test-ClaudeReviewRequired -Checks $checks
+$skippedClaude = Test-ClaudeReviewSkipped -Checks $checks
 $claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins `
-    -HeadSha $view.headRefOid -RequireReview:$requiresClaude
+    -HeadSha $view.headRefOid -RequireReview:$requiresClaude -ReviewSkipped:$skippedClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }
 
 Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."

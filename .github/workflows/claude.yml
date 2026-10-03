@@ -43,6 +43,23 @@ jobs:
           REQUEST_AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.event.issue.user.login }}
         run: bash .github/scripts/claude-request-permission.sh
 
+      - name: Select requested revision from trusted event data
+        id: revision
+        if: steps.permission.outputs.authorized == 'true'
+        env:
+          REQUEST_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUEST_PR_NUMBER: ${{ github.event.issue.pull_request && github.event.issue.number || '' }}
+          REQUEST_EVENT_SHA: ${{ github.sha }}
+        run: bash .github/scripts/claude-request-revision.sh
+
+      - name: Checkout requested revision
+        if: steps.permission.outputs.authorized == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revision.outputs.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Run Claude Code
         id: claude
         if: steps.permission.outputs.authorized == 'true'

@@ -13,6 +13,8 @@ on:
       - .github/scripts/test-pr-review-comment.sh
       - .github/scripts/claude-request-permission.sh
       - .github/scripts/test-claude-request-permission.sh
+      - .github/scripts/claude-request-revision.sh
+      - .github/scripts/test-claude-request-revision.sh
       - .github/workflows/claude.yml
       - .github/workflows/agent-guard.yml
   push:
@@ -27,6 +29,8 @@ on:
       - .github/scripts/test-pr-review-comment.sh
       - .github/scripts/claude-request-permission.sh
       - .github/scripts/test-claude-request-permission.sh
+      - .github/scripts/claude-request-revision.sh
+      - .github/scripts/test-claude-request-revision.sh
       - .github/workflows/claude.yml
       - .github/workflows/agent-guard.yml
 
@@ -69,3 +73,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: bash .github/scripts/test-claude-request-permission.sh
+      - name: Verify Claude request revision
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-claude-request-revision.sh
