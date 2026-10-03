@@ -35,4 +35,13 @@
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
   </ItemGroup>
 
+  <Target Name="RecordExpectedRuntimeAssemblies" BeforeTargets="GetAssemblyAttributes">
+    <!-- Package and runtime assembly names intentionally match. Derive the expected
+         set from references so adding a package cannot silently omit its audit. -->
+    <ItemGroup>
+      <AssemblyMetadata Include="ExpectedRuntimeAssembly" Value="%(PackageReference.Identity)"
+                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.'))" />
+    </ItemGroup>
+  </Target>
+
 </Project>

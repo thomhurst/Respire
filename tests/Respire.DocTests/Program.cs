@@ -16,14 +16,28 @@ internal static class Program
 
     private static void VerifyPackageNamespaces()
     {
+        var expected = typeof(Program).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), inherit: false)
+            .Cast<System.Reflection.AssemblyMetadataAttribute>()
+            .Where(attribute => attribute.Key == "ExpectedRuntimeAssembly")
+            .Select(attribute => attribute.Value!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (expected.Count == 0)
+            throw new InvalidOperationException("No expected runtime assemblies were generated from package references.");
+
+        var paths = Directory.GetFiles(AppContext.BaseDirectory, "Respire*.dll")
+            .Where(path => Path.GetFileNameWithoutExtension(path) != typeof(Program).Assembly.GetName().Name)
+            .ToDictionary(path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal);
+        var missing = expected.Except(paths.Keys, StringComparer.Ordinal).Order().ToArray();
+        var unexpected = paths.Keys.Except(expected, StringComparer.Ordinal).Order().ToArray();
+        if (missing.Length != 0 || unexpected.Length != 0)
+            throw new InvalidOperationException(
+                $"Runtime assembly set mismatch. Missing: [{string.Join(", ", missing)}]. Unexpected: [{string.Join(", ", unexpected)}].");
+
         // Inspect the actual NuGet runtime assets, including packages that a snippet
         // does not use directly. The analyzer is a compiler asset, not a runtime library.
-        foreach (var path in Directory.GetFiles(AppContext.BaseDirectory, "Respire*.dll"))
+        foreach (var (name, path) in paths)
         {
-            var name = Path.GetFileNameWithoutExtension(path);
-            if (name == typeof(Program).Assembly.GetName().Name)
-                continue;
-
             var assembly = System.Reflection.Assembly.LoadFrom(path);
             if (assembly.GetName().Name != name)
                 throw new InvalidOperationException($"Assembly name does not match {path}.");
