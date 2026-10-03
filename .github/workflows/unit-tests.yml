@@ -60,6 +60,7 @@ jobs:
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build -- \
+            --maximum-parallel-tests 4 \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
             --report-trx \
             --report-trx-filename "Respire.Tests-${{ matrix.framework }}.trx" \
@@ -75,6 +76,7 @@ jobs:
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build -- \
+            --maximum-parallel-tests 4 \
             --treenode-filter '/*/*/HedgedReadTests/*' \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
             --report-trx \

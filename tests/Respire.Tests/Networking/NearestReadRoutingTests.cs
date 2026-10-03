@@ -13,9 +13,11 @@ public class NearestReadRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ColdCandidatesShareOneSamplingWaitBudget(bool cluster)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ColdCandidatesShareOneSamplingWaitBudget(bool cluster, bool slowHandshake)
     {
         await using var primary = Server("primary");
         await using var first = Server("first");
@@ -26,8 +28,20 @@ public class NearestReadRoutingTests
             ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*6\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{third.Port}\r\n")
             : Reply(command, "primary");
         var options = Options(primary, first, second, third);
+        if (slowHandshake)
+        {
+            options = options with { Password = "test-password" };
+            primary.DelayCommand("AUTH ", 3_000);
+        }
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
-        await using var client = RespireClient.Create(options);
+        await using var client = await RespireClient.ConnectAsync(options);
+        // Connection handshakes and topology discovery are setup, not sampling wait time.
+        // Warm every transport through ordinary replica reads, leaving latency samples cold.
+        await using var replicas = client.WithReadFrom(RespireReadFrom.Replica);
+        var warmed = new HashSet<string?>();
+        for (var index = 0; index < 3; index++) warmed.Add(await replicas.GetStringAsync("warmup"));
+        await Assert.That(warmed).IsEquivalentTo(new string?[] { "first", "second", "third" });
+        await Assert.That(cluster ? client.Core.Cluster!.NearestLatency : client.Core.ReadRouter.NearestLatency).IsNull();
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         // Three stalled samples previously consumed three independent one-second waits.
         await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2.5)))
@@ -35,7 +49,7 @@ public class NearestReadRoutingTests
         var sampler = cluster ? client.Core.Cluster!.NearestLatency! : client.Core.ReadRouter.NearestLatency!;
         await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
         foreach (var replica in new[] { first, second, third })
-            await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
+            await Assert.That(replica.ReceivedCommands.Contains("GET key")).IsFalse();
     }
 
     [Test]

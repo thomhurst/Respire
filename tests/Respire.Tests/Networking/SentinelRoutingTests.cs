@@ -1019,6 +1019,47 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task CompletedSwitchCycleAllowsGenuineRecurrenceWithoutEpochs()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var firstPort = original.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => original.Port);
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
+        var router = client.Core.Sentinel!;
+        var outbound = SentinelHint.FromSwitchMaster("a-to-b", new("127.0.0.1", original.Port),
+            new("127.0.0.1", promoted.Port), new("127.0.0.1", first.Port));
+        Volatile.Write(ref firstPort, promoted.Port);
+        await CompleteAsync(outbound, promoted.Port);
+        await CompleteAsync(SentinelHint.FromSwitchMaster("b-to-a", outbound.Target,
+            outbound.OldPrimary, new("127.0.0.1", second.Port)), original.Port);
+        // A real third transition has exactly the same switch payload, reporter, GET-MASTER
+        // reply, and ROLE result as a delayed first transition. Completed edge history alone
+        // cannot reject the delayed event without also rejecting this genuine recurrence.
+        await CompleteAsync(outbound, promoted.Port);
+
+        async Task CompleteAsync(SentinelHint hint, int expectedPort)
+        {
+            router.QueueNotificationRediscovery(in hint);
+            await WaitForEndpointAsync(client, expectedPort);
+            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+            await Assert.That(router.Current!.IsRetired).IsFalse();
+        }
+    }
+
+    [Test]
     public async Task CurrentTargetSwitchSurvivesStaleUntargetedDiscovery()
     {
         await using var current = Primary();
