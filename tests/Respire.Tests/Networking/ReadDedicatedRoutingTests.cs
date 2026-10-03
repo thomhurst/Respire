@@ -129,7 +129,7 @@ public partial class ReadDedicatedRoutingTests
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 100L : 1L), () => 0L);
-        await CompleteSentinelReadSetupAsync(client);
+        await SentinelTestSetup.CompleteReadSetupAsync(client);
         var previous = client.Core.Sentinel!.Current!;
         var previousPool = previous.Pool;
         Volatile.Write(ref blockOldRental, true);
@@ -170,17 +170,6 @@ public partial class ReadDedicatedRoutingTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return await OpenSocketAsync(host, port, token);
         }
-    }
-
-    private static async Task CompleteSentinelReadSetupAsync(RespireClient client)
-    {
-        // Monitor startup queues a delivery-gap rediscovery. Finish it with healthy
-        // transports before arming dedicated failures or counting acquisition attempts.
-        var sentinel = client.Core.Sentinel!;
-        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (sentinel.SubscribedSentinelCount == 0) await Task.Delay(5, setup.Token);
-        if (sentinel.NotificationRediscovery is { } startup) await startup.WaitAsync(setup.Token);
-        await client.Core.ReadRouter.RefreshNowAsync(setup.Token);
     }
 
     private static async ValueTask<Stream> OpenSocketAsync(string host, int port, CancellationToken token)
@@ -354,7 +343,7 @@ public partial class ReadDedicatedRoutingTests
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
             () => Volatile.Read(ref now));
-        if (useSentinel) await CompleteSentinelReadSetupAsync(client);
+        if (useSentinel) await SentinelTestSetup.CompleteReadSetupAsync(client);
         var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
         await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
         var handshakesBefore = failedNode.ReceivedCommands.Count(command => command == "HELLO 3");

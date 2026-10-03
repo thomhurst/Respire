@@ -700,7 +700,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +switch-master");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -743,7 +743,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -4655,7 +4655,7 @@ public class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         using (var timeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < expectedSubscriptions) await Task.Delay(5, timeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, expectedSubscriptions, timeout.Token);
         var rediscovery = router.NotificationRediscovery;
         if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
     }
