@@ -94,8 +94,8 @@ internal sealed partial class SentinelRouter
             {
                 if (_disposed || cancellationToken.IsCancellationRequested) return;
                 var current = Current;
-                _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
-                var retained = resolution.Hint.WithSourceAddresses(oldPrimary, addresses);
+                _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses, resolution);
+                var retained = resolution.Hint;
                 // Do not apply an old resolution to a later generation for the same endpoint:
                 // a failback can legitimately publish that address again. A changed endpoint
                 // is checked so a hostname alias is not lost across an in-flight handoff.
@@ -195,134 +195,89 @@ internal sealed partial class SentinelRouter
 
     private async Task RediscoverFromNotificationAsync()
     {
-        var budget = new SentinelRetryBudget(core.Options.ReconnectPolicy);
-        // Consecutive failed attempts. Only the first of a run logs a warning, so a long Sentinel
-        // outage without a ReconnectPolicy does not repeat it every 30 seconds.
-        var consecutiveFailures = 0;
-        while (!_lifetime.IsCancellationRequested)
+        try
         {
-            var succeeded = false;
-            Generation? validated = null;
-            var retryDelay = TimeSpan.Zero;
-            try
+            while (!_lifetime.IsCancellationRequested)
             {
-                // One worker owns this deadline across successes and restarts. New hints can
-                // interrupt failure backoff, but cannot turn a pub/sub storm into an unbounded
-                // sequence of successful Sentinel queries and ROLE checks.
-                var delay = _notificationDiscoveryNotBefore - Environment.TickCount64;
-                if (delay > 0) await Task.Delay(TimeSpan.FromMilliseconds(delay), _lifetime.Token).ConfigureAwait(false);
-                _notificationDiscoveryNotBefore = Environment.TickCount64 + MinimumNotificationDiscoveryIntervalMilliseconds;
-                SentinelHint? hint;
+                SentinelNotificationTransition transition;
                 lock (_gate)
                 {
-                    if (_disposed) return;
-                    // Evidence can arrive after TakePending, during backoff or its wake-up.
-                    // Spend the remaining retry on that evidence, not the failed reporter again.
-                    if (budget.Attempts > 0 && _coalescer.Pending is not null)
-                    {
-                        var next = _coalescer.TakePending(activeFailed: true)!.Value;
-                        _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                        var current = Current;
-                        RetireIfSwitchSourceLocked(current, in next);
-                    }
-                    hint = _coalescer.Active;
+                    transition = _coalescer.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
+                        new(NowMilliseconds: Environment.TickCount64));
+                    ApplyNotificationTransitionLocked(in transition);
                 }
-                validated = await GetGenerationAsync(_lifetime.Token, forceDiscovery: true, notificationHint: hint).ConfigureAwait(false);
-                succeeded = true;
-                if (consecutiveFailures > 0)
-                    SafeLog(consecutiveFailures, static (logger, count) => logger.LogInformation(
-                        "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)", count));
-                consecutiveFailures = 0;
-            }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
-            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
-            {
-                SafeLog((error, attempt: ++consecutiveFailures), static (logger, state) => logger.Log(
-                    state.attempt == 1 ? LogLevel.Warning : LogLevel.Debug, state.error,
-                    "Sentinel notification-triggered primary discovery failed (consecutive failure {Attempt})", state.attempt));
-            }
-
-            lock (_gate)
-            {
-                if (_disposed) return;
-                // Discovery releases its semaphore before this lock. A command may have
-                // published another generation meanwhile; old reporters cannot undo it.
-                if (succeeded && !ReferenceEquals(validated, Current))
+                if (transition.Action == SentinelNotificationAction.Stop) return;
+                if (transition.Action == SentinelNotificationAction.RetryAfter)
                 {
-                    if (_coalescer.SupersedeActive() is null)
-                    {
-                        _notificationRediscovery = null;
-                        return;
-                    }
-                    budget.Reset();
-                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    // Minimum spacing survives worker completion and cannot be interrupted
+                    // by another advisory notification. Policy backoff below can be interrupted.
+                    await Task.Delay(transition.Delay, _lifetime.Token).ConfigureAwait(false);
                     continue;
                 }
-                if (!succeeded && !budget.TryStartRetry())
-                {
-                    // Pending hints cannot bypass the shared retry budget.
-                    _coalescer.Complete();
-                    _notificationRediscovery = null;
-                    return;
-                }
-                if (_coalescer.TakePending(activeFailed: !succeeded, validatedPrimary: validated?.Endpoint,
-                    validatedPeer: validated?.ValidatedPeer) is not { } next)
-                {
-                    // Sentinel publishes each event at most once. Retry a failed hint with backoff,
-                    // because a switch may already have retired the current generation. Without a
-                    // ReconnectPolicy this retries until discovery succeeds or the client is disposed,
-                    // at the default backoff capped at 30 seconds: dropping the hint could leave a
-                    // retired generation with no event-driven replacement. A policy's MaxAttempts
-                    // bounds it; commands still run discovery on demand after that.
-                    if (succeeded)
-                    {
-                        _coalescer.Complete();
-                        _notificationRediscovery = null;
-                        return;
-                    }
-                    retryDelay = budget.GetDelay();
-                }
-                else
-                {
-                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    // A newer hint restarts discovery at once. Count each failed attempt against
-                    // the same policy budget; only success starts a fresh run.
-                    if (succeeded) budget.Reset();
-                    var current = Current;
-                    if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
-                        && IsConfirmedTarget(current, target))
-                    {
-                        _coalescer.Complete();
-                        _notificationRediscovery = null;
-                        return;
-                    }
-                    RetireIfSwitchSourceLocked(current, in next);
-                }
-            }
 
-            if (retryDelay > TimeSpan.Zero)
-            {
+                Generation? validated = null;
+                Exception? failure = null;
+                try
+                {
+                    validated = await GetGenerationAsync(_lifetime.Token, forceDiscovery: true,
+                        notificationHint: transition.State.Active).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+                catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error)) { failure = error; }
+
+                // Logger callbacks run before reconciliation and outside the gate. A callback
+                // may allow another publication; capture Current only after it has returned.
+                int loggedFailures;
+                lock (_gate) loggedFailures = _coalescer.State.GetOutcomeLogCount(failure is null);
+                if (failure is not null)
+                    SafeLog((error: failure, attempt: loggedFailures), static (logger, state) => logger.Log(
+                        state.attempt == 1 ? LogLevel.Warning : LogLevel.Debug, state.error,
+                        "Sentinel notification-triggered primary discovery failed (consecutive failure {Attempt})", state.attempt));
+                else if (loggedFailures > 0)
+                    SafeLog(loggedFailures, static (logger, count) => logger.LogInformation(
+                        "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)", count));
+
                 Task notification;
                 lock (_gate)
                 {
-                    if (_coalescer.Pending is not null) continue;
-                    _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    if (_disposed) return;
+                    var current = Current;
+                    transition = _coalescer.Transition(new(failure is null
+                        ? SentinelNotificationEventKind.AttemptSucceeded : SentinelNotificationEventKind.AttemptFailed),
+                        new(Policy: core.Options.ReconnectPolicy, RandomUnit: Random.Shared.NextDouble(),
+                            CurrentGeneration: current, ValidatedGeneration: validated,
+                            ValidatedPrimary: validated is null ? null : new(validated.Endpoint, validated.ValidatedPeer),
+                            ConfirmedCurrentPeer: current is { IsRetired: false }
+                                ? current.Multiplexer.GetConfirmedCurrentPeer() : null));
+                    ApplyNotificationTransitionLocked(in transition);
                     notification = _pendingNotification.Task;
                 }
-                try
+
+                if (transition.Action == SentinelNotificationAction.Stop) return;
+                if (transition.Action != SentinelNotificationAction.RetryAfter || transition.Delay <= TimeSpan.Zero) continue;
+
+                using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                var delay = Task.Delay(transition.Delay, Clock, retry.Token);
+                if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
                 {
-                    using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-                    var delay = Task.Delay(retryDelay, Clock, retry.Token);
-                    if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
-                    {
-                        retry.Cancel();
-                        continue;
-                    }
-                    await delay.ConfigureAwait(false);
+                    retry.Cancel();
+                    continue;
                 }
-                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+                await delay.ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+    }
+
+    // State replacement and pending-signal replacement share the gate. The reducer
+    // selects work; only the router can retire transports or execute discovery.
+    private void ApplyNotificationTransitionLocked(in SentinelNotificationTransition transition)
+    {
+        if (transition.ReplacePendingSignal)
+            _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (transition.RetireActiveSource && transition.State.Active is { } active)
+            RetireIfSwitchSourceLocked(Current, in active);
+        if (transition.Action == SentinelNotificationAction.Stop) _notificationRediscovery = null;
     }
 
     // Caller holds _gate so source matching and admission retirement see one current generation.

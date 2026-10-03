@@ -17,6 +17,8 @@ internal readonly record struct SentinelSwitchSource
 
     internal static SentinelSwitchSource FromSnapshot(RespireEndpoint endpoint, ImmutableArray<string> addresses)
         => new(SentinelAddressEvidence.FromSnapshot(endpoint, addresses));
+
+    internal static SentinelSwitchSource FromEvidence(SentinelAddressEvidence evidence) => new(evidence);
 }
 internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
     SentinelValidatedPrimary? OwnerAtObservation = null);
@@ -92,6 +94,19 @@ internal readonly record struct SentinelHint(
             if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
             if (source.Evidence.HasSameAddresses(addresses)) return this;
             return this with { Sources = Sources.SetItem(index, new(source.Endpoint, addresses)) };
+        }
+        return this;
+    }
+
+    internal SentinelHint WithSourceEvidence(SentinelAddressEvidence evidence)
+    {
+        for (var index = 0; index < Sources.Length; index++)
+        {
+            var source = Sources[index];
+            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, evidence.Endpoint)) continue;
+            if (source.Addresses.IsDefault == evidence.Addresses.IsDefault
+                && source.Addresses.AsSpan().SequenceEqual(evidence.Addresses.AsSpan())) return this;
+            return this with { Sources = Sources.SetItem(index, SentinelSwitchSource.FromEvidence(evidence)) };
         }
         return this;
     }

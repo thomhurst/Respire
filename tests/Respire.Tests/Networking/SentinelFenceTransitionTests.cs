@@ -13,6 +13,123 @@ public class SentinelFenceTransitionTests
     private static readonly RespireEndpoint First = new("first", 26379);
     private static readonly RespireEndpoint Second = new("second", 26379);
 
+    [Test]
+    public async Task BackoffEvidenceUsesTheRemainingBudgetAndMinimumDeadline()
+    {
+        var policy = new RespireReconnectPolicy { MaxAttempts = 1, JitterRatio = 0 };
+        var active = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromGap(First))).State;
+        active = active.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1000)).State;
+        var failed = active.Transition(new(SentinelNotificationEventKind.AttemptFailed), new(Policy: policy));
+        await Assert.That(failed.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
+        await Assert.That(failed.Interruptible).IsTrue();
+        await Assert.That(failed.Delay).IsEqualTo(policy.InitialDelay);
+        var offered = failed.State.Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromSwitchMaster("a-b", A, B, Second))).State;
+        var waiting = offered.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1099));
+        await Assert.That(waiting.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
+        await Assert.That(waiting.Interruptible).IsFalse();
+        await Assert.That(waiting.Delay).IsEqualTo(TimeSpan.FromMilliseconds(1));
+        var retry = waiting.State.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1100));
+        await Assert.That(retry.Action).IsEqualTo(SentinelNotificationAction.RunNext);
+        await Assert.That(retry.State.Active!.Value.ReportingSentinel).IsEqualTo(Second);
+        await Assert.That(retry.ReplacePendingSignal).IsTrue();
+        await Assert.That(retry.RetireActiveSource).IsTrue();
+        await Assert.That(retry.State.RetryAttempts).IsEqualTo(1);
+        var pending = retry.State.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromGap(First))).State;
+        var exhausted = pending.Transition(new(SentinelNotificationEventKind.AttemptFailed), new(Policy: policy));
+        await Assert.That(exhausted.Action).IsEqualTo(SentinelNotificationAction.Stop);
+        await Assert.That(exhausted.State.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
+        await Assert.That(exhausted.State.ConsecutiveFailures).IsEqualTo(2);
+        await Assert.That(exhausted.State.RetryAttempts).IsEqualTo(1);
+        await Assert.That(active.RetryAttempts).IsEqualTo(0);
+        await Assert.That(offered.Pending).IsNotNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AttemptSupersessionUsesExactGenerationAndKeepsOnlyGenuinePendingEvidence(bool pending)
+    {
+        var oldGeneration = new object();
+        var newGeneration = new object();
+        var active = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromGap(First))).State;
+        if (pending) active = active.Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromSwitchMaster("b-a", B, A, Second))).State;
+        var completed = active.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
+            new(CurrentGeneration: newGeneration, ValidatedGeneration: oldGeneration,
+                ValidatedPrimary: new(A, A), ConfirmedCurrentPeer: A));
+        await Assert.That(completed.Action).IsEqualTo(pending ? SentinelNotificationAction.RunNext : SentinelNotificationAction.Stop);
+        await Assert.That(completed.State.Pending).IsNull();
+        await Assert.That(completed.RetireActiveSource).IsFalse();
+        if (pending)
+        {
+            await Assert.That(completed.State.Active!.Value.Reporters).IsEquivalentTo([Second]);
+            await Assert.That(completed.State.Active.Value.Sources.Select(source => source.Endpoint)).IsEquivalentTo([B]);
+        }
+        else await Assert.That(completed.State.Active).IsNull();
+        await Assert.That(active.Active!.Value.Reporters).IsEquivalentTo([First]);
+    }
+
+    [Test]
+    public async Task SuccessResetsRetryAndLogCountersButPreservesWorkerSpacing()
+    {
+        var generation = new object();
+        var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromGap(First))).State;
+        state = state.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1000)).State;
+        state = state.Transition(new(SentinelNotificationEventKind.AttemptFailed)).State;
+        state = state.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1100)).State;
+        var succeeded = state.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
+            new(CurrentGeneration: generation, ValidatedGeneration: generation, ValidatedPrimary: new(B, B)));
+        await Assert.That(succeeded.Action).IsEqualTo(SentinelNotificationAction.Stop);
+        await Assert.That(succeeded.RecoveredFailures).IsEqualTo(1);
+        await Assert.That(succeeded.State.RetryAttempts).IsEqualTo(0);
+        await Assert.That(succeeded.State.ConsecutiveFailures).IsEqualTo(0);
+        var restarted = succeeded.State.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromGap(Second)));
+        var waiting = restarted.State.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1101));
+        await Assert.That(waiting.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
+        await Assert.That(waiting.Delay).IsEqualTo(TimeSpan.FromMilliseconds(99));
+        await Assert.That(waiting.Interruptible).IsFalse();
+    }
+
+    [Test]
+    public async Task DefaultNotificationRetriesRemainUnlimitedWithCappedBackoff()
+    {
+        var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromGap(First))).State;
+        for (var attempt = 1; attempt <= 256; attempt++)
+        {
+            var failed = state.Transition(new(SentinelNotificationEventKind.AttemptFailed));
+            await Assert.That(failed.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
+            await Assert.That(failed.Delay).IsEqualTo(TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5))));
+            await Assert.That(failed.State.RetryAttempts).IsEqualTo(attempt);
+            await Assert.That(failed.State.ConsecutiveFailures).IsEqualTo(attempt);
+            state = failed.State;
+        }
+    }
+
+    [Test]
+    public async Task DisposalStopsActivePendingAndLaterNotificationTransitions()
+    {
+        var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromGap(First))).State;
+        state = state.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromGap(Second))).State;
+        var disposed = state.Transition(new(SentinelNotificationEventKind.Dispose));
+        await Assert.That(disposed.Action).IsEqualTo(SentinelNotificationAction.Stop);
+        await Assert.That(disposed.State.IsDisposed).IsTrue();
+        await Assert.That(disposed.State.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
+        foreach (var kind in new[] { SentinelNotificationEventKind.Offer, SentinelNotificationEventKind.PrepareAttempt,
+            SentinelNotificationEventKind.AttemptSucceeded, SentinelNotificationEventKind.AttemptFailed })
+        {
+            var late = disposed.State.Transition(new(kind, SentinelHint.FromGap(First)));
+            await Assert.That(late.Action).IsEqualTo(SentinelNotificationAction.Stop);
+            await Assert.That(late.State).IsEqualTo(disposed.State);
+        }
+        await Assert.That(state.Phase).IsEqualTo(SentinelNotificationPhase.ActivePending);
+    }
+
     // The table enumerates idle, active and active+pending transitions, success/failure,
     // switch evidence and both kinds of wake-up-only evidence. Every row exercises the
     // resolver with missing epochs, equal epochs and strictly newer epochs below.

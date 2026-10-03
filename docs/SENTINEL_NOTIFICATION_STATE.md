@@ -2,8 +2,9 @@
 
 `SentinelMonitoring` supervises subscriptions. `SentinelRouter.Notifications` runs one
 notification discovery worker. `SentinelBackgroundWork` registers both components' tasks
-under the router gate. `SentinelNotificationCoalescer` is synchronous state owned by that
-gate. Network queries and DNS resolution happen outside it.
+under the router gate. `SentinelNotificationCoalescer` applies the pure
+`SentinelNotificationState.Transition` function under that gate. Network queries and DNS
+resolution happen outside it.
 
 ## Review boundaries
 
@@ -123,6 +124,24 @@ has completed. The shared test helper no longer polls a subscription count.
 The pure reducer remains tracked by #727 and must preserve these joining and reentrancy contracts.
 
 ## State transitions
+
+Transition inputs cover notification offers, attempt preparation and success/failure,
+source-lookup registration/completion, and disposal. Time, retry policy, jitter samples,
+the exact returned generation, and validated owner/peer facts are explicit inputs.
+The reducer returns `Stop`, `RunNext`, or `RetryAfter(delay)` for worker decisions;
+evidence-only changes return `None`. The router replaces pending signals atomically with
+state changes, then executes discovery, waits, and retirement effects.
+
+Retry attempts and consecutive failures are separate state fields. Success resets both;
+pending hints spend the current retry budget. Exhaustion completes active and pending
+work. Without a policy, retries remain unlimited and backoff caps at 30 seconds. The
+100 ms minimum-discovery deadline survives worker completion and restart. Notifications
+can interrupt policy backoff but cannot bypass that shared deadline.
+
+Recovery logging remains outside the gate and precedes reconciliation. Since callbacks
+can permit a competing publication, the router captures the current generation after
+logging returns. Supersession compares that identity with the exact discovery result;
+matching endpoint text alone is insufficient.
 
 | State/event | Transition |
 | --- | --- |

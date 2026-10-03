@@ -13,6 +13,41 @@ public class SentinelNotificationStateTests
     private static readonly RespireEndpoint Second = new("second", 26379);
 
     [Test]
+    public async Task DnsTransitionsRetainOnlyLookupLifetimeEvidenceThroughCompletionAndDisposal()
+    {
+        var c = new RespireEndpoint("127.0.0.1", 6381);
+        var generation = new object();
+        var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromSwitchMaster("earlier", c, A, First))).State;
+        var lookup = state.Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
+            SentinelHint.FromSwitchMaster("lookup", A, B, First)));
+        state = lookup.State.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
+            new(CurrentGeneration: generation, ValidatedGeneration: generation, ValidatedPrimary: new(A, A))).State;
+        await Assert.That(state.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
+        state = state.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromDown("down", Second, B))).State;
+        state = state.Transition(new(SentinelNotificationEventKind.Offer,
+            SentinelHint.FromSwitchMaster("later", B, c, Second))).State;
+        var unresolved = state;
+        state = state.Transition(new(SentinelNotificationEventKind.SourceResolved,
+            ResolutionId: lookup.ResolutionId, AddressEvidence: new(A, ["192.0.2.1"]))).State;
+        var retained = state.SourceResolutions[lookup.ResolutionId];
+        await Assert.That(retained.Targets).IsEquivalentTo([B, c]);
+        await Assert.That(retained.Sources.Select(source => source.Endpoint)).IsEquivalentTo([A, B]);
+        await Assert.That(retained.Sources.Single(source => source.Endpoint == A).Addresses).IsEquivalentTo(["192.0.2.1"]);
+        await Assert.That(unresolved.SourceResolutions[lookup.ResolutionId].Sources
+            .Single(source => source.Endpoint == A).Addresses.IsDefault).IsTrue();
+        var disposed = state.Transition(new(SentinelNotificationEventKind.Dispose)).State;
+        var late = disposed.Transition(new(SentinelNotificationEventKind.SourceResolved,
+            ResolutionId: lookup.ResolutionId, AddressEvidence: new(A, ["192.0.2.2"])));
+        await Assert.That(late.Action).IsEqualTo(SentinelNotificationAction.Stop);
+        await Assert.That(late.State).IsEqualTo(disposed);
+        var ended = disposed.Transition(new(SentinelNotificationEventKind.EndSourceResolution,
+            ResolutionId: lookup.ResolutionId)).State;
+        await Assert.That(ended.SourceResolutions).IsEmpty();
+        await Assert.That(disposed.SourceResolutions.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task CallerArrayMutationsCannotChangeRetainedEvidence()
     {
         string[] addresses = ["192.0.2.1"];

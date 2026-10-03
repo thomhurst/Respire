@@ -11,10 +11,14 @@ internal enum SentinelNotificationPhase
 
 // Every operation returns a new value. DNS lookup records share immutable storage,
 // so an earlier snapshot cannot be changed by later offers or lookup completions.
-internal readonly record struct SentinelNotificationState
+internal readonly partial record struct SentinelNotificationState
 {
     internal SentinelHint? Active { get; init; }
     internal SentinelHint? Pending { get; init; }
+    internal int RetryAttempts { get; init; }
+    internal int ConsecutiveFailures { get; init; }
+    internal long DiscoveryNotBefore { get; init; }
+    internal bool IsDisposed { get; init; }
     private readonly ImmutableDictionary<long, SentinelHint>? _sourceResolutions;
     internal ImmutableDictionary<long, SentinelHint> SourceResolutions
     {
@@ -93,13 +97,6 @@ internal readonly record struct SentinelNotificationState
             if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, reporter)) return true;
         return false;
     }
-
-    internal SentinelNotificationState RetainResolvedOldPrimaryAddresses(RespireEndpoint endpoint, string[] addresses)
-        => this with
-        {
-            Active = Active?.WithSourceAddresses(endpoint, addresses),
-            Pending = Pending?.WithSourceAddresses(endpoint, addresses),
-        };
 
     internal SentinelNotificationState TakePending(bool activeFailed, RespireEndpoint? validatedPrimary,
         RespireEndpoint? validatedPeer, out SentinelHint? taken)

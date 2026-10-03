@@ -794,17 +794,24 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     // Reusing a whole Sentinel generation needs proof for every command slot. A single
     // matching socket can coexist with an old DNS peer while slots recover independently.
     internal bool AllCurrentPeersMatch(string host, int port)
+        => GetConfirmedCurrentPeer() is { } peer && peer.Host == host && peer.Port == port;
+
+    // A snapshot is proof for the whole generation only when every command slot is
+    // accepting commands and names the same physical peer at observation time.
+    internal RespireEndpoint? GetConfirmedCurrentPeer()
     {
-        if (!IsConnected) return false;
+        if (!IsConnected) return null;
+        RespireEndpoint? result = null;
         for (var slot = 0; slot < _connections.Length; slot++)
         {
             var connection = Volatile.Read(ref _connections[slot]);
-            if (connection is not { IsAcceptingCommands: true }
-                || (connection.NetworkPeerAddress ?? connection.Host) != host
-                || (connection.NetworkPeerPort ?? connection.Port) != port)
-                return false;
+            if (connection is not { IsAcceptingCommands: true }) return null;
+            var peer = new RespireEndpoint(connection.NetworkPeerAddress ?? connection.Host,
+                connection.NetworkPeerPort ?? connection.Port);
+            if (result is { } previous && (previous.Host != peer.Host || previous.Port != peer.Port)) return null;
+            result = peer;
         }
-        return !IsRetired;
+        return IsRetired ? null : result;
     }
 
     // Only these fence-entry guards produce this signal. Generic disposal failures from

@@ -9,6 +9,14 @@ internal sealed class SentinelNotificationCoalescer
     internal SentinelHintKey? ActiveKey => Active?.Key;
     internal SentinelHint? Pending => State.Pending;
 
+    internal SentinelNotificationTransition Transition(in SentinelNotificationEvent notification,
+        in SentinelNotificationContext context = default)
+    {
+        var transition = State.Transition(in notification, in context);
+        State = transition.State;
+        return transition;
+    }
+
     internal sealed class SourceResolution(SentinelNotificationCoalescer owner, long id)
     {
         internal long Id => id;
@@ -17,24 +25,26 @@ internal sealed class SentinelNotificationCoalescer
 
     internal SourceResolution BeginSourceResolution(in SentinelHint hint)
     {
-        State = State.BeginSourceResolution(in hint, out var id);
-        return new(this, id);
+        var transition = Transition(new(SentinelNotificationEventKind.BeginSourceResolution, hint));
+        return new(this, transition.ResolutionId);
     }
 
     internal void EndSourceResolution(SourceResolution resolution)
-        => State = State.EndSourceResolution(resolution.Id);
+        => Transition(new(SentinelNotificationEventKind.EndSourceResolution, ResolutionId: resolution.Id));
 
     internal bool Offer(in SentinelHint hint, bool targetIsCurrent)
     {
-        State = State.Offer(in hint, targetIsCurrent, out var startWorker);
-        return startWorker;
+        return Transition(new(SentinelNotificationEventKind.Offer, hint, targetIsCurrent)).Action
+            == SentinelNotificationAction.RunNext;
     }
 
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
         => SentinelNotificationState.Merge(pending, in hint);
 
-    internal void RetainResolvedOldPrimaryAddresses(RespireEndpoint endpoint, string[] addresses)
-        => State = State.RetainResolvedOldPrimaryAddresses(endpoint, addresses);
+    internal void RetainResolvedOldPrimaryAddresses(RespireEndpoint endpoint, string[] addresses,
+        SourceResolution? resolution = null)
+        => Transition(new(SentinelNotificationEventKind.SourceResolved,
+            ResolutionId: resolution?.Id ?? 0, AddressEvidence: new(endpoint, addresses)));
 
     internal SentinelHint? TakePending(bool activeFailed = false, RespireEndpoint? validatedPrimary = null,
         RespireEndpoint? validatedPeer = null)
