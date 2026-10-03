@@ -233,13 +233,11 @@ internal sealed partial class SentinelRouter
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
                 // Ignore changing quorum counts, but distinguish a later outage of the promoted
                 // primary from another reporter describing the outage already being recovered.
-                var downKey = sentinelEvent.OldPrimary is { } down
-                    ? $"{_masterDownKey}:{SentinelResolver.NormalizeHost(down.Host).ToUpperInvariant()}:{down.Port}" : _masterDownKey;
                 lock (_gate)
                 {
                     var observed = Current;
                     SentinelValidatedPrimary? owner = observed is null ? null : new(observed.Endpoint, observed.ValidatedPeer);
-                    QueueNotificationRediscovery(SentinelHint.FromDown(downKey, sentinel, sentinelEvent.OldPrimary, owner));
+                    QueueNotificationRediscovery(SentinelHint.FromDown(_masterDownKey, sentinel, sentinelEvent.OldPrimary, owner));
                 }
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
@@ -428,7 +426,7 @@ internal sealed partial class SentinelRouter
             if (_disposed) return;
             var current = Current;
             var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
-                && IsCurrentPeer(current, target, null, allowHostnameIdentity: false);
+                && IsConfirmedTarget(current, target);
             var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
             if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
             // Compare the switch source with Current under the gate, immediately before retirement.
@@ -537,7 +535,7 @@ internal sealed partial class SentinelRouter
                     else failures++;
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
-                        && IsCurrentPeer(current, target, null, allowHostnameIdentity: false))
+                        && IsConfirmedTarget(current, target))
                     {
                         _coalescer.Complete();
                         _notificationRediscovery = null;
@@ -606,6 +604,12 @@ internal sealed partial class SentinelRouter
         }
         return false;
     }
+
+    // Skipping rediscovery requires every command socket to confirm the target. Source
+    // fencing and cycle protection below intentionally continue to match any known peer.
+    private static bool IsConfirmedTarget(Generation current, RespireEndpoint endpoint)
+        => IPAddress.TryParse(endpoint.Host, out var address)
+            && current.Multiplexer.AllCurrentPeersMatch(SentinelResolver.NormalizeAddress(address), endpoint.Port);
 
     private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses,
         bool allowHostnameIdentity = true)

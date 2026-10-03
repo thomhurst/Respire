@@ -170,7 +170,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (forceDiscovery && old is { IsRetired: false } && old.Multiplexer.IsConnected
                     && SameEndpoint(old.Endpoint, replacement.Endpoint)
                     && old.ValidatedPeer is { } oldPeer && replacement.ValidatedPeer is { } replacementPeer
-                    && SameEndpoint(oldPeer, replacementPeer))
+                    && SameEndpoint(oldPeer, replacementPeer)
+                    && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
                     return old;
                 if (old is not null) Invalidate(old);
                 Volatile.Write(ref _current, replacement);
@@ -249,10 +250,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         var endpoint = options.PrimaryEndpoint;
         var samePeer = SentinelDiscoveryState.SingleAddress(endpoint, addresses) is { } address
-            && current.Multiplexer.HasCurrentPeer(address, endpoint.Port);
+            && current.Multiplexer.AllCurrentPeersMatch(address, endpoint.Port);
         // A stable DNS name is not proof that its established socket is still the owner.
         // Only an unavailable DNS answer permits falling back to textual endpoint identity.
-        var sameEndpointWithoutAddresses = addresses is null && SameEndpoint(current.Endpoint, endpoint);
+        var sameEndpointWithoutAddresses = addresses is null && SameEndpoint(current.Endpoint, endpoint)
+            && current.ValidatedPeer is { } peer && current.Multiplexer.AllCurrentPeersMatch(peer.Host, peer.Port);
         if (current.IsRetired || !current.Multiplexer.IsConnected
             || !sameEndpointWithoutAddresses && !samePeer)
             return await ConnectGenerationAsync(options, hint, cancellationToken).ConfigureAwait(false);

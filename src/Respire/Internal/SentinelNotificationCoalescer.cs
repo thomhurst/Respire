@@ -23,7 +23,7 @@ internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoin
 
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
 internal readonly record struct SentinelHint(
-    string Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
+    SentinelHintKey Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
     RespireEndpoint[] Reporters, bool MustRediscover)
 {
     // Reporter-only reconciliation has no demotion evidence. Without a newer epoch it may
@@ -31,7 +31,7 @@ internal readonly record struct SentinelHint(
     internal SentinelValidatedPrimary? ReconciliationPrimary { get; init; }
     // One reported outage, independent of reporter and changing quorum counts. Null means
     // mixed or non-down evidence, which cannot be classified as another report of this outage.
-    internal string? DownKey { get; init; }
+    internal SentinelHintKey? DownKey { get; init; }
     // Nonempty only when all merged evidence consists of parsed master-down reports.
     // Keep reporter association: a current-owner outage cannot release a stale reporter's fence.
     internal SentinelDownReport[] DownReports { get; init; } = [];
@@ -42,23 +42,23 @@ internal readonly record struct SentinelHint(
 
     internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
         RespireEndpoint? target, RespireEndpoint reporter)
-        => new(key, target is { } to ? [to] : [],
+        => new(new(key), target is { } to ? [to] : [],
             source is { } from ? [new(from, null)] : [], [reporter], target is null);
 
     internal static SentinelHint FromDown(string key, RespireEndpoint reporter, RespireEndpoint? primary = null,
         SentinelValidatedPrimary? ownerAtObservation = null)
-        => new(key, [], [], [reporter], true)
+        => new(new(key, primary), [], [], [reporter], true)
         {
             // A hostname can denote a different physical owner after publication. Do not
             // treat its next outage as a duplicate of the previous owner's completed outage.
-            DownKey = primary is { } named && !System.Net.IPAddress.TryParse(named.Host, out _)
+            DownKey = new(key, primary, primary is { } named && !System.Net.IPAddress.TryParse(named.Host, out _)
                 && ownerAtObservation?.Peer is { } peer
-                    ? $"{key}:{SentinelResolver.NormalizeHost(peer.Host)}:{peer.Port}" : key,
+                    ? peer : (RespireEndpoint?)null),
             DownReports = primary is { } affected ? [new(affected, reporter, ownerAtObservation)] : [],
         };
 
     internal static SentinelHint FromGap(RespireEndpoint reporter)
-        => new("gap", [], [], [reporter], true);
+        => new(new("gap"), [], [], [reporter], true);
 
     // Only one unambiguous target can satisfy the router's target-is-current shortcut.
     internal RespireEndpoint? Target
@@ -128,7 +128,7 @@ internal sealed class SentinelNotificationCoalescer
     internal SentinelHint? Active { get; private set; }
 
     /// <summary>The key of the hint the worker is discovering, or null when no worker runs.</summary>
-    internal string? ActiveKey => Active?.Key;
+    internal SentinelHintKey? ActiveKey => Active?.Key;
 
     internal SentinelHint? Pending => _pending;
 

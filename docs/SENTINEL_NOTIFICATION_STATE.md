@@ -98,6 +98,9 @@ the record. DNS evidence remains paired with its endpoint and port.
   Textual hostname identity is a fallback only when DNS evidence is unavailable.
 - An unchanged target hostname cannot suppress a switch notification: DNS may now resolve
   to a different server. The target-is-current shortcut requires numeric peer identity.
+  Every command slot must match that peer before skipping rediscovery or reusing an entire
+  generation. One matching socket cannot authorize reuse while another still reaches an old
+  DNS peer. Source fences continue to recognize any known peer.
   Conflicting-cycle source evidence still protects an explicitly announced failback target.
 - A target hostname whose entire DNS answer set identifies demoted sources is rejected
   before connecting, even with a newer configuration epoch. Mixed answers proceed to

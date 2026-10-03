@@ -253,6 +253,35 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments("PRIMARY.TEST", 6379, "primary.test", 6379, true)]
+    [Arguments("::ffff:192.0.2.1", 6379, "192.0.2.1", 6379, true)]
+    [Arguments("0:0:0:0:0:0:0:1", 6379, "::1", 6379, true)]
+    [Arguments("primary.test", 6379, "other.test", 6379, false)]
+    [Arguments("primary.test", 6379, "primary.test", 6380, false)]
+    public async Task DownEventIdentityKeepsNormalizedEndpointAndPort(string firstHost, int firstPort,
+        string secondHost, int secondPort, bool same)
+    {
+        var first = SentinelHint.FromDown("master-down:mymaster", OldPrimary, new(firstHost, firstPort));
+        var second = SentinelHint.FromDown("master-down:mymaster", NewPrimary, new(secondHost, secondPort));
+        await Assert.That(first.Key == second.Key).IsEqualTo(same);
+        await Assert.That(first.DownKey == second.DownKey).IsEqualTo(same);
+        if (same) await Assert.That(first.Key.GetHashCode()).IsEqualTo(second.Key.GetHashCode());
+        var merged = SentinelNotificationCoalescer.Merge(first, in second);
+        await Assert.That(merged.DownKey is not null).IsEqualTo(same);
+    }
+
+    [Test]
+    public async Task DownEventIdentitySeparatesUnparsedEventsAndServiceNames()
+    {
+        var parsed = SentinelHint.FromDown("master-down:mymaster", OldPrimary, NewPrimary);
+        var unparsed = SentinelHint.FromDown("master-down:mymaster", OldPrimary);
+        var otherService = SentinelHint.FromDown("master-down:MYMASTER", OldPrimary, NewPrimary);
+        await Assert.That(parsed.Key).IsNotEqualTo(unparsed.Key);
+        await Assert.That(parsed.DownKey).IsNotEqualTo(unparsed.DownKey);
+        await Assert.That(parsed.Key).IsNotEqualTo(otherService.Key);
+    }
+
+    [Test]
     public async Task HostnameDownReportsRetainDistinctObservedOwnersAcrossPublication()
     {
         var hostname = new RespireEndpoint("primary.test", 6379);
@@ -348,7 +377,7 @@ public class SentinelNotificationTests
         var hint = SentinelHintBuilder.Create("switch", NewPrimary, OldPrimary);
 
         await Assert.That(coalescer.Offer(in hint, targetIsCurrent: false)).IsTrue();
-        await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
+        await Assert.That(coalescer.ActiveKey).IsEqualTo(new SentinelHintKey("switch"));
         await Assert.That(coalescer.Offer(in hint, targetIsCurrent: false)).IsFalse();
         await Assert.That(coalescer.Pending).IsNull();
     }
@@ -363,7 +392,7 @@ public class SentinelNotificationTests
         await Assert.That(coalescer.Offer(in down, targetIsCurrent: false)).IsFalse();
         await AssertHintEvidence(coalescer.Pending!.Value, down);
         await AssertHintEvidence(coalescer.TakePending()!.Value, down);
-        await Assert.That(coalescer.ActiveKey).IsEqualTo("master-down");
+        await Assert.That(coalescer.ActiveKey).IsEqualTo(new SentinelHintKey("master-down"));
         await Assert.That(coalescer.TakePending()).IsNull();
     }
 
@@ -422,7 +451,7 @@ public class SentinelNotificationTests
 
         var merged = SentinelNotificationCoalescer.Merge(pending, in later);
 
-        await Assert.That(merged.Key).IsEqualTo("b");
+        await Assert.That(merged.Key).IsEqualTo(new SentinelHintKey("b"));
         await Assert.That(merged.Target).IsEqualTo(NewPrimary);
         await Assert.That(merged.OldPrimary).IsEqualTo(later.OldPrimary);
         await Assert.That(merged.MustRediscover).IsTrue();
@@ -626,7 +655,7 @@ public class SentinelNotificationTests
         coalescer.Offer(SentinelHintBuilder.Create("b-to-a", OldPrimary, NewPrimary), targetIsCurrent: false);
         var repeated = aliasSpelling ? aToB with
         {
-            Key = "same-switch-with-mapped-address",
+            Key = new("same-switch-with-mapped-address"),
             Sources = [new(new("::ffff:10.0.0.1", OldPrimary.Port), null)],
         } : aToB;
         coalescer.Offer(in repeated, targetIsCurrent: false);
@@ -764,7 +793,7 @@ public class SentinelNotificationTests
 
         // The down hint has no switch source, so the failed switch is kept and must be retried.
         await AssertHintEvidence(next!.Value, failedSwitch with { MustRediscover = true });
-        await Assert.That(coalescer.ActiveKey).IsEqualTo("switch");
+        await Assert.That(coalescer.ActiveKey).IsEqualTo(new SentinelHintKey("switch"));
     }
 
     [Test]
