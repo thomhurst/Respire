@@ -255,6 +255,13 @@ internal sealed partial class SubscriptionHub
         {
             cancellationToken.ThrowIfCancellationRequested();
             var snapshot = cluster.RoutingSnapshot;
+            if (allPrimaries && refreshPrimaries && !snapshot.IsComplete)
+            {
+                // Activation has no existing routes to preserve. A partial publication
+                // after the initial refresh cannot establish complete subscription coverage.
+                await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+                continue;
+            }
             // The refresh and topology event arrays can predate this publication. Build
             // all-primary coverage from the same immutable map checked after owner lookup.
             RespireEndpoint[] primaries = allPrimaries

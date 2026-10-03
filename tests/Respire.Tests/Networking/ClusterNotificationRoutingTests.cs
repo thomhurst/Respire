@@ -385,6 +385,39 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ActivationRefreshesPartialMapBeforeDroppingACompletePrimary()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:0\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:1\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        Configure(first, topology, resp3: true);
+        Configure(second, topology, resp3: true);
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.SuppressReply = command =>
+        {
+            if (command != "HELLO 3") return false;
+            connecting.TrySetResult();
+            return true;
+        };
+        await using var client = CreateClusterClient(first.Port, resp3: true);
+        var all = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        var key = RespireChannel.KeySpaceSingleKey("key", 0);
+        var subscribing = client.SubscribeAsync(new[] { all, key }, CancellationToken.None).AsTask();
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var router = client.Core.Cluster!;
+        router.ClearSlotOwner(0, router.GetKnownSlotOwner(0)!);
+        await Assert.That(router.RoutingSnapshot.IsComplete).IsFalse();
+        second.SuppressReply = null;
+        await second.SendRawAsync(Hello);
+        await using var subscription = await subscribing.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(first.ReceivedCommands).Contains($"SUBSCRIBE {all}");
+        await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {all}");
+        await Assert.That(router.RoutingSnapshot.IsComplete).IsTrue();
+    }
+
+    [Test]
     public async Task StaleAuthoritativeEventCannotRemoveRoutesUsingNewerPartialMap()
     {
         await using var first = new FakeRespServer(20);
