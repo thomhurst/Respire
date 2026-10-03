@@ -248,26 +248,33 @@ internal sealed partial class SubscriptionHub
         RespireEndpoint[]? primarySnapshot = null)
     {
         var cluster = core.Cluster ?? throw new InvalidOperationException("Cluster notification routing requires Redis Cluster.");
-        RespireEndpoint[] primaries = [];
-        if (subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries))
-            primaries = primarySnapshot ?? await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
-        Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
-        foreach (var name in subscription.Names)
+        while (true)
         {
-            IEnumerable<RespireEndpoint> endpoints = name.RoutingScope switch
+            cancellationToken.ThrowIfCancellationRequested();
+            RespireEndpoint[] primaries = [];
+            if (subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries))
+                primaries = primarySnapshot ?? await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+            var snapshot = cluster.RoutingSnapshot;
+            Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
+            foreach (var name in subscription.Names)
             {
-                RespireChannelRoutingScope.AllPrimaries => primaries,
-                RespireChannelRoutingScope.KeyOwner when name.RoutingSlot is { } slot
-                    => [await cluster.GetSlotOwnerEndpointAsync(slot, cancellationToken).ConfigureAwait(false)],
-                _ => throw new ArgumentException("Cluster notification descriptor has no valid routing scope.", nameof(subscription)),
-            };
-            foreach (var endpoint in endpoints)
-            {
-                if (!desired.TryGetValue(endpoint, out var names)) desired.Add(endpoint, names = []);
-                if (!names.Contains(name)) names.Add(name);
+                IEnumerable<RespireEndpoint> endpoints = name.RoutingScope switch
+                {
+                    RespireChannelRoutingScope.AllPrimaries => primaries,
+                    RespireChannelRoutingScope.KeyOwner when name.RoutingSlot is { } slot
+                        => [await cluster.GetSlotOwnerEndpointAsync(slot, cancellationToken).ConfigureAwait(false)],
+                    _ => throw new ArgumentException("Cluster notification descriptor has no valid routing scope.", nameof(subscription)),
+                };
+                foreach (var endpoint in endpoints)
+                {
+                    if (!desired.TryGetValue(endpoint, out var names)) desired.Add(endpoint, names = []);
+                    if (!names.Contains(name)) names.Add(name);
+                }
             }
+            // Resolving an owner can await connection or discovery. Never reconcile a set
+            // assembled across publications: it can remove a route before its replacement is added.
+            if (ReferenceEquals(snapshot, cluster.RoutingSnapshot)) return desired;
         }
-        return desired;
     }
 
     // Callers hold _controlGate. That serializes node creation and connection replacement for

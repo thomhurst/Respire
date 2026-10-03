@@ -328,6 +328,49 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task TopologyChangeDuringOwnerResolutionDoesNotMixNotificationRoutes()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => Volatile.Read(ref topology), resp3: true);
+        Configure(second, () => Volatile.Read(ref topology), resp3: true);
+        var resolvingSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.SuppressReply = command =>
+        {
+            if (command != "HELLO 3") return false;
+            resolvingSecond.TrySetResult();
+            return true;
+        };
+        await using var client = CreateClusterClient(first.Port, resp3: true);
+        await client.Core.EnsureConnectedAsync(CancellationToken.None);
+        var firstKey = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .First(static value => ClusterHash.GetSlot(value) <= 8191);
+        var secondKey = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
+            .First(static value => ClusterHash.GetSlot(value) >= 8192);
+        var firstChannel = RespireChannel.KeySpaceSingleKey(firstKey, 0);
+        var secondChannel = RespireChannel.KeySpaceSingleKey(secondKey, 0);
+        var subscribing = client.SubscribeAsync(new[] { firstChannel, secondChannel }, CancellationToken.None).AsTask();
+        await resolvingSecond.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Cluster!.TopologyChanged += (_, _, _) => published.TrySetResult();
+        Volatile.Write(ref topology, Topology(second.Port, first.Port));
+        var refresh = client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
+        await published.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        second.SuppressReply = null;
+        await second.SendRawAsync(Hello);
+        await refresh.WaitAsync(TimeSpan.FromSeconds(10));
+        await using var subscription = await subscribing.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Both routes must come from the new map, even though the first key resolved before publication.
+        await Assert.That(first.ReceivedCommands).DoesNotContain($"SUBSCRIBE {firstChannel}");
+        await Assert.That(first.ReceivedCommands).Contains($"SUBSCRIBE {secondChannel}");
+        await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {firstChannel}");
+        await Assert.That(second.ReceivedCommands).DoesNotContain($"SUBSCRIBE {secondChannel}");
+    }
+
+    [Test]
     public async Task OnePrimaryReconnectsWithoutStoppingHealthyPrimaryDelivery()
     {
         using var telemetryListener = new MeterListener
