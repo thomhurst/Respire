@@ -924,7 +924,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (discovery is { HasPendingFailure: false })
                 discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
             var join = JoinReadOnlyRefresh(error, source, slot, discovery);
-            _ = await AwaitSharedRefreshAsync(join.Flight, cancellationToken, discovery).ConfigureAwait(false);
+            var recovered = await AwaitSharedRefreshAsync(join.Flight, cancellationToken, discovery).ConfigureAwait(false);
             var owner = RoutingSnapshot[slot].Primary;
             if ((owner is null || IsSameEndpoint(owner, source)) && join.NeedsOwnSlotRecovery)
             {
@@ -938,7 +938,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // The shared flight already waited its backoff and connected the repaired owner.
             // Waiting this caller's pending retry again would delay, or cancel, a finished recovery.
             if (!owner.IsConnected)
+            {
+                // A failed flight for this slot cannot reconnect a cached owner outside its deadline.
+                // Callers that joined unrelated flights retain their own slot recovery above.
+                // Concurrent corrections to an already-connected owner remain usable.
+                if (!recovered && !join.NeedsOwnSlotRecovery)
+                    ExceptionDispatchInfo.Capture(error).Throw();
                 await EnsureRouteNodeConnectedAsync(owner, cancellationToken, discovery).ConfigureAwait(false);
+            }
             return owner;
         }
         catch (Exception failure) when (!cancellationToken.IsCancellationRequested
