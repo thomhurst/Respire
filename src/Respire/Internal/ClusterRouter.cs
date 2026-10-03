@@ -2344,13 +2344,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
         KeyValuePair<RespireConnectionMultiplexer, MaintenanceNotificationHandler>[] maintenanceHandlers;
-        Task retirements;
+        Task[] retirements;
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
             stateHandlers = [.. _nodeStateHandlers, .. _correctionStateHandlers];
             maintenanceHandlers = [.. _nodeMaintenanceHandlers];
-            retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
+            retirements = _retiringNodes.Values.Select(entry => entry.Completion.Task).ToArray();
             _nodeStateHandlers.Clear();
             _nodeMaintenanceHandlers.Clear();
             _correctionStateHandlers.Clear();
@@ -2381,14 +2381,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         foreach (var (node, handler) in maintenanceHandlers) node.MaintenanceNotificationReceived -= handler;
         // Abort all owned work before awaiting either drain. The primary may itself be a
         // superseded generation; ClientCore's later disposal of it is idempotent.
-        await Task.WhenAll(nodes.Select(node => node.DisposeAsync().AsTask())
-            .Append(_ownedPools.DisposeAllAsync())).ConfigureAwait(false);
         // A NodeRetired handler on the worker can dispose the client; joining the worker from
         // inside it would deadlock. The completed channel ends the worker after that handler.
         // Otherwise this waits for any in-flight NodeRetired/TopologyChanged callback, so a
         // handler that blocks also delays disposal.
-        if (!isOnSmigratedWorker) await smigratedWorker.ConfigureAwait(false);
-        await retirements.ConfigureAwait(false);
+        await CleanupTasks.WhenAllAsync(nodes.Select(node => node.DisposeAsync().AsTask())
+            .Append(_ownedPools.DisposeAllAsync())
+            .Concat(retirements)
+            .Append(isOnSmigratedWorker ? Task.CompletedTask : smigratedWorker)).ConfigureAwait(false);
     }
 }
 

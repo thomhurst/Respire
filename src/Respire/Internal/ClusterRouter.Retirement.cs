@@ -8,6 +8,7 @@ internal sealed partial class ClusterRouter
 {
     private readonly Dictionary<RespireConnectionMultiplexer, RetiredGeneration> _retiringNodes = [];
     private readonly DedicatedPoolLedger _ownedPools;
+    internal DedicatedPoolLedger OwnedPools => _ownedPools;
     private readonly CancellationTokenSource _stopRetirement = new();
 
     private sealed class RetiredGeneration(RespireConnectionMultiplexer node, DedicatedConnectionPool? dedicatedPool,

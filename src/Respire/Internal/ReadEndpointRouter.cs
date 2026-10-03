@@ -402,7 +402,7 @@ internal sealed class ReadEndpointRouter(ClientCore core) : IAsyncDisposable
         _entries.Clear();
         _retiring.Clear();
         Cursors.Clear();
-        await Task.WhenAll(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false);
+        await CleanupTasks.WhenAllAsync(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false);
     }
 
     internal readonly record struct Selection(

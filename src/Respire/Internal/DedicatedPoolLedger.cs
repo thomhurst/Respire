@@ -9,7 +9,7 @@ internal sealed class DedicatedPoolLedger(object gate)
 {
     private readonly HashSet<DedicatedConnectionPool> _pools = [];
 
-    public int Count
+    internal int Count
     {
         get { lock (gate) return _pools.Count; }
     }
@@ -31,7 +31,7 @@ internal sealed class DedicatedPoolLedger(object gate)
         lock (gate) _pools.Remove(pool);
     }
 
-    internal async ValueTask ReleaseAsync(DedicatedConnectionPool pool)
+    internal async Task ReleaseAsync(DedicatedConnectionPool pool)
     {
         await pool.DisposeAsync().ConfigureAwait(false);
         lock (gate) _pools.Remove(pool);
@@ -42,5 +42,5 @@ internal sealed class DedicatedPoolLedger(object gate)
 
     internal Task DisposeAllAsync()
         // Start every abort before awaiting any completion, even when one pool fails.
-        => Task.WhenAll(Snapshot().Select(pool => ReleaseAsync(pool).AsTask()));
+        => CleanupTasks.WhenAllAsync(Snapshot().Select(ReleaseAsync));
 }

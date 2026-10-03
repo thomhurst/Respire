@@ -210,6 +210,17 @@ it. Explicit disposal starts every owned pool's abort before awaiting any comple
 one cleanup failure cannot prevent another borrowed lease from being aborted. Concurrent
 retirement and disposal use the pool's existing shared cleanup task.
 
+Client shutdown observes each owner separately in disposal order. A pool, subscription hub,
+or router failure cannot skip a later owner. A single failure, including an owner-supplied
+`AggregateException`, is rethrown unchanged when no other cleanup phase fails; multiple
+failures across owners or cleanup phases are preserved as direct inner exceptions in one
+`AggregateException` after cleanup finishes. The client retains every exception on a bulk disposal task, including
+multiple failures from its dedicated-pool ledger. Router and multiplexer cleanup preserve
+their internal bulk-task failures before an async await boundary can unwrap them. Cluster
+shutdown joins retained retirement tasks alongside abortive cleanup, preserving failures
+from both phases even when abortive cleanup succeeds on a second attempt.
+The same exception observed through both retirement and disposal is reported once.
+
 This bookkeeping does not participate in healthy command dispatch or lease acquisition.
 Route-version validation, ASK target selection, MOVING publication, cancellation deadlines,
 and accepted-command drain rules remain with their existing owners.
