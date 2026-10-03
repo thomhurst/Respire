@@ -221,8 +221,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     if (ReferenceEquals(publication.Publication, lease.Pool.MovingPublication))
                         primaryAlias = publication.Endpoint;
                 }
-                (attempt ??= new()).Add(lease.Pool?.Endpoint
-                    ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port), error, primaryAlias);
+                if (!(attempt ??= new()).TryAdd(lease.Pool?.Endpoint
+                        ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port), error, primaryAlias))
+                    attempt.ThrowFirstFailure();
                 if (readFrom == RespireReadFrom.Nearest)
                 {
                     continue;
@@ -250,7 +251,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 replica.MarkFailed();
                 // This operation remembers failures even when the shared cooldown is zero or
                 // expires during another handshake. Allocate tracking only on the failure path.
-                (attempt ??= new()).Add(replica.Endpoint, error);
+                if (!(attempt ??= new()).TryAdd(replica.Endpoint, error))
+                    attempt.ThrowFirstFailure();
                 // No application command was accepted. Reselect after a failed dedicated
                 // handshake, failed ROLE check, or removal of this replica during acquisition.
             }
@@ -404,7 +406,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
-                if (ReadAttempt.IsFailed(attempt, endpoint)) continue;
+                if (attempt.IsFailed(endpoint)) continue;
                 if (excluded is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoint, excluded)) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
                 if (entry is null) continue;

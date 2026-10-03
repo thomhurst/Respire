@@ -8,26 +8,26 @@ internal sealed class ReadAttempt
     private Exception? _firstFailure;
     private int _retirements;
 
-    internal bool IsFailed(RespireEndpoint endpoint) => _failures?.ContainsKey(endpoint) == true;
+    internal Exception? FirstFailure => _firstFailure;
 
-    internal static bool IsFailed(ReadAttempt? attempt, RespireEndpoint endpoint)
-        => attempt is not null && attempt.IsFailed(endpoint);
+    internal bool ContainsFailure(RespireEndpoint endpoint) => _failures?.ContainsKey(endpoint) == true;
 
-    internal void Add(RespireEndpoint endpoint, Exception error, RespireEndpoint? alias = null)
+    internal bool TryAdd(RespireEndpoint endpoint, Exception error, RespireEndpoint? alias = null)
     {
         var failures = _failures ??= new(RespireEndpointComparer.Instance);
-        // Selection and rental may observe different endpoint identities. Every retry must
-        // exclude a new identity; otherwise terminate with the first acquisition failure.
-        if (!failures.TryAdd(endpoint, error))
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[endpoint]).Throw();
+        // Every retry must exclude a new identity. The caller decides how to terminate
+        // when this attempt has already recorded the failed endpoint.
+        if (!failures.TryAdd(endpoint, error)) return false;
         _firstFailure ??= error;
         if (alias is { } ownerEndpoint) failures.TryAdd(ownerEndpoint, error);
+        return true;
     }
 
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     internal void ThrowFirstFailure()
     {
-        if (_firstFailure is { } error)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        var error = _firstFailure ?? throw new InvalidOperationException("No read acquisition failure was recorded.");
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     internal void ThrowIfFailed(RespireEndpoint endpoint)
