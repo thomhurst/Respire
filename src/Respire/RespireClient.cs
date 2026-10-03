@@ -266,6 +266,9 @@ public sealed partial class RespireClient : IRespireClient
     public IRespireClient WithReadFrom(RespireReadFrom readFrom)
     {
         if (!Enum.IsDefined(readFrom)) throw new ArgumentOutOfRangeException(nameof(readFrom));
+        if (readFrom is RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary
+            && _core.Options.ClientAvailabilityZone is null)
+            throw new InvalidOperationException("AZ-affinity reads require ClientAvailabilityZone before connecting.");
         if (readFrom != RespireReadFrom.Primary && !_core.Options.UseCluster
             && _core.Options.ReplicaEndpoints.Count == 0
             && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
@@ -2010,6 +2013,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = GetReadFromForCommand(in command);
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         // Keep the budget across sends; successful selection does not imply the final route accepts the command.
         var discoveryPending = false;
@@ -2032,8 +2036,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                     onRedirect?.Invoke();
                     continue;
@@ -2055,12 +2059,12 @@ public sealed partial class RespireClient : IRespireClient
                 _core.ClientCache?.FlushForContinuityLoss();
                 cluster.RecordRejection(ref discovery, connection, error);
                 discoveryPending = true;
-                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                     .ConfigureAwait(false);
                 if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -2096,22 +2100,23 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking)
         where TCommand : struct, IRespCommand
     {
+        var preferredZone = GetTransportReadZone(in command);
         if (sendAsking)
         {
             if (!_broadcastTracking)
             {
                 return ClusterRouter.SendTrackedAskingAsync(
-                    connection, in command, cancellationToken, operation);
+                    connection, in command, cancellationToken, operation, preferredZone);
             }
             return ClusterRouter.SendAskingAsync(
-                connection, in command, cancellationToken, operation);
+                connection, in command, cancellationToken, operation, preferredZone: preferredZone);
         }
 
         if (_broadcastTracking)
-            return connection.SendAsync(command, cancellationToken, commandName: operation);
+            return connection.SendAsync(command, cancellationToken, commandName: operation, preferredZone: preferredZone);
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
-            in caching, in command, cancellationToken, operation);
+            in caching, in command, cancellationToken, operation, preferredZone);
     }
 
 #if NET
@@ -2498,6 +2503,7 @@ public sealed partial class RespireClient : IRespireClient
         var cursorReadFrom = readFrom;
         var cursorContinuation = command.ReadKind == ReadCommandKind.CursorRead
             && (cursorAffinity?.IsPinned == true || CursorCommandMetadata.IsCursorContinuation(in command));
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
@@ -2517,18 +2523,17 @@ public sealed partial class RespireClient : IRespireClient
                 if (cursorContinuation) throw initialRetirement;
                 cluster.RecordRejection(ref discovery, connection, initialRetirement);
                 discoveryPending = true;
-                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 discoveryPending = false;
             }
-            var switchedRole = false;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             if (initialRejection is not null && !cursorContinuation
-                && ReadFallbackPolicy.CanFallBackToOtherRole(initialRejection, readFrom, slot,
+                && fallback.TrySwitch(initialRejection, slot,
                     ReadFallbackPolicy.IsReplicaConnection(connection)))
             {
                 connection = await cluster.GetOtherRoleReadConnectionAsync(
-                    slot!.Value, readFrom, initialRejection, cancellationToken, discovery).ConfigureAwait(false);
-                readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
-                switchedRole = true;
+                    slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                readFrom = fallback.RecoveryPolicy;
             }
             else if (initialRejection is not null)
             {
@@ -2538,11 +2543,11 @@ public sealed partial class RespireClient : IRespireClient
                 _core.ClientCache?.FlushForContinuityLoss();
                 discoveryPending = true;
                 connection = await cluster.GetRedirectConnectionAsync(
-                    initialRejection, connection, cancellationToken, slot, discovery).ConfigureAwait(false);
+                    initialRejection, connection, cancellationToken, slot, discovery, preferredZone).ConfigureAwait(false);
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
             }
@@ -2583,8 +2588,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -2597,12 +2602,12 @@ public sealed partial class RespireClient : IRespireClient
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                            connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
 
@@ -2623,16 +2628,15 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
-                catch (RespireServerException error) when (!switchedRole && !sendAsking
+                catch (RespireServerException error) when (!sendAsking
                     && !cursorContinuation
-                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
+                    && fallback.TrySwitch(error, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Reads are idempotent; retry once on the other server role. NoRedirect only
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
-                    switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                        slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = fallback.RecoveryPolicy;
                 }
             }
         }
@@ -2847,7 +2851,8 @@ public sealed partial class RespireClient : IRespireClient
         => RespireTelemetry.IsEnabled
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName)
-            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation);
+            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
+                preferredZone: GetTransportReadZone(in command));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -2869,7 +2874,8 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         try
         {
-            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation).ConfigureAwait(false);
+            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
+                preferredZone: GetTransportReadZone(in command)).ConfigureAwait(false);
             telemetry.Complete(
                 operation,
                 connection.Host,
@@ -3057,6 +3063,12 @@ public sealed partial class RespireClient : IRespireClient
         finally { discovery?.Finish(); }
     }
 
+    // The view's original policy survives role fallback; a physical retirement must retain
+    // its zone even after higher-level routing has narrowed eligibility to one server role.
+    private string? GetTransportReadZone<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
+        => command.ReadKind != ReadCommandKind.None && ReadFallbackPolicy.UsesAvailabilityZone(_readFrom)
+            ? _core.Options.ClientAvailabilityZone : null;
+
     // CommandTimeout is enforced by the connection's deadline sweep (commands are stamped at
     // enqueue), so no per-command CancellationTokenSource or timer is created here.
     private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
@@ -3070,9 +3082,9 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
         => sendAsking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute)
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command))
             : connection.SendCheckedAsync(in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute);
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command));
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
@@ -3134,13 +3146,14 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = GetReadFromForCommand(in command);
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
         {
             var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
             var sendAsking = false;
-            var switchedRole = false;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -3156,8 +3169,8 @@ public sealed partial class RespireClient : IRespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3167,23 +3180,22 @@ public sealed partial class RespireClient : IRespireClient
                     _core.ClientCache?.FlushForContinuityLoss();
                     cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                            connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
-                catch (RespireServerException error) when (!switchedRole && !sendAsking
-                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
+                catch (RespireServerException error) when (!sendAsking
+                    && fallback.TrySwitch(error, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
-                    switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                        slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = fallback.RecoveryPolicy;
                 }
             }
         }
@@ -3212,10 +3224,11 @@ public sealed partial class RespireClient : IRespireClient
         if (sendAsking)
         {
             return ClusterRouter.SendAskingBulkStreamAsync(
-                connection, in command, cancellationToken, operation);
+                connection, in command, cancellationToken, operation, preferredZone: GetTransportReadZone(in command));
         }
 
-        return connection.SendBulkStreamAsync(in command, cancellationToken, operation);
+        return connection.SendBulkStreamAsync(in command, cancellationToken, operation,
+            preferredZone: GetTransportReadZone(in command));
     }
 
 #if NET
@@ -3247,9 +3260,11 @@ public sealed partial class RespireClient : IRespireClient
         {
             var stream = sendAsking
                 ? await ClusterRouter.SendAskingBulkStreamAsync(
-                    connection, in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false)
+                    connection, in command, cancellationToken, operation, CompleteTelemetry,
+                    GetTransportReadZone(in command)).ConfigureAwait(false)
                 : await connection.SendBulkStreamAsync(
-                    in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false);
+                    in command, cancellationToken, operation, CompleteTelemetry,
+                    GetTransportReadZone(in command)).ConfigureAwait(false);
             if (stream is null)
             {
                 CompleteTelemetry(null);
@@ -3404,14 +3419,58 @@ public sealed partial class RespireClient : IRespireClient
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
+            var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             try
             {
-                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
-                telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                    core.Options.Database, storedProcedureName: storedProcedureName, started: started);
-                telemetryStarted = true;
-                var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                RespValue response;
+                while (true)
+                {
+                    var onReplica = false;
+                    if (readFrom != RespireReadFrom.Primary)
+                    {
+                        try
+                        {
+                            (pool, connection, onReplica) = await core.ReadRouter.RentDedicatedConnectionAsync(
+                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly).ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (fallback.OriginalFailure is not null && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
+                        {
+                            RethrowPreservingStackTrace(fallback.OriginalFailure);
+                            throw;
+                        }
+                    }
+                    else
+                    {
+                        pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                        (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
+                            preferredZone: preferredZone).ConfigureAwait(false);
+                    }
+                    if (!telemetryStarted)
+                    {
+                        telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                            core.Options.Database, storedProcedureName: storedProcedureName, started: started);
+                        telemetryStarted = true;
+                    }
+                    else
+                    {
+                        // Keep one logical span while routing advances to a replacement lease.
+                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    }
+                    response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                    if (response.IsError && fallback.OriginalFailure is null && readFrom != RespireReadFrom.Primary)
+                    {
+                        var error = ResponseReader.ServerError(in response, operation);
+                        if (fallback.TrySwitch(error, onReplica))
+                        {
+                            response.Dispose();
+                            pool.Return(connection);
+                            connection = null;
+                            continue;
+                        }
+                    }
+                    break;
+                }
                 pool.Return(connection);
                 returned = true;
                 if (response.IsError)
@@ -3431,12 +3490,13 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
+                            core.Sentinel is null && readFrom == RespireReadFrom.Primary ? (RespireEndpoint?)core.Endpoint : null))
                     : null;
                 if (!telemetryStarted)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
                         started, timeoutError ?? ex, storedProcedureName,
-                        endpoint: core.Sentinel is null ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
+                        endpoint: core.Sentinel is null && readFrom == RespireReadFrom.Primary
+                            ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
@@ -3468,14 +3528,16 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var core = _core;
+        // Role fallback narrows readFrom, but the physical-zone preference belongs to the whole read.
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
+        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null, preferredZone).ConfigureAwait(false);
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
         RespireConnection? askingSource = null;
         RespireServerException? askRedirect = null;
-        var switchedRole = false;
+        var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
 
         ClusterRouter.DiscoveryRound? discovery = null;
         try
@@ -3487,9 +3549,20 @@ public sealed partial class RespireClient : IRespireClient
                 var acquiringRedirectPool = false;
                 try
                 {
-                    (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                        pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        cancellationToken, discovery).ConfigureAwait(false);
+                    try
+                    {
+                        (pool, connection) = await cluster.RentDedicatedConnectionAsync(
+                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
+                            cancellationToken, discovery, preferredZone: preferredZone).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (askRedirect is null && fallback.OriginalFailure is not null
+                        && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
+                    {
+                        // Endpoint selection returned a pool, but its private handshake can fail
+                        // later. Preserve the original rejection through that acquisition phase too.
+                        RethrowPreservingStackTrace(fallback.OriginalFailure);
+                        throw;
+                    }
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -3537,7 +3610,7 @@ public sealed partial class RespireClient : IRespireClient
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
                                 redirectedPool = await cluster.GetReadDedicatedPoolAsync(
-                                        slot, readFrom, cancellationToken, discovery)
+                                        slot, readFrom, cancellationToken, discovery, preferredZone)
                                     .ConfigureAwait(false);
                             }
                             acquiringRedirectPool = false;
@@ -3550,17 +3623,16 @@ public sealed partial class RespireClient : IRespireClient
                             continue;
                         }
 
-                        if (!switchedRole && !sentAsking
-                            && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, pool.IsReadOnly))
+                        if (!sentAsking
+                            && fallback.TrySwitch(error, slot, pool.IsReadOnly))
                         {
                             // Reads are idempotent; retry once on the other role's dedicated pool.
                             // NoRedirect only surfaces MOVED and ASK, so it does not suppress this retry.
-                            switchedRole = true;
                             acquiringRedirectPool = true;
                             var otherRolePool = await cluster.GetOtherRoleDedicatedPoolAsync(
-                                    slot!.Value, readFrom, error, cancellationToken, discovery)
+                                    slot!.Value, fallback, cancellationToken, discovery)
                                 .ConfigureAwait(false);
-                            readFrom = ReadFallbackPolicy.AfterRoleSwitch(readFrom);
+                            readFrom = fallback.RecoveryPolicy;
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;

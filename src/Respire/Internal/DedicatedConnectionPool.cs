@@ -85,7 +85,7 @@ internal sealed partial class DedicatedConnectionPool(
 
     public async ValueTask<RespireConnection> RentAsync(
         CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true,
-        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
     {
         // Maintenance negotiation is connection state. Keep these leases separate from blocking
         // and corrective leases, while retaining one ownership/drain ledger and idle bound.
@@ -98,7 +98,7 @@ internal sealed partial class DedicatedConnectionPool(
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_stopping, this);
-                if (reuseIdle && TryTakeIdle(compatibleKind, out var entry))
+                if (reuseIdle && TryTakeIdle(compatibleKind, preferredZone, out var entry))
                 {
                     if (entry.Connection.IsConnected)
                     {
@@ -176,13 +176,24 @@ internal sealed partial class DedicatedConnectionPool(
     }
 
     // Called under _gate. The bounded list acts as a stack for each compatible lease kind.
-    private bool TryTakeIdle(DedicatedLeaseKind kind, out Entry entry)
+    private bool TryTakeIdle(DedicatedLeaseKind kind, string? preferredZone, out Entry entry)
     {
+        var selected = -1;
         for (var index = _idle.Count - 1; index >= 0; index--)
         {
             if (_idle[index].Kind != kind) continue;
-            entry = _idle[index];
-            _idle.RemoveAt(index);
+            if (selected < 0) selected = index;
+            var connection = _idle[index].Connection;
+            if (preferredZone is null || connection.IsConnected && ReadFallbackPolicy.IsSameZone(connection, preferredZone))
+            {
+                selected = index;
+                break;
+            }
+        }
+        if (selected >= 0)
+        {
+            entry = _idle[selected];
+            _idle.RemoveAt(selected);
             return true;
         }
         entry = null!;

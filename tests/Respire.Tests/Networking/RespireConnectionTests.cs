@@ -173,7 +173,8 @@ public class RespireConnectionTests
         await using var server = new FakeRespServer(
             "$5\r\nfirst\r\n"u8.ToArray(),
             "$6\r\nsecond\r\n"u8.ToArray());
-        server.DelayReply(0, 100);
+        // Hold the first reply until cancellation is observed and the second command arrives.
+        server.MinimumCommandsBeforeReply = 2;
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var first = client.GetStringAsync("first", cancellation.Token);
