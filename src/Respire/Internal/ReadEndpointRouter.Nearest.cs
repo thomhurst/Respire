@@ -130,23 +130,22 @@ internal sealed partial class ReadEndpointRouter
     {
         if (!_entries.TryGetValue(endpoint, out var entry))
         {
-            entry = _entries.GetOrAdd(endpoint, static (value, router) => new Entry(value, router.Core, router), this);
-            // Pairs with SetEndpoints so a late insertion sees the newer topology on recheck.
-            Interlocked.MemoryBarrier();
+            lock (_entriesGate)
+            {
+                ThrowIfDisposed();
+                entry = _entries.GetOrAdd(endpoint, static (value, router) => new Entry(value, router.Core, router), this);
+            }
+            // The gate pairs insertion with publication and the terminal ownership snapshot.
         }
         if (!ContainsEndpoint(Volatile.Read(ref _replicas), endpoint))
         {
-            if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-            {
-                _retiring.TryAdd(entry, 0);
-                _ = RetireAsync(entry);
-            }
+            RetireEntry(new(endpoint, entry));
             return null;
         }
         if (Volatile.Read(ref _disposed) != 0)
         {
-            if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-                await entry.DisposeAsync().ConfigureAwait(false);
+            // Leave ownership visible to the router and join the entry's shared cleanup.
+            await entry.DisposeAsync().ConfigureAwait(false);
             ThrowIfDisposed();
         }
         return entry;
