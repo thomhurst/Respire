@@ -26,6 +26,11 @@ public class StableVersionTagTests
             }
             var selected = await GitVersionDetails.GetLatestStableVersionTagAsync(directory.FullName, CancellationToken.None);
             await Assert.That(selected).IsEqualTo(hasStableTag ? "V1.2.3" : null);
+            await Git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "+semver:minor");
+            await Git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "--allow-empty-message", "-m", "");
+            var increment = await GitVersionDetails.GetVersionIncrementAsync(directory.FullName, "HEAD~2..HEAD", 2, CancellationToken.None);
+            await Assert.That(increment.Increment).IsEqualTo(VersionIncrement.Minor);
+            await Assert.That(increment.PatchHeight).IsEqualTo(1);
         }
         finally
         {

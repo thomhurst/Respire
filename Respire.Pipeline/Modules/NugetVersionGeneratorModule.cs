@@ -154,7 +154,7 @@ internal sealed record GitVersionDetails(
         return int.Parse(heightText, NumberStyles.None, CultureInfo.InvariantCulture);
     }
 
-    private static async Task<VersionIncrementResult> GetVersionIncrementAsync(
+    internal static async Task<VersionIncrementResult> GetVersionIncrementAsync(
         string repositoryRoot,
         string commitRange,
         int commitHeight,
