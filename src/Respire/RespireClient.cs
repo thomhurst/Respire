@@ -2008,10 +2008,25 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, onRedirect, track).ConfigureAwait(false);
         }
 
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var connection = core.Multiplexer.GetConnection();
-        var response = await SendTrackedOnConnectionAsync(
-            operation, connection, command, cancellationToken, sendAsking: false, track).ConfigureAwait(false);
+        RespValue response;
+        for (var attempt = 0; ; attempt++)
+        {
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var connection = core.Multiplexer.GetConnection();
+                response = await SendTrackedOnConnectionAsync(
+                    operation, connection, command, cancellationToken, sendAsking: false, track).ConfigureAwait(false);
+                break;
+            }
+            catch (RespireConnectionRetiredException) when (core.Sentinel is not null && attempt == 0
+                && !core.Disposed && !cancellationToken.IsCancellationRequested)
+            {
+                // No bytes were admitted. Rediscover once and retry the entire tracking prelude
+                // and read together. Keep the original cache token invalid across continuity loss.
+                core.ClientCache?.FlushForContinuityLoss();
+            }
+        }
         if (response.IsError)
         {
             var error = ResponseReader.ServerError(in response, operation);
