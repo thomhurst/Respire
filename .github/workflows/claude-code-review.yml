@@ -85,8 +85,6 @@ jobs:
           # permissions above.
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: "*"
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
@@ -118,7 +116,5 @@ jobs:
               `<!-- REVIEW_VERDICT: CLEAR -->` only when nothing needs action (no bugs,
               no suggestions, and every earlier finding is addressed), otherwise
               `<!-- REVIEW_VERDICT: BLOCKING -->`. The merge gate reads this marker.
-
-            Use the code review skill to run this review: /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}
           claude_args: |
             --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
