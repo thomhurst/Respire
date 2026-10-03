@@ -8,6 +8,99 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("", "TypeInitializationException", true)]
+    [Arguments("Owner.Initialize();", "TypeInitializationException", false)]
+    [Arguments("", "InvalidOperationException", false)]
+    public async Task StructInitializationPrecedesConstructorTransfer(string setup, string catchType, bool warning)
+    {
+        const string declaration = """
+            struct Owner
+            {
+                static Owner() { }
+                public static void Initialize() { }
+                public Owner(RespireResult result) { result.Dispose(); }
+                public Owner(RespireBatch batch) { batch.SendAsync().AsTask().GetAwaiter().GetResult(); }
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = new Owner(result); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                void Run(RespireClient client)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = new Owner(batch); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("optional.HasValue", false)]
+    [Arguments("GetOptional().HasValue", true)]
+    [Arguments("custom.HasValue", true)]
+    public async Task NullableHasValueOnlyThrowsFromItsReceiver(string expression, bool warning)
+    {
+        const string declaration = "class Custom { public bool HasValue => throw new InvalidOperationException(); }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                static int? GetOptional() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int? optional, Custom custom)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{expression}}; result.Dispose(); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                static int? GetOptional() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int? optional, Custom custom)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{expression}}; await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("(choice, holder.Number, holder.Value) = (false, 0, result);", true)]
     [Arguments("(holder.Number, choice, holder.Number, holder.Value) = (0, false, 0, result);", true)]
     [Arguments("(holder.Number, holder.Value, choice) = (0, result, false);", false)]

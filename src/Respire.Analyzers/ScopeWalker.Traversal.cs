@@ -557,6 +557,8 @@ internal static partial class ScopeWalker
             return operation switch
             {
                 IObjectCreationOperation { Type.IsReferenceType: true } => TransferFailure.Allocation,
+                IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
+                    when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 IDeconstructionAssignmentOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
                 IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
@@ -764,6 +766,9 @@ internal static partial class ScopeWalker
 
         private bool MayThrow(IOperation operation)
         {
+            if (operation is IPropertyReferenceOperation
+                { Property: { Name: "HasValue", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+                return false;
             if (_throwingOperations.TryGetValue(operation, out var cached))
                 return cached;
             var throwing = operation is IDeconstructionAssignmentOperation or IInvocationOperation or IFunctionPointerInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
