@@ -8,6 +8,50 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("(values[0], _) = (new object(), 0);", "ArrayTypeMismatchException", true)]
+    [Arguments("(_, (values[0], _)) = (0, (new object(), 0));", "ArrayTypeMismatchException", true)]
+    [Arguments("(values[1], _) = (new object(), 0);", "IndexOutOfRangeException", true)]
+    [Arguments("(values[0], _) = (new object(), 0);", "NullReferenceException", false)]
+    [Arguments("(holder.Value, _) = (new object(), 0);", "InvalidOperationException", true)]
+    public async Task DeconstructionStoresCanBypassCleanup(string operation, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public object Value { set { throw new InvalidOperationException(); } } }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    object[] values = new string[1];
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public object Value { set { throw new InvalidOperationException(); } } }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    object[] values = new string[1];
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Microsoft.CSharp.RuntimeBinder.RuntimeBinderException", true)]
     [Arguments("OutOfMemoryException", true)]
     public async Task DynamicConstructorFailurePrecedesTransfer(string catchType, bool warning) => await Disposal.VerifyAsync($$"""

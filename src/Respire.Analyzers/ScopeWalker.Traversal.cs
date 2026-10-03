@@ -305,7 +305,7 @@ internal static partial class ScopeWalker
         }
 
         private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
-            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values, bool deconstructionStore = false)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
@@ -347,6 +347,9 @@ internal static partial class ScopeWalker
                 VisitDeconstructionLocations(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
                     started, dispatch, ref known, ref values);
                 Visit(deconstruction.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                if (operation.Syntax.Span.End <= firstBarrier)
+                    VisitDeconstructionStores(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
+                        started, dispatch, ref known, ref values);
             }
             else if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
@@ -360,7 +363,7 @@ internal static partial class ScopeWalker
                 Visit(assignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
                 exceptionSource = assignment.Target;
             }
-            else
+            else if (!deconstructionStore)
             {
                 foreach (var child in operation.ChildOperations)
                     if (child != initializer && !arrayAllocation)
@@ -398,7 +401,7 @@ internal static partial class ScopeWalker
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
                         if (arrayAccess.Type?.IsValueType != true
-                            && (operation is IAssignmentOperation
+                            && (deconstructionStore || operation is IAssignmentOperation
                                 || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
@@ -506,6 +509,23 @@ internal static partial class ScopeWalker
                     VisitDeconstructionLocations(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
                 else
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+        }
+
+        private void VisitDeconstructionStores(IOperation target, BasicBlock block, int entryPosition, int firstBarrier,
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            target = _conditions.ResolveCapturedTarget(target);
+            if (target is ITupleOperation or IDeclarationExpressionOperation)
+            {
+                foreach (var child in target.ChildOperations)
+                    VisitDeconstructionStores(child, block, entryPosition, firstBarrier, continuation,
+                        started, dispatch, ref known, ref values);
+            }
+            else
+                // Receivers and indexes were evaluated before the RHS; only the store runs now.
+                Visit(target, block, entryPosition, firstBarrier, continuation, started, dispatch,
+                    ref known, ref values, deconstructionStore: true);
         }
 
         private TransferFailure DeconstructionFailure(IOperation target, IOperation value, ulong known, ulong values, out bool transferred)
