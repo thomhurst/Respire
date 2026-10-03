@@ -193,7 +193,8 @@ internal sealed class FlowConditions
     {
         if (Symbol(target) is { } symbol)
             for (var index = 0; index < _predicates.Count; index++)
-                if (SymbolEqualityComparer.Default.Equals(_predicates[index].Symbol, symbol))
+                if (SymbolEqualityComparer.Default.Equals(_predicates[index].Symbol, symbol)
+                    || _predicates[index].Constant is ISymbol other && SymbolEqualityComparer.Default.Equals(other, symbol))
                 {
                     var mask = ~(1UL << index);
                     known &= mask;
@@ -327,6 +328,10 @@ internal sealed class FlowConditions
                     _ => comparisonOperator,
                 };
             }
+            else if (IsPrimitiveComparisonOperand(left.Type)
+                && SymbolEqualityComparer.Default.Equals(left.Type, right.Type)
+                && Symbol(right) is { } rightSymbol && CanTrackSymbol(rightSymbol))
+                (operand, comparison) = (left, rightSymbol);
             else
                 return true;
             if (comparisonOperator == BinaryOperatorKind.NotEquals)
@@ -401,22 +406,7 @@ internal sealed class FlowConditions
             expected = !expected;
         }
         var symbol = Symbol(operand);
-        if (symbol is null || !_relevant.Contains(symbol) || _unstable.Contains(symbol)
-            || symbol is IParameterSymbol { RefKind: not RefKind.None }
-            || symbol is ILocalSymbol { RefKind: not RefKind.None })
-            return true;
-
-        // Captures and loop-local declarations can be changed without an ordinary assignment
-        // in this graph. Do not correlate their values across executions.
-        foreach (var reference in symbol.DeclaringSyntaxReferences)
-        {
-            if (!_scope.Span.Contains(reference.Span))
-                return true;
-            var syntax = reference.GetSyntax(_cancellationToken);
-            if (syntax.Ancestors().Any(static node => node is
-                    ForStatementSyntax or CommonForEachStatementSyntax or WhileStatementSyntax or DoStatementSyntax))
-                return true;
-        }
+        if (symbol is null || !CanTrackSymbol(symbol)) return true;
 
         var index = PredicateIndex(symbol, comparison, comparisonOperator);
         if (index < 0) return true;
@@ -429,11 +419,40 @@ internal sealed class FlowConditions
         return true;
     }
 
+    private static bool IsPrimitiveComparisonOperand(ITypeSymbol? type)
+        => type?.TypeKind == TypeKind.Enum || type?.SpecialType is SpecialType.System_Boolean
+            or SpecialType.System_Char or SpecialType.System_SByte or SpecialType.System_Byte
+            or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
+            or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64
+            or SpecialType.System_IntPtr or SpecialType.System_UIntPtr or SpecialType.System_Single
+            or SpecialType.System_Double or SpecialType.System_Decimal or SpecialType.System_String;
+
+    private bool CanTrackSymbol(ISymbol symbol)
+    {
+        if (!_relevant.Contains(symbol) || _unstable.Contains(symbol)
+            || symbol is IParameterSymbol { RefKind: not RefKind.None }
+            || symbol is ILocalSymbol { RefKind: not RefKind.None })
+            return false;
+
+        // Captures and loop-local declarations can be changed without an ordinary assignment
+        // in this graph. Do not correlate their values across executions.
+        foreach (var reference in symbol.DeclaringSyntaxReferences)
+        {
+            if (!_scope.Span.Contains(reference.Span))
+                return false;
+            var syntax = reference.GetSyntax(_cancellationToken);
+            if (syntax.Ancestors().Any(static node => node is
+                    ForStatementSyntax or CommonForEachStatementSyntax or WhileStatementSyntax or DoStatementSyntax))
+                return false;
+        }
+        return true;
+    }
+
     private int PredicateIndex(ISymbol symbol, object? comparison, BinaryOperatorKind comparisonOperator)
     {
         var index = _predicates.FindIndex(predicate =>
             SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
-            && (predicate.Constant is ITypeSymbol leftType && comparison is ITypeSymbol rightType
+            && (predicate.Constant is ISymbol leftType && comparison is ISymbol rightType
                 ? SymbolEqualityComparer.Default.Equals(leftType, rightType)
                 : Equals(predicate.Constant, comparison))
             && predicate.Operator == comparisonOperator);

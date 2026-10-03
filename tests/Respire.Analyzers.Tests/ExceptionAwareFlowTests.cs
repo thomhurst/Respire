@@ -7,6 +7,57 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("int", "left == right", "left == right", "", false)]
+    [Arguments("int", "left != right", "!(left == right)", "", false)]
+    [Arguments("int", "left <= right", "!(left > right)", "", false)]
+    [Arguments("bool", "left == right", "left == right", "", false)]
+    [Arguments("string", "left == right", "left == right", "", false)]
+    [Arguments("DayOfWeek", "left == right", "left == right", "", false)]
+    [Arguments("double", "left < right", "left < right", "", false)]
+    [Arguments("double", "!(left > right)", "left <= right", "", true)]
+    [Arguments("int", "left == right", "left == right", "left++;", true)]
+    [Arguments("int", "left == right", "left == right", "right++;", true)]
+    [Arguments("int", "left == right", "left == right", "Reset(ref right);", true)]
+    [Arguments("int", "left == right", "left == right", "Action mutate = () => right++; mutate();", true)]
+    [Arguments("dynamic", "left == right", "left == right", "", true)]
+    public async Task VariableComparisonsRequireBothOperandsStable(string type, string selection, string cleanup, string mutation, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Reset(ref int value) => value++;
+                async Task Run(RespireClient client, RespireResult existing, {{type}} left, {{type}} right)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    {{mutation}}
+                    if ({{cleanup}}) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Reset(ref int value) => value++;
+                async Task Run(RespireClient client, {{type}} left, {{type}} right)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = {{selection}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    {{mutation}}
+                    if ({{cleanup}}) await first.SendAsync(); else await second.SendAsync();
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("OutOfMemoryException", true)]
     [Arguments("InvalidOperationException", false)]
     public async Task ReturnConversionPrecedesOwnershipTransfer(string catchType, bool warning) => await Disposal.VerifyAsync($$"""
