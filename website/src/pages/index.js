@@ -98,6 +98,23 @@ function WireTrace() {
   const [active, setActive] = useState(traces[0].id);
   const trace = traces.find((item) => item.id === active);
 
+  // Arrow keys, Home and End move between tabs, as in the WAI-ARIA tabs pattern.
+  const onKeyDown = (event) => {
+    const index = traces.findIndex((item) => item.id === active);
+    const next = {
+      ArrowRight: (index + 1) % traces.length,
+      ArrowLeft: (index - 1 + traces.length) % traces.length,
+      Home: 0,
+      End: traces.length - 1,
+    }[event.key];
+    if (next === undefined) {
+      return;
+    }
+    event.preventDefault();
+    setActive(traces[next].id);
+    document.getElementById(`trace-tab-${traces[next].id}`)?.focus();
+  };
+
   return (
     <div className={styles.trace}>
       <div className={styles.traceTabs} role="tablist" aria-label="Example commands">
@@ -109,13 +126,15 @@ function WireTrace() {
             id={`trace-tab-${item.id}`}
             aria-selected={item.id === active}
             aria-controls="trace-panel"
+            tabIndex={item.id === active ? 0 : -1}
             className={clsx(styles.traceTab, item.id === active && styles.traceTabActive)}
-            onClick={() => setActive(item.id)}>
+            onClick={() => setActive(item.id)}
+            onKeyDown={onKeyDown}>
             {item.label}
           </button>
         ))}
       </div>
-      <div className={styles.tracePanel} id="trace-panel" role="tabpanel" aria-labelledby={`trace-tab-${trace.id}`} key={trace.id}>
+      <div className={styles.tracePanel} id="trace-panel" role="tabpanel" aria-labelledby={`trace-tab-${trace.id}`} tabIndex={0} key={trace.id}>
         <div className={styles.traceCode}>
           <h3>You write</h3>
           <CodeBlock language="csharp">{trace.code}</CodeBlock>

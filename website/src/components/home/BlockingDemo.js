@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import clsx from 'clsx';
-import {useSeen} from './useDemo';
+import {prefersReducedMotion, useSeen} from './useDemo';
 import styles from './demos.module.css';
 
 const traffic = ['GET', 'SET', 'INCR', 'HGET', 'GET', 'EXPIRE', 'ZADD', 'GET'];
@@ -12,8 +12,9 @@ export default function BlockingDemo() {
   const jobCount = useRef(41);
   const reset = useRef(0);
 
+  // The wait counter is motion, so it stays still for reduced-motion readers.
   useEffect(() => {
-    if (!seen || job) {
+    if (!seen || job || prefersReducedMotion()) {
       return undefined;
     }
     const timer = setInterval(() => setWaited((seconds) => (seconds >= 30 ? 0 : seconds + 1)), 1000);
@@ -46,9 +47,13 @@ export default function BlockingDemo() {
         <div className={styles.lane}>
           <span className={styles.laneName}>Blocking pool</span>
           <div className={clsx(styles.laneTrack, styles.laneBlocking)}>
-            <code className={clsx(styles.blpop, job && styles.blpopDone)} aria-live="polite">
-              {job ? `BLPOP jobs returned "${job}"` : `BLPOP jobs waiting ${waited}s of 30s`}
+            <code className={clsx(styles.blpop, job && styles.blpopDone)}>
+              {job
+                ? `BLPOP jobs returned "${job}"`
+                : waited > 0 ? `BLPOP jobs waiting ${waited}s of 30s` : 'BLPOP jobs waiting, up to 30s'}
             </code>
+            {/* Announce only the result, not every tick of the wait counter. */}
+            <span className={styles.visuallyHidden} aria-live="polite">{job ? `BLPOP returned ${job}` : ''}</span>
           </div>
         </div>
       </div>

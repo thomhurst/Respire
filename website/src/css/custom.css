@@ -194,8 +194,6 @@ pre code { font-family: var(--ifm-font-family-monospace); }
 
 /* Tables read as data, not as cards. */
 .theme-doc-markdown table {
-  display: table;
-  width: 100%;
   border-collapse: collapse;
   font-size: 0.92rem;
 }

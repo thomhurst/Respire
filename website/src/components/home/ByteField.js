@@ -136,13 +136,24 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
     };
     current.draw = draw;
 
+    // Frames are only scheduled while the field is on screen and the tab is
+    // visible; start() resumes the loop when either changes back.
     const loop = (now) => {
+      if (!visible || document.hidden) {
+        frame = 0;
+        return;
+      }
       frame = requestAnimationFrame(loop);
-      if (!visible || document.hidden || now - last < 33) {
+      if (now - last < 33) {
         return;
       }
       last = now;
       draw(now);
+    };
+    const start = () => {
+      if (!reduced && !frame && visible && !document.hidden) {
+        frame = requestAnimationFrame(loop);
+      }
     };
 
     current.theme = readTheme(canvas);
@@ -155,14 +166,14 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
       draw();
     });
     themeObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
-    if (!reduced) {
-      frame = requestAnimationFrame(loop);
-    }
 
     const observer = new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
+      start();
     });
     observer.observe(canvas);
+    document.addEventListener('visibilitychange', start);
+    start();
 
     const host = canvas.parentElement;
     const move = (event) => {
@@ -186,6 +197,7 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       themeObserver.disconnect();
+      document.removeEventListener('visibilitychange', start);
       host.removeEventListener('pointermove', move);
       host.removeEventListener('pointerleave', leave);
       window.removeEventListener('resize', onResize);

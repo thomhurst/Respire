@@ -538,3 +538,12 @@
   .encoderOutput { grid-template-columns: minmax(0, 1fr); }
   .encoderOutput > div + div { border-left: 0; border-top: 1px solid var(--resp-rule); }
 }
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

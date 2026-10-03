@@ -4,13 +4,22 @@ import styles from './demos.module.css';
 const encoder = new TextEncoder();
 const byteLength = (text) => encoder.encode(text).length;
 
+const escapes = {n: '\n', r: '\r', t: '\t', b: '\b', a: '\x07', '"': '"', '\\': '\\'};
+
+// Decodes the escapes redis-cli accepts inside double quotes: \n, \r, \t, \b,
+// \a, \", \\ and \xHH. Anything else keeps the escaped character.
+function unescape(text) {
+  return text.replace(/\\(x[0-9a-fA-F]{2}|.)/g, (_, code) =>
+    code.length === 3 ? String.fromCharCode(parseInt(code.slice(1), 16)) : escapes[code] ?? code);
+}
+
 // Splits a redis-cli style line into arguments, honouring quotes.
 export function tokenize(line) {
   const tokens = [];
   const pattern = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
   let match;
   while ((match = pattern.exec(line)) !== null) {
-    tokens.push(match[1] ?? match[2] ?? match[3]);
+    tokens.push(match[1] !== undefined ? unescape(match[1]) : match[2] ?? match[3]);
   }
   return tokens;
 }
@@ -23,28 +32,50 @@ export function encode(tokens) {
   return lines;
 }
 
+// JSON string escaping (\n, \", \\, \uXXXX) is also valid C# string syntax.
 const quote = (value) => JSON.stringify(value);
-const seconds = (value) => `TimeSpan.FromSeconds(${Number.isFinite(Number(value)) ? value : 0})`;
+const isInteger = (value) => /^\d+$/.test(value);
+const isNumber = (value) => value !== '' && Number.isFinite(Number(value));
+const seconds = (value) => `TimeSpan.FromSeconds(${value})`;
 
-// Respire calls for common commands. Anything else falls back to ExecuteAsync.
+// Respire calls for common commands. Each entry returns null unless it models
+// every argument, so options such as SET ... NX fall back to ExecuteAsync
+// instead of showing a call that means something different.
 const calls = {
-  PING: () => 'TimeSpan roundTrip = await redis.PingAsync();',
-  GET: ([key]) => `string? value = await redis.GetStringAsync(${quote(key)});`,
-  SET: ([key, value, option, amount]) =>
-    option?.toUpperCase() === 'EX'
+  PING: (args) => (args.length === 0 ? 'TimeSpan roundTrip = await redis.PingAsync();' : null),
+  GET: (args) => (args.length === 1 ? `string? value = await redis.GetStringAsync(${quote(args[0])});` : null),
+  SET: ([key, value, option, amount, ...rest]) => {
+    if (value === undefined || rest.length > 0) {
+      return null;
+    }
+    if (option === undefined) {
+      return `await redis.SetAsync(${quote(key)}, ${quote(value)});`;
+    }
+    return option.toUpperCase() === 'EX' && isInteger(amount)
       ? `await redis.SetAsync(${quote(key)}, ${quote(value)}, expiry: ${seconds(amount)});`
-      : `await redis.SetAsync(${quote(key)}, ${quote(value)});`,
-  INCR: ([key]) => `long value = await redis.IncrementAsync(${quote(key)});`,
-  DECR: ([key]) => `long value = await redis.DecrementAsync(${quote(key)});`,
-  DEL: (keys) => `long removed = await redis.DeleteAsync(${keys.map(quote).join(', ')});`,
-  EXPIRE: ([key, amount]) => `await redis.ExpireAsync(${quote(key)}, ${seconds(amount)});`,
-  HSET: ([key, field, value]) => `await redis.Hashes.SetAsync(${quote(key)}, ${quote(field)}, ${quote(value)});`,
-  HGETALL: ([key]) => `Dictionary<string, string> hash = await redis.Hashes.GetAllAsync(${quote(key)});`,
-  LPUSH: ([key, value]) => `await redis.Lists.LeftPushAsync(${quote(key)}, ${quote(value)});`,
-  RPUSH: ([key, value]) => `await redis.Lists.RightPushAsync(${quote(key)}, ${quote(value)});`,
-  BLPOP: ([key, timeout]) => `string? item = await redis.Lists.LeftPopAsync(\n    ${quote(key)},\n    waitFor: ${seconds(timeout)});`,
-  ZADD: ([key, score, member]) => `await redis.SortedSets.AddAsync(${quote(key)}, ${quote(member)}, ${Number(score) || 0});`,
-  PUBLISH: ([channel, message]) => `long receivers = await redis.PublishAsync(${quote(channel)}, ${quote(message)});`,
+      : null;
+  },
+  INCR: (args) => (args.length === 1 ? `long value = await redis.IncrementAsync(${quote(args[0])});` : null),
+  DECR: (args) => (args.length === 1 ? `long value = await redis.DecrementAsync(${quote(args[0])});` : null),
+  DEL: (args) => (args.length > 0 ? `long removed = await redis.DeleteAsync(${args.map(quote).join(', ')});` : null),
+  EXPIRE: (args) =>
+    args.length === 2 && isInteger(args[1]) ? `await redis.ExpireAsync(${quote(args[0])}, ${seconds(args[1])});` : null,
+  HSET: (args) =>
+    args.length === 3 ? `await redis.Hashes.SetAsync(${args.map(quote).join(', ')});` : null,
+  HGETALL: (args) =>
+    args.length === 1 ? `Dictionary<string, string> hash = await redis.Hashes.GetAllAsync(${quote(args[0])});` : null,
+  LPUSH: (args) => (args.length === 2 ? `await redis.Lists.LeftPushAsync(${args.map(quote).join(', ')});` : null),
+  RPUSH: (args) => (args.length === 2 ? `await redis.Lists.RightPushAsync(${args.map(quote).join(', ')});` : null),
+  BLPOP: (args) =>
+    args.length === 2 && isInteger(args[1])
+      ? `string? item = await redis.Lists.LeftPopAsync(\n    ${quote(args[0])},\n    waitFor: ${seconds(args[1])});`
+      : null,
+  ZADD: (args) =>
+    args.length === 3 && isNumber(args[1])
+      ? `await redis.SortedSets.AddAsync(${quote(args[0])}, ${quote(args[2])}, ${Number(args[1])});`
+      : null,
+  PUBLISH: (args) =>
+    args.length === 2 ? `long receivers = await redis.PublishAsync(${args.map(quote).join(', ')});` : null,
 };
 
 function toCSharp(tokens) {
@@ -52,9 +83,9 @@ function toCSharp(tokens) {
     return '// Type a command above';
   }
   const [name, ...args] = tokens;
-  const call = calls[name.toUpperCase()];
-  if (call && args.every((arg) => arg !== undefined)) {
-    return call(args);
+  const typed = calls[name.toUpperCase()]?.(args);
+  if (typed) {
+    return typed;
   }
   return `using RespireResult result = await redis.ExecuteAsync(\n    ${[name.toUpperCase(), ...args].map(quote).join(', ')});`;
 }
