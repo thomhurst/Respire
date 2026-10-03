@@ -310,10 +310,16 @@ limit, matching dedicated recovery notifications. Slow or blocked observers can 
 notifications from concurrent or repeated rounds. `MaxAttempts` bounds one discovery round,
 not the notification queue; handlers should hand off expensive work and return promptly.
 
-## Remaining recovery paths
+## Periodic Cluster refresh
 
-The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery, and
-Sentinel fallback, and Sentinel event monitors as described above. Periodic Cluster refresh
-remains #397. Setting this option does not enable that feature.
-Future periodic Cluster refresh must reuse this discovery budget instead of adding nested
-retry counters.
+The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery,
+Sentinel fallback, and Sentinel event monitors as described above. Background Cluster
+refresh uses the same discovery budget for candidate selection and backoff; it does not
+add a separate nested retry counter.
+
+`ClusterTopologyRefreshInterval` controls the periodic timer and defaults to 60 seconds.
+Set it to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to disable that timer.
+Redirects, primary disconnects, and failed-refresh retries can still trigger discovery.
+Each refresh pass has a 60-second deadline and retains the last published slot map if
+discovery fails. See [Cluster topology refresh](../fundamentals/connections.md#redis-cluster-endpoint-identity)
+for scheduling, jitter, coalescing, and candidate ordering.
