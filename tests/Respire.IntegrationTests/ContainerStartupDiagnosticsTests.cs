@@ -10,6 +10,32 @@ namespace Respire.IntegrationTests;
 public class ContainerStartupDiagnosticsTests
 {
     [Test]
+    public async Task DiagnosticCollectionWithNoPortsDoesNotRunCommand()
+    {
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        var called = false;
+        ((ContainerProbe)container).Execute = (_, _) =>
+        {
+            called = true;
+            return Task.FromResult(new ExecResult("", "", 0));
+        };
+        var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(container, []);
+        called.Should().BeFalse();
+        diagnostics.Should().Contain("no daemon ports");
+    }
+
+    [Test]
+    public async Task DiagnosticCollectionSupportsTailWithoutVerboseOption()
+    {
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        ((ContainerProbe)container).Execute = (command, _) => Task.FromResult(command.Contains("-v")
+            ? new ExecResult("", "tail: unsupported option -v", 1)
+            : new ExecResult($"portable daemon log from {command[^1]}", "", 0));
+        var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(container, [6381, 6382]);
+        diagnostics.Should().Contain("portable daemon log").And.Contain("6381.log").And.Contain("6382.log");
+    }
+
+    [Test]
     public async Task StartupFailureCapturesDaemonLogsBeforeCleanup()
     {
         var original = new IOException("Controlled startup failure.");

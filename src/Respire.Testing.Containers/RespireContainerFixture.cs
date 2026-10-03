@@ -301,8 +301,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         }
     }
 
+    internal static string DaemonLogPath(int port) => $"/tmp/respire-fixture/{Number(port)}.log";
+
     private static string BaseConfiguration(int port)
-        => $"port {port}\nbind 0.0.0.0\nprotected-mode no\ndaemonize yes\nsave \"\"\nappendonly no\npidfile /tmp/respire-fixture/{port}.pid\nlogfile /tmp/respire-fixture/{port}.log\ndir /tmp/respire-fixture\ndbfilename {port}.rdb\n";
+        => $"port {port}\nbind 0.0.0.0\nprotected-mode no\ndaemonize yes\nsave \"\"\nappendonly no\npidfile /tmp/respire-fixture/{port}.pid\nlogfile {DaemonLogPath(port)}\ndir /tmp/respire-fixture\ndbfilename {port}.rdb\n";
 
     private async Task StartServerAsync(int index, string config, bool sentinel, CancellationToken cancellationToken)
     {
