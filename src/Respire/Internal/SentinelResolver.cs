@@ -532,9 +532,9 @@ internal static class SentinelResolver
                 if (report.OwnerAtObservation is { } observed)
                 {
                     // Fresh DNS cannot turn an old owner's event into proof of a later
-                    // owner's outage. A known hostname keeps the peer validated at receipt.
+                    // owner's outage. Even a known hostname still needs fresh peer proof:
+                    // a delayed report may arrive after that name has changed owners.
                     if (!current.Matches(observed.Peer ?? observed.Endpoint, null)) continue;
-                    if (comparer.Equals(primary, observed.Endpoint)) return null;
                 }
                 (aliases ??= []).Add(primary);
             }
@@ -567,7 +567,7 @@ internal static class SentinelResolver
             {
                 var resolved = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, aliasTimeout.Token)
                     .WaitAsync(aliasTimeout.Token).ConfigureAwait(false);
-                return current.Matches(primary, Array.ConvertAll(resolved, NormalizeAddress));
+                return resolved.Length > 0 && current.Matches(primary, Array.ConvertAll(resolved, NormalizeAddress));
             }
             catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
             {

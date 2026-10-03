@@ -202,8 +202,8 @@ public class SentinelRoutingTests
             ReconnectPolicy = new() { InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1 },
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, unavailable);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, unavailable, expectedSubscriptions: 2);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 3);
         var router = client.Core.Sentinel!;
         var clock = new FenceClock();
         router.Clock = clock;
@@ -779,6 +779,30 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task InitialSentinelValidationWaitsForAllExpectedAcknowledgements()
+    {
+        await using var primary = Primary();
+        await using var first = Sentinel(() => primary.Port);
+        await using var second = Sentinel(() => primary.Port);
+        second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForCommandAsync(second, "SUBSCRIBE +switch-master");
+        var readiness = WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
+        await Assert.That(readiness.IsCompleted).IsFalse();
+        var index = second.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master"));
+        var connection = second.ReceivedConnectionIds[index];
+        var acknowledgements = second.ReplyOverride!(connection, second.ReceivedCommands[index]);
+        second.SuppressReply = null;
+        await second.SendRawAsync(acknowledgements!, connection);
+        await readiness.WaitAsync(Limit);
+        await Assert.That(client.Core.Sentinel!.SubscribedSentinelCount).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(false, false, false)]
     [Arguments(false, true, false)]
     [Arguments(true, false, false)]
@@ -811,7 +835,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var firstQueries = first.ReceivedCommands.Count(command => command == query);
@@ -819,14 +843,16 @@ public class SentinelRoutingTests
         first.SuppressReply = command => command == query;
         Volatile.Write(ref firstPort, intermediate.Port);
         Volatile.Write(ref secondPort, laterPromotion ? latest.Port : original.Port);
-        var hint = SentinelHintBuilder.Create("reconcile",
-            Target: switchHint ? new("127.0.0.1", intermediate.Port) : null,
-            OldPrimary: switchHint ? new("127.0.0.1", original.Port) : null,
-            MustRediscover: !switchHint, ReportingSentinel: new("127.0.0.1", first.Port));
+        SentinelHint HintFrom(FakeRespServer reporter) => switchHint
+            ? SentinelHint.FromSwitchMaster("reconcile", new("127.0.0.1", original.Port),
+                new("127.0.0.1", intermediate.Port), new("127.0.0.1", reporter.Port))
+            : SentinelHint.FromDown("reconcile", new("127.0.0.1", reporter.Port),
+                new("127.0.0.1", original.Port));
+        var hint = HintFrom(first);
         router.QueueNotificationRediscovery(in hint);
         await WaitForCommandCountAsync(first, query, firstQueries + 1);
         var blockedConnection = first.ReceivedConnectionIds[^1];
-        router.QueueNotificationRediscovery(hint with { Reporters = [new("127.0.0.1", second.Port)] });
+        router.QueueNotificationRediscovery(HintFrom(second));
         first.SuppressReply = null;
         await first.SendRawAsync(AddressReply(intermediate.Port), blockedConnection);
         await WaitForCommandCountAsync(second, query, secondQueries + 1);
@@ -853,7 +879,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var queries = first.ReceivedCommands.Count(command => command == query);
@@ -894,7 +920,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var queries = first.ReceivedCommands.Count(command => command == query);
@@ -942,7 +968,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
         router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
         var queries = first.ReceivedCommands.Count(command => command == query);
@@ -1020,7 +1046,7 @@ public class SentinelRoutingTests
         client.Core.Sentinel!.HostResolver = static (_, _) => Task.FromResult(new[] { IPAddress.Loopback });
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var firstMonitor = first.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
         var secondMonitor = second.ReceivedCommands.ToList()
@@ -1178,7 +1204,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         Volatile.Write(ref firstPort, replica.Port);
         Volatile.Write(ref secondPort, stale.Port);
         var hint = SentinelHint.FromDown("current-down", new("127.0.0.1", first.Port), new("127.0.0.1", current.Port));
@@ -1267,7 +1293,7 @@ public class SentinelRoutingTests
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
         await WaitForInitialSentinelValidationAsync(client, first);
-        await WaitForInitialSentinelValidationAsync(client, second);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         Volatile.Write(ref firstPort, original.Port);
         Volatile.Write(ref secondPort, promoted.Port);
         var stale = SentinelHint.FromDown("old-down", new("127.0.0.1", first.Port), new("127.0.0.1", original.Port));
@@ -4420,12 +4446,12 @@ public class SentinelRoutingTests
     }
 
     private static async Task WaitForInitialSentinelValidationAsync(
-        RespireClient client, FakeRespServer sentinel, bool waitForRediscovery = true)
+        RespireClient client, FakeRespServer sentinel, bool waitForRediscovery = true, int expectedSubscriptions = 1)
     {
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         using (var timeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount == 0) await Task.Delay(5, timeout.Token);
+            while (router.SubscribedSentinelCount < expectedSubscriptions) await Task.Delay(5, timeout.Token);
         var rediscovery = router.NotificationRediscovery;
         if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
     }

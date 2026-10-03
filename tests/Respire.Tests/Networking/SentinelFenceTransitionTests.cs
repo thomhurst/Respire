@@ -36,11 +36,19 @@ public class SentinelFenceTransitionTests
     ];
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    public async Task DownReportDnsCannotRebindItsObservedOwner(bool knownHostname, bool observedCurrent)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    [Arguments(false, false, null)]
+    [Arguments(true, false, null)]
+    [Arguments(false, true, null)]
+    [Arguments(true, true, null)]
+    public async Task DownReportDnsCannotRebindItsObservedOwner(bool knownHostname, bool observedCurrent, bool? resolvesCurrent)
     {
         var oldPeer = new RespireEndpoint("127.0.0.1", 6379);
         var currentPeer = new RespireEndpoint("127.0.0.2", 6379);
@@ -54,7 +62,7 @@ public class SentinelFenceTransitionTests
         };
         var endpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
         var hint = SentinelHint.FromDown("down", endpoint, hostname, observed)
-            .BindDownReportsToCurrentPrimary(new(currentPeer, currentPeer));
+            .BindDownReportsToCurrentPrimary(new(hostname, currentPeer));
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
@@ -68,12 +76,14 @@ public class SentinelFenceTransitionTests
                 validations++;
                 return ValueTask.FromResult(primary.PrimaryEndpoint);
             }, CancellationToken.None, notificationHint: hint,
-                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>([System.Net.IPAddress.Parse(currentPeer.Host)]));
+                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>(resolvesCurrent is null ? [] :
+                    [System.Net.IPAddress.Parse((resolvesCurrent.Value ? currentPeer : oldPeer).Host)]));
             accepted = true;
         }
         catch (RespireConnectionException) { }
-        await Assert.That(accepted).IsEqualTo(observedCurrent);
-        await Assert.That(validations).IsEqualTo(observedCurrent ? 1 : 0);
+        var provesCurrentOwner = observedCurrent && resolvesCurrent == true;
+        await Assert.That(accepted).IsEqualTo(provesCurrentOwner);
+        await Assert.That(validations).IsEqualTo(provesCurrentOwner ? 1 : 0);
     }
 
     [Test]
