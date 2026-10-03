@@ -113,8 +113,25 @@ internal static partial class ScopeWalker
                             if (region.Kind == ControlFlowRegionKind.Try
                                 && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
                                 unwind.Add(region.EnclosingRegion.NestedRegions.Last());
-                        Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
-                            CatchContinuation(origin.Handler, continuation), false, 0, 0, 0);
+                        var catchContinuation = CatchContinuation(origin.Handler, continuation);
+                        if (origin.Handler.EnclosingRegion is { Kind: ControlFlowRegionKind.FilterAndHandler } filtered)
+                        {
+                            var key = (block.Ordinal, origin.Handler, catchContinuation);
+                            if (!_catchOriginDispatchIds.TryGetValue(key, out var id))
+                            {
+                                var filter = filtered.NestedRegions.First(static region => region.Kind == ControlFlowRegionKind.Filter);
+                                id = _dispatches.Count;
+                                _dispatches.Add(new CatchDispatch(origin.Handler, filter, unwind.ToArray(),
+                                    catchContinuation, next: 0, certain: true));
+                                _catchOriginDispatchIds.Add(key, id);
+                            }
+                            // Even an unknown implicit exception must pass the filter before
+                            // acquiring a value in its handler. Retain that selection evidence.
+                            Dispatch(id, started: false, known: 0, values: 0);
+                        }
+                        else
+                            Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
+                                catchContinuation, false, 0, 0, 0);
                     }
                 }
 
@@ -262,6 +279,7 @@ internal static partial class ScopeWalker
 
         private readonly List<CatchDispatch?> _dispatches = [null];
         private readonly Dictionary<(int Block, int Continuation), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
 
         private int GetDispatch(ControlFlowBranch branch, int continuation)
         {

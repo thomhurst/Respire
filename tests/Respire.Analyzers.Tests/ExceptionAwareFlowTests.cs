@@ -7,6 +7,58 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FilteredCatchOriginRetainsSelectionForDisposal(bool inverted)
+    {
+        var local = inverted ? "{|RESP001:result|}" : "result";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, bool choice)
+                {
+                    try { Console.WriteLine("may throw"); }
+                    catch (Exception) when (choice)
+                    {
+                        var {{local}} = await client.ExecuteAsync("PING");
+                        if ({{(inverted ? "!choice" : "choice")}}) result.Dispose();
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FilteredCatchOriginRetainsSelectionForFlush(bool inverted)
+    {
+        var read = inverted ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, bool choice)
+                {
+                    var batch = client.CreateBatch();
+                    try { Console.WriteLine("may throw"); }
+                    catch (Exception) when (choice)
+                    {
+                        var pending = batch.GetStringAsync("key");
+                        if ({{(inverted ? "!choice" : "choice")}}) await batch.SendAsync();
+                        Console.WriteLine({{read}});
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("bool condition = choice;", "condition", "condition", "", false)]
     [Arguments("", "choice", "choice", "Change(ref choice);", true)]
     [Arguments("", "choice", "choice", "void ChangeChoice() { choice = !choice; } ChangeChoice();", true)]
