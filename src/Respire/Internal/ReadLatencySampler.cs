@@ -158,7 +158,7 @@ internal static class ReadLatencySampler
     internal const int SamplingWaitMilliseconds = 1_000;
     private static readonly RawCommand s_ping = new(RespCommands.Ping);
 
-    internal static ReadLatencySampler<RespireConnection> Create() => new(MeasureAsync);
+    internal static ReadLatencySampler<RespireConnection> Create(Func<long>? clock = null) => new(MeasureAsync, clock);
 
     private static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
     {

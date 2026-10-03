@@ -17,7 +17,7 @@ public class NearestReadRoutingTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
-    public async Task ColdCandidatesShareOneSamplingWaitBudget(bool cluster, bool slowHandshake)
+    public async Task ColdReplicaCandidatesShareOneSamplingWaitBudget(bool cluster, bool slowHandshake)
     {
         await using var primary = Server("primary");
         await using var first = Server("first");
@@ -43,12 +43,36 @@ public class NearestReadRoutingTests
             warmed.Add(await replicas.GetStringAsync("warmup"));
         await Assert.That(warmed).IsEquivalentTo(new string?[] { "first", "second", "third" });
         await Assert.That(cluster ? client.Core.Cluster!.NearestLatency : client.Core.ReadRouter.NearestLatency).IsNull();
+        // Unknown latency does not make a replica ineligible. Establish the primary's
+        // usable sample before timing the three stalled replica samples; otherwise a late
+        // primary PONG makes every latency unknown and rotation can select a stalled replica.
+        // Freeze sample age/cadence, not the real sampling wait deadline.
+        var sampler = ReadLatencySampler.Create(static () => 0);
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        var slot = ClusterHash.GetSlot("key");
+        var primaryConnection = cluster
+            ? client.Core.Cluster!.GetKnownSlotOwner(slot)!.GetConnection(slot)
+            : client.Core.Multiplexer.GetConnection();
+        await Assert.That(await sampler.GetLatencyAsync(primaryConnection, default))
+            .IsLessThan(ReadLatencySampler<RespireConnection>.Unknown);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
+        // A fresh primary probe would now miss the sampling deadline. The known sample
+        // must keep this test independent of when another PONG could be processed.
+        primary.DelayCommand("PING", 1_500);
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         // Three stalled samples previously consumed three independent one-second waits.
-        await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2.5)))
-            .IsEqualTo("primary");
-        var sampler = cluster ? client.Core.Cluster!.NearestLatency! : client.Core.ReadRouter.NearestLatency!;
+        string? result;
+        try { result = await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2.5)); }
+        catch (TimeoutException error)
+        {
+            throw new TimeoutException($"Sampling GET did not complete. Primary: {string.Join(", ", primary.ReceivedCommands)}; "
+                + $"first: {string.Join(", ", first.ReceivedCommands)}; second: {string.Join(", ", second.ReceivedCommands)}; "
+                + $"third: {string.Join(", ", third.ReceivedCommands)}", error);
+        }
+        await Assert.That(result).IsEqualTo("primary");
         await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
         foreach (var replica in new[] { first, second, third })
             await Assert.That(replica.ReceivedCommands.Contains("GET key")).IsFalse();
     }
