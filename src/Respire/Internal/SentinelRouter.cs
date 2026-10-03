@@ -256,7 +256,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken)
     {
         var endpoint = options.PrimaryEndpoint;
-        var samePeer = SentinelDiscoveryState.SingleAddress(endpoint, addresses) is { } address
+        var samePeer = new SentinelAddressEvidence(endpoint, addresses).SingleAddress is { } address
             && current.Multiplexer.AllCurrentPeersMatch(address, endpoint.Port);
         // A stable DNS name is not proof that its established socket is still the owner.
         // Only an unavailable DNS answer permits falling back to textual endpoint identity.

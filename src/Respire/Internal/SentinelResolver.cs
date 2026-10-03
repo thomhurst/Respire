@@ -86,7 +86,7 @@ internal static class SentinelResolver
                 || flags.Contains("o_down", StringComparison.Ordinal)
                 || flags.Contains("disconnected", StringComparison.Ordinal))) continue;
             if (!TryParseEndpoint(host, port, out var endpoint)) return false;
-            if (!discovered.Contains(endpoint, RespireEndpointComparer.Instance)) discovered.Add(endpoint);
+            if (!discovered.Contains(endpoint, SentinelEndpointIdentity.EndpointComparer.Instance)) discovered.Add(endpoint);
         }
         replicas = discovered.ToArray();
         return true;
@@ -124,7 +124,7 @@ internal static class SentinelResolver
         if (preferredSentinel is { } preferred)
         {
             var preferredIndex = sentinelEndpoints.FindIndex(endpoint =>
-                SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, preferred));
+                SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, preferred));
             if (preferredIndex > 0)
             {
                 sentinelEndpoints.RemoveAt(preferredIndex);
@@ -182,7 +182,7 @@ internal static class SentinelResolver
                         {
                             var addresses = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, connectTimeoutSource.Token)
                                 .ConfigureAwait(false);
-                            primaryAddresses = Array.ConvertAll(addresses, NormalizeAddress);
+                            primaryAddresses = Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
                         }
                         catch (System.Net.Sockets.SocketException) { /* Retain the textual owner fence if DNS is unavailable. */ }
                     }
@@ -190,9 +190,9 @@ internal static class SentinelResolver
                     // traffic may have published while the notification was waiting to retry.
                     var matchesSwitchSource = notificationHint is { } hint
                         ? MatchesSwitchSource(primary, in hint, primaryAddresses)
-                        : previouslyValidatedPrimary is { } previous && SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, previous);
+                        : previouslyValidatedPrimary is { } previous && SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, previous);
                     var matchesPreferredTarget = preferredTarget is { } target
-                        && SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary);
+                        && SentinelEndpointIdentity.EndpointComparer.Instance.Equals(target, primary);
                     // A newer epoch orders the announced endpoint, not the client's DNS cache.
                     // A target hostname that still reaches a different demoted source is not
                     // confirmation of that target, even if the source still answers ROLE master.
@@ -405,7 +405,7 @@ internal static class SentinelResolver
             // Even matching address reads must not bind that address to the new epoch.
             if (failoverInProgress)
                 throw new RespireConnectionException("Sentinel failover is still in progress.");
-            if (configuredPrimary is { } snapshot && !RespireEndpointComparer.Instance.Equals(primary, snapshot))
+            if (configuredPrimary is { } snapshot && !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, snapshot))
                 throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
             if (configurationEpoch is not null)
             {
@@ -415,7 +415,7 @@ internal static class SentinelResolver
                 using var confirmation = await connection.SendAsync(
                     new Cmd1(Verbs.SentinelGetMasterAddressByName, serviceName), cancellationToken).ConfigureAwait(false);
                 var confirmed = ParsePrimaryAddress(in confirmation, sentinel, serviceName);
-                if (!RespireEndpointComparer.Instance.Equals(primary, confirmed))
+                if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, confirmed))
                     throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
             }
             return (primary, configurationEpoch);
@@ -480,23 +480,14 @@ internal static class SentinelResolver
     internal static bool TargetPeerMatchesSwitchSource(RespireEndpoint target, RespireEndpoint peer, in SentinelHint hint)
     {
         foreach (var source in hint.Sources)
-            if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)
+            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, target)
                 && MatchesSwitchSource(peer, source)) return true;
         return false;
     }
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, SentinelSwitchSource source,
         string[]? candidateAddresses = null)
-    {
-        if (source.Endpoint.Port != candidate.Port) return false;
-        var candidateHost = NormalizeHost(candidate.Host);
-        if (StringComparer.OrdinalIgnoreCase.Equals(candidateHost, NormalizeHost(source.Endpoint.Host))
-            || source.Addresses?.Contains(candidateHost, StringComparer.OrdinalIgnoreCase) == true) return true;
-        if (candidateAddresses is not null)
-            foreach (var address in candidateAddresses)
-                if (MatchesSwitchSource(new RespireEndpoint(address, candidate.Port), source)) return true;
-        return false;
-    }
+        => source.Evidence.CouldMatch(new(candidate, candidateAddresses));
 
     private static void LogOptionalDiscoveryFailure(ILogger? logger, Exception error, string stage, RespireEndpoint sentinel)
     {
@@ -508,12 +499,6 @@ internal static class SentinelResolver
         }
     }
 
-    internal static string NormalizeHost(string host)
-        => IPAddress.TryParse(host, out var address) ? NormalizeAddress(address) : host;
-
-    internal static string NormalizeAddress(IPAddress address)
-        => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
-
     private static async ValueTask<SentinelValidatedPrimary?> GetReconciliationPrimaryAsync(
         SentinelHint hint, RespireEndpoint reporter, RespireEndpoint candidate,
         Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver, TimeSpan timeout,
@@ -523,7 +508,7 @@ internal static class SentinelResolver
         if (hint.DownReportPrimary is not { } current) return null;
         // Confirming the known numeric peer needs no advisory alias lookup. ROLE still runs.
         if (IPAddress.TryParse(candidate.Host, out _) && current.Matches(candidate, null)) return current;
-        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        var comparer = SentinelEndpointIdentity.EndpointComparer.Instance;
         List<RespireEndpoint>? aliases = null;
         foreach (var report in hint.DownReports)
         {
@@ -575,7 +560,7 @@ internal static class SentinelResolver
             {
                 var resolved = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, aliasTimeout.Token)
                     .WaitAsync(aliasTimeout.Token).ConfigureAwait(false);
-                return resolved.Length > 0 && current.Matches(primary, Array.ConvertAll(resolved, NormalizeAddress));
+                return resolved.Length > 0 && current.Matches(primary, Array.ConvertAll(resolved, SentinelEndpointIdentity.NormalizeAddress));
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {

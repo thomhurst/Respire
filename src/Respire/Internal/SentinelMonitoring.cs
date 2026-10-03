@@ -20,13 +20,13 @@ internal sealed class SentinelMonitoring(
     private readonly SentinelDiscoveryState _discovery = discovery;
     private readonly CancellationTokenSource _lifetime = lifetime;
     private bool _disposed;
-    private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelDiscoveryState.EndpointComparer.Instance);
+    private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
-    private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance);
-    private readonly HashSet<RespireEndpoint> _readySentinels = new(SentinelDiscoveryState.EndpointComparer.Instance);
+    private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelEndpointIdentity.EndpointComparer.Instance);
+    private readonly HashSet<RespireEndpoint> _readySentinels = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _subscriptionVersion;
-    private readonly Dictionary<RespireEndpoint, long> _validatedSubscriptions = new(SentinelDiscoveryState.EndpointComparer.Instance);
+    private readonly Dictionary<RespireEndpoint, long> _validatedSubscriptions = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(options.SentinelPrimaryName ?? "");
 
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
@@ -302,13 +302,13 @@ internal sealed class SentinelMonitoring(
     // failover discovery or prevent this monitor from reading later events.
     internal async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
-        if (IPAddress.TryParse(host, out var literal)) return [SentinelResolver.NormalizeAddress(literal)];
+        if (IPAddress.TryParse(host, out var literal)) return [SentinelEndpointIdentity.NormalizeAddress(literal)];
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.ConnectTimeout);
             var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
-            return Array.ConvertAll(addresses, SentinelResolver.NormalizeAddress);
+            return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
         {

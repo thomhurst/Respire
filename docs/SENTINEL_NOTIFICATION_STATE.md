@@ -37,6 +37,25 @@ Recovery, retry, and guarded diagnostics use `SentinelExceptionPolicy.IsRecovera
 Resource cleanup and task joining still collect all failures before propagating the result;
 those ownership boundaries intentionally do not discard errors through a recovery filter.
 
+## Endpoint identity and address evidence
+
+`SentinelEndpointIdentity` defines textual endpoint equality and hashing for discovery,
+monitor registration, hint keys, evidence unions, and retained validated owners. Hostname
+case is ignored; numeric addresses use their canonical spelling, including IPv4-mapped
+IPv6 equivalence. Ports remain distinct. Textual identity never performs DNS resolution.
+
+`SentinelAddressEvidence` retains the candidates from one observation or lookup lifetime.
+Its conservative `CouldMatch` operation can fence a possible demoted source, but ownership
+confirmation uses `ConfirmsPeer` and requires one unambiguous address. Overlapping sets of
+several addresses cannot confirm an owner or consume its demotion fence. Duplicate evidence
+keeps existing arrays; unions produce a new snapshot without assigning chronology.
+
+`SentinelValidatedPrimary` keeps the advertised endpoint separate from the physical peer
+accepted by ROLE. Discovery retains provisional DNS evidence separately from its accepted
+peer. At an observed epoch, a numeric alias can confirm that peer even when DNS is unavailable;
+an unchanged hostname cannot replace it without a newer epoch. Retained down reports keep
+their observation-time owner when later DNS or publication changes the current owner.
+
 ## Background work ownership
 
 | Work | Owner and shutdown contract |
