@@ -160,7 +160,7 @@ internal static class ReadLatencySampler
 
     internal static ReadLatencySampler<RespireConnection> Create(Func<long>? clock = null) => new(MeasureAsync, clock);
 
-    private static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
+    internal static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
         // Keep observing the physical reply after selection's budget expires. Per-command
