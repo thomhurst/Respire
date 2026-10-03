@@ -34,6 +34,8 @@ public partial class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         var retirements = 0;
+        var initialFlushes = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+        Task<string?>? follower = null;
         using var cancellation = new CancellationTokenSource();
         using var listener = new ActivityListener
         {
@@ -43,10 +45,15 @@ public partial class SentinelRoutingTests
             ActivityStarted = _ =>
             {
                 if (retirements != 0 && !retireReplacement) return;
+                if (coalesce && retirements == 0)
+                    follower = client.GetStringAsync("key").AsTask();
                 retirements++;
                 Volatile.Write(ref port, replacement.Port);
                 // Force the admission race after SendTrackedAsync has selected its connection.
-                client.Core.Sentinel.Current!.TryRetire();
+                var generation = client.Core.Sentinel.Current!;
+                var connection = generation.Multiplexer.GetConnection();
+                using var rejection = Respire.Protocol.RespValue.Error("READONLY demoted");
+                generation.ObserveResponse(connection, "GET", in rejection);
                 if (cancel) cancellation.Cancel();
             },
         };
@@ -61,6 +68,12 @@ public partial class SentinelRoutingTests
             return;
         }
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("new");
+        if (coalesce)
+        {
+            await Assert.That(follower is not null).IsTrue();
+            await Assert.That(await follower!.WaitAsync(Limit)).IsEqualTo("new");
+        }
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(initialFlushes + 1);
         await Assert.That(retirements).IsEqualTo(1);
         await Assert.That(original.IsRetired).IsTrue();
         await Assert.That(first.ReceivedCommands).DoesNotContain("GET key");

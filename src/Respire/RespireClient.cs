@@ -2023,8 +2023,8 @@ public sealed partial class RespireClient : IRespireClient
                 && !core.Disposed && !cancellationToken.IsCancellationRequested)
             {
                 // No bytes were admitted. Rediscover once and retry the entire tracking prelude
-                // and read together. Keep the original cache token invalid across continuity loss.
-                core.ClientCache?.FlushForContinuityLoss();
+                // and read together. Sentinel retirement already fences the original cache
+                // token; another flush would discard unrelated replacement-generation reads.
             }
         }
         if (response.IsError)
