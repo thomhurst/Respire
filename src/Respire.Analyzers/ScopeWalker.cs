@@ -129,8 +129,8 @@ internal static class ScopeWalker
         }
 
         var systemException = GetSystemException(semanticModel);
-        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
-               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
+        return PathExistsAvoiding(graph, semanticModel, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
+               && !PathExistsAvoiding(graph, semanticModel, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -182,7 +182,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
     }
 
@@ -214,7 +214,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
     }
 
@@ -245,7 +245,7 @@ internal static class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel, GetSystemException(semanticModel),
             graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
     }
 
@@ -255,7 +255,8 @@ internal static class ScopeWalker
         SyntaxNode scope,
         SyntaxNode before,
         IEnumerable<SyntaxNode> barriers,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var barrierArray = barriers.ToArray();
         if (barrierArray.Length == 0)
@@ -277,12 +278,13 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
+            semanticModel,
             GetSystemException(semanticModel),
             beforeBlock,
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
             int.MaxValue,
-            barrierArray);
+            barrierArray, startPolicy);
     }
 
     /// <summary>True when a local or parameter used by a condition is written between two nodes.</summary>
@@ -341,6 +343,7 @@ internal static class ScopeWalker
 
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
+        SemanticModel semanticModel,
         INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
@@ -348,11 +351,12 @@ internal static class ScopeWalker
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
-        => new ReachabilityWalker(graph, systemException, startBlock, startPosition, targetBlock,
+        => new ReachabilityWalker(graph, semanticModel, systemException, startBlock, startPosition, targetBlock,
             targetPosition, barriers, startPolicy).Search();
 
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
+        SemanticModel semanticModel,
         INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
@@ -368,6 +372,7 @@ internal static class ScopeWalker
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
         private readonly Stack<(BasicBlock Block, int EntryPosition, int Continuation, bool Started)> _pending = new();
         private readonly Dictionary<(int Block, int Continuation, bool Started), int> _earliestEntries = new();
+        private readonly Dictionary<int, ITypeSymbol?> _exactThrownTypes = new();
 
         internal bool Search()
         {
@@ -500,9 +505,17 @@ internal static class ScopeWalker
                 // protected regions still unwind, from the innermost finally outward.
                 var unwind = new List<ControlFlowRegion>();
                 var exception = branch.Source.BranchValue;
-                while (exception is IConversionOperation conversion)
+                // Only built-in implicit conversions cannot throw. Explicit casts and
+                // user-defined conversions stay in place and are treated as opaque.
+                while (exception is IConversionOperation { Conversion: { IsImplicit: true, IsUserDefined: false } } conversion)
                 {
                     exception = conversion.Operand;
+                }
+
+                if (!_exactThrownTypes.TryGetValue(branch.Source.Ordinal, out var exactType))
+                {
+                    exactType = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception);
+                    _exactThrownTypes.Add(branch.Source.Ordinal, exactType);
                 }
 
                 for (var region = branch.Source.EnclosingRegion; region is not null; region = region.EnclosingRegion)
@@ -513,7 +526,7 @@ internal static class ScopeWalker
                         foreach (var handler in region.EnclosingRegion.NestedRegions.Where(static nested =>
                                      nested.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler))
                         {
-                            var (possible, certain) = GetCatchApplicability(handler, exception, _systemException);
+                            var (possible, certain) = GetCatchApplicability(handler, exception, exactType, semanticModel.Compilation, _systemException);
                             if (possible)
                             {
                                 var catchContinuation = continuation;
@@ -557,7 +570,8 @@ internal static class ScopeWalker
         }
 
         private static (bool Possible, bool Certain) GetCatchApplicability(
-            ControlFlowRegion handler, IOperation? exception, INamedTypeSymbol? systemException)
+            ControlFlowRegion handler, IOperation? exception, ITypeSymbol? exactType, Compilation compilation,
+            INamedTypeSymbol? systemException)
         {
             // A filtered region wraps separate filter/catch regions. The catch type still
             // restricts entry to the filter; a filter does not make incompatible types reachable.
@@ -567,13 +581,35 @@ internal static class ScopeWalker
             var catchType = catchRegion?.ExceptionType;
             var catchesAll = catchType is null || catchType.SpecialType == SpecialType.System_Object
                 || SymbolEqualityComparer.Default.Equals(catchType, systemException);
-            var exceptionType = exception?.Type;
-            var certain = catchesAll || HasBaseType(exceptionType, catchType);
-            // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
-            // handlers. A fresh construction has an exact type; other values may be derived.
-            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
+            // An opaque construction can raise any exception before the explicit throw, so
+            // every handler stays possible and only a catch-all is certain to handle it.
+            // This also covers new T(): T's constructor is user code.
+            if (exactType is null
+                && exception is IObjectCreationOperation or ITypeParameterObjectCreationOperation or IConversionOperation)
+            {
+                return (true, catchesAll);
+            }
+
+            var exceptionType = exactType ?? exception?.Type;
+            // A type parameter's runtime type derives from its class constraint. Without
+            // one, the value stays unknown and every handler remains possible.
+            if (exceptionType is ITypeParameterSymbol typeParameter)
+            {
+                exceptionType = typeParameter.ConstraintTypes.FirstOrDefault(static constraint => constraint.TypeKind == TypeKind.Class);
+            }
+
+            // Throwing an existing value that is null raises NullReferenceException instead.
+            var nullReference = exception is null || exactType is not null
+                ? null
+                : compilation.GetTypeByMetadataName("System.NullReferenceException");
+            var certain = catchesAll || HasBaseType(exceptionType, catchType)
+                && (exactType is not null || HasBaseType(nullReference, catchType));
+            // Unknown/rethrown/dynamic values intentionally retain possible handlers. An exact
+            // non-null value matches only its own bases; other values may be derived or null.
+            var possible = certain || exceptionType is null or IDynamicTypeSymbol
                 || catchType is ITypeParameterSymbol
-                || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
+                || exactType is null
+                   && (HasBaseType(catchType, exceptionType) || HasBaseType(nullReference, catchType));
             return (possible, certain);
         }
 

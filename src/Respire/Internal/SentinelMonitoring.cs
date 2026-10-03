@@ -408,7 +408,8 @@ internal sealed class SentinelMonitoring(
             }
             var addresses = await resolution.ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            // Stop closes ownership before linked cancellation callbacks necessarily run.
+            // Stop closes ownership before asynchronous linked-token callbacks finish.
+            // Late DNS must not supply evidence or trigger a follow-up target lookup.
             lock (_gate) if (_disposed) return null;
             return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }

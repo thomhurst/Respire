@@ -642,8 +642,16 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
         }
 
+        internal ValueTask<RespireConnection?> GetNearestConnectionAsync(
+            ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken)
+            => GetConnectionCoreAsync(cancellationToken, preferredZone: null, sampler);
+
         /// <summary>Acquires a current connection after validating its replication role.</summary>
         internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null)
+            => (await GetConnectionCoreAsync(cancellationToken, preferredZone, sampler: null).ConfigureAwait(false))!;
+
+        private async ValueTask<RespireConnection?> GetConnectionCoreAsync(CancellationToken cancellationToken,
+            string? preferredZone, ReadLatencySampler<RespireConnection>? sampler)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
             RespireConnection? selected = null;
@@ -651,8 +659,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             var interval = router.RoleRevalidationInterval;
             if (!_closed && Volatile.Read(ref _multiplexer) is { } current)
             {
-                selected = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
                 selectedFrom = current;
+                // Check and return the same physical socket. Exclusion lasts for this selection
+                // even if the pending probe completes next.
+                selected = SelectSocket(current, preferredZone, sampler);
+                if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
             }
@@ -709,15 +720,26 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     }
                 }
 
-                if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands)
-                    selected = preferredZone is null ? _multiplexer.GetConnection() : _multiplexer.GetConnectionForZone(preferredZone);
+                // The socket or its probe state may have changed while acquiring the gate.
+                if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands
+                    || sampler?.IsOccupied(selected) == true)
+                    selected = SelectSocket(_multiplexer, preferredZone, sampler);
+                if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
-                var checkedAt = Stopwatch.GetTimestamp();
-                using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token).ConfigureAwait(false);
-                if (!_health.Record(selected, checkedAt, in role))
-                    throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
-                return selected;
+                ReadLatencySampler<RespireConnection>.ValidationReservation reservation = default;
+                if (sampler is not null && !sampler.TryReserveForValidation(selected, out reservation)) return null;
+                using (reservation)
+                {
+                    var checkedAt = Stopwatch.GetTimestamp();
+                    // The reservation belongs to this physical socket. A MOVING handoff
+                    // must reject validation here, not reroute ROLE onto an unreserved socket.
+                    using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token,
+                        pinToConnection: true).ConfigureAwait(false);
+                    if (!_health.Record(selected, checkedAt, in role))
+                        throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
+                    return selected;
+                }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested
                 && router._lifetime.IsCancellationRequested)
@@ -726,6 +748,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
             finally { if (entered) _gate.Release(); }
         }
+
+        private static RespireConnection? SelectSocket(RespireConnectionMultiplexer multiplexer, string? preferredZone,
+            ReadLatencySampler<RespireConnection>? sampler)
+            => NearestReadSelection.AvoidPendingProbe(multiplexer,
+                preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
+                sampler, preferredZone);
 
         /// <summary>Stops new reads, then drains accepted work before the entry is disposed.</summary>
         internal async Task RetireAsync(CancellationToken cancellationToken)

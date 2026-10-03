@@ -73,7 +73,10 @@ internal sealed partial class ClusterRouter
             if (index == 0)
             {
                 if (primary is null || primary.Multiplexer is { } primaryOwner && excluded?.Contains(primaryOwner) == true) continue;
-                connection = primary;
+                // The slot-affinity socket can have a pending probe while a sibling is idle. With no
+                // idle sibling, keep that socket so its probe can still answer within the budget.
+                connection = primary.Multiplexer is { } multiplexer
+                    ? NearestReadSelection.AvoidPendingProbe(multiplexer, primary, sampler) ?? primary : primary;
             }
             else
             {
@@ -83,8 +86,9 @@ internal sealed partial class ClusterRouter
                 {
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (node.IsRetired) continue;
-                    connection = node.GetConnection(slot);
                     sampler.ConnectionSucceeded(node);
+                    var affinity = node.GetConnection(slot);
+                    connection = NearestReadSelection.AvoidPendingProbe(node, affinity, sampler) ?? affinity;
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
@@ -94,14 +98,15 @@ internal sealed partial class ClusterRouter
                 }
             }
             if (!connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(connection, default);
+            var latency = sampler.GetLatencyAsync(connection, default, probeDeadline: deadline);
             if (connection.IsAcceptingCommands) best.QueueSample(connection, latency);
         }
         using var samplingWait = best.HasPendingSamples
             ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken)
+                .ConfigureAwait(false);
             if (pending.Candidate.IsAcceptingCommands) best.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
         }
         if (best.TryGet(out var selected))

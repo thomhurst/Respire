@@ -330,7 +330,8 @@ internal sealed partial class ClusterRouter
             {
                 // Nearest can serve a healthy primary while this advisory discovery is pending.
                 // Do not put CLUSTER SLOTS ahead of its reads in the data connection's FIFO.
-                await using var connection = await RespireConnection.ConnectAsync(node.Host, node.Port,
+                var endpoint = node.ActiveConnectionEndpoint;
+                await using var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
                     _options.ToConnectionOptions(), _logger, cancellationToken).ConfigureAwait(false);
                 var load = await TryLoadSlotsAsync(node, cancellationToken,
                     expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: refreshRound.SnapshotBatch,

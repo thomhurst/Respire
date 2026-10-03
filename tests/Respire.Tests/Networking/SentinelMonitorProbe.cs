@@ -14,6 +14,7 @@ internal sealed class SentinelMonitorProbe
     internal Func<ValueTask> DisposeSubscription = static () => ValueTask.CompletedTask;
     internal Action? CancellationCallback;
     internal bool IgnoreCancellation;
+    internal CancellationToken SubscriptionToken;
     private CancellationTokenRegistration _cancellation;
 
     public Task<RespireSubscriptionEndReason> Completion => Task.FromResult(RespireSubscriptionEndReason.ClientDisposed);
@@ -44,6 +45,7 @@ internal sealed class SentinelMonitorProbe
     {
         public ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken)
         {
+            owner.SubscriptionToken = cancellationToken;
             owner._cancellation = cancellationToken.Register(() =>
             {
                 owner.Cancelled.TrySetResult();

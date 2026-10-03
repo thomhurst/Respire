@@ -1,5 +1,6 @@
 namespace Respire.Tests.Networking;
 
+/// <summary>Advances deadlines only when the test has observed the relevant network operation.</summary>
 internal sealed class ClusterRecoveryTestClock : TimeProvider
 {
     private readonly object _gate = new();
@@ -13,8 +14,8 @@ internal sealed class ClusterRecoveryTestClock : TimeProvider
     {
         lock (_gate)
         {
-            var timer = new ManualTimer(this, callback, state, _ticks + dueTime.Ticks);
-            _timers.Add(timer);
+            var timer = new ManualTimer(this, callback, state);
+            timer.Change(dueTime, period);
             return timer;
         }
     }
@@ -25,23 +26,34 @@ internal sealed class ClusterRecoveryTestClock : TimeProvider
         lock (_gate)
         {
             _ticks += elapsed.Ticks;
-            due = _timers.Where(timer => timer.Due <= _ticks).OrderBy(timer => timer.Due).ToArray();
+            // Keep registration order: when both deadlines have elapsed, the round
+            // cancels first so a resumed phase cannot race an undelivered round timer.
+            due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
             foreach (var timer in due) _timers.Remove(timer);
         }
         foreach (var timer in due) timer.Fire();
     }
 
-    private sealed class ManualTimer(ClusterRecoveryTestClock clock, TimerCallback callback, object? state, long due) : ITimer
+    private sealed class ManualTimer(ClusterRecoveryTestClock clock, TimerCallback callback, object? state) : ITimer
     {
         private int _disposed;
-        internal long Due { get; private set; } = due;
-        internal void Fire() { if (Interlocked.Exchange(ref _disposed, 1) == 0) callback(state); }
+        internal long Due { get; private set; }
+        internal void Fire() { if (Volatile.Read(ref _disposed) == 0) callback(state); }
         public bool Change(TimeSpan dueTime, TimeSpan period)
         {
+            // Recovery uses one-shot cancellation timers. Reject unsupported periodic use
+            // explicitly instead of silently simulating a different timer contract.
+            if (period != Timeout.InfiniteTimeSpan && period != TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(period));
+            if (dueTime < TimeSpan.Zero && dueTime != Timeout.InfiniteTimeSpan)
+                throw new ArgumentOutOfRangeException(nameof(dueTime));
             lock (clock._gate)
             {
                 if (Volatile.Read(ref _disposed) != 0) return false;
+                clock._timers.Remove(this);
+                if (dueTime == Timeout.InfiniteTimeSpan) return true;
                 Due = clock._ticks + dueTime.Ticks;
+                clock._timers.Add(this);
                 return true;
             }
         }
