@@ -29,7 +29,7 @@ public partial class ReadDedicatedRoutingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await blocked.Task.WaitAsync(deadline.Token);
         while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, deadline.Token);
-        var ready = WaitForSentinelStartupAsync(client);
+        var ready = SentinelTestSetup.WaitForStartupAsync(client);
         try { await Assert.That(ready.IsCompleted).IsFalse(); }
         finally
         {
@@ -51,7 +51,7 @@ public partial class ReadDedicatedRoutingTests
         await using var sentinel = Sentinel(primary, () => [replica]);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
             with { SentinelPrimaryName = "primary" });
-        await WaitForSentinelStartupAsync(client);
+        await SentinelTestSetup.WaitForStartupAsync(client);
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(default);
         var generation = client.Core.Sentinel!.Current!;

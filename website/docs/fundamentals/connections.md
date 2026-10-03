@@ -134,8 +134,11 @@ checked, so a server resend of the same ID on the same connection is ignored eve
 copy was rejected, fenced or later dropped from the waiting list. If a
 notification is dropped under queue pressure, or a server sends none, ordinary `MOVED` handling
 and topology discovery remain the fallback. Until one of them runs, commands for the affected
-slots go to the previous owner and are redirected. Triggering a topology refresh when a
-notification is lost is tracked by [#397](https://github.com/thomhurst/Respire/issues/397). Drops and other skipped notifications are counted
+slots go to the previous owner and are redirected. Queue drops request a topology refresh
+using the same debounce and failure backoff as `MOVED`. Periodic topology refresh also
+repairs missed notifications when its timer is enabled.
+See [Cluster topology refresh](#redis-cluster-endpoint-identity).
+Drops and other skipped notifications are counted
 in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).
 Client disposal waits for a topology callback that is already running, such as a
 `ConnectionStateChanged` handler raised by a migration, so keep those handlers short.
