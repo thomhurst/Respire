@@ -128,8 +128,9 @@ internal static class ScopeWalker
             return before.SpanStart < after.SpanStart;
         }
 
-        return PathExistsAvoiding(graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
-               && !PathExistsAvoiding(graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
+        var systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
+        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
+               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -181,7 +182,8 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, semanticModel.Compilation, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
+            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
     }
 
     /// <summary>
@@ -212,7 +214,8 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, semanticModel.Compilation, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
+            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
     }
 
     /// <summary>True when every path to <paramref name="after"/> crosses one of <paramref name="barriers"/>.</summary>
@@ -242,7 +245,8 @@ internal static class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
+            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
     }
 
     /// <summary>True when every path from <paramref name="before"/> to exit crosses one of <paramref name="barriers"/>.</summary>
@@ -273,7 +277,7 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
-            semanticModel.Compilation,
+            semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
             beforeBlock,
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
@@ -334,19 +338,19 @@ internal static class ScopeWalker
 
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
-        Compilation compilation,
+        INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
         BasicBlock targetBlock,
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
-        => new ReachabilityWalker(graph, compilation, startBlock, startPosition, targetBlock,
+        => new ReachabilityWalker(graph, systemException, startBlock, startPosition, targetBlock,
             targetPosition, barriers, startPolicy).Search();
 
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
-        Compilation compilation,
+        INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
         BasicBlock targetBlock,
@@ -354,7 +358,7 @@ internal static class ScopeWalker
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy)
     {
-        private readonly INamedTypeSymbol? _systemException = compilation.GetTypeByMetadataName("System.Exception");
+        private readonly INamedTypeSymbol? _systemException = systemException;
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
