@@ -31,6 +31,27 @@ internal sealed class ReadLatencySampler<TConnection>(
     internal bool HasPendingProbe(TConnection connection)
         => _samples.TryGetValue(connection, out var sample) && Volatile.Read(ref sample.Pending) is not null;
 
+    internal bool TryReserveForValidation(TConnection connection)
+    {
+        var sample = _samples.GetValue(connection, static _ => new Sample());
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+            if (sample.Pending is not null || sample.Reserved) return false;
+            Volatile.Write(ref sample.Reserved, true);
+            return true;
+        }
+    }
+
+    internal void ReleaseValidationReservation(TConnection connection)
+    {
+        lock (_gate)
+        {
+            if (_samples.TryGetValue(connection, out var sample))
+                Volatile.Write(ref sample.Reserved, false);
+        }
+    }
+
     internal bool CanConnect(object candidate)
         => !_connectionFailures.TryGetValue(candidate, out var retry) || Now >= Volatile.Read(ref retry.Value);
 
@@ -47,6 +68,9 @@ internal sealed class ReadLatencySampler<TConnection>(
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var sample = _samples.GetValue(connection, static _ => new Sample());
+        // ROLE owns this socket until validation completes. Exclude it without starting
+        // a probe or publishing a cached estimate to a concurrent selection.
+        if (Volatile.Read(ref sample.Reserved)) return ValueTask.FromResult(ReadLatencySampler.Pending);
         var now = Now;
         var pending = Volatile.Read(ref sample.Pending);
         Probe? start = null;
@@ -55,6 +79,9 @@ internal sealed class ReadLatencySampler<TConnection>(
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed != 0, this);
+                // Pair this check with TryReserveForValidation under the same gate: a
+                // PING cannot enter the FIFO between the pending check and ROLE.
+                if (sample.Reserved) return ValueTask.FromResult(ReadLatencySampler.Pending);
                 pending = sample.Pending;
                 // No queue of health checks: callers without a sample can still select a
                 // healthy connection without latency evidence when all four slots are busy.
@@ -147,6 +174,7 @@ internal sealed class ReadLatencySampler<TConnection>(
         internal Measurement? Measurement;
         internal long NextAttempt;
         internal Task<long>? Pending;
+        internal bool Reserved;
     }
 
     private sealed record Measurement(long Latency, long MeasuredAt);
@@ -160,7 +188,7 @@ internal sealed class ReadLatencySampler<TConnection>(
 
 internal static class ReadLatencySampler
 {
-    /// <summary>An unanswered probe occupies the FIFO; exclude this connection from selection, unlike Unknown.</summary>
+    /// <summary>A probe or ROLE validation occupies the connection; exclude it from selection, unlike Unknown.</summary>
     internal const long Pending = -1;
     internal const int SamplingWaitMilliseconds = 1_000;
     private static readonly RawCommand s_ping = new(RespCommands.Ping);

@@ -13,6 +13,51 @@ public class NearestReadRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RoleValidationReservesItsSocketAgainstConcurrentProbes(bool invalidRole)
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var options = Options(primary, replica) with
+        {
+            ReplicaRefreshInterval = TimeSpan.Zero,
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        await using var sampler = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        replica.ReplyOverride = (_, command) =>
+        {
+            if (command == "ROLE")
+            {
+                entered.TrySetResult();
+                release.Wait(deadline.Token);
+                if (invalidRole) return Reply(command, "primary");
+            }
+            return Reply(command, "replica");
+        };
+        var validation = selection.Replica!.GetNearestConnectionAsync(sampler, deadline.Token).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await Assert.That(await sampler.GetLatencyAsync(selection.Connection, deadline.Token))
+                .IsEqualTo(ReadLatencySampler.Pending);
+            await Assert.That(sampler.SamplesStarted).IsEqualTo(0);
+        }
+        finally { release.Set(); }
+        if (invalidRole)
+            await Assert.That(async () => await validation).Throws<RespireConnectionException>();
+        else
+            await Assert.That(await validation).IsSameReferenceAs(selection.Connection);
+        await Assert.That(await sampler.GetLatencyAsync(selection.Connection, deadline.Token)).IsEqualTo(10);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task MultipleConnectionsCheckTheSameSocketBeforeRoleValidation()
     {
         await using var primary = Server("primary");

@@ -9,6 +9,40 @@ namespace Respire.Tests.Networking;
 public class ReadLatencySamplerTests
 {
     [Test]
+    public async Task ValidationReservationIsExclusiveAndDoesNotReserveOtherConnections()
+    {
+        await using var sampler = new ReadLatencySampler<object>((_, _) => ValueTask.FromResult(10L));
+        var connection = new object();
+        await Assert.That(sampler.TryReserveForValidation(connection)).IsTrue();
+        try
+        {
+            await Assert.That(sampler.TryReserveForValidation(connection)).IsFalse();
+            await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencySampler.Pending);
+            await Assert.That(await sampler.GetLatencyAsync(new object(), default)).IsEqualTo(10);
+            await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
+        }
+        finally { sampler.ReleaseValidationReservation(connection); }
+        await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(10);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task OutstandingProbePreventsValidationReservation()
+    {
+        var reply = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sampler = new ReadLatencySampler<object>((_, token) => new(reply.Task.WaitAsync(token)));
+        var connection = new object();
+        var probe = sampler.GetLatencyAsync(connection, default).AsTask();
+        await Assert.That(sampler.TryReserveForValidation(connection)).IsFalse();
+        reply.SetResult(10);
+        await probe;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (sampler.HasPendingProbe(connection)) await Task.Delay(1, deadline.Token);
+        await Assert.That(sampler.TryReserveForValidation(connection)).IsTrue();
+        sampler.ReleaseValidationReservation(connection);
+    }
+
+    [Test]
     public async Task SharedSamplingWaitDetachesEveryCandidateWithoutCancelingProbes()
     {
         var firstProbe = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
