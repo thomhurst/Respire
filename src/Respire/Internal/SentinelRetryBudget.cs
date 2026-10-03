@@ -2,14 +2,14 @@ namespace Respire.Internal;
 
 /// <summary>Counts replacement attempts after the initial Sentinel operation.</summary>
 /// <remarks>
-/// Keep this mutable budget in its owner's field or local; never pass it by value or
-/// copy it while an episode is active. Copies have independent attempt counts.
+/// Each owning loop creates one budget. Reference identity keeps callbacks and helpers
+/// on the same attempt count when they receive the budget.
 /// The owning loop is the only writer. A monitor's transport-close callback can read
 /// <see cref="Attempts"/> to capture the publication signal for a new retry episode.
 /// Reset only after successful discovery/subscription or an observed monitor rearm signal;
 /// a pending notification is another use of the current budget, not a reset.
 /// </remarks>
-internal struct SentinelRetryBudget(RespireReconnectPolicy? policy)
+internal sealed class SentinelRetryBudget(RespireReconnectPolicy? policy)
 {
     private int _attempts;
 
