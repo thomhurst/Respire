@@ -10,6 +10,13 @@ namespace Respire.Tests.Networking;
 
 public class DedicatedStreamRouteTests
 {
+    [Test]
+    public async Task DirectConnectionRouteNeedsNoOwnerValidation()
+    {
+        await Assert.That(DedicatedStreamRoute.None.IsCurrent()).IsTrue();
+        await Assert.That(default(DedicatedStreamRoute).IsCurrent()).IsTrue();
+    }
+
     [Test, NotInParallel]
     [Arguments("standalone")]
     [Arguments("cluster")]

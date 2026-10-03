@@ -231,31 +231,15 @@ public sealed partial class RespireClient
                             acquiringRedirectPool = true;
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                            // ASK does not publish a slot owner: preserve the topology observed before
-                            // target acquisition so a concurrent refresh invalidates this redirect.
-                            if (error.Code == RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
-                            var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                    error, connection, acquisitionToken, slot, discovery)
-                                .ConfigureAwait(false);
+                            var redirect = await AcquireUploadRedirectAsync(
+                                cluster, error, connection, slot, acquisitionToken, discovery).ConfigureAwait(false);
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;
-                            pool = redirectedPool;
-                            // MOVED and READONLY recovery can publish a new owner during acquisition.
-                            if (error.Code != RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
-                            if (command is IReplayableStreamingRespCommand replayable)
-                            {
-                                try { replayable.ResetSourceForReplay(); }
-                                catch (Exception resetError) when (resetError is not OutOfMemoryException
-                                    and not AccessViolationException and not StackOverflowException)
-                                {
-                                    RethrowPreservingStackTrace(error);
-                                }
-                            }
-                            asking = error.Code == RespireErrorCodes.Ask
-                                ? new UploadAskState(connection, error) : default;
+                            pool = redirect.Pool;
+                            routeVersion = redirect.Version;
+                            ResetUploadForReplay(in command, error);
+                            asking = redirect.Asking;
                             continue;
                         }
 
@@ -317,6 +301,35 @@ public sealed partial class RespireClient
         }
         finally { discovery?.Finish(); }
     }
+
+    private static async ValueTask<UploadRedirect> AcquireUploadRedirectAsync(
+        ClusterRouter cluster, RespireServerException error, RespireConnection source, int? slot,
+        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
+    {
+        var isAsk = error.Code == RespireErrorCodes.Ask;
+        // ASK does not publish a slot owner: capture before acquisition so a concurrent
+        // refresh invalidates it. MOVED and READONLY can publish during acquisition.
+        var version = isAsk ? cluster.CaptureSlotVersion(slot) : default;
+        var pool = await cluster.GetRedirectDedicatedPoolAsync(error, source, cancellationToken, slot, discovery)
+            .ConfigureAwait(false);
+        if (!isAsk) version = cluster.CaptureSlotVersion(slot);
+        return new(pool, version, isAsk ? new UploadAskState(source, error) : default);
+    }
+
+    private static void ResetUploadForReplay<TCommand>(in TCommand command, RespireServerException rejection)
+        where TCommand : struct, IRespCommand
+    {
+        if (command is not IReplayableStreamingRespCommand replayable) return;
+        try { replayable.ResetSourceForReplay(); }
+        catch (Exception error) when (error is not OutOfMemoryException
+            and not AccessViolationException and not StackOverflowException)
+        {
+            RethrowPreservingStackTrace(rejection);
+        }
+    }
+
+    private readonly record struct UploadRedirect(
+        DedicatedConnectionPool Pool, ClusterRouter.StreamRouteVersion Version, UploadAskState Asking);
 
     // ASK identity must be set and cleared together. Slot version and discovery also serve
     // ordinary routes, so they remain independent of this optional redirect state.

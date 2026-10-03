@@ -187,7 +187,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
         }
     }
 
-    private async Task<string> CommandAsync(int node, params string[] arguments)
+    internal async Task<string> CommandAsync(int node, params string[] arguments)
     {
         var result = await container.ExecAsync(["redis-cli", "-e", "--raw", "-p", ports[node].ToString(), .. arguments]);
         if (result.ExitCode != 0)

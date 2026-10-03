@@ -3,9 +3,12 @@ using Respire.Networking;
 namespace Respire.Internal;
 
 /// <summary>Value snapshot revalidated immediately before a streamed header is admitted.</summary>
-/// <remarks>Default permits direct connection sends. No delegate or boxed strategy is retained.</remarks>
+/// <remarks>None (also the default value) permits direct connection sends. No delegate or boxed strategy is retained.</remarks>
 internal readonly struct DedicatedStreamRoute
 {
+    /// <summary>A direct connection send with no router-owned lease to validate.</summary>
+    internal static DedicatedStreamRoute None => default;
+
     private readonly ClientCore? _core;
     private readonly ClusterRouter? _cluster;
     private readonly DedicatedConnectionPool? _pool;
