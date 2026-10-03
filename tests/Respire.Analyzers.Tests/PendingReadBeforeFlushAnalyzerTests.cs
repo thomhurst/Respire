@@ -107,6 +107,43 @@ public class PendingReadBeforeFlushAnalyzerTests
     }
 
     [Test]
+    [Arguments("new CustomException(Compute())", true)]
+    [Arguments("new CustomException()", true)]
+    [Arguments("new ArgumentException(Message())", true)]
+    [Arguments("new ArgumentException(\"message\")", false)]
+    public async Task OpaqueExceptionConstructionKeepsCatchesReachableBeforeFinallyRead(string thrown, bool warning)
+    {
+        // Constructor bodies and argument evaluation can raise a different exception
+        // before the explicit throw, so only simple framework constructions are exact.
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class CustomException : Exception
+            {
+                public CustomException() { }
+                public CustomException(int value) : base(value.ToString()) { }
+            }
+            public class Caller
+            {
+                private static int Compute() => throw new InvalidOperationException();
+                private static string Message() => throw new InvalidOperationException();
+
+                public async Task RunAsync(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw {{thrown}}; }
+                    catch (InvalidOperationException) { return; }
+                    catch (Exception) { await batch.SendAsync(); }
+                    finally { Console.WriteLine({{read}}); }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("T")]
     [Arguments("dynamic")]
     public async Task UnknownFilteredCatchRemainsPossibleBeforeFinallyRead(string exceptionType) => await Verify.VerifyAsync(

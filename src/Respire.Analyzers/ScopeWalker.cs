@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using System.Runtime.CompilerServices;
 
 namespace Respire.Analyzers;
 
@@ -18,6 +19,7 @@ internal static class ScopeWalker
     private enum CatchMatch { None, Possible, Guaranteed }
     private static readonly string[] SimpleExceptionTypes =
         ["System.Exception", "System.InvalidOperationException", "System.ArgumentException"];
+    private static readonly ConditionalWeakTable<Compilation, INamedTypeSymbol?[]> SimpleExceptionSymbols = new();
 
     /// <summary>Whether an explicit exit can skip the statement following this one.</summary>
     public static bool CanBypassFollowingStatement(
@@ -209,11 +211,19 @@ internal static class ScopeWalker
     }
 
     private static ITypeSymbol? GetKnownThrownType(SemanticModel semanticModel, ThrowStatementSyntax thrown)
+        => thrown.Expression is { } expression
+            ? GetKnownExactExceptionType(semanticModel.Compilation, semanticModel.GetOperation(Unwrap(expression)))
+            : null;
+
+    /// <summary>
+    /// The exact type of a fresh exception whose construction cannot itself raise a different
+    /// exception, or null. Shared by the syntactic exit analysis and the flow-graph walker.
+    /// </summary>
+    private static ITypeSymbol? GetKnownExactExceptionType(Compilation compilation, IOperation? operation)
     {
         // User constructors (including new T()) and argument evaluation can throw a
         // different exception before the explicit throw. Keep their catches possible.
-        if (thrown.Expression is not { } expression
-            || semanticModel.GetOperation(Unwrap(expression)) is not IObjectCreationOperation creation
+        if (operation is not IObjectCreationOperation creation
             || creation.Initializer is not null
             || creation.Arguments.Any(argument => !argument.Value.ConstantValue.HasValue
                 && argument.Value is not ILocalReferenceOperation and not IParameterReferenceOperation))
@@ -221,10 +231,11 @@ internal static class ScopeWalker
 
         // These framework constructors only store the supplied message/inner exception.
         // Other constructors remain opaque; this is not an interprocedural exception proof.
-        foreach (var name in SimpleExceptionTypes)
-            if (SymbolEqualityComparer.Default.Equals(creation.Type, semanticModel.Compilation.GetTypeByMetadataName(name)))
-                return creation.Type;
-        return null;
+        var simpleTypes = SimpleExceptionSymbols.GetValue(compilation, static candidate =>
+            SimpleExceptionTypes.Select(candidate.GetTypeByMetadataName).ToArray());
+        return simpleTypes.Any(type => SymbolEqualityComparer.Default.Equals(creation.Type, type))
+            ? creation.Type
+            : null;
     }
 
     private static CatchMatch MatchCatch(
@@ -753,7 +764,7 @@ internal static class ScopeWalker
                         foreach (var handler in region.EnclosingRegion.NestedRegions.Where(static nested =>
                                      nested.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler))
                         {
-                            var (possible, certain) = GetCatchApplicability(handler, exception, _systemException);
+                            var (possible, certain) = GetCatchApplicability(handler, exception, compilation, _systemException);
                             if (possible)
                             {
                                 var catchContinuation = continuation;
@@ -797,7 +808,7 @@ internal static class ScopeWalker
         }
 
         private static (bool Possible, bool Certain) GetCatchApplicability(
-            ControlFlowRegion handler, IOperation? exception, INamedTypeSymbol? systemException)
+            ControlFlowRegion handler, IOperation? exception, Compilation compilation, INamedTypeSymbol? systemException)
         {
             // A filtered region wraps separate filter/catch regions. The catch type still
             // restricts entry to the filter; a filter does not make incompatible types reachable.
@@ -807,10 +818,17 @@ internal static class ScopeWalker
             var catchType = catchRegion?.ExceptionType;
             var catchesAll = catchType is null || catchType.SpecialType == SpecialType.System_Object
                 || SymbolEqualityComparer.Default.Equals(catchType, systemException);
+            // An opaque construction can raise any exception before the explicit throw, so
+            // every handler stays possible and only a catch-all is certain to handle it.
+            if (exception is IObjectCreationOperation && GetKnownExactExceptionType(compilation, exception) is null)
+            {
+                return (true, catchesAll);
+            }
+
             var exceptionType = exception?.Type;
             var certain = catchesAll || HasBaseType(exceptionType, catchType);
             // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
-            // handlers. A fresh construction has an exact type; other values may be derived.
+            // handlers. A known simple construction has an exact type; other values may be derived.
             var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
                 || catchType is ITypeParameterSymbol
                 || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
