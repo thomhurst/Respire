@@ -764,7 +764,9 @@ internal static partial class ScopeWalker
                 return (true, false);
             if (kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder)
                 return (type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
-                    || type?.SpecialType == SpecialType.System_Decimal && kind == BinaryOperatorKind.Divide, true);
+                    || kind == BinaryOperatorKind.Divide && (type?.SpecialType == SpecialType.System_Decimal
+                        || type?.SpecialType is SpecialType.System_SByte or SpecialType.System_Int16
+                            && operation is ICompoundAssignmentOperation { IsChecked: true, OutConversion.IsIdentity: false }), true);
             return null;
         }
 

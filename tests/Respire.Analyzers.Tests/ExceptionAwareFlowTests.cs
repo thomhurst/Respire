@@ -7,6 +7,50 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("sbyte", "checked { value /= -1; }", "OverflowException", true)]
+    [Arguments("short", "checked { value /= -1; }", "OverflowException", true)]
+    [Arguments("sbyte?", "checked { value /= -1; }", "OverflowException", true)]
+    [Arguments("short?", "checked { value /= -1; }", "OverflowException", true)]
+    [Arguments("byte", "checked { value /= 2; }", "OverflowException", false)]
+    [Arguments("ushort", "checked { value /= 2; }", "OverflowException", false)]
+    [Arguments("sbyte", "unchecked { value /= -1; }", "OverflowException", false)]
+    [Arguments("sbyte", "checked { value %= -1; }", "OverflowException", false)]
+    [Arguments("sbyte", "checked { value /= -1; }", "InvalidOperationException", false)]
+    public async Task CompoundDivisionIncludesCheckedResultConversion(string type, string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} value)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("_ = checked(value + 1);", "InvalidOperationException", false)]
     [Arguments("_ = checked(value + 1);", "OverflowException", true)]
     [Arguments("_ = checked(-value);", "InvalidOperationException", false)]
