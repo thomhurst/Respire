@@ -44,7 +44,7 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Ship the command generator and RESP001/RESP002 inside the Respire package automatically.
+  <!-- Ship the command generator and diagnostics inside the Respire package automatically.
        The path is TFM-independent, so this runs once on the outer (cross-targeting) build. -->
   <Target Name="_PackRespireAnalyzers" BeforeTargets="_GetPackageFiles">
     <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj"

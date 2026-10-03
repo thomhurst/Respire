@@ -70,6 +70,28 @@ public sealed class ProductCache(IDistributedCache cache)
 }
 ```
 
+## Ignored connection options (RESP004)
+
+`client.AsDistributedCache(options)` adapts the supplied client. Setting
+`ConnectionString` or `ClientOptions` cannot create or replace that client's connection.
+Configure the client before adapting it; pass `InstanceName` and `ValueCodec` as cache options.
+These connection options remain valid for the dependency-injection registrations above,
+which can create and own a client.
+
+The bundled `RESP004` analyzer warns when a directly supplied `RespireCacheOptions`
+initializer explicitly sets either ignored option. It supports concrete and interface
+receivers, static extension calls, named arguments, and target-typed initializers.
+Explicit `null` values, omitted options, and shared or dynamically produced options do not
+produce this warning. The analyzer does not change runtime behavior or client ownership.
+
+If ignoring these fields is intentional, suppress the warning locally with
+`#pragma warning disable RESP004`, or configure its severity in `.editorconfig`:
+
+```ini
+[*.cs]
+dotnet_diagnostic.RESP004.severity = none
+```
+
 ## HybridCache
 
 `Respire.Extensions.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:

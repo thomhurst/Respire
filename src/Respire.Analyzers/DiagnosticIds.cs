@@ -12,5 +12,8 @@ public static class DiagnosticIds
     /// <summary>A <c>[RespireCommands]</c> interface or method cannot be generated.</summary>
     public const string InvalidGeneratedCommand = "RESP003";
 
+    /// <summary>A distributed-cache adapter ignores supplied connection-creation options.</summary>
+    public const string IgnoredCacheConnectionOption = "RESP004";
+
     internal const string Category = "Respire";
 }

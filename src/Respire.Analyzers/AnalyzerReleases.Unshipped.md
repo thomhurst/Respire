@@ -8,3 +8,4 @@ Rule ID | Category | Severity | Notes
 RESP001 | Respire  | Warning  | UndisposedPooledResultAnalyzer: pooled result never disposed
 RESP002 | Respire  | Warning  | PendingReadBeforeFlushAnalyzer: pending read before the batch is sent
 RESP003 | Respire  | Error    | RespireCommandGenerator: unsupported generated command declaration
+RESP004 | Respire  | Warning  | IgnoredCacheConnectionOptionAnalyzer: connection option ignored by an existing-client adapter

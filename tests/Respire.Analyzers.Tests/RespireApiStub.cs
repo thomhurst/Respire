@@ -84,13 +84,32 @@ internal static class RespireApiStub
                 public RespirePending<string> GetStringAsync(string key, string field) => new RespirePending<string>();
             }
 
-            public sealed class RespireClient
+            public interface IRespireClient { }
+
+            public sealed class RespireClient : IRespireClient
             {
                 public ValueTask<RespireResult> ExecuteAsync(string command, params string[] args) => default;
                 public ValueTask<RespireLease> GetLeaseAsync(string key) => default;
                 public RespireBatch CreateBatch() => new RespireBatch();
                 public RespireTransaction CreateTransaction() => new RespireTransaction();
                 public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params string[] keys) => default;
+            }
+        }
+
+        namespace Respire.Extensions.Caching
+        {
+            public sealed class RespireCacheOptions
+            {
+                public string ConnectionString { get; set; }
+                public Func<IServiceProvider, object> ClientOptions { get; set; }
+                public string InstanceName { get; set; }
+                public object ValueCodec { get; set; }
+            }
+
+            public static class RespireDistributedCacheClientExtensions
+            {
+                public static object AsDistributedCache(this Respire.IRespireClient client, RespireCacheOptions options = null)
+                    => new object();
             }
         }
         """;
