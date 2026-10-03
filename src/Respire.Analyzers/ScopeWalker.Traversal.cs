@@ -19,7 +19,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken,
         SyntaxNode? origin)
     {
-        private const int MaxQueuedStates = 16384;
+        private const int MaxProcessedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startPosition, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
@@ -86,7 +86,7 @@ internal static partial class ScopeWalker
             var catchOrigins = FindCatchOrigins();
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
-            var remaining = MaxQueuedStates;
+            var remaining = MaxProcessedStates;
             while (_pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -237,7 +237,7 @@ internal static partial class ScopeWalker
         private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
         {
-            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation
+            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
                 || operation.Syntax.SpanStart >= firstBarrier)
                 return;
 
@@ -452,7 +452,7 @@ internal static partial class ScopeWalker
             if (_throwingOperations.TryGetValue(operation, out var cached))
                 return cached;
             var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
-                or IDynamicInvocationOperation or IArrayElementReferenceOperation
+                or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }

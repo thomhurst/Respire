@@ -7,6 +7,47 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = new T();", false, true)]
+    [Arguments("_ = new T();", true, false)]
+    [Arguments("_ = nameof(holder.Property);", false, false)]
+    [Arguments("_ = holder.Property;", false, true)]
+    public async Task ExceptionSourcesRespectEvaluation(string operation, bool cleanupInCatch, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Property => throw new Exception(); }
+            class Caller
+            {
+                async Task Run<T>(RespireClient client, Holder holder) where T : new()
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Property => throw new Exception(); }
+            class Caller
+            {
+                async Task Run<T>(RespireClient client, Holder holder) where T : new()
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Throws() || true", false)]
     [Arguments("Property || true", false)]
     [Arguments("Throws() || true", true)]
@@ -300,7 +341,7 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments(10, false)]
     [Arguments(14, true)]
-    public async Task QueuedStateLimitRetainsWarning(int predicates, bool warning)
+    public async Task ProcessedStateLimitRetainsWarning(int predicates, bool warning)
     {
         var parameters = string.Join(", ", Enumerable.Range(0, predicates).Select(index => $"bool flag{index}"));
         var branches = string.Join(Environment.NewLine, Enumerable.Range(0, predicates)
