@@ -7,6 +7,34 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("holder.Value = result;", "NullReferenceException", true)]
+    [Arguments("holder.Field = result;", "NullReferenceException", true)]
+    [Arguments("buffer[index] = result;", "IndexOutOfRangeException", true)]
+    [Arguments("target.Value = result;", "Exception", true)]
+    [Arguments("target[index] = result;", "Exception", true)]
+    [Arguments("this.Value = result;", "InvalidOperationException", false)]
+    [Arguments("holder.Value = result;", "InvalidOperationException", false)]
+    public async Task AssignmentTransferWaitsForTargetChecks(string assignment, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public RespireResult Value { set { value.Dispose(); } } public RespireResult Field; }
+            class Caller
+            {
+                RespireResult Value { set { value.Dispose(); } }
+                async Task Run(RespireClient client, Holder holder, RespireResult[] buffer, int index, dynamic target)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{assignment}} }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("_ = $\"{value}{flag = false}\";", false)]
     [Arguments("_ = $\"{flag = false}{value}\";", true)]
     [Arguments("flag = false; _ = new Token();", false)]

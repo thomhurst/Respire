@@ -150,7 +150,16 @@ internal static partial class ScopeWalker
             var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
-            if (call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax)
+            var assignmentTransfer = false;
+            if (expression is not null && Unwrap(expression) is IdentifierNameSyntax
+                && expression.Parent is AssignmentExpressionSyntax assignment
+                && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression)
+            {
+                call = assignment;
+                assignmentTransfer = true;
+            }
+            if (call is not null && (assignmentTransfer
+                || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
@@ -166,7 +175,7 @@ internal static partial class ScopeWalker
             static bool ContainsCall(IOperation operation, SyntaxNode call)
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IDynamicInvocationOperation
-                    or IObjectCreationOperation or IDynamicObjectCreationOperation)
+                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation)
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
@@ -318,13 +327,11 @@ internal static partial class ScopeWalker
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks and dynamic binding happen before the callee accepts ownership.
             var transferFailure = operation.Syntax.Span.End - 1 == firstBarrier
-                && (operation is IDynamicInvocationOperation
-                    || operation is IInvocationOperation { Instance: { } transferReceiver }
-                        && CanDereferenceNull(transferReceiver));
+                ? GetTransferFailure(operation) : TransferFailure.None;
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
-                && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure))
+                && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
                     // The runtime treats a throwing filter as a rejected filter.
@@ -334,7 +341,7 @@ internal static partial class ScopeWalker
                     // Elements and arguments have their own exception paths. Fixed arrays
                     // and simple framework exception constructors only add allocation failure.
                     Dispatch(GetDispatch(successor, continuation, implicitException: true,
-                        nullPath: transferFailure && operation is IInvocationOperation,
+                        nullPath: transferFailure == TransferFailure.NullReceiver,
                         allocationOnly: arrayAllocation
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
@@ -354,6 +361,25 @@ internal static partial class ScopeWalker
                 foreach (var child in operation.ChildOperations)
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
+        }
+
+        private enum TransferFailure { None, NullReceiver, Unknown }
+
+        private TransferFailure GetTransferFailure(IOperation operation)
+        {
+            if (operation is ISimpleAssignmentOperation assignment)
+                operation = _conditions.ResolveCapturedTarget(assignment.Target);
+            return operation switch
+            {
+                IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
+                    or IArrayElementReferenceOperation => TransferFailure.Unknown,
+                IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
+                IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
+                IFieldReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
+                IPropertyReferenceOperation { Property: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
+                    or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } } => TransferFailure.Unknown,
+                _ => TransferFailure.None,
+            };
         }
 
         private static List<ControlFlowRegion> CollectFinallyRegions(ControlFlowRegion from, ControlFlowRegion? until = null)
