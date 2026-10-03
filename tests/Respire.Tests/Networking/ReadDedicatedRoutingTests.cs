@@ -322,6 +322,14 @@ public partial class ReadDedicatedRoutingTests
         }
         var failedNode = failPrimary ? primary : replica;
         var failDedicated = false;
+        var sentinelReply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) =>
+            // A failed dedicated primary retires its Sentinel generation. Keep background
+            // rediscovery from opening another primary socket while counting read attempts.
+            // Restore the advertisement below so the recovery read still proves progress.
+            Volatile.Read(ref failDedicated) && command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? "*-1\r\n"u8.ToArray()
+                : sentinelReply(id, command);
         var failedNodeConnections = 0;
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var previous = failedNode.ReplyOverride!;
