@@ -450,14 +450,14 @@ public partial class SentinelRoutingTests
         var original = router.Current!;
         var confirmation = SentinelHintBuilder.Create("confirmed-alias", new("127.0.0.1", primary.Port), original.Endpoint);
         var peers = original.Multiplexer.CaptureSentinelPeers();
-        var evidence = new SentinelGenerationEvidence(original, original.Endpoint, original.ValidatedPeer,
+        var evidence = new SentinelGenerationEvidence(original.Identity, original.Endpoint, original.ValidatedPeer,
             original.IsRetired, peers.Peers, peers.ConfirmedPeer);
         var protectedTarget = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, confirmation),
             new(CurrentEvidence: evidence));
         await Assert.That(protectedTarget.RetireGeneration).IsNull();
         var demoted = SentinelHintBuilder.Create("demoted", new("127.0.0.1", primary.Port + 1), original.Endpoint);
         await Assert.That(new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, demoted),
-            new(CurrentEvidence: evidence)).RetireGeneration).IsSameReferenceAs(original);
+            new(CurrentEvidence: evidence)).RetireGeneration).IsSameReferenceAs(original.Identity);
         Volatile.Write(ref host, "127.0.0.1");
         var numeric = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
         Volatile.Write(ref host, "localhost");
@@ -572,13 +572,13 @@ public partial class SentinelRoutingTests
         await using var current = new SentinelRouter.Generation(client.Core.Sentinel!, client.Core,
             Options(26379) with { Endpoints = [new("2001:db8::1", 6379)] });
         var hint = SentinelHintBuilder.Create("failback", new("2001:0db8:0:0:0:0:0:1", 6379), current.Endpoint);
-        var evidence = new SentinelGenerationEvidence(current, current.Endpoint, null, false, [], null);
+        var evidence = new SentinelGenerationEvidence(current.Identity, current.Endpoint, null, false, [], null);
         var protectedTarget = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, hint),
             new(CurrentEvidence: evidence));
         await Assert.That(protectedTarget.RetireGeneration).IsNull();
         var demoted = SentinelHintBuilder.Create("demoted", new("2001:db8::2", 6379), current.Endpoint);
         await Assert.That(new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, demoted),
-            new(CurrentEvidence: evidence)).RetireGeneration).IsSameReferenceAs(current);
+            new(CurrentEvidence: evidence)).RetireGeneration).IsSameReferenceAs(current.Identity);
     }
 
     [Test]

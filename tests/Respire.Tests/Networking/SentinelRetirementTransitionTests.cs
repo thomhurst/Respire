@@ -18,7 +18,7 @@ public class SentinelRetirementTransitionTests
     [Arguments(true)]
     public async Task NumericTargetShortcutRequiresAllCommandSlots(bool allSlotsAgree)
     {
-        var identity = new object();
+        var identity = new SentinelGenerationIdentity();
         var current = new SentinelGenerationEvidence(identity, A, A, false,
             allSlotsAgree ? [A] : [A, B], allSlotsAgree ? A : (RespireEndpoint?)null);
         var hint = SentinelHint.FromSwitchMaster("b-a", B, A, Reporter);
@@ -34,8 +34,8 @@ public class SentinelRetirementTransitionTests
     [Arguments(false, true)]
     public async Task DelayedDnsProtectsInterveningEndpointOrPeer(bool sameEndpoint, bool samePeer)
     {
-        var arrived = new SentinelGenerationEvidence(new object(), new("original.test", 6379), A, false, [A], A);
-        var current = new SentinelGenerationEvidence(new object(), sameEndpoint ? arrived.Endpoint : new("replacement.test", 6379),
+        var arrived = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), new("original.test", 6379), A, false, [A], A);
+        var current = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), sameEndpoint ? arrived.Endpoint : new("replacement.test", 6379),
             samePeer ? A : B, false, samePeer ? [A] : [B], samePeer ? A : B);
         var lookup = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
             SentinelHint.FromSwitchMaster("source", Source, C, Reporter)));
@@ -60,8 +60,8 @@ public class SentinelRetirementTransitionTests
     [Arguments(true)]
     public async Task OnlyTargetsOfferedDuringLookupProtectTheLaterGeneration(bool offeredDuringLookup)
     {
-        var arrived = new SentinelGenerationEvidence(new object(), new("original.test", 6379), A, false, [A], A);
-        var current = new SentinelGenerationEvidence(new object(), new("replacement.test", 6379), B, false, [B], B);
+        var arrived = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), new("original.test", 6379), A, false, [A], A);
+        var current = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), new("replacement.test", 6379), B, false, [B], B);
         var protection = SentinelHint.FromSwitchMaster("protection", C, B, Reporter);
         var state = new SentinelNotificationState();
         if (!offeredDuringLookup) state = state.Transition(new(SentinelNotificationEventKind.Offer, protection)).State;
@@ -87,7 +87,7 @@ public class SentinelRetirementTransitionTests
     public async Task TargetDnsOverlapRequiresUnambiguousProofAndPreservesKnownPeer(bool knownPeer, bool ambiguous)
     {
         var target = new RespireEndpoint("promoted.test", 6379);
-        var current = new SentinelGenerationEvidence(new object(), new("primary.test", 6379), knownPeer ? B : A, false, [B], B);
+        var current = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), new("primary.test", 6379), knownPeer ? B : A, false, [B], B);
         var lookup = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
             SentinelHint.FromSwitchMaster("source", Source, target, Reporter)));
         var completed = lookup.State.Transition(new(SentinelNotificationEventKind.SourceResolved,
@@ -105,7 +105,7 @@ public class SentinelRetirementTransitionTests
     [Test]
     public async Task DisposalCannotProduceLateRetirementOrRediscovery()
     {
-        var current = new SentinelGenerationEvidence(new object(), A, A, false, [A], A);
+        var current = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), A, A, false, [A], A);
         var lookup = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
             SentinelHint.FromSwitchMaster("source", Source, B, Reporter)));
         var disposed = lookup.State.Transition(new(SentinelNotificationEventKind.Dispose)).State;

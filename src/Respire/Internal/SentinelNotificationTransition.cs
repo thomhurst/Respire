@@ -19,13 +19,13 @@ internal readonly record struct SentinelNotificationEvent(SentinelNotificationEv
     long ResolutionId = 0, SentinelAddressEvidence AddressEvidence = default,
     ImmutableArray<SentinelAddressEvidence> TargetAddresses = default);
 
-// Generation objects are opaque identity tokens. The reducer reads only captured values;
+// Generation identities are opaque tokens. The reducer reads only captured values;
 // it never asks a live generation, transport, clock, or random source for information.
 internal readonly record struct SentinelNotificationContext(
     long NowMilliseconds = 0,
     RespireReconnectPolicy? Policy = null,
     double RandomUnit = 0.5,
-    object? ValidatedGeneration = null,
+    SentinelGenerationIdentity? ValidatedGeneration = null,
     SentinelValidatedPrimary? ValidatedPrimary = null,
     SentinelGenerationEvidence? CurrentEvidence = null,
     SentinelGenerationEvidence? LookupGeneration = null);
@@ -46,7 +46,7 @@ internal readonly record struct SentinelNotificationTransition(
     bool ReplacePendingSignal = false,
     int RecoveredFailures = 0,
     long ResolutionId = 0,
-    object? RetireGeneration = null);
+    SentinelGenerationIdentity? RetireGeneration = null);
 
 internal readonly partial record struct SentinelNotificationState
 {
@@ -147,6 +147,6 @@ internal readonly partial record struct SentinelNotificationState
     internal int GetOutcomeLogCount(bool succeeded)
         => succeeded ? ConsecutiveFailures : IncrementSaturated(ConsecutiveFailures);
 
-    private static object? RetirementFor(in SentinelHint hint, in SentinelNotificationContext context)
+    private static SentinelGenerationIdentity? RetirementFor(in SentinelHint hint, in SentinelNotificationContext context)
         => context.CurrentEvidence is { } current && current.ShouldRetire(in hint) ? current.Identity : null;
 }

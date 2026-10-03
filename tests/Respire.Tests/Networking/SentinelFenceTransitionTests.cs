@@ -30,7 +30,7 @@ public class SentinelFenceTransitionTests
         await Assert.That(waiting.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
         await Assert.That(waiting.Interruptible).IsFalse();
         await Assert.That(waiting.Delay).IsEqualTo(TimeSpan.FromMilliseconds(1));
-        var generation = new object();
+        var generation = new SentinelGenerationIdentity();
         var retry = waiting.State.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
             new(NowMilliseconds: 1100, CurrentEvidence: new(generation, A, A, false, [A], A)));
         await Assert.That(retry.Action).IsEqualTo(SentinelNotificationAction.RunNext);
@@ -53,8 +53,8 @@ public class SentinelFenceTransitionTests
     [Arguments(true)]
     public async Task AttemptSupersessionUsesExactGenerationAndKeepsOnlyGenuinePendingEvidence(bool pending)
     {
-        var oldGeneration = new object();
-        var newGeneration = new object();
+        var oldGeneration = new SentinelGenerationIdentity();
+        var newGeneration = new SentinelGenerationIdentity();
         var active = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromGap(First))).State;
         if (pending) active = active.Transition(new(SentinelNotificationEventKind.Offer,
@@ -77,7 +77,7 @@ public class SentinelFenceTransitionTests
     [Test]
     public async Task SuccessResetsRetryAndLogCountersButPreservesWorkerSpacing()
     {
-        var generation = new object();
+        var generation = new SentinelGenerationIdentity();
         var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromGap(First))).State;
         state = state.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1000)).State;

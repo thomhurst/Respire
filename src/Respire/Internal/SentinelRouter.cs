@@ -495,6 +495,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     internal sealed class Generation : IConnectionGeneration, IAsyncDisposable
     {
+        internal SentinelGenerationIdentity Identity { get; } = new();
         private readonly SentinelRouter _owner;
         private readonly ClientCore _core;
         private readonly object _connectionsGate = new();

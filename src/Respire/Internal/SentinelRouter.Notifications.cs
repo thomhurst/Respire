@@ -221,7 +221,7 @@ internal sealed partial class SentinelRouter
                     transition = _coalescer.Transition(new(failure is null
                         ? SentinelNotificationEventKind.AttemptSucceeded : SentinelNotificationEventKind.AttemptFailed),
                         new(Policy: core.Options.ReconnectPolicy, RandomUnit: Random.Shared.NextDouble(),
-                            ValidatedGeneration: validated,
+                            ValidatedGeneration: validated?.Identity,
                             ValidatedPrimary: validated is null ? null : new(validated.Endpoint, validated.ValidatedPeer),
                             CurrentEvidence: CaptureGenerationEvidence(current)));
                     ApplyNotificationTransitionLocked(in transition);
@@ -261,7 +261,7 @@ internal sealed partial class SentinelRouter
         if (transition.ReplacePendingSignal)
             _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
         if (transition.State.Pending is not null) _pendingNotification.TrySetResult();
-        if (!_disposed && transition.RetireGeneration is Generation generation && ReferenceEquals(Current, generation))
+        if (!_disposed && Current is { } generation && ReferenceEquals(transition.RetireGeneration, generation.Identity))
             Invalidate(generation);
         if (transition.Action == SentinelNotificationAction.Stop) _notificationRediscovery = null;
     }
@@ -277,7 +277,7 @@ internal sealed partial class SentinelRouter
     {
         if (generation is null) return null;
         var peers = generation.Multiplexer.CaptureSentinelPeers();
-        return new(generation, generation.Endpoint, generation.ValidatedPeer, generation.IsRetired,
+        return new(generation.Identity, generation.Endpoint, generation.ValidatedPeer, generation.IsRetired,
             peers.Peers, peers.ConfirmedPeer);
     }
 

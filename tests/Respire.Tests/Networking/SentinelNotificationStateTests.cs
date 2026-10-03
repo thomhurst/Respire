@@ -16,7 +16,7 @@ public class SentinelNotificationStateTests
     public async Task DnsTransitionsRetainOnlyLookupLifetimeEvidenceThroughCompletionAndDisposal()
     {
         var c = new RespireEndpoint("127.0.0.1", 6381);
-        var generation = new object();
+        var generation = new SentinelGenerationIdentity();
         var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromSwitchMaster("earlier", c, A, First))).State;
         var lookup = state.Transition(new(SentinelNotificationEventKind.BeginSourceResolution,

@@ -77,7 +77,7 @@ public class SentinelReporterLedgerTests
         var second = SentinelHint.FromSwitchMaster("a-b", A, B, Second).CaptureObservationContext(owner, Epoch(3, 3));
         var merged = SentinelNotificationCoalescer.Merge(first, second).WithSourceAddresses(A, [A.Host]);
         var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, merged)).State;
-        var generation = new object();
+        var generation = new SentinelGenerationIdentity();
         var reconciled = state.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
             new(ValidatedGeneration: generation, ValidatedPrimary: owner,
                 CurrentEvidence: new(generation, A, A, false, [A], A)));

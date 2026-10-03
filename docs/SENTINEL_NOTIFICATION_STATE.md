@@ -148,6 +148,8 @@ state changes, then executes discovery, waits, and retirement effects.
 `SentinelGenerationEvidence` captures the generation identity, endpoint, validated peer,
 retirement state, and accepting command peers. Source and cycle matching may use any
 captured peer; skipping discovery requires one confirmed peer for every command slot.
+Each generation owns one `SentinelGenerationIdentity` token with no transport or mutable
+state. Reducer inputs and retirement effects accept only this token type.
 The reducer returns the exact generation identity to retire. Under the same gate, the
 router verifies that identity is still current and disposal has not begun, then performs
 retirement. No live transport is read by the reducer.
