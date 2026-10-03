@@ -122,7 +122,8 @@ public class CorrectionCoordinatorTests
         };
         var result = await CorrectionCoordinator.AttemptAsync(failure == 5 ? null : client.Core,
             _ => ValueTask.FromException(error), Limit, stop.Token);
-        await Assert.That(result).IsEqualTo(failure < 2 ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed);
+        await Assert.That(result).IsEqualTo(failure is 0 or 1 or 5
+            ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed);
     }
 
     [Test]
@@ -192,6 +193,37 @@ public class CorrectionCoordinatorTests
         var fence = new CorrectionFence(Identity, (_, _, _) => { fences++; throw new InvalidOperationException(); });
         await CorrectionCoordinator.ConvergeAsync(Identity, fence, (_, _) => Task.CompletedTask, Limit, TimeSpan.MaxValue);
         await Assert.That(fences).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FenceIsCreatedOnlyAfterAnOverduePass(bool overdue)
+    {
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var created = 0;
+        var sent = 0;
+        var passes = 0;
+        try
+        {
+            await CorrectionCoordinator.ConvergeAsync(Identity, 0, (_, identity) =>
+            {
+                if (identity != Identity) throw new InvalidOperationException("Fence identity changed.");
+                created++;
+                return new CorrectionFence(identity, (_, _, acknowledge) =>
+                {
+                    sent++;
+                    acknowledge();
+                    return ValueTask.CompletedTask;
+                });
+            }, (_, _, _) => ++passes == 1 && overdue ? first.Task : Task.CompletedTask,
+                TimeSpan.FromMilliseconds(10), TimeSpan.MaxValue);
+
+            await Assert.That(created).IsEqualTo(overdue ? 1 : 0);
+            await Assert.That(sent).IsEqualTo(created);
+            await Assert.That(passes).IsEqualTo(overdue ? 2 : 1);
+        }
+        finally { first.TrySetResult(); }
     }
 
     [Test]

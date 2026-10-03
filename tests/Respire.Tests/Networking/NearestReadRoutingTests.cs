@@ -546,6 +546,42 @@ public class NearestReadRoutingTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(router, [slot]);
 
     [Test]
+    public async Task ClusterOwnerChangedDuringConnectionRetriesBeforeStalledReplicaDiscovery()
+    {
+        await using var seed = Server("primary");
+        await using var old = Server("primary");
+        await using var replacement = Server("primary");
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(seed.Port, 0, 16383) : Reply(command, "primary");
+        Action? connectingOld = null;
+        await using var client = await RespireClient.ConnectAsync(Options(seed) with
+        {
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == old.Port) connectingOld?.Invoke();
+                var tcp = new System.Net.Sockets.TcpClient();
+                await tcp.ConnectAsync(host, port, token);
+                return tcp.GetStream();
+            },
+        });
+        var router = client.Core.Cluster!;
+        var oldNode = router.GetOrCreateNode(new("127.0.0.1", old.Port));
+        var replacementNode = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
+        await replacementNode.EnsureConnectedAsync(CancellationToken.None);
+        router.SetSlotOwner(1, oldNode);
+        connectingOld = () => router.SetSlotOwner(1, replacementNode);
+        foreach (var server in new[] { seed, old, replacement })
+            server.SuppressReply = command => command == "CLUSTER SLOTS";
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+        await Assert.That(selected.Port).IsEqualTo(replacement.Port);
+    }
+
+    [Test]
     public async Task CooldownRetryRetainsTheOriginalConnectionFailure()
     {
         using var unavailable = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

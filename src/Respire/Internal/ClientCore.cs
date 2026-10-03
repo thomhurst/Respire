@@ -126,17 +126,27 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, CancellationToken cancellationToken, bool reuseIdle = true,
-        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
-        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this), cancellationToken, reuseIdle, kind);
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null,
+        ReadLatencySampler<RespireConnection>? nearestLatency = null)
+        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, nearestLatency, cancellationToken),
+            cancellationToken, reuseIdle, kind, preferredZone);
 
-    private readonly struct DedicatedLeaseRoute(ClientCore owner) : IDedicatedLeaseRoute
+    private readonly struct DedicatedLeaseRoute(ClientCore owner, ReadLatencySampler<RespireConnection>? nearestLatency,
+        CancellationToken callerToken) : IDedicatedLeaseRoute
     {
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(owner.Disposed, owner);
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !owner.Disposed;
         public void RecordRetirement(Exception error, int attempt) { }
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
             => owner.GetDedicatedPoolAsync(cancellationToken);
-        public void SetTerminalError(Exception error) { }
+        public void SetTerminalError(DedicatedConnectionPool pool, Exception error)
+        {
+            // A retirement retry can move to another Sentinel generation. Attribute a failed
+            // handshake to that pool's owner, never to the earlier endpoint selection.
+            if (nearestLatency is not null && pool.MovingOwner is { } failedOwner
+                && ReadEndpointRouter.IsReadCandidateFailure(error, callerToken))
+                nearestLatency.ConnectionFailed(failedOwner);
+        }
         public void Dispose() { }
     }
 

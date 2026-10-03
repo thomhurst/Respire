@@ -1,3 +1,4 @@
+using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -7,6 +8,36 @@ namespace Respire.Extensions.Coordination.Tests;
 
 public class CoordinationCleanupQueueTests
 {
+    [Test]
+    public async Task DisposedLegacyClientReleaseStopsAfterOneAttempt()
+    {
+        var client = DispatchProxy.Create<IRespireClient, DisposedClientProxy>();
+        var owner = RespireLock.NewToken();
+        var attempts = 0;
+        string? abandoned = null;
+        var completion = RespireSemaphore.EnqueueCleanupAsync(client, token =>
+        {
+            attempts++;
+            return RespireSemaphore.TryReleaseOnceAsync(client, "semaphore", owner, token);
+        }, () => attempts < 2, reason => abandoned = reason);
+
+        await completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(((DisposedClientProxy)client).ScriptAccesses).IsEqualTo(1);
+        await Assert.That(abandoned).IsEqualTo("client_disposed");
+    }
+
+    public class DisposedClientProxy : DispatchProxy
+    {
+        internal int ScriptAccesses;
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name != "get_Scripts") throw new NotSupportedException();
+            ScriptAccesses++;
+            throw new ObjectDisposedException("legacy-client");
+        }
+    }
+
     [Test]
     public async Task InvalidRetryDelayCompletesCleanupAndDisposal()
     {

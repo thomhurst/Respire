@@ -23,6 +23,33 @@ Raw command values are not attached to spans because arbitrary Redis payloads ca
 
 Operation latency uses the stable `db.client.operation.duration` histogram and records seconds, as required by the semantic convention.
 
+## Reads by availability zone
+
+When `ClientAvailabilityZone` is configured, the `Respire` meter exposes the observable
+counter `respire.read.availability_zone` (unit `{read}`). It counts read commands accepted
+by physical connections, tagged with `server.availability_zone` and
+`respire.availability_zone.status=known`. These are attempts, not successful operations:
+a redirected or retried command can count more than once. Local cache hits do not count.
+Individually submitted batch reads count; composite transactions do not.
+All read policies count, including `Primary` and `Replica`; affinity is not required.
+
+Missing zone metadata uses `respire.availability_zone.status=unknown` without a zone tag.
+The process retains counters for at most 64 distinct zone names; all clients share this
+process-wide budget. Names longer than 128 UTF-16 code units go directly to overflow
+without consuming this budget. This limit applies only to exported metric labels;
+routing retains the full metadata and compares zone names ordinally. Additional names share
+`respire.availability_zone.status=overflow`, also without a zone tag. Totals survive
+connection disposal. The first 64 names retain their counters for the process lifetime;
+names are never evicted, so later names continue to use overflow even after old connections
+close. This preserves monotonic totals without resetting or relabeling a counter.
+Zone names come from server metadata, not command keys or values. A server reporting
+many distinct names can exhaust the budget, whether through normal topology changes,
+misconfiguration, or hostile metadata. Overflow is intentionally reachable: it bounds
+the number of exported zone series without dropping read counts. It is not a trust check.
+The status tag distinguishes real zone names such as `unknown`
+from missing metadata. Observation happens outside transport locks; accepting a read
+only increments its connection's cached counter.
+
 ## Logging
 
 Pass an `ILoggerFactory` through `RespireOptions` or use the dependency-injection integration. Logs cover connection lifecycle and recovery without logging command payloads.

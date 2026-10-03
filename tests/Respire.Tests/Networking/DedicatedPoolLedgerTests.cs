@@ -371,6 +371,53 @@ public class DedicatedPoolLedgerTests
         finally { logger.ThrowOnDisconnect = false; }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplicaEntryPreservesMultiplexerAndDedicatedCleanupFailures(bool retire)
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*5\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n+connected\r\n:0\r\n"u8.ToArray() : FakeRespServer.OkReply,
+        };
+        var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
+        var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)], LoggerFactory = logger,
+        });
+        try
+        {
+            var selection = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, CancellationToken.None);
+            var entry = selection.Replica!;
+            var lease = await entry.RentDedicatedConnectionAsync(CancellationToken.None);
+            lease.Pool.Return(lease.Connection);
+            logger.ThrowOnDisconnect = true;
+            // Pool disposal reports its failure through the warning contract; retirement throws it directly.
+            logger.ThrowOnWarning = !retire;
+            var error = await Assert.That(async () =>
+            {
+                if (retire) await entry.RetireAsync(CancellationToken.None).WaitAsync(Limit);
+                else await entry.DisposeAsync().AsTask().WaitAsync(Limit);
+            }).ThrowsExactly<AggregateException>();
+            await Assert.That(logger.DisconnectFailures.Count).IsEqualTo(2);
+            await Assert.That(error!.InnerExceptions.Count).IsEqualTo(2);
+            await Assert.That(error.InnerExceptions.Contains(logger.WarningFailure)).IsEqualTo(!retire);
+            await Assert.That(logger.DisconnectFailures.Count(error.InnerExceptions.Contains)).IsEqualTo(retire ? 2 : 1);
+            await Assert.That(lease.Connection.IsConnected).IsFalse();
+            await Assert.That(selection.Connection.IsConnected).IsFalse();
+        }
+        finally
+        {
+            logger.ThrowOnDisconnect = logger.ThrowOnWarning = false;
+            try { await client.DisposeAsync(); }
+            catch (Exception) { /* The injected cleanup failures were asserted above. */ }
+        }
+    }
+
     private sealed class CleanupFailureLogger : ILogger, ILoggerFactory
     {
         internal readonly InvalidOperationException Failure = new("Injected pool cleanup failure.");

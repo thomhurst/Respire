@@ -928,9 +928,17 @@ public class CredentialProviderTests
         {
             // Force the clock callback onto this connection's serial completion worker.
             // The first cache metric must leave that worker before synchronously awaiting PING.
-            server.SuppressReply = command => command == "PING";
+            var suppressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                suppressed.TrySetResult();
+                return true;
+            };
             var advance = AdvanceFromReplyAsync();
-            await UntilAsync(() => server.ReceivedCommands.Contains("PING"));
+            // Receipt is recorded before SuppressReply runs. Wait for the decision itself,
+            // otherwise clearing the callback can produce both an automatic and manual PONG.
+            await suppressed.Task.WaitAsync(Limit);
             server.SuppressReply = null;
             await server.SendRawAsync("+PONG\r\n"u8.ToArray());
             await advance.WaitAsync(Limit);

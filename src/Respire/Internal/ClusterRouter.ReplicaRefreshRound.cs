@@ -46,6 +46,9 @@ internal sealed partial class ClusterRouter
             List<ClusterTopologyRange> ranges = [];
             lock (router._nodesGate)
             {
+                // This is writer-side reconciliation under the node gate: staging includes
+                // every accepted mutation, including any not yet published after a failure.
+                // Read-only routing decisions instead capture the immutable snapshot.
                 foreach (var range in snapshot.Ranges)
                 {
                     if (range.Start > slot || range.End < slot) continue;

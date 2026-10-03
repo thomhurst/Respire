@@ -510,7 +510,7 @@ public class ClusterTests
                 invalidate = false;
                 // Publish exactly the invalidated marker after discovery observes coverage,
                 // before its caller reloads routes. No timing or background thread is needed.
-                Volatile.Write(ref ReplicaRoutes(client)[slot], unknown);
+                SetReplicaRoutes(client, slot, unknown);
                 coordinator.Invalidate(slot);
             }
             return covered;
@@ -787,7 +787,7 @@ public class ClusterTests
         }];
         router.ApplyTopology(Topology(oldReplica.Port), 0, 1);
         var previous = new ClusterReplicaSet(ReplicaRoutes(client)[0]!.Nodes, TimeSpan.FromMinutes(1), static () => 0);
-        ReplicaRoutes(client)[0] = previous;
+        SetReplicaRoutes(client, 0, previous);
         // Keep the old range throttled after its refresh completes. Selection already holds
         // this range when publication retires its candidate during the READONLY handshake.
         await previous.JoinOrStartRefresh(() => Task.CompletedTask)!;
@@ -877,7 +877,7 @@ public class ClusterTests
         var slot = ClusterHash.GetSlot("key");
         // Freeze the old set's throttle so scheduler delays cannot reopen its refresh budget.
         var oldRoutes = new ClusterReplicaSet(ReplicaRoutes(client)[slot]!.Nodes, TimeSpan.FromMinutes(1), () => 0);
-        ReplicaRoutes(client)[slot] = oldRoutes;
+        SetReplicaRoutes(client, slot, oldRoutes);
         await oldRoutes.JoinOrStartRefresh(() => Task.CompletedTask)!;
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
         var read = reads.Strings.GetStringAsync("key").AsTask();
@@ -988,7 +988,23 @@ public class ClusterTests
     [Arguments("ASK", 1)]
     [Arguments("ASK", 2)]
     [Arguments("ASK", 3)]
-    public async Task ReadFrom_RoleFallbackFollowsRedirectWithoutReturningToFailedReplica(string redirect, int mode)
+    [Arguments("MOVED", 0, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 1, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 2, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 3, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 0, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 1, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 2, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 3, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 0, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 1, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 2, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 3, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 0, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 1, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 2, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 3, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task ReadFrom_RoleFallbackFollowsRedirectWithoutReturningToFailedReplica(string redirect, int mode, RespireReadFrom policy = RespireReadFrom.ReplicaPreferred)
     {
         const string key = "{batch-fallback}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1012,9 +1028,10 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ClientAvailabilityZone = "local",
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
-        await using var reads = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        await using var reads = client.WithReadFrom(policy);
         if (mode == 1)
         {
             using var batch = reads.CreateBatch();
@@ -1153,6 +1170,7 @@ public class ClusterTests
     public async Task ReadFrom_RevalidationDiscoversPromotionThroughConnectedReplica()
     {
         byte[]? promotedTopology = null;
+        var primaryStopped = false;
         await using var replica = new FakeRespServer(4)
         {
             ReplyOverride = (_, command) => command switch
@@ -1169,13 +1187,16 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            // Healthy startup uses the ordinary connection deadline. After shutdown, fail
+            // primary discovery explicitly instead of imposing a 200 ms deadline on all peers.
+            TestingStreamFactory = OpenStreamAsync,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
         var strict = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await strict.Strings.GetStringAsync("key")).IsEqualTo("value");
         Volatile.Write(ref promotedTopology, ClusterTopologyWithoutReplicas(replica.Port));
         await primary.DisposeAsync();
+        Volatile.Write(ref primaryStopped, true);
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
         try { await strict.Strings.GetStringAsync("key"); }
         catch (RespireConnectionException) { }
@@ -1190,6 +1211,20 @@ public class ClusterTests
         await Assert.That(async () => await strict.Strings.GetStringAsync("sibling"))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(replica.ReceivedCommands).DoesNotContain("GET sibling");
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (port == primary.Port && Volatile.Read(ref primaryStopped))
+                throw new RespireConnectionException("The test primary has stopped.");
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
     }
 
     [Test]
@@ -2216,10 +2251,24 @@ public class ClusterTests
         await Assert.That(target.ReceivedCommands).Contains("CLUSTER SLOTS");
     }
 
-    private static ClusterReplicaSet?[] ReplicaRoutes(RespireClient client)
-        => (ClusterReplicaSet?[])typeof(ClusterRouter)
-            .GetField("_replicasBySlot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(client.Core.Cluster!)!;
+    private readonly record struct ReplicaRouteView(ClusterRoutingSnapshot Snapshot)
+    {
+        public ClusterReplicaSet? this[int slot] => Snapshot[slot].Replicas;
+    }
+
+    private static ReplicaRouteView ReplicaRoutes(RespireClient client)
+        => new(client.Core.Cluster!.RoutingSnapshot);
+
+    private static void SetReplicaRoutes(RespireClient client, int slot, ClusterReplicaSet routes)
+    {
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        lock (router.NodeStateGate)
+        {
+            typeof(ClusterRouter).GetMethod("SetReplicaRoutesLocked", flags)!.Invoke(router, [slot, routes]);
+            typeof(ClusterRouter).GetMethod("PublishTopologyLocked", flags)!.Invoke(router, null);
+        }
+    }
 
     [Test]
     [Arguments("GET", true)]
