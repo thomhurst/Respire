@@ -50,6 +50,15 @@ public class CoordinationCleanupQueueTests
     }
 
     [Test]
+    public async Task DisposedClientReleaseIsAbandonedWithoutRetry()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });
+        await client.DisposeAsync();
+        var outcome = await RespireSemaphore.TryReleaseOnceAsync(client, "semaphore", RespireLock.NewToken());
+        await Assert.That(outcome).IsEqualTo(CleanupAttemptResult.Abandoned);
+    }
+
+    [Test]
     public async Task DisposeCancelsDelayedRetryAndCompletesCleanup()
     {
         await using var queue = new CoordinationCleanupQueue();

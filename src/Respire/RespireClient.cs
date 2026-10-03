@@ -4285,11 +4285,12 @@ public sealed partial class RespireClient : IRespireClient
     /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
     /// from the target client can execute afterward.
     /// </summary>
-    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
-        => FenceCorrectionConnectionAsync(identity, CancellationToken.None, null);
+    internal ValueTask FenceCorrectionConnectionAsync(
+        TrackedConnectionIdentity identity, CancellationToken cancellationToken = default)
+        => _core.Corrections.CreateFence(this, identity).EnsureAsync(cancellationToken);
 
-    internal async ValueTask FenceCorrectionConnectionAsync(
-        TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged = null)
+    internal async ValueTask SendCorrectionFenceAsync(
+        TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action onAcknowledged)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
@@ -4326,7 +4327,7 @@ public sealed partial class RespireClient : IRespireClient
                 throw error;
             }
 
-            onAcknowledged?.Invoke();
+            onAcknowledged();
             reply.Dispose();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

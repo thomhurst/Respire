@@ -38,6 +38,11 @@ internal sealed class ClientCore : IAsyncDisposable
     }
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
+    private CorrectionCoordinator? _corrections;
+    internal CorrectionCoordinator Corrections
+    {
+        get { lock (_hubGate) return _corrections ??= new(this); }
+    }
     private CoordinationCleanupQueue? _coordinationCleanupQueue;
     internal CoordinationCleanupQueue? CoordinationCleanupQueue
     {
