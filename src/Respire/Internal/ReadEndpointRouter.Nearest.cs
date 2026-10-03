@@ -21,7 +21,7 @@ internal sealed partial class ReadEndpointRouter
         Selection? primary = null;
         Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
-        if (attempt?.IsFailed(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
+        if (!ReadAttempt.IsFailed(attempt, primaryCandidate.ActiveConnectionEndpoint) && sampler.CanConnect(primaryCandidate))
         {
             try
             {
@@ -54,7 +54,7 @@ internal sealed partial class ReadEndpointRouter
             }
             else
             {
-                if (attempt?.IsFailed(endpoints[index - 1]) == true) continue;
+                if (ReadAttempt.IsFailed(attempt, endpoints[index - 1])) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
@@ -101,6 +101,9 @@ internal sealed partial class ReadEndpointRouter
         if (retry)
             return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
                 previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
+        // Once acquisition exhausted the candidates, preserve its original failure rather
+        // than replacing it with the selection error caused by those exclusions.
+        attempt?.ThrowFirstFailure();
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }

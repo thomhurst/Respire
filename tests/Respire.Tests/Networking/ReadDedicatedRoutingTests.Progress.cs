@@ -10,14 +10,17 @@ namespace Respire.Tests.Networking;
 public partial class ReadDedicatedRoutingTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task NearestTerminatesWhenPoolAndSelectedEndpointDiffer(bool failRental)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task NearestTerminatesWhenPoolAndSelectedEndpointDiffer(bool failRental, bool hasReplica)
     {
         await using var primary = Node("primary", false);
+        await using var replica = Node("replica", true);
         var expected = new IOException("Injected dedicated alias failure.");
         var rentals = 0;
-        var options = Options(primary, [], RespireReadFrom.Primary) with
+        var options = Options(primary, hasReplica ? [replica] : [], RespireReadFrom.Primary) with
         {
             Endpoints = [new("localhost", primary.Port)],
             TestingStreamFactory = OpenStreamAsync,
@@ -37,12 +40,12 @@ public partial class ReadDedicatedRoutingTests
         field.SetValue(core, pool);
         long now = 0;
         core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
-            (_, _) => ValueTask.FromResult(1L), () => Interlocked.Add(ref now, 2_000));
+            (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 1L : 10L), () => Interlocked.Add(ref now, 2_000));
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
             await Assert.That(pool.Endpoint).IsNotEqualTo(core.Multiplexer.ActiveConnectionEndpoint);
-            if (failRental)
+            if (failRental && !hasReplica)
             {
                 var error = await Assert.That(async () =>
                     await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token))
@@ -53,8 +56,9 @@ public partial class ReadDedicatedRoutingTests
             {
                 var lease = await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token);
                 lease.Pool.Return(lease.Connection);
-                await Assert.That(lease.Pool).IsSameReferenceAs(pool);
-                await Assert.That(lease.IsReplica).IsFalse();
+                await Assert.That(lease.IsReplica).IsEqualTo(failRental && hasReplica);
+                await Assert.That(lease.Connection.Port).IsEqualTo(failRental && hasReplica ? replica.Port : primary.Port);
+                if (!failRental) await Assert.That(lease.Pool).IsSameReferenceAs(pool);
             }
             await Assert.That(caller.IsCancellationRequested).IsFalse();
             await Assert.That(rentals).IsEqualTo(1);
@@ -63,7 +67,7 @@ public partial class ReadDedicatedRoutingTests
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
-            if (host == "127.0.0.1")
+            if (host == "127.0.0.1" && port == primary.Port)
             {
                 Interlocked.Increment(ref rentals);
                 if (failRental) throw expected;

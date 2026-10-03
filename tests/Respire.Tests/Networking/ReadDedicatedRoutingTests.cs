@@ -706,9 +706,13 @@ public partial class ReadDedicatedRoutingTests
             ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
             : command.StartsWith("SENTINEL REPLICAS ")
                 ? Encoding.ASCII.GetBytes(ReplicaReply(replicas()))
-                : command == "SUBSCRIBE +switch-master +sdown +odown"
-                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
-                    : "*0\r\n"u8.ToArray(),
+                : command switch
+                {
+                    "SUBSCRIBE +switch-master" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
+                    "SUBSCRIBE +sdown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n"u8.ToArray(),
+                    "SUBSCRIBE +odown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray(),
+                    _ => "*0\r\n"u8.ToArray(),
+                },
     };
 
     private static string ReplicaReply(FakeRespServer[] replicas)

@@ -212,8 +212,17 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(lease.Failure!).Throw();
                 }
                 if (lease.Failure is not { } error) return (lease.Pool!, lease.Connection!, false);
+                RespireEndpoint? primaryAlias = null;
+                if (lease.Pool?.MovingOwner is { } owner)
+                {
+                    var publication = owner.CaptureMovingPublication();
+                    // The pool's publication proves these aliases name the same failed
+                    // candidate. Do not exclude an owner that has since moved elsewhere.
+                    if (ReferenceEquals(publication.Publication, lease.Pool.MovingPublication))
+                        primaryAlias = publication.Endpoint;
+                }
                 (attempt ??= new()).Add(lease.Pool?.Endpoint
-                    ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port), error);
+                    ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port), error, primaryAlias);
                 if (readFrom == RespireReadFrom.Nearest)
                 {
                     continue;
@@ -395,7 +404,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
-                if (attempt?.IsFailed(endpoint) == true) continue;
+                if (ReadAttempt.IsFailed(attempt, endpoint)) continue;
                 if (excluded is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoint, excluded)) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
                 if (entry is null) continue;

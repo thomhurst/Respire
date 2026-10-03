@@ -5,17 +5,29 @@ namespace Respire.Internal;
 internal sealed class ReadAttempt
 {
     private Dictionary<RespireEndpoint, Exception>? _failures;
+    private Exception? _firstFailure;
     private int _retirements;
 
     internal bool IsFailed(RespireEndpoint endpoint) => _failures?.ContainsKey(endpoint) == true;
 
-    internal void Add(RespireEndpoint endpoint, Exception error)
+    internal static bool IsFailed(ReadAttempt? attempt, RespireEndpoint endpoint)
+        => attempt is not null && attempt.IsFailed(endpoint);
+
+    internal void Add(RespireEndpoint endpoint, Exception error, RespireEndpoint? alias = null)
     {
         var failures = _failures ??= new(RespireEndpointComparer.Instance);
         // Selection and rental may observe different endpoint identities. Every retry must
         // exclude a new identity; otherwise terminate with the first acquisition failure.
         if (!failures.TryAdd(endpoint, error))
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[endpoint]).Throw();
+        _firstFailure ??= error;
+        if (alias is { } ownerEndpoint) failures.TryAdd(ownerEndpoint, error);
+    }
+
+    internal void ThrowFirstFailure()
+    {
+        if (_firstFailure is { } error)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     internal void ThrowIfFailed(RespireEndpoint endpoint)
