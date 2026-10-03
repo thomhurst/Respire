@@ -10,6 +10,59 @@ namespace Respire.Tests.Networking;
 public class SentinelIdentityTests
 {
     [Test]
+    public async Task RuntimeShorthandUsesTheSameIdentityAsTheConnectedPeer()
+    {
+        await using var server = new FakeRespServer(1);
+        using var socket = new System.Net.Sockets.TcpClient();
+        await socket.ConnectAsync("127.1", server.Port).WaitAsync(TimeSpan.FromSeconds(5));
+        var remote = (System.Net.IPEndPoint)socket.Client.RemoteEndPoint!;
+        await Assert.That(new SentinelEndpointIdentity(new("127.1", server.Port)))
+            .IsEqualTo(new SentinelEndpointIdentity(new(remote.Address.ToString(), remote.Port)));
+    }
+
+    [Test]
+    public async Task DefaultIdentityRetainsEqualityAndHashing()
+    {
+        var first = default(SentinelEndpointIdentity);
+        var second = default(SentinelEndpointIdentity);
+        await Assert.That(first.Equals(second)).IsTrue();
+        await Assert.That(first.GetHashCode()).IsEqualTo(second.GetHashCode());
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RepeatedNormalizedEvidenceMatchingDoesNotAllocate()
+    {
+        var sourceAddresses = Enumerable.Range(1, 16).Select(index => $"::ffff:192.0.2.{index}").ToArray();
+        var source = new SentinelAddressEvidence(new("former.test", 6379), sourceAddresses);
+        var candidate = new SentinelAddressEvidence(new("primary.test", 6379),
+            [.. Enumerable.Range(1, 15).Select(index => $"198.51.100.{index}"), "192.0.2.16"]);
+        await Assert.That(sourceAddresses[15]).IsEqualTo("::ffff:192.0.2.16");
+        await Assert.That(source.Addresses![15]).IsEqualTo("192.0.2.16");
+        await Assert.That(ReferenceEquals(source.Addresses, sourceAddresses)).IsFalse();
+        var alreadyNormalized = new SentinelAddressEvidence(source.Endpoint, source.Addresses);
+        await Assert.That(ReferenceEquals(alreadyNormalized.Addresses, source.Addresses)).IsTrue();
+        _ = MeasureMatching(source, candidate, false);
+        _ = MeasureMatching(source, candidate, true);
+        var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureMatching(source, candidate, false), MeasureMatching(source, candidate, true)));
+        await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(37_000);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureMatching(SentinelAddressEvidence source, SentinelAddressEvidence candidate, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1_000; index++)
+        {
+            if (!source.CouldMatch(candidate)) throw new InvalidOperationException("The final address must match.");
+            if (allocate) GC.KeepAlive(AllocateControl());
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
     public async Task ConfigurationSnapshotAndConfirmationUseCanonicalNumericIdentity()
     {
         var addressReads = 0;
@@ -72,6 +125,10 @@ public class SentinelIdentityTests
     [Arguments("2001:0db8:0:0:0:0:0:1", "2001:db8::1", true)]
     [Arguments("primary.test", "other.test", false)]
     [Arguments("192.0.2.1", "192.0.2.2", false)]
+    [Arguments("1", "0.0.0.1", true)]
+    [Arguments("127.1", "127.0.0.1", true)]
+    [Arguments("fe80:0:0:0:0:0:0:1%3", "fe80::1%3", true)]
+    [Arguments("fe80::1%3", "fe80::1%4", false)]
     public async Task TextualIdentityIsConsistentAcrossKeysOwnersAndDiscovery(string leftHost, string rightHost, bool same)
     {
         var left = new RespireEndpoint(leftHost, 6379);
@@ -113,7 +170,7 @@ public class SentinelIdentityTests
             await Assert.That(evidence.ConfirmsPeer(new(host, port + 1))).IsFalse();
             await Assert.That(evidence.ConfirmsSameAddress(new(new("alias.test", port), [mapped]))).IsTrue();
 
-            var ambiguous = evidence with { Addresses = [.. candidates, "198.51.100.1"] };
+            var ambiguous = new SentinelAddressEvidence(evidence.Endpoint, [.. candidates, "198.51.100.1"]);
             await Assert.That(ambiguous.SingleAddress).IsNull();
             await Assert.That(ambiguous.CouldMatch(new(peer, null))).IsTrue();
             await Assert.That(ambiguous.ConfirmsPeer(peer)).IsFalse();

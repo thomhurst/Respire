@@ -458,9 +458,11 @@ internal static class SentinelResolver
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, in SentinelHint hint, string[]? candidateAddresses = null)
     {
+        if (hint.Sources.Length == 0) return false;
+        var evidence = new SentinelAddressEvidence(candidate, candidateAddresses);
         foreach (var source in hint.Sources)
         {
-            if (MatchesSwitchSource(candidate, source, candidateAddresses)) return true;
+            if (source.Evidence.CouldMatch(evidence)) return true;
         }
         return false;
     }
@@ -479,9 +481,11 @@ internal static class SentinelResolver
 
     internal static bool TargetPeerMatchesSwitchSource(RespireEndpoint target, RespireEndpoint peer, in SentinelHint hint)
     {
+        if (hint.Sources.Length == 0) return false;
+        var evidence = new SentinelAddressEvidence(peer, null);
         foreach (var source in hint.Sources)
             if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, target)
-                && MatchesSwitchSource(peer, source)) return true;
+                && source.Evidence.CouldMatch(evidence)) return true;
         return false;
     }
 
