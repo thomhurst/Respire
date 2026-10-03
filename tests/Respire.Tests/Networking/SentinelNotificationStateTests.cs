@@ -124,4 +124,16 @@ public class SentinelNotificationStateTests
         await Assert.That(complete.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
         await Assert.That(superseded.Active).IsNotNull();
     }
+
+    [Test]
+    [Arguments(0, 1)]
+    [Arguments(1, 1)]
+    [Arguments(2, 2)]
+    [Arguments(5, 16)]
+    [Arguments(6, 30)]
+    [Arguments(int.MaxValue, 30)]
+    public async Task DefaultRetryDelayBacksOffExponentiallyToThirtySeconds(int attempts, int expectedSeconds)
+    {
+        await Assert.That(SentinelNotificationState.DefaultRetryDelay(attempts)).IsEqualTo(TimeSpan.FromSeconds(expectedSeconds));
+    }
 }

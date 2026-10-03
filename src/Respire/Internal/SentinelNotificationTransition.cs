@@ -131,7 +131,7 @@ internal readonly partial record struct SentinelNotificationState
             if (succeeded)
                 return new(state.Complete(), SentinelNotificationAction.Stop, RecoveredFailures: recovered);
             var delay = context.Policy?.GetDelay(state.RetryAttempts, context.RandomUnit)
-                ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(state.RetryAttempts - 1, 5)));
+                ?? DefaultRetryDelay(state.RetryAttempts);
             return new(state, SentinelNotificationAction.RetryAfter, delay,
                 Interruptible: true, ReplacePendingSignal: true);
         }
@@ -141,6 +141,13 @@ internal readonly partial record struct SentinelNotificationState
         return new(state, SentinelNotificationAction.RunNext, ReplacePendingSignal: true,
             RecoveredFailures: recovered, RetireGeneration: RetirementFor(next.Value, in context));
     }
+
+    private const int DefaultRetryDelayCapSeconds = 30;
+
+    // RespireOptions.ReconnectPolicy is optional. Without one, notification retries back off
+    // exponentially from 1s to 30s, uncapped in count and without jitter.
+    internal static TimeSpan DefaultRetryDelay(int retryAttempts)
+        => TimeSpan.FromSeconds(Math.Min(DefaultRetryDelayCapSeconds, 1 << Math.Clamp(retryAttempts - 1, 0, 5)));
 
     private static int IncrementSaturated(int count) => count < int.MaxValue ? count + 1 : count;
 
