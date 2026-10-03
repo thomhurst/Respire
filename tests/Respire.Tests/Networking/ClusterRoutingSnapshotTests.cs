@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Reflection;
+using Respire.Infrastructure;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +10,48 @@ namespace Respire.Tests.Networking;
 
 public class ClusterRoutingSnapshotTests
 {
+    [Test]
+    public async Task IncrementalPublicationsMatchFullStagingRebuild()
+    {
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        router.ApplyTopology(Topology(6379, 6380), 0, 1);
+        AssertMatchesFullRebuild(router);
+        var target = router.GetMultiplexer(new("localhost", 6381));
+        int[] slots = [0, 255, 256, 511, 512, 16383];
+        foreach (var slot in slots)
+        {
+            router.SetSlotOwner(slot, target);
+            AssertMatchesFullRebuild(router);
+        }
+        foreach (var slot in slots)
+        {
+            router.ClearSlotOwner(slot, target);
+            AssertMatchesFullRebuild(router);
+        }
+        router.ApplyTopology(Topology(6382, 6383), router.TopologyVersion, 2);
+        AssertMatchesFullRebuild(router);
+    }
+
+    // Test-only oracle runs in both build configurations, without adding work to publication.
+    private static void AssertMatchesFullRebuild(ClusterRouter router)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        object Field(string name) => typeof(ClusterRouter).GetField(name, flags)!.GetValue(router)!;
+        lock (Field("_nodesGate"))
+        {
+            var owners = (RespireConnectionMultiplexer?[])Field("_slots");
+            var routes = (ClusterReplicaSet?[])Field("_replicasBySlot");
+            var published = router.RoutingSnapshot;
+            var rebuilt = ClusterRoutingSnapshot.Empty.Publish(owners, routes, ulong.MaxValue,
+                published.Masters, published.ReplicaNodes, published.Replicas,
+                published.MasterSlotCounts, published.IsComplete);
+            for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+                if (published[slot] != rebuilt[slot])
+                    throw new InvalidOperationException($"Incremental publication differs from staging at slot {slot}.");
+        }
+    }
+
     [Test]
     public async Task UnchangedPublicationReusesSnapshotButChangedCountsAndCompletenessDoNot()
     {

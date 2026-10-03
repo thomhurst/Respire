@@ -142,7 +142,7 @@ internal sealed record GitVersionDetails(
         var isReleaseBranch = settings.ReleaseBranches.Contains(branchName, StringComparer.OrdinalIgnoreCase);
         var packageVersion = isReleaseBranch
             ? coreVersion.ToString()
-            : $"{coreVersion}-ci.{SanitizeNuGetIdentifier(branchName)}.{commitHeight}.{shortCommitHash}";
+            : CreatePrereleaseVersion(coreVersion.ToString(), branchName, commitHeight, shortCommitHash);
 
         return new GitVersionDetails(
             packageVersion,
@@ -226,9 +226,15 @@ internal sealed record GitVersionDetails(
             .Replace("refs/tags/", string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static string CreatePrereleaseVersion(string coreVersion, string branchName, int commitHeight, string shortCommitHash)
+        // A hexadecimal hash can contain only digits with leading zeroes, which SemVer
+        // forbids for numeric prerelease identifiers. The prefix makes every hash textual.
+        => $"{coreVersion}-ci.{SanitizeNuGetIdentifier(branchName)}.{commitHeight}.g{shortCommitHash}";
+
     private static string SanitizeNuGetIdentifier(string value)
     {
         var sanitized = Regex.Replace(value.ToLowerInvariant(), "[^0-9a-z-]+", "-").Trim('-');
+        if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit)) return $"branch-{sanitized}";
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
     }
 

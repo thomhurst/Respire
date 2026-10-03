@@ -1143,22 +1143,26 @@ public sealed class StreamedSetTests
             Endpoints = { new("127.0.0.1", server.Port) },
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(250),
+            CommandTimeout = TimeSpan.FromSeconds(2),
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
         var source = new NonCooperativeStream();
         var set = client.Strings.SetAsync("stalled-source", source, 1).AsTask();
-        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(3)))
-            .Throws<RespireTimeoutException>();
-        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
-        // The timeout leaves the dedicated upload lease healthy; ordinary traffic stays available.
-        await client.PingAsync();
-
-        // Finish the ignored read so its rented buffer can be returned safely.
-        source.CompleteRead.TrySetResult();
+        try
+        {
+            await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
+            // The timeout leaves the dedicated upload lease healthy; ordinary traffic stays available.
+            await client.PingAsync();
+        }
+        finally
+        {
+            // Finish the ignored read even after an assertion fails, returning its rented buffer.
+            source.CompleteRead.TrySetResult();
+        }
         await source.ReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 

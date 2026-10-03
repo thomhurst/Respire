@@ -1895,14 +1895,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         Volatile.Write(ref _slotVersions[slot], version);
         if (ReferenceEquals(_slots[slot], node)) return;
         _slots[slot] = node;
-        _dirtyTopologyPages |= 1UL << (slot / ClusterRoutingSnapshot.PageSize);
+        _dirtyTopologyPages |= ClusterRoutingSnapshot.PageBit(slot);
     }
 
     private void SetReplicaRoutesLocked(int slot, ClusterReplicaSet? routes)
     {
         if (ReferenceEquals(_replicasBySlot[slot], routes)) return;
         _replicasBySlot[slot] = routes;
-        _dirtyTopologyPages |= 1UL << (slot / ClusterRoutingSnapshot.PageSize);
+        _dirtyTopologyPages |= ClusterRoutingSnapshot.PageBit(slot);
     }
 
     // The only reader-visible topology publication. The staging arrays remain writer-owned.

@@ -12,6 +12,7 @@ internal sealed class ClusterRoutingSnapshot
 {
     internal const int PageSize = 256;
     private const int PageShift = 8;
+    internal static ulong PageBit(int slot) => 1UL << (slot >> PageShift);
     private readonly SlotRoute[][] _pages;
 
     internal readonly record struct SlotRoute(RespireConnectionMultiplexer? Primary, ClusterReplicaSet? Replicas);

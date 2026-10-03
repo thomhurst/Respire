@@ -66,7 +66,10 @@ guarantees.
 
 `ClusterRoutingSnapshotTests` covers retained snapshots, stale discovery after MOVED,
 concurrent readers during publication, final-slot replica retirement, and allocation-free
-selection with a positive allocation control. Existing Cluster tests cover same-endpoint
+selection with a positive allocation control. A test-only oracle rebuilds all pages from
+writer staging and compares every slot after discovery, MOVED, and clearing at page boundaries.
+It runs in Debug and Release without adding validation work to production publication.
+Existing Cluster tests cover same-endpoint
 promotion, aliases, partial and deferred empty replies, independent unknown-slot coverage,
 SMIGRATED ordering, cursor affinity, and transport retirement. Real Redis Cluster replica
 tests exercise RESP2 and RESP3 on both target frameworks.
