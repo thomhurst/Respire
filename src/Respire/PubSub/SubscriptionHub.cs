@@ -482,7 +482,11 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             if (watch)
             {
                 if (core.Options.ReconnectPolicy is not null)
-                    lock (_reconnectStateGate) _configuredConnection = connection;
+                    lock (_reconnectStateGate)
+                    {
+                        _configuredConnection = connection;
+                        _configuredEpisodeCaptured = false;
+                    }
                 _ = WatchConnectionAsync(connection);
             }
             if (previous is not null)

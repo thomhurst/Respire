@@ -175,6 +175,7 @@ internal static class RespireTelemetry
         ReconnectDelays.Record(delay.TotalSeconds, address, endpointPort, sourceTag);
     }
 
+    // ClusterDiscovery and SentinelMonitor use RecordDiscoveryReconnect's scope tag instead.
     private static string ReconnectSourceName(RespireReconnectSource source) => source switch
     {
         RespireReconnectSource.Command => "command",

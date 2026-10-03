@@ -32,6 +32,70 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
+    public async Task InitialHandshakeFailureDoesNotStartRecoveryEpisode()
+    {
+        await using var server = new FakeRespServer(4, Confirmation) { CloseConnectionAfterCommand = 1 };
+        var episodes = 0;
+        await using var client = RespireClient.Create(Options(server.Port, Policy(), database: 1) with
+        {
+            ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
+        });
+        await Assert.That(async () => await client.SubscribeAsync("ch")).Throws<RespireConnectionException>();
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CloseDuringSuccessfulPromotionStartsNewEpisode(bool throwingObserver)
+    {
+        await using var server = new FakeRespServer(4, Confirmation);
+        var episodes = 0;
+        var secondEpisode = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 100)) with
+        {
+            ReconnectEpisodeStarted = () =>
+            {
+                if (Interlocked.Increment(ref episodes) == 2) secondEpisode.TrySetResult();
+                if (throwingObserver) throw new InvalidOperationException("Injected episode observer failure.");
+            },
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        await WaitForCommandsAsync(server, 2, deadline.Token);
+
+        var hub = client.Core.Hub;
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var stateGate = typeof(SubscriptionHub).GetField("_reconnectStateGate", flags)!.GetValue(hub)!;
+        var controlGate = (SemaphoreSlim)typeof(SubscriptionHub).GetField("_controlGate", flags)!.GetValue(hub)!;
+        var closed = typeof(SubscriptionHub).GetMethod("OnUnexpectedConnectionClosed", flags)!;
+        Task? cleanup = null;
+        await Task.Run(() =>
+        {
+            lock (stateGate)
+            {
+                // Hold promotion until resubscription has passed its last IsConnected check
+                // and released the control gate. Deliver the close on this same thread so
+                // its observer can enter the reentrant state gate before promotion.
+                server.SendRawAsync(Confirmation, server.ReceivedConnectionIds[^1]).GetAwaiter().GetResult();
+                if (!SpinWait.SpinUntil(() => controlGate.CurrentCount == 1, Deadline))
+                    throw new TimeoutException("Recovery did not reach the promotion boundary.");
+                var connection = (Respire.Networking.RespireConnection)typeof(SubscriptionHub)
+                    .GetField("_connection", flags)!.GetValue(hub)!;
+                closed.Invoke(hub, [connection]);
+                cleanup = connection.DisposeAsync().AsTask();
+            }
+        }, deadline.Token);
+        await cleanup!.WaitAsync(deadline.Token);
+        await secondEpisode.Task.WaitAsync(deadline.Token);
+        await WaitForCommandsAsync(server, 3, deadline.Token);
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(2);
+        await client.DisposeAsync();
+    }
+
+    [Test]
     public async Task ReplacementClosesDoNotRestartTheReconnectEpisode()
     {
         await using var server = new FakeRespServer(4, Confirmation);
@@ -524,7 +588,9 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
-    public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery()
+    [Arguments(RespireReconnectSource.PubSub)]
+    [Arguments(RespireReconnectSource.SentinelMonitor)]
+    public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery(RespireReconnectSource source)
     {
         await using var client = RespireClient.Create(Options(6379, Policy()));
         using var releaseObserver = new ManualResetEventSlim();
@@ -540,7 +606,7 @@ public class PubSubReconnectPolicyTests
         var first = new RespireConnectionStateChange(new RespireEndpoint("127.0.0.1", 6379),
             RespireConnectionState.Reconnecting, null)
         {
-            ReconnectSource = RespireReconnectSource.PubSub,
+            ReconnectSource = source,
             SourceState = RespireConnectionState.Reconnecting,
             ReconnectAttempt = 1,
         };

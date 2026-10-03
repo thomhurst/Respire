@@ -13,17 +13,31 @@ internal sealed partial class SubscriptionHub
     private TaskCompletionSource? _configuredRecoveryDrained;
     private RespireReconnectLimitException? _recoveryExhaustion;
     private ConfiguredRecoveryPhase _configuredRecoveryPhase;
+    private bool _configuredEpisodeCaptured;
 
     private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
 
-    private void OnUnexpectedConnectionClosed()
+    private void OnUnexpectedConnectionClosed(RespireConnection connection)
     {
         lock (_reconnectStateGate)
         {
-            // Failed replacement sockets belong to the existing recovery episode. They
-            // must not replace a Sentinel publication signal already captured at its start.
-            if (!_disposed && _configuredRecoveryPhase == ConfiguredRecoveryPhase.Idle)
-                core.Options.ReconnectEpisodeStarted?.Invoke();
+            // Only a published, watched connection can start an episode. Initial handshake
+            // failures and unsuccessful replacement sockets have no recovery ownership.
+            if (!_disposed && _configuredRecoveryPhase == ConfiguredRecoveryPhase.Idle
+                && ReferenceEquals(_configuredConnection, connection))
+                CaptureConfiguredEpisodeLocked();
+        }
+    }
+
+    private void CaptureConfiguredEpisodeLocked()
+    {
+        if (_configuredEpisodeCaptured) return;
+        _configuredEpisodeCaptured = true;
+        try { core.Options.ReconnectEpisodeStarted?.Invoke(); }
+        catch (Exception error)
+        {
+            try { core.Logger?.LogWarning(error, "Pub/sub recovery episode observer threw"); }
+            catch { /* Diagnostics must not prevent recovery ownership from advancing. */ }
         }
     }
 
@@ -53,6 +67,10 @@ internal sealed partial class SubscriptionHub
         {
             if (_disposed || _configuredRecoveryPhase != ConfiguredRecoveryPhase.Idle
                 || !ReferenceEquals(_configuredConnection, connection)) return;
+            // A replacement may close after its final connectivity check but before it is
+            // promoted. Its watcher supplies the capture that the earlier close could not.
+            CaptureConfiguredEpisodeLocked();
+            if (_disposed) return;
             _configuredConnection = null;
             _configuredRecoveryPhase = ConfiguredRecoveryPhase.Recovering;
             _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -113,6 +131,7 @@ internal sealed partial class SubscriptionHub
             lock (_reconnectStateGate)
             {
                 _configuredConnection = restored;
+                _configuredEpisodeCaptured = false;
                 if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
                     _configuredRecoveryPhase = ConfiguredRecoveryPhase.Idle;
                 if (restored is not null)
