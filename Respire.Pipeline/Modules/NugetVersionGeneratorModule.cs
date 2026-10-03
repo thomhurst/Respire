@@ -185,21 +185,34 @@ internal sealed record GitVersionDetails(
 
     internal static async Task<string?> GetLatestStableVersionTagAsync(string repositoryRoot, CancellationToken cancellationToken)
     {
-        // Enumerate once rather than rerunning describe for every rejected prerelease.
-        // Only stable names reach argv; invalid-tag history cannot grow the command line.
-        var reachableTags = await RunGitAsync(repositoryRoot, cancellationToken,
-            "for-each-ref", "--merged=HEAD", "--format=%(refname:strip=2)", "refs/tags");
-        List<string> arguments = ["describe", "--tags", "--abbrev=0"];
-        foreach (var tag in reachableTags.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        // Filter only a temporary mirror's refs. Shared objects avoid copying history;
+        // the source repository's tags, branches and working tree remain untouched.
+        // All Git argument lists are constant-size, regardless of tag count.
+        var mirror = Directory.CreateTempSubdirectory("respire-stable-version-");
+        try
         {
-            if (ParseVersion(tag) is null) continue;
-            arguments.Add("--match");
-            arguments.Add(tag);
+            await RunGitAsync(repositoryRoot, cancellationToken, "clone", "--mirror", "--shared", "--quiet", "--",
+                Path.GetFullPath(repositoryRoot), mirror.FullName);
+            var tags = await RunGitAsync(mirror.FullName, cancellationToken,
+                "for-each-ref", "--format=%(refname:strip=2)", "refs/tags");
+            var removals = string.Join('\n', tags.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(tag => ParseVersion(tag) is null).Select(tag => $"delete refs/tags/{tag}"));
+            if (removals.Length != 0)
+                await RunGitWithInputAsync(mirror.FullName, cancellationToken, removals + "\n", "update-ref", "--stdin");
+
+            // Git retains native distance, merge-history and annotated-tag precedence.
+            // --always reports a commit hash only when no retained tag is reachable;
+            // unlike catching Git failures, this leaves repository errors observable.
+            var selected = await RunGitAsync(mirror.FullName, cancellationToken,
+                "describe", "--tags", "--abbrev=0", "--always");
+            return ParseVersion(selected) is null ? null : selected;
         }
-        if (arguments.Count == 3) return null;
-        // Git retains its native distance, merge-history and annotated-tag precedence.
-        // Strict version names contain no glob metacharacters, so matches are exact.
-        return await RunGitAsync(repositoryRoot, cancellationToken, arguments.ToArray());
+        finally
+        {
+            foreach (var file in mirror.EnumerateFiles("*", SearchOption.AllDirectories))
+                file.Attributes &= ~FileAttributes.ReadOnly;
+            mirror.Delete(recursive: true);
+        }
     }
 
     private static SemanticVersion? ParseVersion(string? value)
@@ -240,9 +253,16 @@ internal sealed record GitVersionDetails(
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
     }
 
-    private static async Task<string> RunGitAsync(
+    private static Task<string> RunGitAsync(
         string repositoryRoot,
         CancellationToken cancellationToken,
+        params string[] arguments)
+        => RunGitWithInputAsync(repositoryRoot, cancellationToken, null, arguments);
+
+    private static async Task<string> RunGitWithInputAsync(
+        string repositoryRoot,
+        CancellationToken cancellationToken,
+        string? input,
         params string[] arguments)
     {
         using var process = new Process
@@ -251,9 +271,11 @@ internal sealed record GitVersionDetails(
             {
                 FileName = "git",
                 WorkingDirectory = repositoryRoot,
+                RedirectStandardInput = input is not null,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false
+                UseShellExecute = false,
+                CreateNoWindow = true,
             }
         };
 
@@ -270,7 +292,25 @@ internal sealed record GitVersionDetails(
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
-        await process.WaitForExitAsync(cancellationToken);
+        try
+        {
+            if (input is not null)
+            {
+                await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken);
+                process.StandardInput.Close();
+            }
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Join this owned process before the caller removes its temporary mirror.
+            try { process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { /* The process already exited. */ }
+            await process.WaitForExitAsync(CancellationToken.None);
+            try { await Task.WhenAll(stdoutTask, stderrTask); }
+            catch (OperationCanceledException) { }
+            throw;
+        }
 
         var stdout = (await stdoutTask).Trim();
         var stderr = (await stderrTask).Trim();

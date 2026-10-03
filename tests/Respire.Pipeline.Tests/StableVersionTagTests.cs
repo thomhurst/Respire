@@ -44,24 +44,33 @@ public class StableVersionTagTests
 
     [Test]
     [NotInParallel]
-    public async Task LargePrereleaseHistoryDoesNotGrowDescribeArguments()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LargeTagHistoriesKeepGitProcessAndArgumentCountsBounded(bool stable)
     {
         using var repository = new TestRepository();
         await repository.InitializeAsync();
         await repository.Git("tag", "v1.2.3");
-        await repository.CommitAsync("prereleases");
+        await repository.CommitAsync("tagged work");
         var head = await repository.Git("rev-parse", "HEAD");
         // Populate refs in one process; setup must not hide linear process creation
-        // in the version lookup itself. These exclusions would exceed Windows argv limits.
-        var updates = string.Join('\n', Enumerable.Range(0, 512)
-            .Select(index => $"create refs/tags/v2.0.0-preview.{index:D4}.{new string('x', 64)} {head}")) + "\n";
+        // in the version lookup itself. Listing these names in argv exceeds Windows limits.
+        var updates = string.Join('\n', Enumerable.Range(0, stable ? 1000 : 512)
+            .Select(index =>
+            {
+                var tag = stable ? $"v2147483647.2147483647.{index:D10}"
+                    : $"v2.0.0-preview.{index:D4}.{new string('x', 64)}";
+                return $"create refs/tags/{tag} {head}";
+            })) + "\n";
         await repository.GitWithInput(updates, "update-ref", "--stdin");
+        var expected = stable ? await repository.Git("describe", "--tags", "--abbrev=0") : "v1.2.3";
+        var refsBefore = await repository.Git("show-ref");
         var trace = System.IO.Path.Combine(repository.Path, "git-trace.jsonl");
         var previousTrace = Environment.GetEnvironmentVariable("GIT_TRACE2_EVENT");
         try
         {
             Environment.SetEnvironmentVariable("GIT_TRACE2_EVENT", trace);
-            await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+            await Assert.That(await repository.SelectAsync()).IsEqualTo(expected);
         }
         finally { Environment.SetEnvironmentVariable("GIT_TRACE2_EVENT", previousTrace); }
         var starts = File.ReadLines(trace).Count(line =>
@@ -69,7 +78,39 @@ public class StableVersionTagTests
             using var record = System.Text.Json.JsonDocument.Parse(line);
             return record.RootElement.GetProperty("event").GetString() == "start";
         });
-        await Assert.That(starts).IsEqualTo(2);
+        await Assert.That(starts).IsGreaterThan(0);
+        await Assert.That(starts).IsLessThanOrEqualTo(6);
+        await Assert.That(await repository.Git("show-ref")).IsEqualTo(refsBefore);
+        await Assert.That(await repository.Git("rev-parse", "HEAD")).IsEqualTo(head);
+    }
+
+    [Test]
+    public async Task LinkedWorktreeUsesItsOwnHead()
+    {
+        using var repository = new TestRepository();
+        using var linked = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v9.0.0");
+        await repository.CommitAsync("main release");
+        await repository.Git("tag", "v1.2.3");
+        await repository.Git("worktree", "add", "--detach", linked.Path, "HEAD~1");
+        await Assert.That(await linked.SelectAsync()).IsEqualTo("v9.0.0");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+    }
+
+    [Test]
+    public async Task ShallowHistoryDoesNotUseTagsBeyondItsBoundary()
+    {
+        using var repository = new TestRepository();
+        using var shallow = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("shallow head");
+        await repository.Git("tag", "v2.0.0-beta");
+        var source = new Uri(repository.Path + System.IO.Path.DirectorySeparatorChar).AbsoluteUri;
+        await repository.Git("clone", "--depth=1", source, shallow.Path);
+        await Assert.That(await shallow.Git("rev-parse", "--is-shallow-repository")).IsEqualTo("true");
+        await Assert.That(await shallow.SelectAsync()).IsNull();
     }
 
     [Test]
