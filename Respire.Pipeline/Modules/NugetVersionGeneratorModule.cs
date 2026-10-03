@@ -164,7 +164,7 @@ internal sealed record GitVersionDetails(
         return VersionIncrementResult.FromCommitMessages(commitMessages, commitHeight);
     }
 
-    private static async Task<string> GetBranchNameAsync(string repositoryRoot, CancellationToken cancellationToken)
+    internal static async Task<string> GetBranchNameAsync(string repositoryRoot, CancellationToken cancellationToken)
     {
         foreach (var value in new[]
                  {
@@ -179,24 +179,27 @@ internal sealed record GitVersionDetails(
             }
         }
 
-        var branch = await TryRunGitAsync(repositoryRoot, cancellationToken, "branch", "--show-current")
-            ?? await TryRunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "--abbrev-ref", "HEAD")
-            ?? "detached";
-
-        branch = NormalizeBranchName(branch);
-        return branch == "HEAD" ? "detached" : branch;
+        var branch = await RunGitAsync(repositoryRoot, cancellationToken, "branch", "--show-current");
+        return string.IsNullOrWhiteSpace(branch) ? "detached" : NormalizeBranchName(branch);
     }
 
     internal static async Task<string?> GetLatestStableVersionTagAsync(string repositoryRoot, CancellationToken cancellationToken)
     {
-        List<string> arguments = ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--match", "V[0-9]*", "--match", "[0-9]*"];
-        while (await TryRunGitAsync(repositoryRoot, cancellationToken, arguments.ToArray()) is { } tag)
+        // Enumerate once rather than rerunning describe for every rejected prerelease.
+        // Only stable names reach argv; invalid-tag history cannot grow the command line.
+        var reachableTags = await RunGitAsync(repositoryRoot, cancellationToken,
+            "for-each-ref", "--merged=HEAD", "--format=%(refname:strip=2)", "refs/tags");
+        List<string> arguments = ["describe", "--tags", "--abbrev=0"];
+        foreach (var tag in reachableTags.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (ParseVersion(tag) is not null) return tag;
-            arguments.Add("--exclude");
+            if (ParseVersion(tag) is null) continue;
+            arguments.Add("--match");
             arguments.Add(tag);
         }
-        return null;
+        if (arguments.Count == 3) return null;
+        // Git retains its native distance, merge-history and annotated-tag precedence.
+        // Strict version names contain no glob metacharacters, so matches are exact.
+        return await RunGitAsync(repositoryRoot, cancellationToken, arguments.ToArray());
     }
 
     private static SemanticVersion? ParseVersion(string? value)
@@ -235,21 +238,6 @@ internal sealed record GitVersionDetails(
         var sanitized = Regex.Replace(value.ToLowerInvariant(), "[^0-9a-z-]+", "-").Trim('-');
         if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit)) return $"branch-{sanitized}";
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
-    }
-
-    private static async Task<string?> TryRunGitAsync(
-        string repositoryRoot,
-        CancellationToken cancellationToken,
-        params string[] arguments)
-    {
-        try
-        {
-            return await RunGitAsync(repositoryRoot, cancellationToken, arguments);
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
     }
 
     private static async Task<string> RunGitAsync(
