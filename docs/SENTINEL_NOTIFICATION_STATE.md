@@ -25,10 +25,12 @@ The monitor and reducer extraction in #727 separates the first two runtime bound
 Fixtures and documentation accompany the behavior they verify and describe, so intermediate
 changes retain executable coverage and an accurate public contract.
 
-Logger callbacks are isolated from monitoring and discovery. Non-fatal callback failures
-increment the process-wide `respire.sentinel.logging.failures` counter instead of logging
-through the same failing sink. Non-fatal metric-listener exceptions are also isolated;
-fatal exceptions still propagate.
+The notification router's `SafeLog` and `LogSentinelEvent` wrappers isolate non-fatal
+logger callback failures and increment the process-wide `respire.sentinel.logging.failures`
+counter instead of logging through the same failing sink. These wrappers also isolate
+non-fatal counter-listener exceptions; fatal exceptions still propagate. The counter covers
+these two wrappers only. Resolver and other Sentinel logging paths are outside its coverage,
+and this is not a general guarantee that throwing loggers cannot interrupt discovery.
 
 ## State transitions
 

@@ -28,7 +28,7 @@ internal static class RespireTelemetry
         "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
 
     private static readonly Counter<long> SentinelLoggingFailures = Meter.CreateCounter<long>(
-        "respire.sentinel.logging.failures", unit: "{failure}", description: "Non-fatal logger failures isolated from Sentinel recovery.");
+        "respire.sentinel.logging.failures", unit: "{failure}", description: "Non-fatal logger failures caught by Sentinel notification logging wrappers.");
 
     internal static void RecordSentinelLoggingFailure()
     {
