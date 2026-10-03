@@ -118,6 +118,9 @@ public class ExceptionAwareFlowTests
 
     [Test]
     [Arguments("object boxed = value;", "OutOfMemoryException", true)]
+    [Arguments("_ = $\"value: {value}\";", "InvalidOperationException", false)]
+    [Arguments("_ = $\"value: {value}\";", "OutOfMemoryException", true)]
+    [Arguments("_ = $\"value: {value:Q}\";", "FormatException", true)]
     [Arguments("object boxed = value;", "InvalidOperationException", false)]
     [Arguments("object boxed = 1;", "OutOfMemoryException", true)]
     [Arguments("object boxed = (int?)null;", "OutOfMemoryException", false)]
@@ -1531,12 +1534,32 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments("bool condition = choice;", "condition", "condition", "", false)]
     [Arguments("", "choice", "choice", "Change(ref choice);", true)]
+    [Arguments("", "choice", "choice", "Reset(out choice);", true)]
+    [Arguments("", "choice", "choice", "Action mutate = () => choice = !choice; mutate();", true)]
+    [Arguments("", "choice", "choice", "choice ^= true;", true)]
     [Arguments("", "choice", "choice", "void ChangeChoice() { choice = !choice; } ChangeChoice();", true)]
     [Arguments("", "(byte)number == 0", "number == 0", "", true)]
-    [Arguments("", "choice ? other : false", "other", "", true)]
+    [Arguments("", "choice ? other : false", "other", "", true, false)]
     public async Task CorrelationRequiresStableEquivalentValues(
-        string declaration, string select, string flush, string mutation, bool warning)
+        string declaration, string select, string flush, string mutation, bool warning, bool? disposalWarning = null)
     {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Change(ref bool value) { value = !value; }
+                static void Reset(out bool value) { value = false; }
+                async Task Run(RespireClient client, RespireResult existing, bool choice, bool other, int number)
+                {
+                    {{declaration}}
+                    var {{((disposalWarning ?? warning) ? "{|RESP001:result|}" : "result")}} = ({{select}}) ? await client.ExecuteAsync("PING") : existing;
+                    {{mutation}}
+                    if ({{flush}}) result.Dispose();
+                }
+            }
+            """);
         var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
         await Pending.VerifyAsync($$"""
             using System;
@@ -1545,6 +1568,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static void Change(ref bool value) { value = !value; }
+                static void Reset(out bool value) { value = false; }
                 async Task Run(RespireClient client, bool choice, bool other, int number)
                 {
                     {{declaration}}

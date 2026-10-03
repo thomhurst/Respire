@@ -333,6 +333,7 @@ internal static partial class ScopeWalker
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
+                            || IsAllocationOnlyInterpolation(exceptionSource)
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
                 }
@@ -612,6 +613,18 @@ internal static partial class ScopeWalker
                 || kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply
                     && (decimalType || isChecked && integral);
         }
+
+        private static bool IsAllocationOnlyInterpolation(IOperation operation)
+            => operation is IInterpolatedStringOperation interpolated
+                && interpolated.Parts.All(static part => part is IInterpolatedStringTextOperation
+                    || part is IInterpolationOperation { FormatString: null } interpolation
+                        && interpolation.Expression.Type?.SpecialType is SpecialType.System_String
+                            or SpecialType.System_Char or SpecialType.System_Boolean
+                            or SpecialType.System_SByte or SpecialType.System_Byte
+                            or SpecialType.System_Int16 or SpecialType.System_UInt16
+                            or SpecialType.System_Int32 or SpecialType.System_UInt32
+                            or SpecialType.System_Int64 or SpecialType.System_UInt64
+                            or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal);
 
         private static bool IsStringOnlyConcatenation(IOperation operation)
             => operation switch
