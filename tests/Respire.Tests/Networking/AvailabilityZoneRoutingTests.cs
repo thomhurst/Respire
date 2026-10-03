@@ -799,52 +799,105 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task NearestDedicatedPrimaryFailureReselectsByLatencyAndRecovers(bool useSentinel)
+    // Failures: remote close, independent connect deadline, and caller cancellation.
+    [Arguments(false, true, 0)]
+    [Arguments(true, true, 0)]
+    [Arguments(false, true, 1)]
+    [Arguments(true, true, 1)]
+    [Arguments(false, true, 2)]
+    [Arguments(true, true, 2)]
+    [Arguments(false, false, 0)]
+    [Arguments(true, false, 0)]
+    [Arguments(false, false, 1)]
+    [Arguments(true, false, 1)]
+    [Arguments(false, false, 2)]
+    [Arguments(true, false, 2)]
+    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(bool useSentinel, bool failPrimary, int failure)
     {
         await using var primary = Node("primary", "local", false);
-        await using var slow = Node("slow", "local", true);
+        await using var replica = Node("replica", "local", true);
         await using var fast = Node("fast", "remote", true);
-        await using var sentinel = Sentinel(primary, () => [slow, fast]);
+        await using var sentinel = Sentinel(primary, () => [replica, fast]);
+        var failedNode = failPrimary ? primary : replica;
         var failDedicated = true;
-        var previous = primary.ReplyOverride!;
-        primary.ReplyOverride = (id, command) =>
+        var failedNodeConnections = 0;
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previous = failedNode.ReplyOverride!;
+        failedNode.ReplyOverride = (id, command) =>
         {
-            if (id > 0 && command == "HELLO 3" && Volatile.Read(ref failDedicated)) primary.CloseConnection(id);
+            if (failure == 0 && id > 0 && command == "HELLO 3" && Volatile.Read(ref failDedicated)) failedNode.CloseConnection(id);
             return previous(id, command);
         };
         await using var client = await RespireClient.ConnectAsync(
-            Options(useSentinel ? sentinel : primary, useSentinel ? [] : [slow, fast], false, RespireReadFrom.Nearest)
-            with { Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null });
+            Options(useSentinel ? sentinel : primary, useSentinel ? [] : [replica, fast], false, RespireReadFrom.Nearest)
+            with
+            {
+                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                TestingStreamFactory = failure == 0 ? null : OpenStreamAsync,
+            });
         long now = 0;
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
-            ValueTask.FromResult(connection.Port == primary.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
+            ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
             () => Volatile.Read(ref now));
         if (useSentinel) await router.RefreshNowAsync(default);
         var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
-        await Assert.That(selected.Connection.Port).IsEqualTo(primary.Port);
-
-        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo("fast");
+        await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
+        using var caller = new CancellationTokenSource();
+        var read = ReadAsync(caller.Token);
+        if (failure == 2)
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+            var error = await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            using var reply = await read;
+            await Assert.That(reply.AsString()).IsEqualTo("fast");
+            await Assert.That(caller.IsCancellationRequested).IsFalse();
+        }
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-        await Assert.That(primary.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
-        await Assert.That(slow.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
-        // Sentinel invalidates the whole generation when any of its sockets fails. The
-        // configured deployment retains its healthy shared socket despite this lease failure.
-        if (useSentinel) await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsTrue();
+        await Assert.That(failedNode.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(failure == 0 ? 2 : 1);
+        if (failure != 0) await Assert.That(failedNodeConnections).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
+        // A failed Sentinel socket invalidates its generation. A connection attempt canceled
+        // before transport creation leaves the existing shared connection healthy.
+        if (useSentinel && failPrimary && failure == 0) await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsTrue();
         else await Assert.That(selected.Connection.IsConnected).IsTrue();
-        await Assert.That(router.NearestLatency.CanConnect(selected.Primary!)).IsFalse();
+        if (selected.Primary is { } primaryOwner)
+            await Assert.That(router.NearestLatency.CanConnect(primaryOwner)).IsEqualTo(failure == 2);
+        else await Assert.That(selected.Replica!.IsCoolingDown).IsEqualTo(failure != 2);
 
         Volatile.Write(ref failDedicated, false);
         Volatile.Write(ref now, ReadLatencySampler<RespireConnection>.IntervalMilliseconds);
-        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo("primary");
-        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
-        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        router.FailedReplicaCooldown = TimeSpan.Zero;
+        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo(failPrimary ? "primary" : "replica");
+        await Assert.That(failedNode.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
 
-        Task<RespireResult> ReadAsync() => client.ExecuteAsync(RespireCommands.Stream.XREAD,
-            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Task<RespireResult> ReadAsync(CancellationToken token = default) => client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == failedNode.Port && Interlocked.Increment(ref failedNodeConnections) > 1 && Volatile.Read(ref failDedicated))
+            {
+                connecting.TrySetResult();
+                // This token includes the transport's independent ConnectTimeout. The caller
+                // control cancels only after acquisition is blocked at the same boundary.
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
     }
 
     [Test]

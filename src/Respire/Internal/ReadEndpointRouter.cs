@@ -179,7 +179,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     var lease = await core.RentDedicatedConnectionAsync(pool, cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
                     return (lease.Pool, lease.Connection, false);
                 }
-                catch (Exception error) when (replicaOnly is null && IsUnavailable(error, cancellationToken)
+                catch (Exception error) when (replicaOnly is null && IsDedicatedCandidateFailure(error, readFrom, cancellationToken)
                     && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
                         || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)))
                 {
@@ -210,7 +210,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 var lease = await replica.RentDedicatedConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
                 return (lease.Pool, lease.Connection, true);
             }
-            catch (Exception error) when (IsUnavailable(error, cancellationToken))
+            catch (Exception error) when (IsDedicatedCandidateFailure(error, readFrom, cancellationToken))
             {
                 replica.MarkFailed();
                 if (attempt >= ClusterRouter.RedirectLimit) throw;
@@ -219,6 +219,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
         }
     }
+
+    private static bool IsDedicatedCandidateFailure(Exception error, RespireReadFrom readFrom, CancellationToken cancellationToken)
+        => readFrom == RespireReadFrom.Nearest
+            ? IsNearestCandidateFailure(error, cancellationToken)
+            : IsUnavailable(error, cancellationToken);
 
     /// <summary>
     /// Selects a connection for one page of a cursor read. With an <paramref name="affinity"/>, the
