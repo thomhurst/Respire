@@ -8,7 +8,10 @@ namespace Respire;
 /// Distributed lock commands. Prefer <see cref="AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/>
 /// for managed locks. Use the token-based methods only when ownership must cross process boundaries.
 /// </summary>
-/// <remarks>Positive fractional milliseconds are rounded up to Redis millisecond precision.</remarks>
+/// <remarks>
+/// Positive fractional milliseconds are rounded up to Redis millisecond precision, capped at the largest
+/// whole millisecond representable by <see cref="TimeSpan"/>. Values above that cap are rounded down to it.
+/// </remarks>
 public interface ILockCommands
 {
     /// <summary>
