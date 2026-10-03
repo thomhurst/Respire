@@ -21,7 +21,7 @@ public class ReadAttemptTests
         var repeated = await Assert.That(() => attempt.ThrowFirstFailure())
             .ThrowsExactly<IOException>();
         await Assert.That(repeated).IsSameReferenceAs(original);
-        await Assert.That(attempt.IsFailed(new("replica", 6380))).IsFalse();
+        await Assert.That(attempt.ContainsFailure(new("replica", 6380))).IsFalse();
     }
 
     [Test]
@@ -37,7 +37,7 @@ public class ReadAttemptTests
         await Assert.That(fallback.TryRetryRetirement()).IsFalse();
         var endpoint = new RespireEndpoint("replica", 6379);
         await Assert.That(fallback.TryAdd(endpoint, new IOException("failure"))).IsTrue();
-        await Assert.That(attempt.IsFailed(endpoint)).IsTrue();
+        await Assert.That(attempt.ContainsFailure(endpoint)).IsTrue();
         await Assert.That(attempt.TryRetryRetirement()).IsFalse();
     }
 }

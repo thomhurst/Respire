@@ -406,7 +406,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
-                if (attempt.IsFailed(endpoint)) continue;
+                if (attempt?.ContainsFailure(endpoint) == true) continue;
                 if (excluded is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoint, excluded)) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
                 if (entry is null) continue;
