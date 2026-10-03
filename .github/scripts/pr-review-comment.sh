@@ -32,6 +32,9 @@ if [[ ${body^^} =~ $head_marker_pattern ]]; then
   echo "the helper owns the reviewed commit marker" >&2
   exit 2
 fi
+# This check and the later comment POST are not atomic. A head change after the
+# check can still produce a stale-stamped comment; the merge gate rejects that
+# stamp for the newer head. This check only avoids posting already stale work.
 current_head=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json headRefOid --jq .headRefOid)
 if [[ $current_head != "$REVIEW_HEAD_SHA" ]]; then
   echo "pull request changed during review; refusing to post stale clearance" >&2

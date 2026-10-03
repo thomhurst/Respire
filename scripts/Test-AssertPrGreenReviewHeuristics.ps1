@@ -1355,6 +1355,12 @@ foreach ($case in $headCases) {
     if ([bool]$reason -ne $case.Blocks) { throw "Head case '$($case.Name)' failed: $reason" }
 }
 
+$unstamped = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview ''
+$recoveryReason = Get-UnansweredClaudeReviewReason -Comments @($unstamped) -AuthorizedLogins @() -HeadSha $reviewHead
+if ($recoveryReason -notlike '*workflow_dispatch with pr_number*') {
+    throw "An unstamped review without a required job must explain how to request a fresh review: $recoveryReason"
+}
+
 $reviewRequirementCases = @(
     @{ Name = 'no Claude job'; Checks = @(@{ name = 'build'; conclusion = 'SUCCESS' }); Required = $false },
     @{ Name = 'skipped dependency review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Required = $false },
@@ -1373,4 +1379,4 @@ foreach ($case in $reviewRequirementCases) {
     if ([bool]$reason -ne $case.Required) { throw "Missing comment case '$($case.Name)' failed: $reason" }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases)."
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, 1 manual review recovery case)."

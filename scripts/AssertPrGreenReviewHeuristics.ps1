@@ -418,7 +418,9 @@ function Get-UnansweredClaudeReviewReason {
     }
     $latestReview = $reviews | Where-Object { & $matchesHead $_ } | Select-Object -Last 1
     if ($null -eq $latestReview) {
-        if ($RequireReview -or $reviews.Count -gt 0) { return "no Claude review matches current head $HeadSha" }
+        if ($RequireReview -or $reviews.Count -gt 0) {
+            return "no Claude review matches current head $HeadSha; run the Claude Code Review workflow manually (workflow_dispatch with pr_number) to request a current-head review"
+        }
         return $null
     }
 

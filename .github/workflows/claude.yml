@@ -28,21 +28,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Authorization code must come from the trusted default branch even
+          # when a review-comment event refers to an untrusted pull request.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check requesting actor permission
+      - name: Check requesting actor and content author permissions
         id: permission
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           REQUEST_ACTOR: ${{ github.actor }}
-        run: |
-          permission=$(gh api "repos/$GH_REPO/collaborators/$REQUEST_ACTOR/permission" --jq .permission)
-          case "$permission" in
-            admin|maintain|write) echo 'authorized=true' >> "$GITHUB_OUTPUT" ;;
-            *) echo 'authorized=false' >> "$GITHUB_OUTPUT" ;;
-          esac
+          REQUEST_AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.event.issue.user.login }}
+        run: bash .github/scripts/claude-request-permission.sh
 
       - name: Run Claude Code
         id: claude

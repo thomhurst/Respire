@@ -11,6 +11,9 @@ on:
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/scripts/pr-review-comment.sh
       - .github/scripts/test-pr-review-comment.sh
+      - .github/scripts/claude-request-permission.sh
+      - .github/scripts/test-claude-request-permission.sh
+      - .github/workflows/claude.yml
       - .github/workflows/agent-guard.yml
   push:
     branches: [main]
@@ -22,6 +25,9 @@ on:
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/scripts/pr-review-comment.sh
       - .github/scripts/test-pr-review-comment.sh
+      - .github/scripts/claude-request-permission.sh
+      - .github/scripts/test-claude-request-permission.sh
+      - .github/workflows/claude.yml
       - .github/workflows/agent-guard.yml
 
 permissions:
@@ -59,3 +65,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: bash .github/scripts/test-pr-review-comment.sh
+      - name: Verify Claude request authorization
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-claude-request-permission.sh
