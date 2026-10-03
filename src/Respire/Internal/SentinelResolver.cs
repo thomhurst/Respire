@@ -527,7 +527,17 @@ internal static class SentinelResolver
             {
                 if (current.Matches(primary, null)) return null;
             }
-            else (aliases ??= []).Add(primary);
+            else
+            {
+                if (report.OwnerAtObservation is { } observed)
+                {
+                    // Fresh DNS cannot turn an old owner's event into proof of a later
+                    // owner's outage. A known hostname keeps the peer validated at receipt.
+                    if (!current.Matches(observed.Peer ?? observed.Endpoint, null)) continue;
+                    if (comparer.Equals(primary, observed.Endpoint)) return null;
+                }
+                (aliases ??= []).Add(primary);
+            }
         }
         if (aliases is null) return current;
         using var aliasTimeout = CommandTimeoutCancellation.Create(cancellationToken, timeout);

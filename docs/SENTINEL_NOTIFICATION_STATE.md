@@ -44,6 +44,7 @@ and this is not a general guarantee that throwing loggers cannot interrupt disco
 | Discovery succeeds without remaining source evidence | Bind reporter-only reconciliation to the validated owner and socket peer. A different owner requires a strictly newer configuration epoch. |
 | Discovery succeeds with another report of the same master-down outage pending | Bind reconciliation to the validated owner; the affected endpoint identifies the outage independently of reporter, channel and quorum count. Normalize numeric addresses and fold hostname case while retaining the port. |
 | A parsed down report arrives after its outage worker completed | Retain each affected endpoint together with its reporter through coalescing. Capture the current validated owner after acquiring discovery ownership. Each reporting Sentinel uses only its own down evidence: reports about superseded owners and unreported fallback Sentinels reconcile the current owner unless a newer epoch authorizes movement. Current-owner reports remain independent, including after failback. Check numeric evidence first, then resolve hostname reports concurrently within one separate alias deadline and require unambiguous validated-peer identity. Cancel and join losing lookups. Unknown aliases retain the fence without consuming the candidate's DNS/connection/ROLE deadline; caller cancellation still wins. |
+| DNS moves after a hostname down report is received | Retain the validated endpoint and peer from notification receipt in that reporter's evidence. A known hostname keeps that peer; a previously unknown alias can authorize recovery only while the observed owner is still current and fresh DNS unambiguously matches it. Never rebind old evidence to a later owner through fresh DNS. Include the observed peer in hostname outage identity so the next owner's outage is not mistaken for the completed one. Numeric reports continue to identify their endpoint directly, including a next outage queued during publication. |
 | Discovery succeeds with an independent down/gap hint pending | Discover again without binding that hint to the completed primary. A down report for a different endpoint or a delivery gap may describe a subsequent promotion, including on deployments without epoch metadata. |
 | Discovery fails | Retain source evidence and prioritize unqueried reporters before retrying with bounded backoff. |
 | Another discovery publishes a different generation | Discard superseded active evidence, preserve pending notifications, and continue from the published generation. |
@@ -139,6 +140,12 @@ replies, and replica ROLE replies. Every successful selection requires a fresh s
 ROLE response and a nondecreasing epoch. Failed attempts preserve the published generation.
 Positive coverage checks require successful selections, stale-report rejection, and actual
 replica ROLE replies, so an implementation that rejects everything cannot pass.
+
+`RandomInterleavingsNeverLetAStaleReporterReleaseValidatedOwnership` checks the ownership
+fence across three seeded sequences of 64 offer, success/failure, and supersession steps.
+It mixes duplicate switches, stale down reports, and another Sentinel's current-owner
+outage reports. Every active state rejects the stale reporter's old owner without epoch
+metadata and accepts the validated owner as a positive control.
 
 The monitor/coalescer extraction remains tracked by [#727](https://github.com/thomhurst/Respire/issues/727).
 That refactor must preserve these contracts and the deterministic tests while reducing

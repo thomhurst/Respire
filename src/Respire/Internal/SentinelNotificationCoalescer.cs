@@ -3,7 +3,8 @@ namespace Respire.Internal;
 // Endpoint identity uses EndpointComparer; Addresses are normalized DNS evidence for this
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
 internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
-internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter);
+internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
+    SentinelValidatedPrimary? OwnerAtObservation = null);
 
 internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
 {
@@ -44,11 +45,16 @@ internal readonly record struct SentinelHint(
         => new(key, target is { } to ? [to] : [],
             source is { } from ? [new(from, null)] : [], [reporter], target is null);
 
-    internal static SentinelHint FromDown(string key, RespireEndpoint reporter, RespireEndpoint? primary = null)
+    internal static SentinelHint FromDown(string key, RespireEndpoint reporter, RespireEndpoint? primary = null,
+        SentinelValidatedPrimary? ownerAtObservation = null)
         => new(key, [], [], [reporter], true)
         {
-            DownKey = key,
-            DownReports = primary is { } affected ? [new(affected, reporter)] : [],
+            // A hostname can denote a different physical owner after publication. Do not
+            // treat its next outage as a duplicate of the previous owner's completed outage.
+            DownKey = primary is { } named && !System.Net.IPAddress.TryParse(named.Host, out _)
+                && ownerAtObservation?.Peer is { } peer
+                    ? $"{key}:{SentinelResolver.NormalizeHost(peer.Host)}:{peer.Port}" : key,
+            DownReports = primary is { } affected ? [new(affected, reporter, ownerAtObservation)] : [],
         };
 
     internal static SentinelHint FromGap(RespireEndpoint reporter)
@@ -227,7 +233,8 @@ internal sealed class SentinelNotificationCoalescer
             for (var index = 0; index < reports.Count; index++)
             {
                 var known = reports[index];
-                if (comparer.Equals(known.Primary, report.Primary) && comparer.Equals(known.Reporter, report.Reporter))
+                if (comparer.Equals(known.Primary, report.Primary) && comparer.Equals(known.Reporter, report.Reporter)
+                    && known.OwnerAtObservation == report.OwnerAtObservation)
                 {
                     found = true;
                     break;

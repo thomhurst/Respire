@@ -199,6 +199,25 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task HostnameDownReportsRetainDistinctObservedOwnersAcrossPublication()
+    {
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        var firstOwner = new SentinelValidatedPrimary(hostname, new("10.0.0.1", 6379));
+        var nextOwner = new SentinelValidatedPrimary(hostname, new("10.0.0.2", 6379));
+        var before = SentinelHint.FromDown("down", OldPrimary, hostname, firstOwner);
+        var after = SentinelHint.FromDown("down", OldPrimary, hostname, nextOwner);
+        await Assert.That(before.DownKey).IsNotEqualTo(after.DownKey);
+        var merged = SentinelNotificationCoalescer.Merge(before, in after);
+        await Assert.That(merged.DownReports.Select(report => report.OwnerAtObservation))
+            .IsEquivalentTo(new SentinelValidatedPrimary?[] { firstOwner, nextOwner });
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(before, false);
+        coalescer.Offer(after, false);
+        var pending = coalescer.TakePending(validatedPrimary: nextOwner.Endpoint, validatedPeer: nextOwner.Peer);
+        await Assert.That(pending!.Value.ReconciliationPrimary).IsNull();
+    }
+
+    [Test]
     public async Task DownReportBindingRetainsReporterAssociationsAndLeavesGapsIndependent()
     {
         var current = new SentinelValidatedPrimary(NewPrimary, NewPrimary);

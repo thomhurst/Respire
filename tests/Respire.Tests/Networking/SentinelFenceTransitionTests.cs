@@ -36,6 +36,114 @@ public class SentinelFenceTransitionTests
     ];
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DownReportDnsCannotRebindItsObservedOwner(bool knownHostname, bool observedCurrent)
+    {
+        var oldPeer = new RespireEndpoint("127.0.0.1", 6379);
+        var currentPeer = new RespireEndpoint("127.0.0.2", 6379);
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        var observedPeer = observedCurrent ? currentPeer : oldPeer;
+        var observed = new SentinelValidatedPrimary(knownHostname ? hostname : observedPeer, observedPeer);
+        await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? "*2\r\n+127.0.0.1\r\n+6379\r\n"u8.ToArray() : "*0\r\n"u8.ToArray(),
+        };
+        var endpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
+        var hint = SentinelHint.FromDown("down", endpoint, hostname, observed)
+            .BindDownReportsToCurrentPrimary(new(currentPeer, currentPeer));
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+        };
+        var validations = 0;
+        var accepted = false;
+        try
+        {
+            await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
+            {
+                validations++;
+                return ValueTask.FromResult(primary.PrimaryEndpoint);
+            }, CancellationToken.None, notificationHint: hint,
+                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>([System.Net.IPAddress.Parse(currentPeer.Host)]));
+            accepted = true;
+        }
+        catch (RespireConnectionException) { }
+        await Assert.That(accepted).IsEqualTo(observedCurrent);
+        await Assert.That(validations).IsEqualTo(observedCurrent ? 1 : 0);
+    }
+
+    [Test]
+    [Arguments(549)]
+    [Arguments(678)]
+    [Arguments(727)]
+    public async Task RandomInterleavingsNeverLetAStaleReporterReleaseValidatedOwnership(int seed)
+    {
+        var candidate = A;
+        await using var reporter = new FakeRespServer(512, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? Encoding.ASCII.GetBytes($"*2\r\n+{candidate.Host}\r\n+{candidate.Port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        var endpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+        };
+        // This Sentinel has only observed A's outage. Another Sentinel may report B down,
+        // but cannot authorize this stale reporter to replace B with its old ROLE-master A.
+        SentinelHint[] evidence =
+        [
+            SentinelHint.FromSwitchMaster("a-to-b", A, B, endpoint),
+            SentinelHint.FromDown("a-down", endpoint, A),
+            SentinelHint.FromDown("a-down", Second, A),
+            SentinelHint.FromDown("b-down", Second, B),
+        ];
+        var random = new Random(seed);
+        var coalescer = new SentinelNotificationCoalescer();
+        var attempts = 0;
+        for (var step = 0; step < 64; step++)
+        {
+            for (var offer = random.Next(1, 5); offer > 0; offer--)
+                coalescer.Offer(evidence[random.Next(evidence.Length)], targetIsCurrent: false);
+            if (random.Next(3) == 0)
+            {
+                var next = random.Next(3) == 0 ? coalescer.SupersedeActive()
+                    : coalescer.TakePending(activeFailed: random.Next(2) == 0, validatedPrimary: B, validatedPeer: B);
+                if (next is null) coalescer.Complete();
+            }
+            if (coalescer.Active is not { } active) continue;
+            var hint = active.BindDownReportsToCurrentPrimary(new(B, B));
+            // Probe both outcomes through the resolver, without epoch metadata. Acceptance
+            // of B is a positive control: rejecting every candidate does not satisfy this test.
+            foreach (var probe in new[] { A, B })
+            {
+                candidate = probe;
+                var validations = 0;
+                var accepted = false;
+                try
+                {
+                    await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
+                    {
+                        validations++;
+                        return ValueTask.FromResult(primary.PrimaryEndpoint);
+                    }, CancellationToken.None, preferredTarget: hint.Target, notificationHint: hint);
+                    accepted = true;
+                }
+                catch (RespireConnectionException) { }
+                await Assert.That((seed, step, probe, accepted)).IsEqualTo((seed, step, probe, probe == B));
+                await Assert.That(validations).IsEqualTo(probe == B ? 1 : 0);
+            }
+            attempts++;
+        }
+        await Assert.That(attempts).IsGreaterThan(32);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EveryFenceTransitionRequiresConsistentDiscoveryEvidence(bool metadataAvailable)
