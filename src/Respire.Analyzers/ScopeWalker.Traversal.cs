@@ -491,6 +491,7 @@ internal static partial class ScopeWalker
                 or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                 or IDynamicObjectCreationOperation
                 or IWithOperation { CloneMethod: not null }
+                or IRecursivePatternOperation { DeconstructSymbol: not null }
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
@@ -506,6 +507,13 @@ internal static partial class ScopeWalker
                 or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
                 or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
                 or IIncrementOrDecrementOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
+                || operation is IListPatternOperation listPattern
+                    && (listPattern.LengthSymbol is not null || listPattern.IndexerSymbol is not null)
+                    && listPattern.InputType.TypeKind != TypeKind.Array
+                    && listPattern.InputType.SpecialType != SpecialType.System_String
+                || operation is ISlicePatternOperation { SliceSymbol: not null } slicePattern
+                    && slicePattern.InputType.TypeKind != TypeKind.Array
+                    && slicePattern.InputType.SpecialType != SpecialType.System_String
                 || operation is IDelegateCreationOperation
                     { Target: IMethodReferenceOperation { Method.IsStatic: false, Instance: { } methodReceiver } }
                     && methodReceiver.Type?.IsReferenceType == true

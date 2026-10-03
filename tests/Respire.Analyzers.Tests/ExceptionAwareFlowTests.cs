@@ -7,6 +7,56 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("holder is (0, 0)", false, true)]
+    [Arguments("holder is [0]", false, true)]
+    [Arguments("holder is [.. var rest]", false, true)]
+    [Arguments("holder is [0]", true, false)]
+    [Arguments("array is [0]", false, false)]
+    [Arguments("text is ['a']", false, false)]
+    public async Task PatternCallsCanBypassCleanup(string pattern, bool cleanupInCatch, bool warning)
+    {
+        const string holder = """
+            class Holder
+            {
+                public int Length => throw new System.Exception();
+                public int this[int index] => throw new System.Exception();
+                public Holder Slice(int start, int length) => throw new System.Exception();
+                public void Deconstruct(out int first, out int second) => throw new System.Exception();
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int[] array, string text)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{pattern}}; result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int[] array, string text)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{pattern}}; await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task LoopCarriedPendingRetainsStableSelection(bool wrongBatch)
