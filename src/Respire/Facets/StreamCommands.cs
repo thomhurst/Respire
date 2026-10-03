@@ -977,7 +977,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         {
             var reply = await client.SendAsync(
                 "XREADGROUP",
-                new CmdN(Verbs.XReadGroup,
+                new CmdN(Verbs.XReadGroupReplay,
                 [
                     "GROUP", group, consumer,
                     "COUNT", batchSize,

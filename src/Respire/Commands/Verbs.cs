@@ -231,6 +231,7 @@ internal static class Verbs
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP CREATE");
     public static readonly Verb XReadGroup = new(8, "XREADGROUP");
+    public static readonly Verb XReadGroupReplay = new(6, "XREADGROUP");
 
     // Scripts
     public static readonly Verb Eval = new(2, "EVAL");
