@@ -6,13 +6,15 @@ namespace Respire.Internal;
 
 // Owns Sentinel subscriptions and their transport lifecycle. Generation publication,
 // retirement, and evidence reconciliation remain callbacks guarded by the router.
-// Callbacks run synchronously under gate and must not block or perform network I/O.
-// Any asynchronous continuation returned by received is awaited after releasing gate.
+// received runs synchronously under gate and must not block or perform network I/O;
+// its asynchronous continuation is awaited after releasing gate. deliveryGap runs
+// outside gate with a captured startup version (zero means an independent gap).
+// The router rechecks disposal when consuming either callback.
 internal sealed class SentinelMonitoring(
     RespireOptions options, ILogger? logger, object gate, SentinelDiscoveryState discovery,
     CancellationTokenSource lifetime,
     Func<RespireEndpoint, SentinelEvent, string?, CancellationToken, ValueTask> received,
-    Action<RespireEndpoint, bool> deliveryGap)
+    Action<RespireEndpoint, long> deliveryGap)
 {
     private readonly object _gate = gate;
     private readonly SentinelDiscoveryState _discovery = discovery;
@@ -21,6 +23,7 @@ internal sealed class SentinelMonitoring(
     private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance);
+    private readonly HashSet<RespireEndpoint> _readySentinels = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _subscriptionVersion;
     private readonly Dictionary<RespireEndpoint, long> _validatedSubscriptions = new(SentinelDiscoveryState.EndpointComparer.Instance);
@@ -28,7 +31,7 @@ internal sealed class SentinelMonitoring(
 
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
-    internal int SubscribedCount { get { lock (_gate) return _subscribedSentinels.Count; } }
+    internal int SubscribedCount { get { lock (_gate) return _readySentinels.Count; } }
     internal long SubscriptionVersion { get { lock (_gate) return _subscriptionVersion; } }
     internal bool NeedsStartupValidation(RespireEndpoint reporter, long version)
     {
@@ -48,12 +51,18 @@ internal sealed class SentinelMonitoring(
 
     internal void SubscriptionEstablished(RespireEndpoint endpoint, bool first)
     {
+        long startupVersion = 0;
         lock (_gate)
         {
             if (_disposed) return;
-            if (first && _subscribedSentinels.Add(endpoint)) _subscriptionVersion++;
-            deliveryGap(endpoint, first);
+            // A replacement monitor task has fresh local state, but this endpoint's
+            // earlier subscription means the restart is a real delivery gap.
+            if (first && _subscribedSentinels.Add(endpoint)) startupVersion = ++_subscriptionVersion;
         }
+        deliveryGap(endpoint, startupVersion);
+        // Readiness must not become visible before the router queues this subscription's
+        // validation. Moving the callback outside gate must preserve that startup fence.
+        lock (_gate) if (!_disposed) _readySentinels.Add(endpoint);
     }
 
     // The same gate serializes router disposal, publication, and monitor registration.
@@ -82,8 +91,8 @@ internal sealed class SentinelMonitoring(
     {
         if (message.Kind == RespireMessageKind.Gap)
         {
-            lock (_gate)
-                if (!_disposed) deliveryGap(sentinel, false);
+            lock (_gate) if (_disposed) return ValueTask.CompletedTask;
+            deliveryGap(sentinel, 0);
             return ValueTask.CompletedTask;
         }
         if (message.Kind != RespireMessageKind.Message || _serviceNameUtf8.Length == 0)

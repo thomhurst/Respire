@@ -54,6 +54,12 @@ their views may disagree. A subscription that attaches during the lookup still r
 initial gap with any real switch, down event, reconnect, or overflow gap clears this shortcut;
 those events keep their independent rediscovery requirements.
 
+A restarted monitor task does not turn its endpoint's next subscription into a first
+subscription: that endpoint has already been observed, so the restart reports an independent
+delivery gap. Gap callbacks run outside the shared gate with the startup version captured
+under it; user logging cannot hold the publication/disposal gate. The router rechecks disposal
+when consuming a late callback before queuing discovery or changing a generation.
+
 The dedicated background-work owner and pure reducer are the next architectural change in
 #727. That extraction must preserve these different joining and reentrancy contracts.
 

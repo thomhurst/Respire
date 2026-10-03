@@ -54,6 +54,50 @@ public class SentinelMonitoringTests
     }
 
     [Test]
+    public async Task RestartedMonitorSubscriptionIsAnIndependentGap()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var gaps = new List<bool>();
+        var monitor = Create(lifetime, (_, initial) => gaps.Add(initial));
+        var endpoint = new RespireEndpoint("sentinel", 26379);
+        monitor.SubscriptionEstablished(endpoint, true);
+        monitor.Validated(endpoint, monitor.SubscriptionVersion);
+        // A replacement monitor task starts with its local subscribedBefore=false.
+        monitor.SubscriptionEstablished(endpoint, true);
+        await Assert.That(gaps).IsEquivalentTo(new[] { true, false });
+        await Assert.That(monitor.SubscribedCount).IsEqualTo(1);
+        monitor.Stop();
+    }
+
+    [Test]
+    public async Task BlockingGapCallbackDoesNotHoldDisposalGate()
+    {
+        using var lifetime = new CancellationTokenSource();
+        using var release = new ManualResetEventSlim();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var monitor = Create(lifetime, (_, _) =>
+        {
+            started.TrySetResult();
+            if (!release.Wait(Limit)) throw new TimeoutException("Gap callback was not released.");
+        });
+        var subscription = Task.Run(() => monitor.SubscriptionEstablished(new("sentinel", 26379), true));
+        Task? stopped = null;
+        try
+        {
+            await started.Task.WaitAsync(Limit);
+            await Assert.That(monitor.SubscribedCount).IsEqualTo(0);
+            stopped = Task.Run(monitor.Stop);
+            await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.Set();
+            await subscription.WaitAsync(Limit);
+            if (stopped is not null) await stopped.WaitAsync(Limit);
+        }
+    }
+
+    [Test]
     public async Task StoppedMonitorRejectsLateSubscriptionAndPublication()
     {
         using var lifetime = new CancellationTokenSource();
@@ -92,7 +136,7 @@ public class SentinelMonitoringTests
         };
         var monitor = new SentinelMonitoring(options, null, new object(), new([endpoint]), lifetime,
             (_, parsed, _, _) => { Interlocked.Increment(ref count); received.TrySetResult(parsed); return ValueTask.CompletedTask; },
-            (_, initial) => { if (initial) startup.TrySetResult(); else gap.TrySetResult(); });
+            (_, version) => { if (version > 0) startup.TrySetResult(); else gap.TrySetResult(); });
         try
         {
             monitor.Published();
@@ -127,5 +171,5 @@ public class SentinelMonitoringTests
 
     private static SentinelMonitoring Create(CancellationTokenSource lifetime, Action<RespireEndpoint, bool> gap)
         => new(new() { SentinelPrimaryName = "service" }, null, new object(), new([]), lifetime,
-            (_, _, _, _) => ValueTask.CompletedTask, gap);
+            (_, _, _, _) => ValueTask.CompletedTask, (endpoint, version) => gap(endpoint, version > 0));
 }

@@ -151,8 +151,9 @@ internal sealed partial class SentinelRouter
         }
     }
 
-    private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, bool initialSubscription = false)
+    private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, long startupVersion)
     {
+        var initialSubscription = startupVersion > 0;
         SafeLog((sentinel, initialSubscription), static (logger, state) => logger.LogInformation(state.initialSubscription
             ? "Sentinel monitor established at {Sentinel}; revalidating the primary after subscription"
             : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
@@ -160,7 +161,7 @@ internal sealed partial class SentinelRouter
         // Reconnect and overflow gaps remain independent, mandatory rediscovery hints.
         QueueNotificationRediscovery(SentinelHint.FromGap(sentinel) with
         {
-            StartupSubscriptionVersion = initialSubscription ? Monitoring.SubscriptionVersion : 0,
+            StartupSubscriptionVersion = startupVersion,
         });
     }
 
