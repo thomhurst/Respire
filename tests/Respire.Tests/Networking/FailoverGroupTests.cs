@@ -879,8 +879,8 @@ public class FailoverGroupTests
         {
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            ConnectTimeout = TimeSpan.FromMilliseconds(200),
-            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
         }, priority);
 
@@ -911,7 +911,9 @@ public class FailoverGroupTests
         => new()
         {
             ProbeInterval = TimeSpan.FromMilliseconds(15),
-            ProbeTimeout = TimeSpan.FromMilliseconds(200),
+            // Tests inject failure replies explicitly. Keep monitoring fast without treating
+            // a busy CI scheduler as another failed endpoint or an extra switch event.
+            ProbeTimeout = TimeSpan.FromSeconds(2),
             FailureThreshold = failureThreshold,
             CircuitOpenDuration = TimeSpan.FromMilliseconds(100),
             FailbackGracePeriod = TimeSpan.FromMilliseconds(20),

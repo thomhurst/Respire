@@ -1793,6 +1793,7 @@ public sealed class StreamedSetTests
     private sealed class ShortReadThenBlockedStream : Stream
     {
         private int _readCount;
+        private int _position;
         internal byte[]? CapturedBuffer { get; private set; }
         internal TaskCompletionSource ThirdReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueThirdRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1806,23 +1807,23 @@ public sealed class StreamedSetTests
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
+            var count = buffer.Length;
             switch (Interlocked.Increment(ref _readCount))
             {
-                case 1:
-                    buffer.Span.Fill((byte)'a');
-                    return buffer.Length;
                 case 2:
-                    buffer.Span[0] = (byte)'b';
-                    return 1;
+                    count = 1;
+                    break;
                 case 3:
                     ThirdReadStarted.TrySetResult();
                     await ContinueThirdRead.Task.ConfigureAwait(false);
-                    buffer.Span[0] = (byte)'c';
-                    return 1;
-                default:
-                    buffer.Span.Fill((byte)'d');
-                    return buffer.Length;
+                    count = 1;
+                    break;
             }
+            // Cancellation can race an already accepted chunk reaching CountingSetServer.
+            // Keep the fixture's payload valid even when the server sees that prefix.
+            for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_position + index) % 251);
+            _position += count;
+            return count;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
