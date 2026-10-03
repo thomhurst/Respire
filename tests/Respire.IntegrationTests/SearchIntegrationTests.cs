@@ -1,5 +1,5 @@
 using FluentAssertions;
-using Redis.Search;
+using Respire.Search;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;

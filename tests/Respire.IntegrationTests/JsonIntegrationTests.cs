@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 using FluentAssertions;
-using Respire.Extensions.Json;
+using Respire.Json;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;

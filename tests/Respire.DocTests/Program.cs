@@ -8,7 +8,37 @@ namespace Respire.DocTests;
 
 internal static class Program
 {
-    public static void Main() => SnippetCatalog.Report();
+    public static void Main()
+    {
+        VerifyPackageNamespaces();
+        SnippetCatalog.Report();
+    }
+
+    private static void VerifyPackageNamespaces()
+    {
+        // Inspect the actual NuGet runtime assets, including packages that a snippet
+        // does not use directly. The analyzer is a compiler asset, not a runtime library.
+        foreach (var path in Directory.GetFiles(AppContext.BaseDirectory, "Respire*.dll"))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (name == typeof(Program).Assembly.GetName().Name)
+                continue;
+
+            var assembly = System.Reflection.Assembly.LoadFrom(path);
+            if (assembly.GetName().Name != name)
+                throw new InvalidOperationException($"Assembly name does not match {path}.");
+
+            var publicTypes = assembly.GetExportedTypes();
+            if (!publicTypes.Any(type => type.Namespace == name))
+                throw new InvalidOperationException($"{name} has no public types in its root namespace.");
+
+            foreach (var type in publicTypes)
+            {
+                if (type.Namespace != name && !(type.Namespace?.StartsWith(name + ".", StringComparison.Ordinal) ?? false))
+                    throw new InvalidOperationException($"{type.FullName} is outside the {name} namespace hierarchy.");
+            }
+        }
+    }
 }
 
 #pragma warning disable CS0162, CS0169, CS0219, CS0414, CS0649, CS1998

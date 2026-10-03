@@ -9,7 +9,7 @@ Respire integrates with Microsoft caching abstractions through two companion pro
 
 ## Distributed cache
 
-`Respire.Extensions.Caching` provides `IDistributedCache` and `IBufferDistributedCache`:
+`Respire.Caching` provides `IDistributedCache` and `IBufferDistributedCache`:
 
 ```csharp
 builder.Services.AddRespireDistributedCache(
@@ -53,7 +53,7 @@ public sealed class ProductCache(IDistributedCache cache)
 
 ## HybridCache
 
-`Respire.Extensions.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:
+`Respire.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:
 
 ```csharp
 builder.Services.AddRespireHybridCache(

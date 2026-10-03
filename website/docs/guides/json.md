@@ -1,8 +1,8 @@
 ---
-title: RedisJSON
+title: Redis JSON
 ---
 
-`Respire.Json` adds typed RedisJSON commands to an existing Respire client. Use Redis Stack or Redis 8 with the JSON module enabled.
+`Respire.Json` provides typed Redis JSON commands. JSON is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisJSON module. The package, assembly, and root namespace are all `Respire.Json`.
 
 ```bash
 dotnet add package Respire.Json
@@ -13,7 +13,7 @@ dotnet add package Respire.Json
 <!-- doc-test-declaration: split-before=await using var client -->
 ```csharp
 using System.Text.Json.Serialization;
-using Respire.Extensions.Json;
+using Respire.Json;
 
 [JsonSerializable(typeof(Customer))]
 internal partial class CustomerJsonContext : JsonSerializerContext;

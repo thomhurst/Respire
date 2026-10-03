@@ -8,10 +8,10 @@ title: Redis Search
 dotnet add package Respire.Search
 ```
 
-The package ID is `Respire.Search`. Its types live in the `Redis.Search` namespace. This package provides the client API. Your Redis server must also provide the Redis Search module.
+The package, assembly, and root namespace are all `Respire.Search`. Search is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RediSearch module. Installing the client package does not add server capabilities.
 
 ```csharp
-using Redis.Search;
+using Respire.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var search = new RespireSearchClient(client);

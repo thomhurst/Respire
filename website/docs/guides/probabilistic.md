@@ -4,13 +4,15 @@ title: Probabilistic data structures
 
 `Respire.Probabilistic` adds typed command methods for Redis Bloom filters, Cuckoo filters, Count-Min Sketches, Top-K sketches, and t-digest sketches.
 
+These data types are built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisBloom module. The package, assembly, and root namespace are all `Respire.Probabilistic`.
+
 ```bash
 dotnet add package Respire.Probabilistic
 ```
 
 ```csharp
 using Respire;
-using Respire.Extensions.Probabilistic;
+using Respire.Probabilistic;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var probabilistic = new RespireProbabilisticClient(client);

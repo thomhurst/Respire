@@ -127,6 +127,7 @@ contract as Brotli and Deflate, including both array and destination overloads.
 
 ```csharp
 using Respire.Compression;
+using Respire.Compression.Lz4;
 using Respire.Serialization;
 
 var codec = new Lz4ValueCodec(new RespireValueCodecOptions
@@ -163,6 +164,7 @@ Install `Respire.Compression.Zstd` to use `ZstdValueCodec` through the same
 
 ```csharp
 using Respire.Compression;
+using Respire.Compression.Zstd;
 using Respire.Serialization;
 
 var codec = new ZstdValueCodec(new RespireValueCodecOptions

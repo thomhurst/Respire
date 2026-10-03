@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 #if FENCED_LOCKS
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 #endif
 
 namespace Respire.Benchmarks;

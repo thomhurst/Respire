@@ -454,7 +454,7 @@ feature is enabled.
 
 ## ASP.NET Core registration
 
-`Respire.Extensions.DependencyInjection` provides a helper on its mutable options builder:
+`Respire.DependencyInjection` provides a helper on its mutable options builder:
 
 ```csharp
 builder.Services.AddRespire(options =>

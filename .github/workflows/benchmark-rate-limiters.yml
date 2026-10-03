@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [labeled]
     paths:
-      - 'src/Respire.Extensions.Coordination/**'
+      - 'src/Respire.Coordination/**'
       - 'Directory.Packages.props'
       - 'benchmarks/Respire.Benchmarks/RedisRateLimiterBenchmarks.cs'
       - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'

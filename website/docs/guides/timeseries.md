@@ -1,15 +1,15 @@
 ---
-title: RedisTimeSeries
+title: Redis time series
 ---
 
-The `Respire.TimeSeries` package (namespace `Respire.Extensions.TimeSeries`) adds typed RedisTimeSeries commands to an existing Respire client. Use Redis 8, or Redis Stack, with the TimeSeries module enabled.
+`Respire.TimeSeries` provides typed Redis time series commands. Time series is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisTimeSeries module. The package, assembly, and root namespace are all `Respire.TimeSeries`.
 
 ```bash
 dotnet add package Respire.TimeSeries
 ```
 
 ```csharp
-using Respire.Extensions.TimeSeries;
+using Respire.TimeSeries;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var timeSeries = new RespireTimeSeriesClient(client);

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Respire.Compression;
+using Respire.Compression.Zstd;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

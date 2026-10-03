@@ -1,5 +1,5 @@
 using FluentAssertions;
-using Respire.Extensions.Probabilistic;
+using Respire.Probabilistic;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
