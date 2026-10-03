@@ -50,6 +50,23 @@ The status tag distinguishes real zone names such as `unknown`
 from missing metadata. Observation happens outside transport locks; accepting a read
 only increments its connection's cached counter.
 
+## Hedged reads
+
+Opt-in [hedged reads](../fundamentals/connections.md#hedged-reads) expose three instruments:
+
+| Instrument | Kind | Meaning |
+| --- | --- | --- |
+| `respire.read.hedge.sent` | Counter | Additional requests started |
+| `respire.read.hedge.won` | Counter | Successful additional replies returned to callers |
+| `respire.read.hedge.extra_load` | Histogram | One 0/1 sample per completed eligible logical read |
+
+The mean of `extra_load` is the ratio of additional requests to eligible logical reads.
+Multiply by 100 for a percentage. Sent/won tags identify the hedge endpoint; extra-load tags
+identify the original endpoint. All use `server.address` and `server.port`, without keys or
+payloads. Logical completion records the sample even if a losing reply is still draining.
+Transport redirects and topology probes are not hedge starts. A histogram window can exceed
+the configured lifetime percentage when saved credit is spent during that window.
+
 ## Logging
 
 Pass an `ILoggerFactory` through `RespireOptions` or use the dependency-injection integration. Logs cover connection lifecycle and recovery without logging command payloads.

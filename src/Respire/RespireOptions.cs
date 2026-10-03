@@ -121,6 +121,9 @@ public sealed record RespireOptions
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
+    /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
+    public RespireHedgedReadOptions? HedgedReads { get; init; }
+
     /// <summary>
     /// Client availability zone used by AZ-affinity read policies. Zone names are compared
     /// ordinally. Configure this before connecting, including when selecting a policy through a view.
@@ -379,6 +382,7 @@ public sealed record RespireOptions
             nameof(ClientAvailabilityZone), "must be nonempty when provided");
         Require(ReadFrom is not (RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary)
             || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
+        HedgedReads?.Validate();
         Require(
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),

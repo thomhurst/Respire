@@ -2219,7 +2219,13 @@ public sealed partial class RespireClient : IRespireClient
 
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         ValueTask<RespValue> response;
-        if (routeRead && core.Cluster is null)
+        if (readKind == ReadCommandKind.Read && core.HedgedReads is { } hedgeBudget
+            && command is not IRespCommandWrapper && HedgedReadPolicy.IsEligible(operation)
+            && (core.Cluster is null || command.TryGetClusterSlot(out _)))
+        {
+            response = SendHedgedReadAsync(operation, command, hedgeBudget, flags, cancellationToken);
+        }
+        else if (routeRead && core.Cluster is null)
         {
             response = SendReadFromAsync(operation, command, readKind, cursorAffinity, cancellationToken);
         }
@@ -2495,7 +2501,9 @@ public sealed partial class RespireClient : IRespireClient
         RespireServerException? initialRejection = null,
         bool allowReadFrom = false,
         RespireReadFrom? readFromOverride = null,
-        ReadAffinity? cursorAffinity = null)
+        ReadAffinity? cursorAffinity = null,
+        HedgeOriginalRoute? hedgeOriginalRoute = null,
+        bool isHedge = false)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -2557,6 +2565,12 @@ public sealed partial class RespireClient : IRespireClient
             var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;
             for (var attempt = firstAttempt; ; attempt++)
             {
+                if (hedgeOriginalRoute is not null)
+                {
+                    if (!isHedge) hedgeOriginalRoute.Connection = connection;
+                    else if (!hedgeOriginalRoute.CanHedge(connection))
+                        throw new RespireConnectionException("The optional hedge no longer has a distinct original peer.");
+                }
                 try
                 {
                     var result = await SendOnConnectionAsync(
@@ -2582,6 +2596,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireConnectionRetiredException retirement) when (!cursorContinuation
                     && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
+                    if (!isHedge && hedgeOriginalRoute is not null) hedgeOriginalRoute.Connection = null;
                     commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                     cluster.RecordRejection(ref discovery, connection, retirement);
                     if (!ReadFallbackPolicy.IsReplicaConnection(connection))
@@ -2596,6 +2611,7 @@ public sealed partial class RespireClient : IRespireClient
                     when (!cursorContinuation && !noRedirect && attempt < ClusterRouter.RedirectLimit
                         && ClusterRouter.CanRecover(error, slot))
                 {
+                    if (!isHedge && hedgeOriginalRoute is not null) hedgeOriginalRoute.Connection = null;
                     if (ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
                     // Learn the new owner before touching the caller-owned stream. A broken seek
                     // must not leave later commands pinned to the stale slot owner.
@@ -2632,6 +2648,7 @@ public sealed partial class RespireClient : IRespireClient
                     && !cursorContinuation
                     && fallback.TrySwitch(error, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
+                    if (!isHedge && hedgeOriginalRoute is not null) hedgeOriginalRoute.Connection = null;
                     // Reads are idempotent; retry once on the other server role. NoRedirect only
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
@@ -2645,7 +2662,11 @@ public sealed partial class RespireClient : IRespireClient
             discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect, cancellationToken);
             throw;
         }
-        finally { discovery?.Finish(); }
+        finally
+        {
+            if (!isHedge) hedgeOriginalRoute?.Complete();
+            discovery?.Finish();
+        }
     }
 
     [DoesNotReturn]

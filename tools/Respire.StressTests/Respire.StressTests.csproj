@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
   </ItemGroup>
 
   <ItemGroup>

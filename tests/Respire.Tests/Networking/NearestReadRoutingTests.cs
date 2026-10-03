@@ -584,21 +584,30 @@ public class NearestReadRoutingTests
     [Test]
     public async Task CooldownRetryRetainsTheOriginalConnectionFailure()
     {
-        using var unavailable = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        unavailable.Start();
-        var port = ((System.Net.IPEndPoint)unavailable.LocalEndpoint).Port;
-        unavailable.Stop();
+        var refused = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused);
+        var attempts = 0;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
-            Endpoints = [new("127.0.0.1", port)],
-            ReplicaEndpoints = [new("127.0.0.1", port)],
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("unavailable.test", 6379)],
+            ReplicaEndpoints = [new("unavailable.test", 6379)],
+            // A released ephemeral port can be reused by another parallel test. Inject the
+            // transport failure directly so this test never connects to an unrelated server.
+            TestingStreamFactory = (_, _, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref attempts);
+                return ValueTask.FromException<Stream>(refused);
+            },
         });
+        client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
+            (_, _) => ValueTask.FromResult(1L), () => 0L);
+        client.Core.ReadRouter.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
         var failure = await Assert.That(async () =>
             await client.WithReadFrom(RespireReadFrom.Nearest).GetStringAsync("key"))
             .Throws<RespireConnectionException>();
-        await Assert.That(failure!.InnerException).IsNotNull();
-        await Assert.That(failure.InnerException is InvalidOperationException).IsFalse();
+        await Assert.That(failure!.InnerException).IsSameReferenceAs(refused);
+        await Assert.That(attempts).IsEqualTo(2);
     }
 
     [Test]
