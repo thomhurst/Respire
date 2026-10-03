@@ -397,7 +397,16 @@ internal sealed class SentinelMonitoring(
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.ConnectTimeout);
-            var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
+            Task<IPAddress[]> resolution;
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_disposed) return null;
+                // Starting DNS shares Stop's gate; its asynchronous completion must not.
+                // The internal resolver seam must return its task without blocking.
+                resolution = HostResolver(host, timeout.Token);
+            }
+            var addresses = await resolution.ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             // Stop closes ownership before asynchronous linked-token callbacks finish.
             // Late DNS must not supply evidence or trigger a follow-up target lookup.
