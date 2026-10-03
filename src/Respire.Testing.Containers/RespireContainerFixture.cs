@@ -104,6 +104,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             RespireContainerFixture? fixture = null;
             int[] ports = [];
             var startingContainer = false;
+            var containerStarted = false;
             try
             {
                 deadline.Token.ThrowIfCancellationRequested();
@@ -120,6 +121,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 startingContainer = true;
                 await container.StartAsync(deadline.Token).ConfigureAwait(false);
                 startingContainer = false;
+                containerStarted = true;
                 if (!IsLocalHost(container.Hostname))
                     throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
                 await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
@@ -140,6 +142,15 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 startupError.Data["RespireFixture.ContainerId"] = containerId;
                 if (fixture is not null)
                 {
+                    if (containerStarted)
+                    {
+                        var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(fixture._container, ports).ConfigureAwait(false);
+                        startupError.Data["RespireFixture.DaemonLogs"] = diagnostics;
+                        // Test runners capture stderr with the failed test. Console failures must
+                        // not replace the original startup error or prevent container removal.
+                        try { Console.Error.WriteLine($"Fixture container {containerId ?? "unavailable"} daemon diagnostics:\n{diagnostics}"); }
+                        catch (Exception) { }
+                    }
                     try { await fixture.DisposeAsync().ConfigureAwait(false); }
                     catch (Exception cleanupError)
                     {

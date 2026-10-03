@@ -115,6 +115,14 @@ to startup-stage diagnostics. Cleanup failure stops retries and reports all star
 cleanup causes together in an `AggregateException`. Cancellation or deadline wrappers
 retain the original startup error as their inner exception.
 
+If the container started but initialization failed, the fixture collects the last 4 KiB
+of each Redis, Valkey, or Sentinel daemon log before removing the container. The original
+startup exception exposes the result in `Data["RespireFixture.DaemonLogs"]`; it is also
+written to standard error for test runners to capture. Collection has its own two-second
+deadline, independent of an expired startup deadline or caller cancellation. Combined
+diagnostics are limited to 32,768 characters. Missing logs, failed collection, and collection
+timeouts are reported without replacing the startup failure or preventing cleanup.
+
 The [in-memory fake](in-memory-testing.md) runs deterministic tests without Docker.
 The [shared sample](testing-sample.md) runs the same public-client scenarios against
 the fake, Redis, and Valkey on both supported frameworks.

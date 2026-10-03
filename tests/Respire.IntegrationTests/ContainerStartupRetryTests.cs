@@ -177,6 +177,7 @@ public class ContainerStartupRetryTests
     {
         private Func<CancellationToken, Task> _start = null!;
         public Func<ValueTask>? Cleanup { get; set; }
+        public Func<IList<string>, CancellationToken, Task<ExecResult>>? Execute { get; set; }
         public Exception? HostnameError { get; set; }
         public int StartCount { get; private set; }
         public int DisposeCount { get; private set; }
@@ -194,6 +195,8 @@ public class ContainerStartupRetryTests
             {
                 case "StartAsync": StartCount++; return _start((CancellationToken)args![0]!);
                 case "DisposeAsync": DisposeCount++; return Cleanup?.Invoke() ?? ValueTask.CompletedTask;
+                case "ExecAsync": return Execute?.Invoke((IList<string>)args![0]!, (CancellationToken)args[1]!)
+                    ?? Task.FromException<ExecResult>(new InvalidOperationException("Daemon diagnostics unavailable."));
                 case "get_Id": return "controlled-container";
                 case "get_Hostname": throw HostnameError ?? new InvalidOperationException("Unexpected successful start in failure test.");
                 default: throw new NotSupportedException(method.Name);
