@@ -54,7 +54,9 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
     private DedicatedConnectionPool _dedicatedPool;
-    public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
+    // Tests own this override's lifetime and restore it before disposing the client.
+    internal DedicatedConnectionPool? TestingDedicatedPoolOverride { get; set; }
+    public DedicatedConnectionPool DedicatedPool => TestingDedicatedPoolOverride ?? Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
     public readonly ClusterRouter? Cluster;
@@ -119,6 +121,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
     {
+        if (TestingDedicatedPoolOverride is { } testingPool) return testingPool;
         if (Sentinel is { } sentinel)
             return (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool;
         // Read the published endpoint here too: a new upload can race the handoff callback.
