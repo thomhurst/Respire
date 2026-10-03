@@ -125,6 +125,7 @@ public partial class ReadDedicatedRoutingTests
             SentinelPrimaryName = "primary", TestingStreamFactory = OpenStreamAsync,
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
+        await WaitForSentinelStartupAsync(client);
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 100L : 1L), () => 0L);
@@ -139,7 +140,7 @@ public partial class ReadDedicatedRoutingTests
             if (expireSelectedPoolDeadline) await oldDeadline.Task.WaitAsync(TimeSpan.FromSeconds(5));
             currentPrimary = newPrimary;
             previous.TryRetire();
-            var current = await client.Core.Sentinel.GetGenerationAsync(default);
+            var current = await client.Core.Sentinel.GetGenerationAsync(default).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             var retirement = previousPool.RetireAsync().AsTask();
             releaseOld.TrySetResult();
             using var reply = await read.WaitAsync(TimeSpan.FromSeconds(10));
@@ -326,6 +327,7 @@ public partial class ReadDedicatedRoutingTests
                 Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = failure == 0 ? null : OpenStreamAsync,
             });
+        if (useSentinel) await WaitForSentinelStartupAsync(client);
         long now = 0;
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -690,8 +692,21 @@ public partial class ReadDedicatedRoutingTests
         ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
             : command.StartsWith("SENTINEL REPLICAS ")
-                ? Encoding.ASCII.GetBytes(ReplicaReply(replicas())) : "*0\r\n"u8.ToArray(),
+                ? Encoding.ASCII.GetBytes(ReplicaReply(replicas()))
+                : command == "SUBSCRIBE +switch-master +sdown +odown"
+                    ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
+                    : "*0\r\n"u8.ToArray(),
     };
+
+    private static async Task WaitForSentinelStartupAsync(RespireClient client)
+    {
+        var sentinel = client.Core.Sentinel!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (sentinel.SubscribedSentinelCount == 0) await Task.Delay(5, deadline.Token);
+        // Startup revalidation owns a separate discovery attempt; finish it before injecting
+        // primary failures or counting reads' discovery and connection attempts.
+        if (sentinel.NotificationRediscovery is { } rediscovery) await rediscovery.WaitAsync(deadline.Token);
+    }
 
     private static string ReplicaReply(FakeRespServer[] replicas)
         => $"*{replicas.Length}\r\n" + string.Concat(replicas.Select(replica =>
