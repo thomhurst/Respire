@@ -40,6 +40,10 @@ process-wide budget. Additional names share
 connection disposal. The first 64 names retain their counters for the process lifetime;
 names are never evicted, so later names continue to use overflow even after old connections
 close. This preserves monotonic totals without resetting or relabeling a counter.
+Zone names come from server metadata, not command keys or values. A server reporting
+many distinct names can exhaust the budget, whether through normal topology changes,
+misconfiguration, or hostile metadata. Overflow is intentionally reachable: it bounds
+the number of exported zone series without dropping read counts. It is not a trust check.
 The status tag distinguishes real zone names such as `unknown`
 from missing metadata. Observation happens outside transport locks; accepting a read
 only increments its connection's cached counter.

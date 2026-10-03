@@ -432,9 +432,10 @@ public class AvailabilityZoneRoutingTests
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
         for (var slot = 0; slot < 8; slot++)
         {
+            var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
+            await Assert.That(fallback.TrySwitch(new RespireServerException("LOADING unavailable"), onReplica: false)).IsTrue();
             var selected = await router.GetOtherRoleReadConnectionAsync(slot,
-                RespireReadFrom.AzAffinityReplicasAndPrimary, onReplica: false,
-                new RespireServerException("LOADING unavailable"), CancellationToken.None, discovery: null);
+                fallback, CancellationToken.None, discovery: null);
             await Assert.That(selected.Port).IsEqualTo(replica.Port);
             await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
         }
@@ -743,30 +744,49 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task BlockingStandaloneFallbackSwitchesRoleOnlyOnce(bool primaryFirst, bool bothFail)
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    public async Task BlockingStandaloneFallbackSwitchesRoleOnlyOnce(bool primaryFirst, bool bothFail, bool fallbackDeadline)
     {
         await using var primary = Node("primary", primaryFirst ? "local" : "remote", false);
         await using var replica = Node("replica", primaryFirst ? "remote" : "local", true);
         var first = primaryFirst ? primary : replica;
         var second = primaryFirst ? replica : primary;
+        var fallbackConnections = 0;
         RejectReads(first);
         if (bothFail) RejectReads(second);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
-            RespireReadFrom.AzAffinityReplicasAndPrimary));
-        if (bothFail)
-            await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { TestingStreamFactory = fallbackDeadline ? OpenStreamAsync : null });
+        if (bothFail || fallbackDeadline)
+        {
+            var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"])).Throws<RespireServerException>();
+            await Assert.That(error!.Message).Contains("LOADING unavailable");
+        }
         else
         {
             using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
             await Assert.That(reply.AsString()).IsEqualTo(primaryFirst ? "replica" : "primary");
         }
         await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
-        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(fallbackDeadline ? 0 : 1);
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == second.Port && Interlocked.Increment(ref fallbackConnections) > 1)
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
 
         static void RejectReads(FakeRespServer node)
         {
@@ -888,6 +908,85 @@ public class AvailabilityZoneRoutingTests
                 connecting.TrySetResult();
                 // This token includes the transport's independent ConnectTimeout. The caller
                 // control cancels only after acquisition is blocked at the same boundary.
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.PrimaryPreferred, false, false)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, false, true)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, true, false)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, true, true)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false, true)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, true, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, true, true)]
+    [Arguments(RespireReadFrom.Replica, false, false)]
+    [Arguments(RespireReadFrom.Replica, false, true)]
+    [Arguments(RespireReadFrom.Replica, true, false)]
+    [Arguments(RespireReadFrom.Replica, true, true)]
+    [Arguments(RespireReadFrom.AzAffinity, false, false)]
+    [Arguments(RespireReadFrom.AzAffinity, false, true)]
+    [Arguments(RespireReadFrom.AzAffinity, true, false)]
+    [Arguments(RespireReadFrom.AzAffinity, true, true)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, true)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, true)]
+    public async Task DedicatedConnectDeadlineFallsBackForEveryEligiblePolicy(RespireReadFrom policy, bool useSentinel, bool cancelCaller)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var first = Node("first", "remote", true);
+        await using var second = Node("second", "remote", true);
+        await using var sentinel = Sentinel(primary, () => [first, second]);
+        var connections = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+        var failedPort = 0;
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = await RespireClient.ConnectAsync(
+            Options(useSentinel ? sentinel : primary, useSentinel ? [] : [first, second], false, policy) with
+            {
+                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                TestingStreamFactory = OpenStreamAsync,
+            });
+        using var caller = new CancellationTokenSource();
+        var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        if (cancelCaller)
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+            var error = await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
+                .Any(command => command.StartsWith("XREAD "))).IsFalse();
+            return;
+        }
+        using var reply = await read;
+        await Assert.That(caller.IsCancellationRequested).IsFalse();
+        await Assert.That(failedPort).IsNotEqualTo(0);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        var failed = new[] { primary, first, second }.Single(node => node.Port == failedPort);
+        await Assert.That(failed.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        await Assert.That(first.ReceivedCommands.Concat(second.ReceivedCommands)
+            .Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(reply.AsString()).IsEqualTo(first.ReceivedCommands.Any(command => command.StartsWith("XREAD "))
+            ? "first" : "second");
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port != sentinel.Port && connections.AddOrUpdate(port, 1, (_, count) => count + 1) == 2
+                && Interlocked.CompareExchange(ref failedPort, port, 0) == 0)
+            {
+                connecting.TrySetResult();
+                // The deadline case keeps the caller live; its control cancels at this boundary.
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             }
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
@@ -1204,8 +1303,9 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
         var router = client.Core.Cluster!;
-        var old = await router.GetOtherRoleReadConnectionAsync(1, RespireReadFrom.AzAffinityReplicasAndPrimary, false,
-            new RespireServerException("LOADING unavailable"), CancellationToken.None, null);
+        var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
+        await Assert.That(fallback.TrySwitch(new RespireServerException("LOADING unavailable"), onReplica: false)).IsTrue();
+        var old = await router.GetOtherRoleReadConnectionAsync(1, fallback, CancellationToken.None, null);
         router.ApplyTopology([new(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
         {
             Replicas = replacementAvailable ? [new(new("127.0.0.1", replacement.Port), "replacement", [])] : [],

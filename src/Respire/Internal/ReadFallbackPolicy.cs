@@ -7,6 +7,28 @@ namespace Respire.Internal;
 
 internal static class ReadFallbackPolicy
 {
+    // One instance belongs to one logical read, including its redirects and retirement retries.
+    // Keeping this state inline avoids an allocation on the normal read path.
+    internal struct RoleFallback(RespireReadFrom policy)
+    {
+        internal RespireReadFrom Policy { get; } = policy;
+        internal bool? ReplicaOnly { get; private set; }
+        internal RespireServerException? OriginalFailure { get; private set; }
+        internal RespireReadFrom RecoveryPolicy => ReplicaOnly is { } replica
+            ? AfterRoleSwitch(replica) : Policy;
+
+        internal bool TrySwitch(RespireServerException error, bool onReplica)
+        {
+            if (OriginalFailure is not null || !CanFallBackToOtherRole(error, Policy, onReplica)) return false;
+            OriginalFailure = error;
+            ReplicaOnly = !onReplica;
+            return true;
+        }
+
+        internal bool TrySwitch(RespireServerException error, int? slot, bool onReplica)
+            => slot is not null && TrySwitch(error, onReplica);
+    }
+
     // Retain every fallback until selection finishes: an earlier socket can retire while a
     // later candidate is checked. One candidate stays inline; larger sets borrow pooled storage.
     // This mutable owner must remain a single local: never copy it or pass it by value after Offer.

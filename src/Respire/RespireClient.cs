@@ -2526,16 +2526,14 @@ public sealed partial class RespireClient : IRespireClient
                 connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 discoveryPending = false;
             }
-            var switchedRole = false;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             if (initialRejection is not null && !cursorContinuation
-                && ReadFallbackPolicy.CanFallBackToOtherRole(initialRejection, readFrom, slot,
+                && fallback.TrySwitch(initialRejection, slot,
                     ReadFallbackPolicy.IsReplicaConnection(connection)))
             {
                 connection = await cluster.GetOtherRoleReadConnectionAsync(
-                    slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
-                    initialRejection, cancellationToken, discovery).ConfigureAwait(false);
-                readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
-                switchedRole = true;
+                    slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                readFrom = fallback.RecoveryPolicy;
             }
             else if (initialRejection is not null)
             {
@@ -2630,17 +2628,15 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
-                catch (RespireServerException error) when (!switchedRole && !sendAsking
+                catch (RespireServerException error) when (!sendAsking
                     && !cursorContinuation
-                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
+                    && fallback.TrySwitch(error, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Reads are idempotent; retry once on the other server role. NoRedirect only
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
-                    switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
-                        error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
+                        slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = fallback.RecoveryPolicy;
                 }
             }
         }
@@ -3157,7 +3153,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
             var sendAsking = false;
-            var switchedRole = false;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -3194,14 +3190,12 @@ public sealed partial class RespireClient : IRespireClient
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
-                catch (RespireServerException error) when (!switchedRole && !sendAsking
-                    && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
+                catch (RespireServerException error) when (!sendAsking
+                    && fallback.TrySwitch(error, slot, ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
-                    switchedRole = true;
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, readFrom, ReadFallbackPolicy.IsReplicaConnection(connection),
-                        error, cancellationToken, discovery).ConfigureAwait(false);
-                    readFrom = ReadFallbackPolicy.AfterRoleSwitch(ReadFallbackPolicy.IsReplicaConnection(connection));
+                        slot!.Value, fallback, cancellationToken, discovery).ConfigureAwait(false);
+                    readFrom = fallback.RecoveryPolicy;
                 }
             }
         }
@@ -3426,8 +3420,7 @@ public sealed partial class RespireClient : IRespireClient
             DedicatedConnectionPool? pool = null;
             var returned = false;
             var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
-            bool? fallbackReplica = null;
-            RespireServerException? fallbackError = null;
+            var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             try
             {
                 RespValue response;
@@ -3439,11 +3432,11 @@ public sealed partial class RespireClient : IRespireClient
                         try
                         {
                             (pool, connection, onReplica) = await core.ReadRouter.RentDedicatedConnectionAsync(
-                                readFrom, cancellationToken, preferredZone, fallbackReplica).ConfigureAwait(false);
+                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly).ConfigureAwait(false);
                         }
-                        catch (Exception error) when (fallbackError is not null && ReadEndpointRouter.IsUnavailable(error, cancellationToken))
+                        catch (Exception error) when (fallback.OriginalFailure is not null && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
                         {
-                            RethrowPreservingStackTrace(fallbackError);
+                            RethrowPreservingStackTrace(fallback.OriginalFailure);
                             throw;
                         }
                     }
@@ -3465,16 +3458,14 @@ public sealed partial class RespireClient : IRespireClient
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
                     response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
-                    if (response.IsError && fallbackReplica is null && readFrom != RespireReadFrom.Primary)
+                    if (response.IsError && fallback.OriginalFailure is null && readFrom != RespireReadFrom.Primary)
                     {
                         var error = ResponseReader.ServerError(in response, operation);
-                        if (ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, onReplica))
+                        if (fallback.TrySwitch(error, onReplica))
                         {
                             response.Dispose();
                             pool.Return(connection);
                             connection = null;
-                            fallbackReplica = !onReplica;
-                            fallbackError = error;
                             continue;
                         }
                     }
@@ -3546,7 +3537,7 @@ public sealed partial class RespireClient : IRespireClient
         var sendAsking = false;
         RespireConnection? askingSource = null;
         RespireServerException? askRedirect = null;
-        var switchedRole = false;
+        var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
 
         ClusterRouter.DiscoveryRound? discovery = null;
         try
@@ -3621,17 +3612,16 @@ public sealed partial class RespireClient : IRespireClient
                             continue;
                         }
 
-                        if (!switchedRole && !sentAsking
-                            && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, slot, pool.IsReadOnly))
+                        if (!sentAsking
+                            && fallback.TrySwitch(error, slot, pool.IsReadOnly))
                         {
                             // Reads are idempotent; retry once on the other role's dedicated pool.
                             // NoRedirect only surfaces MOVED and ASK, so it does not suppress this retry.
-                            switchedRole = true;
                             acquiringRedirectPool = true;
                             var otherRolePool = await cluster.GetOtherRoleDedicatedPoolAsync(
-                                    slot!.Value, readFrom, pool.IsReadOnly, error, cancellationToken, discovery)
+                                    slot!.Value, fallback, cancellationToken, discovery)
                                 .ConfigureAwait(false);
-                            readFrom = ReadFallbackPolicy.AfterRoleSwitch(otherRolePool.IsReadOnly);
+                            readFrom = fallback.RecoveryPolicy;
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;

@@ -344,20 +344,22 @@ internal sealed partial class ClusterRouter
     }
 
     /// <summary>
-    /// Selects the other server role after <see cref="ReadFallbackPolicy.CanFallBackToOtherRole(RespireServerException, RespireReadFrom, int?, bool)"/> accepted
-    /// <paramref name="error"/>. When no candidate of that role is reachable, the server error is
-    /// surfaced unchanged.
+    /// Selects the role chosen by a successful <see cref="ReadFallbackPolicy.RoleFallback"/>
+    /// transition. When no candidate of that role is reachable, its original server rejection
+    /// is surfaced unchanged.
     /// </summary>
     internal async ValueTask<RespireConnection> GetOtherRoleReadConnectionAsync(
-        int slot, RespireReadFrom readFrom, bool onReplica, RespireServerException error,
+        int slot, ReadFallbackPolicy.RoleFallback fallback,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        var readFrom = fallback.Policy;
+        var error = fallback.OriginalFailure!;
         _logger?.LogDebug(
             "Redis Cluster slot {Slot} returned {Code} on the preferred role; {ReadFrom} read retries on the other role",
             slot, error.Code, readFrom);
         try
         {
-            if (onReplica)
+            if (fallback.ReplicaOnly == false)
                 return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
 
             // Preserve replica zone ranking without probing the primary that just rejected the read.
@@ -374,10 +376,10 @@ internal sealed partial class ClusterRouter
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetOtherRoleDedicatedPoolAsync(
-        int slot, RespireReadFrom readFrom, bool onReplica, RespireServerException error,
+        int slot, ReadFallbackPolicy.RoleFallback fallback,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        var connection = await GetOtherRoleReadConnectionAsync(slot, readFrom, onReplica, error, cancellationToken, discovery)
+        var connection = await GetOtherRoleReadConnectionAsync(slot, fallback, cancellationToken, discovery)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)

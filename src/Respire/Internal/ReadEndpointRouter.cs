@@ -179,7 +179,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     var lease = await core.RentDedicatedConnectionAsync(pool, cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
                     return (lease.Pool, lease.Connection, false);
                 }
-                catch (Exception error) when (replicaOnly is null && IsDedicatedCandidateFailure(error, readFrom, cancellationToken)
+                catch (Exception error) when (replicaOnly is null && IsReadCandidateFailure(error, cancellationToken)
                     && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
                         || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)))
                 {
@@ -198,7 +198,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                         return await RentDedicatedConnectionAsync(readFrom, cancellationToken, preferredZone, replicaOnly: true)
                             .ConfigureAwait(false);
                     }
-                    catch (Exception fallback) when (IsUnavailable(fallback, cancellationToken))
+                    catch (Exception fallback) when (IsReadCandidateFailure(fallback, cancellationToken))
                     {
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
                         throw;
@@ -210,7 +210,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 var lease = await replica.RentDedicatedConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
                 return (lease.Pool, lease.Connection, true);
             }
-            catch (Exception error) when (IsDedicatedCandidateFailure(error, readFrom, cancellationToken))
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 replica.MarkFailed();
                 if (attempt >= ClusterRouter.RedirectLimit) throw;
@@ -220,10 +220,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         }
     }
 
-    private static bool IsDedicatedCandidateFailure(Exception error, RespireReadFrom readFrom, CancellationToken cancellationToken)
-        => readFrom == RespireReadFrom.Nearest
-            ? IsNearestCandidateFailure(error, cancellationToken)
-            : IsUnavailable(error, cancellationToken);
+    // Before admission, every read policy can try its remaining eligible candidates after
+    // a private transport deadline. Actual caller cancellation remains terminal.
+    internal static bool IsReadCandidateFailure(Exception error, CancellationToken cancellationToken)
+        => IsUnavailable(error, cancellationToken)
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
     /// <summary>
     /// Selects a connection for one page of a cursor read. With an <paramref name="affinity"/>, the
