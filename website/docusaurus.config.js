@@ -81,6 +81,7 @@ const config = {
               {label: 'Getting started', to: '/docs/getting-started'},
               {label: 'Commands', to: '/docs/commands/strings-and-keys'},
               {label: 'Integrations', to: '/docs/integrations/dependency-injection'},
+              {label: 'From StackExchange.Redis', to: '/docs/stackexchange-redis'},
             ],
           },
           {

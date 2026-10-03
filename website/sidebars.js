@@ -4,6 +4,7 @@ const sidebars = {
     'intro',
     'getting-started',
     'packages',
+    'stackexchange-redis',
     'fundamentals/client-side-caching',
     {
       type: 'category',

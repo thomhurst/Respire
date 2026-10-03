@@ -174,7 +174,7 @@ await using var redis = await RespireClient.ConnectAnyAsync([
 
 Each candidate keeps its full `RespireOptions`, including TLS, authentication, timeout, cluster, and serializer settings. Respire tries candidates in order, disposes failed partial clients, and returns the first connected client. If every candidate fails, `ConnectAnyAsync` throws `RespireConnectionException` with each attempt in the message and an aggregate inner exception.
 
-This is connection-time fallback only. After a client is returned, commands run against that selected deployment and use Respire's normal reconnect behavior. `ConnectAnyAsync` is not a health-checked circuit breaker and does not continuously route commands between independent deployments.
+This is connection-time fallback only. After a client is returned, commands run against that selected deployment and use Respire's normal reconnect behavior. `ConnectAnyAsync` is not a health-checked circuit breaker and does not continuously route commands between independent deployments. Use a [failover group](../guides/failover-groups.md) for health-checked switching and failback.
 
 ## Cluster primary changes
 
@@ -258,7 +258,8 @@ Multiple endpoints require an explicit deployment mode:
 | `cache-a,cache-b` | Rejected: the endpoints could belong to unrelated standalone deployments. |
 
 Use `ConnectAnyAsync` with separate `RespireOptions` candidates for connection-time fallback
-between independent deployments. It does not perform continuous geographic failover. Sentinel
+between independent deployments. It does not perform continuous failover; use a
+[failover group](../guides/failover-groups.md) for that. Sentinel
 discovers the primary on connection or first use, then discovers a replacement after a
 disconnect or READONLY rejection. Ordinary standalone reconnection targets the deployment already selected. Cluster routing
 is distinct from either standalone fallback or Sentinel discovery.
@@ -309,8 +310,8 @@ and `SentinelTlsOptions` on the parsed options in code when you need these overr
 Unknown or unsupported options still throw `ArgumentException`, catching spelling mistakes.
 For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to
 Respire's TCP keepalive settings. Configure `TcpKeepAliveTime` directly when kernel probes are
-wanted. Connection groups and continuous failover require application-level policy; an endpoint
-list never silently enables them. See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html)
+wanted. An endpoint list never silently enables StackExchange.Redis-style connection groups or
+continuous failover; configure a [failover group](../guides/failover-groups.md) explicitly. See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html)
 for its original option semantics, and use `RespireOptions` directly for Respire-only settings.
 
 Bare IPv6 endpoints use the default Redis port. Add brackets when specifying a port: `::1` or
