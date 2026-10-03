@@ -631,8 +631,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
             finally { _gate.Release(); }
             if (multiplexer is not null) owner.NotifyReadReplicaRetired(multiplexer);
-            await Task.WhenAll(multiplexer?.RetireAsync() ?? Task.CompletedTask,
-                pool?.RetireAsync().AsTask() ?? Task.CompletedTask).WaitAsync(cancellationToken).ConfigureAwait(false);
+            await CleanupTasks.WhenAllAsync([multiplexer?.RetireAsync() ?? Task.CompletedTask,
+                pool?.RetireAsync().AsTask() ?? Task.CompletedTask]).WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         private void DetachHandlers(RespireConnectionMultiplexer multiplexer)
@@ -661,8 +661,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             if (multiplexer is not null) DetachHandlers(multiplexer);
             try
             {
-                await Task.WhenAll(multiplexer?.DisposeAsync().AsTask() ?? Task.CompletedTask,
-                    pool?.DisposeAsync().AsTask() ?? Task.CompletedTask).ConfigureAwait(false);
+                await CleanupTasks.WhenAllAsync([multiplexer?.DisposeAsync().AsTask() ?? Task.CompletedTask,
+                    pool?.DisposeAsync().AsTask() ?? Task.CompletedTask]).ConfigureAwait(false);
             }
             finally
             {

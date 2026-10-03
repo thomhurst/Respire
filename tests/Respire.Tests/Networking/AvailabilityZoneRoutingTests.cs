@@ -621,15 +621,19 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(false, false, false)]
-    [Arguments(false, false, true)]
-    [Arguments(false, true, false)]
-    [Arguments(false, true, true)]
-    [Arguments(true, false, false)]
-    [Arguments(true, false, true)]
-    [Arguments(true, true, false)]
-    [Arguments(true, true, true)]
-    public async Task PinnedCursorKeepsLocalPhysicalSocket(bool cluster, bool shared, bool primaryPin)
+    [Arguments(false, false, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(false, false, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(false, true, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(false, true, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(true, false, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(true, false, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(true, true, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(true, true, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(false, false, false, RespireReadFrom.AzAffinity)]
+    [Arguments(false, true, false, RespireReadFrom.AzAffinity)]
+    [Arguments(true, false, false, RespireReadFrom.AzAffinity)]
+    [Arguments(true, true, false, RespireReadFrom.AzAffinity)]
+    public async Task PinnedCursorKeepsLocalPhysicalSocket(bool cluster, bool shared, bool primaryPin, RespireReadFrom policy)
     {
         await using var primary = Node("primary", "remote", false);
         await using var replica = Node("replica", "remote", true);
@@ -638,7 +642,6 @@ public class AvailabilityZoneRoutingTests
         var original = mixed.ReplyOverride!;
         mixed.ReplyOverride = (id, command) => command == "INFO SERVER"
             ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
-        const RespireReadFrom policy = RespireReadFrom.AzAffinityReplicasAndPrimary;
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster, policy)
             with { Connections = 2 });
         ReadAffinity? pin = shared ? null : new();
@@ -813,20 +816,38 @@ public class AvailabilityZoneRoutingTests
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
     }
 
+    // Shared routing matrix: both policies x ASK/MOVED x direct/role-fallback x ordinary/batch/stream.
+    // Each row must keep the local socket and send once per visited endpoint. The reverse role
+    // direction is covered by ReplicaRoleFallbackRetainsZoneAfterMovedRefresh: a narrowed replica
+    // read never returns to the primary. PinnedCursorKeepsLocalPhysicalSocket covers both policies
+    // and shared/per-enumeration pins without changing the server that owns the cursor.
     [Test]
-    [Arguments("ASK", 0, false)]
-    [Arguments("ASK", 0, true)]
-    [Arguments("ASK", 1, false)]
-    [Arguments("ASK", 1, true)]
-    [Arguments("ASK", 2, false)]
-    [Arguments("ASK", 2, true)]
-    [Arguments("MOVED", 0, false)]
-    [Arguments("MOVED", 0, true)]
-    [Arguments("MOVED", 1, false)]
-    [Arguments("MOVED", 1, true)]
-    [Arguments("MOVED", 2, false)]
-    [Arguments("MOVED", 2, true)]
-    public async Task ClusterRedirectKeepsLocalPhysicalSocket(string redirect, int mode, bool afterRoleFallback)
+    [Arguments("ASK", 0, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 0, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 1, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 1, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 2, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 2, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 0, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 0, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 1, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 1, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 2, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 2, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 0, false, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 0, true, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 1, false, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 1, true, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 2, false, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 2, true, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 0, false, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 0, true, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 1, false, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 1, true, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 2, false, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 2, true, RespireReadFrom.AzAffinity)]
+    public async Task ClusterRedirectKeepsLocalPhysicalSocket(
+        string redirect, int mode, bool afterRoleFallback, RespireReadFrom policy)
     {
         await using var primary = Node("primary", "local", false);
         await using var target = Node("target", "remote", false);
@@ -850,7 +871,7 @@ public class AvailabilityZoneRoutingTests
             _ => targetReply(id, command),
         };
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+            policy) with { Connections = 2, ClusterTopologyRefreshInterval = null });
         if (mode == 1)
         {
             using var batch = client.CreateBatch();
@@ -865,6 +886,10 @@ public class AvailabilityZoneRoutingTests
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
         }
         else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET ")))
+            .IsEqualTo(afterRoleFallback ? 1 : 0);
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
     }
 
     [Test]
