@@ -576,6 +576,9 @@ the original endpoint. Optional connection discovery or handshake cannot delay a
 
 `Primary` never hedges. `Replica` can hedge only onto another replica. `PrimaryPreferred`,
 `ReplicaPreferred`, and `Nearest` can hedge onto either role, using a different physical peer.
+`AzAffinity` and `AzAffinityReplicasAndPrimary` keep their zone and role ranking when selecting
+that other peer. Cluster selection excludes the original attempt's current peer after redirects
+or role fallback, and optional retries cannot re-enter that peer while the original remains there.
 Configured and Sentinel replicas must pass the same role validation as ordinary replica reads;
 Cluster candidates must belong to the key's current slot topology. All replica-capable policies
 can return stale data, including a replica hedge that beats a primary read.
