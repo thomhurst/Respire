@@ -100,6 +100,12 @@ internal static partial class ScopeWalker
 
                 _earliestEntries[state] = entryPosition;
 
+                // Forget writes before using this block's exceptional paths as evidence.
+                // A write and the throwing operation may share the same basic block.
+                foreach (var operation in block.Operations)
+                    _conditions.ForgetWrites(operation, ref known, ref values);
+                if (block.BranchValue is { } branchValue)
+                    _conditions.ForgetWrites(branchValue, ref known, ref values);
                 if (!started)
                 {
                     foreach (var origin in catchOrigins)
@@ -127,11 +133,11 @@ internal static partial class ScopeWalker
                             }
                             // Even an unknown implicit exception must pass the filter before
                             // acquiring a value in its handler. Retain that selection evidence.
-                            Dispatch(id, started: false, known: 0, values: 0);
+                            Dispatch(id, started: false, known, values);
                         }
                         else
                             Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
-                                catchContinuation, false, 0, 0, 0);
+                                catchContinuation, false, known, values, 0);
                     }
                 }
 
@@ -145,8 +151,10 @@ internal static partial class ScopeWalker
                 // Opaque calls before a proof barrier can enter local handlers. Barrier
                 // failure and uncaught implicit exceptions remain outside this proof.
                 if (dispatch == 0 && block.FallThroughSuccessor is { } successor
-                    && block.Operations.Any(operation => operation.Syntax.SpanStart > entryPosition
-                        && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation)))
+                    && (block.Operations.Any(operation => operation.Syntax.SpanStart > entryPosition
+                        && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation))
+                        || block.BranchValue is { } condition && condition.Syntax.SpanStart > entryPosition
+                        && condition.Syntax.Span.End <= firstBarrier && MayThrow(condition)))
                     Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
 
                 if (started && block.Ordinal == targetBlock.Ordinal
@@ -178,10 +186,6 @@ internal static partial class ScopeWalker
                     continue;
                 }
 
-                foreach (var operation in block.Operations)
-                    _conditions.ForgetWrites(operation, ref known, ref values);
-                if (block.BranchValue is { } branchValue)
-                    _conditions.ForgetWrites(branchValue, ref known, ref values);
                 Follow(block.FallThroughSuccessor, continuation, started, known, values, dispatch);
                 Follow(block.ConditionalSuccessor, continuation, started, known, values, dispatch);
             }
@@ -266,9 +270,7 @@ internal static partial class ScopeWalker
                 Dispatch(GetDispatch(branch, continuation), started, known, values);
                 if (branch.Semantics == ControlFlowBranchSemantics.Throw)
                 {
-                    var exception = branch.Source.BranchValue;
-                    while (exception is IConversionOperation { OperatorMethod: null } conversion)
-                        exception = conversion.Operand;
+                    var exception = UnwrapException(branch.Source.BranchValue);
                     if (exception is ILocalReferenceOperation or IParameterReferenceOperation
                         && ScopeExitAnalysis.GetExactThrownType(semanticModel, exception) is null)
                         Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
@@ -303,9 +305,7 @@ internal static partial class ScopeWalker
             if (_dispatchIds.TryGetValue(key, out var existing))
                 return existing;
 
-            var exception = branch.Source.BranchValue;
-            while (exception is IConversionOperation { OperatorMethod: null } conversion)
-                exception = conversion.Operand;
+            var exception = UnwrapException(branch.Source.BranchValue);
             ITypeSymbol? exceptionType = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception);
             var exactType = exceptionType is not null;
             var possiblyNull = !exactType && exception is ILocalReferenceOperation or IParameterReferenceOperation;
@@ -382,11 +382,21 @@ internal static partial class ScopeWalker
                 return false;
             if (operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation
-                || operation is IConversionOperation { OperatorMethod: not null })
+                || operation is IConversionOperation conversion
+                && (conversion.OperatorMethod is not null || !conversion.IsImplicit
+                    && !conversion.Conversion.IsIdentity && !conversion.ConstantValue.HasValue))
                 return true;
             if (operation is IObjectCreationOperation)
                 return ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
             return operation.ChildOperations.Any(MayThrow);
+        }
+
+        private static IOperation? UnwrapException(IOperation? operation)
+        {
+            while (operation is IConversionOperation { OperatorMethod: null } conversion
+                   && (conversion.IsImplicit || conversion.Conversion.IsIdentity))
+                operation = conversion.Operand;
+            return operation;
         }
 
         private int CatchContinuation(ControlFlowRegion handler, int continuation)

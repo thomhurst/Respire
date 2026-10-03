@@ -7,6 +7,72 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("MayThrow()")]
+    [Arguments("Property")]
+    public async Task ThrowingConditionCanBypassBothFlushBranches(string condition) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            bool MayThrow() => throw new Exception();
+            bool Property => throw new Exception();
+            async Task Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("a");
+                try { if ({{condition}}) await batch.SendAsync(); else await batch.SendAsync(); }
+                catch (Exception) { }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ExplicitExceptionCastCanReachInvalidCastHandler() => await Pending.VerifyAsync("""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("a");
+                try { throw (InvalidOperationException)(object)new Exception(); }
+                catch (InvalidCastException) { }
+                catch (Exception) { await batch.SendAsync(); }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CatchAcquisitionRetainsEnclosingPredicate(bool filtered) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            void MayThrow() => throw new Exception();
+            async Task Run(RespireClient client, bool choice, bool filter)
+            {
+                if (choice)
+                {
+                    try { MayThrow(); }
+                    catch (Exception) {{(filtered ? "when (filter)" : "")}}
+                    {
+                        var result = await client.ExecuteAsync("PING");
+                        if (choice) result.Dispose();
+                    }
+                }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("choice = !choice;", "", "", false)]
     [Arguments("", "", "choice = !choice;", false)]
     [Arguments("", "choice = !choice;", "", true)]
