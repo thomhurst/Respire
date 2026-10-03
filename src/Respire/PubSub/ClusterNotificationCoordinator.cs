@@ -20,6 +20,7 @@ internal sealed class ClusterNotificationCoordinator
     internal readonly HashSet<RespireSubscription> ScheduledReconciliationSubscriptions = [];
     internal long TopologyVersion;
     internal NotificationTopology? LatestTopology;
+    internal TaskCompletionSource TopologyChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal bool ReconciliationScheduled;
     internal bool ReconciliationScheduledAgain;
     internal bool ReconciliationHasExaminedSubscriptions;

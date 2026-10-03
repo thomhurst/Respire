@@ -97,14 +97,23 @@ internal sealed partial class SubscriptionHub
             while (true)
             {
                 NotificationTopology? latest;
-                lock (_gate) latest = _clusterNotifications.LatestTopology;
+                Task topologyChanged;
+                lock (_gate)
+                {
+                    latest = _clusterNotifications.LatestTopology;
+                    topologyChanged = _clusterNotifications.TopologyChanged.Task;
+                }
                 if (latest is null || latest.Version <= observedTopologyVersion) break;
-                observedTopologyVersion = latest.Version;
                 // Use the caller's token too, so a stalled new primary cannot outlive cancellation.
                 using var activation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken, _lifetimeCancellation.Token);
-                await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
-                    latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token).ConfigureAwait(false);
+                if (await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
+                        latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token).ConfigureAwait(false))
+                    observedTopologyVersion = latest.Version;
+                else
+                    // The router can publish before its callback reaches this hub. A rejected
+                    // catch-up is unfinished; wait for that callback before retrying it.
+                    await topologyChanged.WaitAsync(activation.Token).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
@@ -795,6 +804,8 @@ internal sealed partial class SubscriptionHub
             if (version <= _clusterNotifications.TopologyVersion) return;
             _clusterNotifications.LatestTopology = new NotificationTopology(version, endpoints, authoritative);
             Volatile.Write(ref _clusterNotifications.TopologyVersion, version);
+            _clusterNotifications.TopologyChanged.TrySetResult();
+            _clusterNotifications.TopologyChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
             if (authoritative)
             {
                 // An endpoint absent from a complete map has left the cluster. Forget its terminal

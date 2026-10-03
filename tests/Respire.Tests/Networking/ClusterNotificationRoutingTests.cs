@@ -449,6 +449,53 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ActivationWaitsForTheCallbackMatchingThePublishedMap(bool cancel)
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = SinglePrimaryTopology(first.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        var ackPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) return false;
+            ackPending.TrySetResult();
+            return true;
+        };
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        await using var hub = new SubscriptionHub(client.Core, new NotificationRecoveryClock());
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        var activation = hub.SubscribeAsync(SubscriptionKind.Channel, [descriptor], new(), cancellation.Token).AsTask();
+        await ackPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // A standalone hub lets the router publish V2 while only the V1 callback has arrived.
+        topology = SinglePrimaryTopology(second.Port);
+        _ = await client.Core.Cluster!.GetPrimaryEndpointsAsync(CancellationToken.None);
+        hub.NotifyTopologyChanged(1, [new("127.0.0.1", first.Port)], authoritative: true);
+        var commandIndex = first.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {descriptor}");
+        first.SuppressReply = null;
+        await first.SendRawAsync(Confirmation("subscribe", descriptor.ToString(), false), first.ReceivedConnectionIds[commandIndex]);
+        await Task.WhenAny(activation, Task.Delay(100));
+        await Assert.That(activation.IsCompleted).IsFalse();
+        if (cancel)
+        {
+            await cancellation.CancelAsync();
+            await Assert.That(async () => await activation).Throws<OperationCanceledException>();
+            await Assert.That(hub.ClusterNotificationCoverageCount).IsEqualTo(0);
+        }
+        else
+        {
+            hub.NotifyTopologyChanged(2, [new("127.0.0.1", second.Port)], authoritative: true);
+            await using var subscription = await activation.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+        }
+    }
+
+    [Test]
     public async Task OnePrimaryReconnectsWithoutStoppingHealthyPrimaryDelivery()
     {
         using var telemetryListener = new MeterListener
