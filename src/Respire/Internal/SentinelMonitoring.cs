@@ -6,6 +6,8 @@ namespace Respire.Internal;
 
 // Owns Sentinel subscriptions and their transport lifecycle. Generation publication,
 // retirement, and evidence reconciliation remain callbacks guarded by the router.
+// Callbacks run synchronously under gate and must not block or perform network I/O.
+// Any asynchronous continuation returned by received is awaited after releasing gate.
 internal sealed class SentinelMonitoring(
     RespireOptions options, ILogger? logger, object gate, SentinelDiscoveryState discovery,
     CancellationTokenSource lifetime,
@@ -21,23 +23,27 @@ internal sealed class SentinelMonitoring(
     private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _subscriptionVersion;
-    private long _validatedSubscriptions;
+    private readonly Dictionary<RespireEndpoint, long> _validatedSubscriptions = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(options.SentinelPrimaryName ?? "");
 
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
     internal int SubscribedCount { get { lock (_gate) return _subscribedSentinels.Count; } }
     internal long SubscriptionVersion { get { lock (_gate) return _subscriptionVersion; } }
-    internal bool NeedsStartupValidation(long version)
+    internal bool NeedsStartupValidation(RespireEndpoint reporter, long version)
     {
-        lock (_gate) return version > _validatedSubscriptions;
+        lock (_gate) return !_validatedSubscriptions.TryGetValue(reporter, out var validated) || version > validated;
     }
 
     // Capture the version before discovery starts. A lookup already in flight when a
     // subscription attaches cannot prove that its preceding delivery gap was covered.
-    internal void Validated(long version)
+    internal void Validated(RespireEndpoint reporter, long version)
     {
-        lock (_gate) _validatedSubscriptions = Math.Max(_validatedSubscriptions, version);
+        lock (_gate)
+        {
+            _validatedSubscriptions.TryGetValue(reporter, out var validated);
+            _validatedSubscriptions[reporter] = Math.Max(validated, version);
+        }
     }
 
     internal void SubscriptionEstablished(RespireEndpoint endpoint, bool first)

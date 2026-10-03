@@ -103,7 +103,8 @@ internal static class SentinelResolver
         SentinelHint? notificationHint = null,
         Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null,
         Func<TResult, RespireEndpoint?>? getValidatedPeer = null,
-        Func<TResult, ValueTask>? rejectPrimaryAsync = null)
+        Func<TResult, ValueTask>? rejectPrimaryAsync = null,
+        Action<RespireEndpoint>? acceptedReporter = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -228,6 +229,7 @@ internal static class SentinelResolver
                         if (rejectPrimaryAsync is not null) await rejectPrimaryAsync(result).ConfigureAwait(false);
                         throw;
                     }
+                    acceptedReporter?.Invoke(endpoint);
                     return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(

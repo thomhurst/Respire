@@ -922,6 +922,33 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task StartupCoverageDoesNotSkipUnqueriedReporter()
+    {
+        await using var primary = Primary();
+        await using var promoted = Primary();
+        await using var first = Sentinel(() => primary.Port, () => 0);
+        await using var second = Sentinel(() => promoted.Port, () => 1);
+        second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        var router = client.Core.Sentinel!;
+        // Offer the alternate reporter at an already validated version, as when two
+        // startup gaps attach before one lookup begins. Control the hint directly so
+        // transport scheduling cannot hide the unqueried-reporter regression.
+        var startup = SentinelHint.FromGap(new("127.0.0.1", second.Port)) with
+        {
+            StartupSubscriptionVersion = router.Monitoring.SubscriptionVersion,
+        };
+        await router.GetGenerationAsync(default, forceDiscovery: true, notificationHint: startup);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(promoted.Port);
+        await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))).IsTrue();
+        await Assert.That(promoted.ReceivedCommands.Contains("ROLE")).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task InitialSentinelValidationWaitsForAllExpectedAcknowledgements(bool promotionBeforeAttach)

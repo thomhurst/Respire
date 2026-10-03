@@ -132,8 +132,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             var previous = Current;
             if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
                 && (!forceDiscovery || notificationHint is { StartupSubscriptionVersion: > 0 } startup
-                    && !Monitoring.NeedsStartupValidation(startup.StartupSubscriptionVersion))) return previous;
+                    && startup.ReportingSentinel is { } reporter
+                    && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion))) return previous;
             var subscriptionVersion = Monitoring.SubscriptionVersion;
+            RespireEndpoint? acceptedReporter = null;
             // Classify against the generation current after acquiring discovery ownership:
             // a down report queued during A-to-B publication may describe B's next outage.
             if (notificationHint is { } downHint && previous is not null)
@@ -150,7 +152,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 forceDiscovery ? previous?.Endpoint : null,
                 notificationHint?.Target, notificationHint, HostResolver,
                 getValidatedPeer: static generation => generation.ValidatedPeer,
-                rejectPrimaryAsync: RejectGenerationAsync).ConfigureAwait(false);
+                rejectPrimaryAsync: RejectGenerationAsync,
+                acceptedReporter: endpoint => acceptedReporter = endpoint).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -158,7 +161,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     ObjectDisposedException.ThrowIf(_disposed, this);
                     if (replacement.IsRetired || !ReferenceEquals(Current, replacement))
                         throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
-                    Monitoring.Validated(subscriptionVersion);
+                    if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                 }
                 return replacement;
             }
@@ -176,7 +179,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && SameEndpoint(oldPeer, replacementPeer)
                     && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
                 {
-                    Monitoring.Validated(subscriptionVersion);
+                    if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                     return old;
                 }
                 if (old is not null) Invalidate(old);
@@ -190,7 +193,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
                 Monitoring.Published();
-                Monitoring.Validated(subscriptionVersion);
+                if (acceptedReporter is { } publishedReporter) Monitoring.Validated(publishedReporter, subscriptionVersion);
             }
             return replacement;
         }

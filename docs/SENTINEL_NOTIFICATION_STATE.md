@@ -47,9 +47,10 @@ those ownership boundaries intentionally do not discard errors through a recover
 | State/health observer callbacks | Serialized in `_notifications`, outside publication locks. Pending application callbacks are suppressed after disposal; explicitly retained telemetry callbacks may still run. This chain is not joined because an active observer can synchronously dispose the client itself. |
 
 First-subscription acknowledgements advance a monitor version. Discovery captures that version
-before its network lookup and marks it validated only after accepting the primary. An initial
-gap already covered by that validation can reuse the healthy generation without another ROLE
-pass. A subscription that attaches during the lookup still requires a later pass. Merging an
+before its network lookup and marks it validated only for the reporter whose primary was
+accepted. An initial gap from that reporter can reuse the healthy generation without another
+ROLE pass. Other reporters remain unvalidated even if they attached before the lookup began;
+their views may disagree. A subscription that attaches during the lookup still requires a later pass. Merging an
 initial gap with any real switch, down event, reconnect, or overflow gap clears this shortcut;
 those events keep their independent rediscovery requirements.
 

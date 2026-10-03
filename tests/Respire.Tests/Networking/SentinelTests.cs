@@ -87,6 +87,54 @@ public class SentinelTests
         await Assert.That(reconnectEpisodes).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task SentinelMonitorOptionsPreserveTransportAndExcludeDataRouting()
+    {
+        var source = new RespireOptions
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(11), CommandTimeout = TimeSpan.FromSeconds(12),
+            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(13),
+            ReconnectPolicy = new() { MaxAttempts = 7 },
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(14),
+            CredentialRefreshRetryDelay = TimeSpan.FromSeconds(15),
+            TcpKeepAliveTime = TimeSpan.FromSeconds(16), TcpKeepAliveInterval = TimeSpan.FromSeconds(17),
+            TcpKeepAliveRetryCount = 18, SubscriptionBufferSize = 19,
+            SubscriptionOverflow = SubscriptionOverflow.DropNewest,
+            ReceiveBufferSize = 20_000, WriteBufferSize = 21_000, MaxInflightCommands = 22,
+            LoggerFactory = Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+            // These are data-client settings, never subscription-monitor settings.
+            Database = 3, ClientName = "data-client", Connections = 4, UseCluster = true,
+            ReadFrom = RespireReadFrom.Replica, ReplicaEndpoints = [new("replica", 6380)],
+            SentinelPrimaryName = "service", ThreadPoolMonitoring = true,
+        };
+        var monitor = SentinelMonitoring.CreateOptions(source, new("sentinel", 26379));
+        string[] transport =
+        [
+            nameof(RespireOptions.ConnectTimeout), nameof(RespireOptions.CommandTimeout),
+            nameof(RespireOptions.ConnectionIdleReadTimeout), nameof(RespireOptions.ReconnectPolicy),
+            nameof(RespireOptions.CredentialRefreshBeforeExpiry), nameof(RespireOptions.CredentialRefreshRetryDelay),
+            nameof(RespireOptions.TcpKeepAliveTime), nameof(RespireOptions.TcpKeepAliveInterval),
+            nameof(RespireOptions.TcpKeepAliveRetryCount), nameof(RespireOptions.SubscriptionBufferSize),
+            nameof(RespireOptions.SubscriptionOverflow), nameof(RespireOptions.ReceiveBufferSize),
+            nameof(RespireOptions.WriteBufferSize), nameof(RespireOptions.MaxInflightCommands),
+            nameof(RespireOptions.LoggerFactory),
+        ];
+        foreach (var name in transport)
+        {
+            var property = typeof(RespireOptions).GetProperty(name)!;
+            await Assert.That(property.GetValue(monitor)).IsEqualTo(property.GetValue(source));
+        }
+        await Assert.That(monitor.Database).IsEqualTo(0);
+        await Assert.That(monitor.ClientName).IsNull();
+        await Assert.That(monitor.Connections).IsEqualTo(1);
+        await Assert.That(monitor.UseCluster).IsFalse();
+        await Assert.That(monitor.ReadFrom).IsEqualTo(RespireReadFrom.Primary);
+        await Assert.That(monitor.ReplicaEndpoints.Count).IsEqualTo(0);
+        await Assert.That(monitor.SentinelPrimaryName).IsNull();
+        await Assert.That(monitor.ThreadPoolMonitoring).IsFalse();
+        await Assert.That(monitor.MaintenanceNotifications).IsEqualTo(RespireMaintenanceNotificationMode.Disabled);
+    }
+
     // Each row: which credential sources are configured, and the expected monitor credentials and protocol.
     [Test]
     [Arguments("none", null, null, false, RespProtocol.Resp2)]

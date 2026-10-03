@@ -16,15 +16,20 @@ public class SentinelMonitoringTests
         using var lifetime = new CancellationTokenSource();
         var gaps = new List<(RespireEndpoint, bool)>();
         var monitor = Create(lifetime, (endpoint, initial) => gaps.Add((endpoint, initial)));
-        monitor.SubscriptionEstablished(new("first", 26379), true);
+        var first = new RespireEndpoint("first", 26379);
+        var second = new RespireEndpoint("second", 26379);
+        monitor.SubscriptionEstablished(first, true);
         var lookup = monitor.SubscriptionVersion;
-        monitor.SubscriptionEstablished(new("second", 26379), true);
-        monitor.Validated(lookup);
-        await Assert.That(monitor.NeedsStartupValidation(lookup)).IsFalse();
-        await Assert.That(monitor.NeedsStartupValidation(monitor.SubscriptionVersion)).IsTrue();
-        monitor.Validated(monitor.SubscriptionVersion);
-        monitor.Validated(lookup); // A late older completion cannot reopen a covered gap.
-        await Assert.That(monitor.NeedsStartupValidation(monitor.SubscriptionVersion)).IsFalse();
+        monitor.SubscriptionEstablished(second, true);
+        monitor.Validated(first, lookup);
+        await Assert.That(monitor.NeedsStartupValidation(first, lookup)).IsFalse();
+        await Assert.That(monitor.NeedsStartupValidation(second, monitor.SubscriptionVersion)).IsTrue();
+        // A newer lookup of the first reporter cannot cover the second reporter's view.
+        monitor.Validated(first, monitor.SubscriptionVersion);
+        await Assert.That(monitor.NeedsStartupValidation(second, monitor.SubscriptionVersion)).IsTrue();
+        monitor.Validated(second, monitor.SubscriptionVersion);
+        monitor.Validated(second, lookup); // A late older completion cannot reopen a covered gap.
+        await Assert.That(monitor.NeedsStartupValidation(second, monitor.SubscriptionVersion)).IsFalse();
         monitor.SubscriptionEstablished(new("first", 26379), false);
         await Assert.That(monitor.SubscriptionVersion).IsEqualTo(2L);
         await Assert.That(gaps.Count).IsEqualTo(3);
