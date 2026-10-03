@@ -192,7 +192,12 @@ internal static class SentinelResolver
                         && (preferredTarget is not null || notificationHint is { Sources.Length: > 0 })
                         && !matchesPreferredTarget
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
-                    var contradictsRecovery = notificationHint?.ReconciliationPrimary is { } recovered
+                    var reconciliationPrimary = !discoveryState.IsNewerConfiguration(observation.Epoch)
+                        && notificationHint is { } downHint
+                        ? await GetReconciliationPrimaryAsync(downHint, endpoint, hostResolver, connectTimeoutSource.Token)
+                            .ConfigureAwait(false)
+                        : null;
+                    var contradictsRecovery = reconciliationPrimary is { } recovered
                         && !recovered.Matches(primary, primaryAddresses)
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
                     if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
@@ -498,6 +503,39 @@ internal static class SentinelResolver
 
     internal static string NormalizeAddress(IPAddress address)
         => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+
+    private static async ValueTask<SentinelValidatedPrimary?> GetReconciliationPrimaryAsync(
+        SentinelHint hint, RespireEndpoint reporter,
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver, CancellationToken cancellationToken)
+    {
+        if (hint.ReconciliationPrimary is { } reconciliation) return reconciliation;
+        if (hint.DownReportPrimary is not { } current) return null;
+        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        var hasOwnReports = false;
+        foreach (var report in hint.DownReports)
+            if (comparer.Equals(report.Reporter, reporter)) { hasOwnReports = true; break; }
+        foreach (var report in hint.DownReports)
+        {
+            // A reporter named by the batch may use only its own evidence. Other fallback
+            // Sentinels may discover the current outage, but cannot override a known stale report.
+            if (hasOwnReports && !comparer.Equals(report.Reporter, reporter)) continue;
+            var primary = report.Primary;
+            if (primary.Port != (current.Peer ?? current.Endpoint).Port) continue;
+            string[]? addresses = null;
+            if (!IPAddress.TryParse(primary.Host, out _))
+            {
+                try
+                {
+                    var resolved = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, cancellationToken)
+                        .ConfigureAwait(false);
+                    addresses = Array.ConvertAll(resolved, NormalizeAddress);
+                }
+                catch (System.Net.Sockets.SocketException) { /* Unresolved aliases cannot prove ownership. */ }
+            }
+            if (current.Matches(primary, addresses)) return null;
+        }
+        return current;
+    }
 
     internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch,
         out bool failoverInProgress)

@@ -135,7 +135,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             // Classify against the generation current after acquiring discovery ownership:
             // a down report queued during A-to-B publication may describe B's next outage.
             if (notificationHint is { } downHint && previous is not null)
-                notificationHint = downHint.BindSupersededDownReports(new(previous.Endpoint, previous.ValidatedPeer));
+                notificationHint = downHint.BindDownReportsToCurrentPrimary(new(previous.Endpoint, previous.ValidatedPeer));
             if (!forceDiscovery && previous is not null) Invalidate(previous);
             // A forced discovery that resolves to the healthy current primary confirms it with ROLE
             // on the existing connection instead of opening and discarding a candidate generation.

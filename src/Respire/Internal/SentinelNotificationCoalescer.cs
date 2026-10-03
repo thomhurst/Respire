@@ -3,6 +3,7 @@ namespace Respire.Internal;
 // Endpoint identity uses EndpointComparer; Addresses are normalized DNS evidence for this
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
 internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
+internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter);
 
 internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
 {
@@ -31,18 +32,12 @@ internal readonly record struct SentinelHint(
     // mixed or non-down evidence, which cannot be classified as another report of this outage.
     internal string? DownKey { get; init; }
     // Nonempty only when all merged evidence consists of parsed master-down reports.
-    // Unlike DownKey, this survives reports for several different affected endpoints.
-    internal RespireEndpoint[] DownPrimaries { get; init; } = [];
+    // Keep reporter association: a current-owner outage cannot release a stale reporter's fence.
+    internal SentinelDownReport[] DownReports { get; init; } = [];
+    internal SentinelValidatedPrimary? DownReportPrimary { get; init; }
 
-    internal SentinelHint BindSupersededDownReports(SentinelValidatedPrimary current)
-    {
-        if (DownPrimaries.Length == 0 || ReconciliationPrimary is not null) return this;
-        foreach (var primary in DownPrimaries)
-            if (current.Matches(primary, null)) return this;
-        // A report about another owner cannot authorize metadata-free rollback. It can
-        // confirm the current peer or establish a genuinely newer configuration epoch.
-        return this with { ReconciliationPrimary = current };
-    }
+    internal SentinelHint BindDownReportsToCurrentPrimary(SentinelValidatedPrimary current)
+        => DownReports.Length == 0 ? this : this with { DownReportPrimary = current };
 
     internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
         RespireEndpoint? target, RespireEndpoint reporter)
@@ -50,7 +45,11 @@ internal readonly record struct SentinelHint(
             source is { } from ? [new(from, null)] : [], [reporter], target is null);
 
     internal static SentinelHint FromDown(string key, RespireEndpoint reporter, RespireEndpoint? primary = null)
-        => new(key, [], [], [reporter], true) { DownKey = key, DownPrimaries = primary is { } affected ? [affected] : [] };
+        => new(key, [], [], [reporter], true)
+        {
+            DownKey = key,
+            DownReports = primary is { } affected ? [new(affected, reporter)] : [],
+        };
 
     internal static SentinelHint FromGap(RespireEndpoint reporter)
         => new("gap", [], [], [reporter], true);
@@ -210,11 +209,33 @@ internal sealed class SentinelNotificationCoalescer
             // An independent wake-up remains independent even when its key duplicates an
             // active reconciliation pass. Only two reconciliation-only hints retain a bound.
             DownKey = previous.DownKey == hint.DownKey ? hint.DownKey : null,
-            DownPrimaries = previous.DownPrimaries.Length > 0 && hint.DownPrimaries.Length > 0
-                ? UnionEndpoints(previous.DownPrimaries, hint.DownPrimaries) : [],
+            DownReports = previous.DownReports.Length > 0 && hint.DownReports.Length > 0
+                ? UnionDownReports(previous.DownReports, hint.DownReports) : [],
             ReconciliationPrimary = sources.Length == 0 && previous.ReconciliationPrimary is not null
                 ? hint.ReconciliationPrimary : null,
         };
+    }
+
+    private static SentinelDownReport[] UnionDownReports(SentinelDownReport[] first, SentinelDownReport[] second)
+    {
+        List<SentinelDownReport>? result = null;
+        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        foreach (var report in second)
+        {
+            var found = false;
+            IReadOnlyList<SentinelDownReport> reports = result ?? (IReadOnlyList<SentinelDownReport>)first;
+            for (var index = 0; index < reports.Count; index++)
+            {
+                var known = reports[index];
+                if (comparer.Equals(known.Primary, report.Primary) && comparer.Equals(known.Reporter, report.Reporter))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) (result ??= [.. first]).Add(report);
+        }
+        return result?.ToArray() ?? first;
     }
 
     private static bool HasTargetSourceOverlap(RespireEndpoint[] targets, SentinelSwitchSource[] sources)

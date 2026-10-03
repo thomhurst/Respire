@@ -1075,6 +1075,101 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("primary.test", "127.0.0.1", true)]
+    [Arguments("PRIMARY.test", "::ffff:127.0.0.1", true)]
+    [Arguments("primary.test", "127.0.0.1,::ffff:127.0.0.1", true)]
+    [Arguments("primary.test", "127.0.0.1,192.0.2.1", false)]
+    [Arguments("primary.test", "192.0.2.1", false)]
+    [Arguments("primary.test", "", false)]
+    public async Task HostnameDownReportRecognizesTheValidatedNumericPeer(string host, string addresses, bool accepts)
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        router.HostResolver = (_, _) => addresses.Length == 0
+            ? throw new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)
+            : Task.FromResult(addresses.Split(',').Select(IPAddress.Parse).ToArray());
+        Volatile.Write(ref port, promoted.Port);
+        var hint = SentinelHint.FromDown("alias-down", new("127.0.0.1", sentinel.Port), new(host, original.Port));
+        var discovery = router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+            notificationHint: hint).AsTask().WaitAsync(Limit);
+        if (accepts)
+        {
+            var selected = await discovery;
+            await Assert.That(selected.Endpoint.Port).IsEqualTo(promoted.Port);
+        }
+        else
+        {
+            await Assert.That(async () => await discovery).Throws<RespireConnectionException>();
+            await Assert.That(client.Endpoint.Port).IsEqualTo(original.Port);
+            await Assert.That(promoted.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    public async Task NewerEpochDoesNotRequireDownReportAliasResolution()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        long epoch = 1;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port), () => Volatile.Read(ref epoch));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        router.HostResolver = (_, _) => throw new InvalidOperationException("A newer epoch needs no down-report DNS proof.");
+        Volatile.Write(ref port, promoted.Port);
+        Volatile.Write(ref epoch, 2);
+        var hint = SentinelHint.FromDown("alias-down", new("127.0.0.1", sentinel.Port), new("unavailable.test", original.Port));
+        var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+            notificationHint: hint).AsTask().WaitAsync(Limit);
+        await Assert.That(selected.Endpoint.Port).IsEqualTo(promoted.Port);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MixedDownReportsKeepEachReportersOwnershipFence(bool reverse)
+    {
+        await using var original = Primary();
+        await using var current = Primary();
+        await using var promoted = Primary();
+        var firstPort = current.Port;
+        var secondPort = current.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => Volatile.Read(ref secondPort));
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        Volatile.Write(ref firstPort, original.Port);
+        Volatile.Write(ref secondPort, promoted.Port);
+        var stale = SentinelHint.FromDown("old-down", new("127.0.0.1", first.Port), new("127.0.0.1", original.Port));
+        var fresh = SentinelHint.FromDown("current-down", new("127.0.0.1", second.Port), new("127.0.0.1", current.Port));
+        var hint = reverse ? SentinelNotificationCoalescer.Merge(fresh, in stale)
+            : SentinelNotificationCoalescer.Merge(stale, in fresh);
+        var selected = await client.Core.Sentinel!.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+            notificationHint: hint).AsTask().WaitAsync(Limit);
+        await Assert.That(selected.Endpoint.Port).IsEqualTo(promoted.Port);
+        await Assert.That(original.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task DownReportQueuedDuringPublicationCanDescribeTheNextOutage()
     {
         await using var original = Primary();

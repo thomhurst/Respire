@@ -199,26 +199,31 @@ public class SentinelNotificationTests
     }
 
     [Test]
-    public async Task DownReportBindingRetainsMixedOutagesButAllowsCurrentOutagesAndGaps()
+    public async Task DownReportBindingRetainsReporterAssociationsAndLeavesGapsIndependent()
     {
         var current = new SentinelValidatedPrimary(NewPrimary, NewPrimary);
         var first = SentinelHint.FromDown("old-down", OldPrimary, OldPrimary);
         var other = SentinelHint.FromDown("other-down", OldPrimary, new("10.0.0.3", 6379));
         var merged = SentinelNotificationCoalescer.Merge(first, in other);
         await Assert.That(merged.DownKey).IsNull();
-        await Assert.That(merged.DownPrimaries.Length).IsEqualTo(2);
-        await Assert.That(merged.BindSupersededDownReports(current).ReconciliationPrimary).IsEqualTo(current);
+        await Assert.That(merged.DownReports.Length).IsEqualTo(2);
+        await Assert.That(merged.BindDownReportsToCurrentPrimary(current).DownReportPrimary).IsEqualTo(current);
 
         var currentDown = SentinelHint.FromDown("current-down", OldPrimary, NewPrimary);
         var withCurrent = SentinelNotificationCoalescer.Merge(merged, in currentDown);
-        await Assert.That(withCurrent.BindSupersededDownReports(current).ReconciliationPrimary).IsNull();
+        await Assert.That(withCurrent.DownReports.Length).IsEqualTo(3);
+        await Assert.That(withCurrent.BindDownReportsToCurrentPrimary(current).DownReportPrimary).IsEqualTo(current);
         var gap = SentinelHint.FromGap(OldPrimary);
         var withGap = SentinelNotificationCoalescer.Merge(merged, in gap);
-        await Assert.That(withGap.DownPrimaries).IsEmpty();
-        await Assert.That(withGap.BindSupersededDownReports(current).ReconciliationPrimary).IsNull();
+        await Assert.That(withGap.DownReports).IsEmpty();
+        await Assert.That(withGap.BindDownReportsToCurrentPrimary(current).DownReportPrimary).IsNull();
 
         var duplicate = SentinelNotificationCoalescer.Merge(first, in first);
-        await Assert.That(ReferenceEquals(duplicate.DownPrimaries, first.DownPrimaries)).IsTrue();
+        await Assert.That(ReferenceEquals(duplicate.DownReports, first.DownReports)).IsTrue();
+        var otherReporter = SentinelHint.FromDown("old-down", NewPrimary, OldPrimary);
+        var bothReporters = SentinelNotificationCoalescer.Merge(first, in otherReporter);
+        await Assert.That(bothReporters.DownReports).IsEquivalentTo(
+            [new SentinelDownReport(OldPrimary, OldPrimary), new SentinelDownReport(OldPrimary, NewPrimary)]);
     }
 
     [Test]
