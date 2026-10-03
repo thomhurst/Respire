@@ -43,8 +43,15 @@ those ownership boundaries intentionally do not discard errors through a recover
 monitor registration, hint keys, evidence unions, and retained validated owners. Hostname
 case is ignored; numeric addresses use their canonical spelling, including IPv4-mapped
 IPv6 equivalence. Ports remain distinct. Textual identity never performs DNS resolution.
+Literal parsing preserves the runtime's existing IPv4 shorthand syntax (`127.1`, for
+example). IPv6 scope IDs remain part of identity: identical link-local addresses on
+different interfaces are distinct peers. Interface-name syntax follows the runtime parser;
+identity comparison performs no additional interface lookup.
 
-`SentinelAddressEvidence` retains the candidates from one observation or lookup lifetime.
+`SentinelAddressEvidence` normalizes and retains the candidates from one observation or
+lookup lifetime. It reuses already canonical arrays and copies only when normalization
+changes an address. Repeated matching compares retained canonical strings without parsing
+IPs in the address-pair loop. Switch sources retain this evidence across matching calls.
 Its conservative `CouldMatch` operation can fence a possible demoted source, but ownership
 confirmation uses `ConfirmsPeer` and requires one unambiguous address. Overlapping sets of
 several addresses cannot confirm an owner or consume its demotion fence. Duplicate evidence

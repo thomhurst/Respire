@@ -2,9 +2,14 @@ namespace Respire.Internal;
 
 // Endpoint identity uses SentinelEndpointIdentity; Addresses are DNS evidence for this
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
-internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses)
+internal readonly record struct SentinelSwitchSource
 {
-    internal SentinelAddressEvidence Evidence => new(Endpoint, Addresses);
+    internal SentinelAddressEvidence Evidence { get; }
+    internal RespireEndpoint Endpoint => Evidence.Endpoint;
+    internal string[]? Addresses => Evidence.Addresses;
+
+    internal SentinelSwitchSource(RespireEndpoint endpoint, string[]? addresses)
+        => Evidence = new(endpoint, addresses);
 }
 internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
     SentinelValidatedPrimary? OwnerAtObservation = null);
@@ -80,7 +85,7 @@ internal readonly record struct SentinelHint(
             if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
             if (source.Evidence.HasSameAddresses(addresses)) return this;
             var sources = (SentinelSwitchSource[])Sources.Clone();
-            sources[index] = source with { Addresses = addresses };
+            sources[index] = new(source.Endpoint, addresses);
             return this with { Sources = sources };
         }
         return this;
