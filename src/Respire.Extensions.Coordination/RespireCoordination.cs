@@ -96,6 +96,16 @@ public sealed class RespireCoordination
     /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
     public RespireRateLimiters RateLimiters { get; }
 
+    /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
+    /// <param name="key">Dedicated key before the client's configured prefix.</param>
+    /// <param name="capacity">Maximum active permits; must be positive.</param>
+    /// <remarks>
+    /// Creates a new local view without network I/O or acquiring a permit. The caller retains
+    /// ownership of the client. All contenders for the same key must use the same capacity.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The capacity is not positive.</exception>
+    public RespireSemaphore CreateSemaphore(RespireKey key, int capacity) => new(_client, key, capacity);
+
     // Shared per connection so every limiter (for example, one per PartitionedRateLimiter partition) skips the
     // failing INCREX probe after an unknown-command reply from a pre-8.8 server. The result expires so that
     // upgraded nodes (rolling Cluster upgrades, failover to a newer primary) regain the INCREX fast path.
