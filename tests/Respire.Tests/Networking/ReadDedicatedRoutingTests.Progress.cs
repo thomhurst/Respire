@@ -46,13 +46,14 @@ public partial class ReadDedicatedRoutingTests
             {
                 var error = await Assert.That(async () =>
                     await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token))
-                    .Throws<RespireConnectionException>();
-                await Assert.That(error!.ToString()).Contains(expected.Message);
+                    .ThrowsExactly<IOException>();
+                await Assert.That(error).IsSameReferenceAs(expected);
             }
             else
             {
                 var lease = await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token);
                 lease.Pool.Return(lease.Connection);
+                await Assert.That(lease.Pool).IsSameReferenceAs(pool);
                 await Assert.That(lease.IsReplica).IsFalse();
             }
             await Assert.That(caller.IsCancellationRequested).IsFalse();

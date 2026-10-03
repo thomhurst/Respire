@@ -1,23 +1,27 @@
 namespace Respire.Internal;
 
-// The rental loop owns this mutable value. Selection receives read-only copies; a role fallback
-// transfers it to the recursive rental and returns immediately. Successful reads allocate no set.
-internal struct ReadAttempt
+// Created only after acquisition fails. Selection and role fallback share one attempt so
+// exclusions, original errors, and retirement counts cannot diverge through value copies.
+internal sealed class ReadAttempt
 {
-    private HashSet<RespireEndpoint>? _failedEndpoints;
+    private Dictionary<RespireEndpoint, Exception>? _failures;
     private int _retirements;
 
-    internal readonly bool HasFailures => _failedEndpoints is not null;
+    internal bool IsFailed(RespireEndpoint endpoint) => _failures?.ContainsKey(endpoint) == true;
 
-    internal readonly bool IsFailed(RespireEndpoint endpoint) => _failedEndpoints?.Contains(endpoint) == true;
-
-    internal void Add(RespireEndpoint endpoint)
-        => (_failedEndpoints ??= new(RespireEndpointComparer.Instance)).Add(endpoint);
-
-    internal readonly void ThrowIfFailed(RespireEndpoint endpoint)
+    internal void Add(RespireEndpoint endpoint, Exception error)
     {
-        if (IsFailed(endpoint))
-            throw new RespireConnectionException($"Read acquisition already failed at {endpoint}.");
+        var failures = _failures ??= new(RespireEndpointComparer.Instance);
+        // Selection and rental may observe different endpoint identities. Every retry must
+        // exclude a new identity; otherwise terminate with the first acquisition failure.
+        if (!failures.TryAdd(endpoint, error))
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[endpoint]).Throw();
+    }
+
+    internal void ThrowIfFailed(RespireEndpoint endpoint)
+    {
+        if (_failures?.TryGetValue(endpoint, out var error) == true)
+            throw new RespireConnectionException($"Read acquisition already failed at {endpoint}.", error);
     }
 
     // Retirement can publish a healthy replacement at the same address, so it does not exclude

@@ -9,7 +9,7 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt attempt = default)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -21,7 +21,7 @@ internal sealed partial class ReadEndpointRouter
         Selection? primary = null;
         Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
-        if (!attempt.IsFailed(primaryCandidate.ActiveConnectionEndpoint) && sampler.CanConnect(primaryCandidate))
+        if (attempt?.IsFailed(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
         {
             try
             {
@@ -54,7 +54,7 @@ internal sealed partial class ReadEndpointRouter
             }
             else
             {
-                if (attempt.IsFailed(endpoints[index - 1])) continue;
+                if (attempt?.IsFailed(endpoints[index - 1]) == true) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
