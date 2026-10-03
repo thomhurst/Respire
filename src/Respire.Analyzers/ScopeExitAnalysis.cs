@@ -190,15 +190,42 @@ internal static class ScopeExitAnalysis
             return true;
         }
 
-        var throws = new List<ThrowStatementSyntax>();
-        foreach (var operation in body.DescendantsAndSelf())
+        var thrownTypes = new List<ThrownType>();
+        if (!TryCollectEscapingThrows(semanticModel, body, thrownTypes))
         {
+            return true;
+        }
+
+        var precedingHandlers = tryStatement.Catches.TakeWhile(candidate => candidate != handler).ToArray();
+        return thrownTypes.Any(thrownType =>
+            precedingHandlers.All(previous => MatchCatch(semanticModel, thrownType, previous) != CatchMatch.Guaranteed)
+            && MatchCatch(semanticModel, thrownType, handler) != CatchMatch.None);
+    }
+
+    /// <summary>
+    /// Collects the explicit throws that can leave <paramref name="root"/>. False when any
+    /// operation outside a small non-throwing set could raise something else. A nested
+    /// try/catch contributes only the throws its handlers may not catch, plus the throws
+    /// of the handlers that a known throw can enter.
+    /// </summary>
+    private static bool TryCollectEscapingThrows(SemanticModel semanticModel, IOperation root, List<ThrownType> thrownTypes)
+    {
+        var pending = new Stack<IOperation>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var operation = pending.Pop();
             switch (operation)
             {
                 case IThrowOperation { Syntax: ThrowStatementSyntax thrown }:
-                    throws.Add(thrown);
+                    thrownTypes.AddRange(GetThrownTypes(semanticModel, thrown));
                     break;
+                case ITryOperation { Finally: null, Syntax: TryStatementSyntax nestedTry } nested
+                    when nested.Catches.Length == nestedTry.Catches.Count:
+                    if (!TryCollectNestedEscapes(semanticModel, nested, nestedTry, thrownTypes)) return false;
+                    continue;
                 case IConversionOperation { IsImplicit: true, Conversion.IsReference: true, Parent: IThrowOperation }:
+                case IConversionOperation { Parent: IThrowOperation, ConstantValue: { HasValue: true, Value: null } }:
                 case IObjectCreationOperation { Parent: IThrowOperation or IConversionOperation { Parent: IThrowOperation } }:
                 case IBlockOperation:
                 case IConditionalOperation:
@@ -213,20 +240,58 @@ internal static class ScopeExitAnalysis
                     or BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals }:
                     break;
                 default:
-                    return true;
+                    return false;
+            }
+
+            foreach (var child in operation.ChildOperations)
+            {
+                pending.Push(child);
             }
         }
 
-        var precedingHandlers = tryStatement.Catches.TakeWhile(candidate => candidate != handler).ToArray();
-        return throws.Any(thrown => GetThrownTypes(semanticModel, thrown).Any(thrownType =>
-            precedingHandlers.All(previous => MatchCatch(semanticModel, thrownType, previous) != CatchMatch.Guaranteed)
-            && MatchCatch(semanticModel, thrownType, handler) != CatchMatch.None));
+        return true;
+    }
+
+    private static bool TryCollectNestedEscapes(
+        SemanticModel semanticModel, ITryOperation nested, TryStatementSyntax nestedTry, List<ThrownType> thrownTypes)
+    {
+        var innerTypes = new List<ThrownType>();
+        if (!TryCollectEscapingThrows(semanticModel, nested.Body, innerTypes)) return false;
+        var entered = new bool[nested.Catches.Length];
+        foreach (var innerType in innerTypes)
+        {
+            var caught = false;
+            for (var index = 0; index < entered.Length && !caught; index++)
+            {
+                var match = MatchCatch(semanticModel, innerType, nestedTry.Catches[index]);
+                if (match == CatchMatch.None) continue;
+                entered[index] = true;
+                caught = match == CatchMatch.Guaranteed;
+            }
+
+            if (!caught) thrownTypes.Add(innerType);
+        }
+
+        // An exception raised by a filter is swallowed, so only an entered handler body can
+        // add escaping throws. A rethrow there has an unknown type and stays conservative.
+        for (var index = 0; index < entered.Length; index++)
+        {
+            if (entered[index] && !TryCollectEscapingThrows(semanticModel, nested.Catches[index].Handler, thrownTypes))
+                return false;
+        }
+
+        return true;
     }
 
     private static ThrownType[] GetThrownTypes(SemanticModel semanticModel, ThrowStatementSyntax thrown)
     {
         var operation = thrown.Expression is { } expression
             ? semanticModel.GetOperation(ScopeWalker.Unwrap(expression)) : null;
+        if (GetExactThrownType(semanticModel, operation) is { } exactType)
+        {
+            return [new(exactType, true)];
+        }
+
         if (operation is ILocalReferenceOperation or IParameterReferenceOperation
             && operation.Type is { TypeKind: not TypeKind.Dynamic } type)
         {
@@ -234,7 +299,85 @@ internal static class ScopeExitAnalysis
             // value may be derived; throwing null instead raises NullReferenceException.
             return [new(type, false), new(semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException"), true)];
         }
-        return [new(GetKnownExactExceptionType(semanticModel.Compilation, operation), true)];
+        return [new(null, true)];
+    }
+
+    /// <summary>
+    /// The exact runtime type raised by throwing <paramref name="operation"/>, or null when it
+    /// is unknown: NullReferenceException for a compile-time null, the type of a simple fresh
+    /// construction, or the type a never-reassigned local was initialized with.
+    /// </summary>
+    internal static ITypeSymbol? GetExactThrownType(SemanticModel semanticModel, IOperation? operation)
+    {
+        if (operation?.ConstantValue is { HasValue: true, Value: null })
+        {
+            return semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException");
+        }
+
+        return GetKnownExactExceptionType(semanticModel.Compilation, operation)
+               ?? GetUnreassignedCreationType(semanticModel, operation);
+    }
+
+    /// <summary>
+    /// The created type of a local initialized with <c>new X(...)</c> and never written again,
+    /// so every read is that exact non-null instance. A construction exception happens at the
+    /// initializer, before any read. Any possible write or by-reference use returns null.
+    /// </summary>
+    private static ITypeSymbol? GetUnreassignedCreationType(SemanticModel semanticModel, IOperation? operation)
+    {
+        if (operation is not ILocalReferenceOperation { Local: { IsRef: false, IsConst: false } local }
+            || local.DeclaringSyntaxReferences.Length != 1
+            || local.DeclaringSyntaxReferences[0].GetSyntax() is not VariableDeclaratorSyntax { Initializer.Value: { } value } declarator
+            || declarator.SyntaxTree != semanticModel.SyntaxTree
+            || semanticModel.GetOperation(ScopeWalker.Unwrap(value)) is not IObjectCreationOperation { Type: { } createdType }
+            // A switch section's locals are scoped to the whole switch block.
+            || declarator.Ancestors().FirstOrDefault(static ancestor =>
+                ancestor is BlockSyntax or SwitchStatementSyntax or CompilationUnitSyntax) is not { } scope)
+        {
+            return null;
+        }
+
+        foreach (var identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>())
+        {
+            if (identifier.Identifier.ValueText == local.Name
+                && SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(identifier).Symbol, local)
+                && IsPotentialWrite(identifier))
+            {
+                return null;
+            }
+        }
+
+        return createdType;
+    }
+
+    private static bool IsPotentialWrite(IdentifierNameSyntax identifier)
+    {
+        // Assignment and deconstruction targets, including member writes, are rejected conservatively.
+        if (identifier.Ancestors().Any(ancestor =>
+                ancestor is AssignmentExpressionSyntax assignment && assignment.Left.Span.Contains(identifier.Span)
+                || ancestor is ForEachVariableStatementSyntax loop && loop.Variable.Span.Contains(identifier.Span)))
+        {
+            return true;
+        }
+
+        SyntaxNode node = identifier;
+        while (node.Parent is ParenthesizedExpressionSyntax
+               || node.Parent is PostfixUnaryExpressionSyntax suppression
+               && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression))
+        {
+            node = node.Parent;
+        }
+
+        return node.Parent switch
+        {
+            ArgumentSyntax argument => !argument.RefKindKeyword.IsKind(SyntaxKind.None),
+            RefExpressionSyntax or MakeRefExpressionSyntax => true,
+            PrefixUnaryExpressionSyntax prefix => prefix.Kind() is SyntaxKind.PreIncrementExpression
+                or SyntaxKind.PreDecrementExpression or SyntaxKind.AddressOfExpression,
+            PostfixUnaryExpressionSyntax postfix => postfix.Kind() is SyntaxKind.PostIncrementExpression
+                or SyntaxKind.PostDecrementExpression,
+            _ => false,
+        };
     }
 
     /// <summary>

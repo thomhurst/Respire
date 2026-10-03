@@ -151,4 +151,100 @@ public class ScopeExitAnalysisTests
         }
         """);
 
+    [Test]
+    [Arguments("", "throw null", "catch (NullReferenceException) { }", false)]
+    [Arguments("", "throw (Exception)null", "catch (NullReferenceException) { }", false)]
+    [Arguments("", "throw default(InvalidOperationException)", "catch (NullReferenceException) { }", false)]
+    [Arguments("", "throw null", "catch (InvalidOperationException) { }", true)]
+    [Arguments("", "throw (InvalidOperationException)null", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = new InvalidOperationException();", "throw error", "catch (InvalidOperationException) { }", false)]
+    [Arguments("Exception error = new InvalidOperationException();", "throw error", "catch (InvalidOperationException) { }", false)]
+    [Arguments("var error = new InvalidOperationException(); error = null;", "throw error", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = new InvalidOperationException(); Reset(ref error);", "throw error", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = new InvalidOperationException(); Action reset = () => error = null; reset();", "throw error", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = skip ? new InvalidOperationException() : null;", "throw error", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = new InvalidOperationException();", "throw error", "catch (ArgumentException) { }", true)]
+    public async Task ExactNullOrUnreassignedThrownValueSelectsReleaseHandler(
+        string setup, string thrown, string handler, bool warning)
+    {
+        var result = warning ? "{|RESP001:result|}" : "result";
+        await VerifyDisposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                private static void Reset<T>(ref T value) where T : class => value = null;
+
+                public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+                {
+                    {{setup}}
+                    var {{result}} = choice switch { 0 => await client.ExecuteAsync("PING"), _ => existing };
+                    try { if (skip) {{thrown}}; }
+                    {{handler}}
+                    if (choice == 0) result.Dispose();
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("", "null", false)]
+    [Arguments("", "(Exception)null", false)]
+    [Arguments("", "error", true)]
+    [Arguments("var local = new ArgumentException(\"x\");", "local", false)]
+    [Arguments("Exception local = new ArgumentException(\"x\");", "local", false)]
+    [Arguments("var local = new ArgumentException(\"x\"); if (skip) local = null;", "local", true)]
+    [Arguments("var local = new ArgumentException(\"x\"); var (copy, other) = (local, local); (local, other) = (null, copy);", "local", true)]
+    public async Task ExactNullOrUnreassignedThrownValueSelectsFinallyHandler(string setup, string thrown, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client, bool skip, Exception error)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw {{thrown}}; }
+                    catch (NullReferenceException) { await batch.SendAsync(); }
+                    catch (ArgumentException) { await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    finally { Console.WriteLine({{read}}); }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("catch (InvalidOperationException) { await batch.SendAsync(); } catch (ArgumentException) { }", true)]
+    [Arguments("catch (InvalidOperationException) { await batch.SendAsync(); }", true)]
+    [Arguments("catch (Exception) { await batch.SendAsync(); }", false)]
+    [Arguments("catch { await batch.SendAsync(); }", false)]
+    public async Task GenericConstructionKeepsLaterCatchesReachable(string handlers, bool warning)
+    {
+        // new T() runs T's constructor, which can raise a different exception first.
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync<T>(RespireClient client) where T : InvalidOperationException, new()
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw new T(); }
+                    {{handlers}}
+                    finally { Console.WriteLine({{read}}); }
+                }
+            }
+            """);
+    }
+
 }

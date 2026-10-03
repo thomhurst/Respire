@@ -925,6 +925,10 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Test]
     [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { break; }")]
     [Arguments("try { if (skip) throw new InvalidOperationException(\"x\"); } catch (InvalidOperationException) { throw; } catch (Exception) { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { } } catch { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { } } catch (ArgumentException) { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw new ArgumentException(); } } catch (InvalidOperationException) { break; }")]
+    [Arguments("try { try { if (skip) throw null; } catch (NullReferenceException) { } } catch { break; }")]
     public async Task InapplicableHandlerExitDoesNotBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
         $$$"""
         using System;
@@ -960,6 +964,12 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Arguments("try { if (skip) throw new ArgumentException(); } catch (ArgumentException) { break; }")]
     [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) when (skip) { } catch (Exception) { break; }")]
     [Arguments("try { Console.WriteLine(); } catch (ArgumentException) { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { } } catch { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw; } } catch { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw new ArgumentException(); } } catch (ArgumentException) { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) when (skip) { } } catch { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } finally { } } catch { break; }")]
+    [Arguments("try { try { Console.WriteLine(); } catch (ArgumentException) { } } catch { break; }")]
     public async Task ApplicableHandlerExitCanBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
         $$$"""
         using System;
