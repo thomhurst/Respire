@@ -481,6 +481,7 @@ internal static partial class ScopeWalker
             var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
                 or IEventAssignmentOperation or IArrayCreationOperation
+                or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }

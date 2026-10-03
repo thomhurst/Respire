@@ -7,6 +7,81 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("value is not null", "value is not null", "", false)]
+    [Arguments("value is not null", "value != null", "", false)]
+    [Arguments("value is not null", "value is null", "", true)]
+    [Arguments("choice", "choice", "buffer[choice ? 0 : 1] = 1;", false)]
+    [Arguments("choice", "choice", "buffer[(choice = false) ? 0 : 1] = 1;", true)]
+    public async Task StablePatternAndIndexPredicatesRemainCorrelated(string selection, string cleanup, string write, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, object value, bool choice, int[] buffer)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    {{write}}
+                    if ({{cleanup}}) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, object value, bool choice, int[] buffer)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = {{selection}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    {{write}}
+                    if ({{cleanup}}) await first.SendAsync(); else await second.SendAsync();
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("value.Missing", false)]
+    [Arguments("value[0]", false)]
+    [Arguments("value.Missing", true)]
+    public async Task DynamicAccessCanBypassCleanup(string access, bool cleanupInCatch)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, dynamic value)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{access}}; result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, dynamic value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{access}}; await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("new Holder { Value = (flag = false) }", false)]
     [Arguments("new Holder { Property = (flag = false) }", true)]
     [Arguments("new Holder(flag = false) { Value = true }", true)]

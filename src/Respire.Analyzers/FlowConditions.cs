@@ -108,8 +108,9 @@ internal sealed class FlowConditions
                     known &= mask;
                     values &= mask;
                 }
-        foreach (var child in target.ChildOperations)
-            Forget(child, ref known, ref values);
+        if (target is ITupleOperation or IDeclarationExpressionOperation)
+            foreach (var child in target.ChildOperations)
+                Forget(child, ref known, ref values);
     }
 
     private void Invalidate(IOperation operation)
@@ -199,11 +200,20 @@ internal sealed class FlowConditions
                 expected = !expected;
             }
         }
-        else if (condition is IIsPatternOperation { Pattern: IConstantPatternOperation pattern } isPattern
-                 && pattern.Value.ConstantValue.HasValue)
+        else if (condition is IIsPatternOperation isPattern)
         {
+            var pattern = isPattern.Pattern;
+            while (pattern is INegatedPatternOperation negated)
+            {
+                expected = !expected;
+                pattern = negated.Pattern;
+            }
+            if (pattern is IDiscardPatternOperation)
+                return expected;
+            if (pattern is not IConstantPatternOperation constantPattern || !constantPattern.Value.ConstantValue.HasValue)
+                return true;
             operand = isPattern.Value;
-            comparison = pattern.Value.ConstantValue.Value;
+            comparison = constantPattern.Value.ConstantValue.Value;
         }
         else if (condition.Type?.SpecialType != SpecialType.System_Boolean)
             return true;
