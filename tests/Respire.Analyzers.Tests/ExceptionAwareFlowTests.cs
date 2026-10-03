@@ -7,6 +7,76 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Take(result, Throws());", false)]
+    [Arguments("Take(result, choice ? Throws() : 0);", false)]
+    [Arguments("_ = new Owner(result, Throws());", false)]
+    [Arguments("Take(result, Throws());", true)]
+    [Arguments("Take(result, 0);", false, false)]
+    public async Task OwnershipTransferWaitsForArguments(string transfer, bool cleanupInCatch, bool warning = true)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } }
+            class Caller
+            {
+                int Throws() => throw new InvalidOperationException();
+                void Take(RespireResult result, int value) { result.Dispose(); }
+                async Task Run(RespireClient client, bool choice)
+                {
+                    var {{(warning && !cleanupInCatch ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{transfer}} }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("_ = \"prefix\" + holder;", true)]
+    [Arguments("text += holder;", true)]
+    [Arguments("_ = text + text;", false)]
+    [Arguments("text += text;", false)]
+    [Arguments("_ = \"prefix\" + \"suffix\";", false)]
+    public async Task StringConcatenationCanInvokeUserCode(string expression, bool warning)
+    {
+        const string holder = "class Holder { public override string ToString() => throw new System.InvalidOperationException(); }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, string text)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, string text)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("object boxed = value;", "OutOfMemoryException", true)]
     [Arguments("object boxed = value;", "InvalidOperationException", false)]
     [Arguments("object boxed = 1;", "OutOfMemoryException", true)]

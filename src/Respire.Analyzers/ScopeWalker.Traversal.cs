@@ -68,7 +68,8 @@ internal static partial class ScopeWalker
         {
             foreach (var barrier in barriers)
             {
-                if (FindBlock(graph, barrier) is not { } block)
+                var (block, position) = FindBarrierLocation(barrier);
+                if (block is null)
                 {
                     continue;
                 }
@@ -79,7 +80,7 @@ internal static partial class ScopeWalker
                     _barrierPositions.Add(block.Ordinal, positions);
                 }
 
-                positions.Add(barrier.SpanStart);
+                positions.Add(position);
             }
 
             foreach (var positions in _barrierPositions.Values)
@@ -142,6 +143,29 @@ internal static partial class ScopeWalker
             }
 
             return false;
+        }
+
+        private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
+        {
+            var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
+            var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
+                ? arguments.Parent : expression;
+            if (call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax)
+            {
+                foreach (var block in graph.Blocks)
+                    foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
+                        if (ContainsCall(operation, call))
+                            return (block, call.Span.End - 1);
+            }
+            return (FindBlock(graph, barrier), barrier.SpanStart);
+
+            static bool ContainsCall(IOperation operation, SyntaxNode call)
+            {
+                if (operation.Syntax == call && operation is IInvocationOperation or IDynamicInvocationOperation
+                    or IObjectCreationOperation or IDynamicObjectCreationOperation)
+                    return true;
+                return operation.ChildOperations.Any(child => ContainsCall(child, call));
+            }
         }
 
         private List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> FindCatchOrigins()
@@ -304,6 +328,7 @@ internal static partial class ScopeWalker
                         allocationOnly: arrayAllocation
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
+                            || IsStringOnlyConcatenation(exceptionSource)
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
                 }
@@ -518,6 +543,8 @@ internal static partial class ScopeWalker
                 or IDynamicObjectCreationOperation
                 or IWithOperation { CloneMethod: not null }
                 or IRecursivePatternOperation { DeconstructSymbol: not null }
+                or IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String, ConstantValue.HasValue: false }
+                or ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String }
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
@@ -580,6 +607,20 @@ internal static partial class ScopeWalker
                 || kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply
                     && (decimalType || isChecked && integral);
         }
+
+        private static bool IsStringOnlyConcatenation(IOperation operation)
+            => operation switch
+            {
+                IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
+                    OperatorMethod: null } binary => IsStringOrNull(binary.LeftOperand) && IsStringOrNull(binary.RightOperand),
+                ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
+                    OperatorMethod: null } assignment => IsStringOrNull(assignment.Value),
+                _ => false,
+            };
+
+        private static bool IsStringOrNull(IOperation operation)
+            => operation.Type?.SpecialType == SpecialType.System_String
+                || operation.ConstantValue is { HasValue: true, Value: null };
 
         private bool IsBoxing(IConversionOperation operation)
             => operation.Operand.ConstantValue is not { HasValue: true, Value: null }
