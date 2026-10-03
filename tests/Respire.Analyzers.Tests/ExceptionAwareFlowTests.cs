@@ -7,6 +7,49 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("object boxed = value;", "OutOfMemoryException", true)]
+    [Arguments("object boxed = value;", "InvalidOperationException", false)]
+    [Arguments("object boxed = 1;", "OutOfMemoryException", true)]
+    [Arguments("_ = new { Value = 1 };", "InvalidOperationException", false)]
+    [Arguments("_ = new { Value = 1 };", "OutOfMemoryException", true)]
+    [Arguments("_ = new { Value = Throw() };", "InvalidOperationException", true)]
+    public async Task BoxingAndAnonymousObjectsHaveAllocationExceptions(string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                int Throw() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int value)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                int Throw() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Exception", false)]
     [Arguments("InvalidOperationException", false)]
     [Arguments("ArgumentException", false)]

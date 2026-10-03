@@ -258,7 +258,14 @@ internal static partial class ScopeWalker
                 IArrayCreationOperation creation => creation.Initializer,
                 _ => null,
             };
-            if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
+            if (operation is IAnonymousObjectCreationOperation anonymous)
+            {
+                // Anonymous properties are constructor arguments, not setter calls.
+                foreach (var member in anonymous.Initializers)
+                    if (member is ISimpleAssignmentOperation memberAssignment)
+                        Visit(memberAssignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
+            else if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
                     or IFieldReferenceOperation or IArrayElementReferenceOperation
                     or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation)
@@ -295,6 +302,8 @@ internal static partial class ScopeWalker
                     // and simple framework exception constructors only add allocation failure.
                     Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         allocationOnly: arrayAllocation
+                            || exceptionSource is IAnonymousObjectCreationOperation
+                            || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
                 }
@@ -556,7 +565,7 @@ internal static partial class ScopeWalker
                     && field.ContainingType.StaticConstructors.Length != 0
                 || operation is IConversionOperation conversion
                     && ConversionMayThrow(conversion)
-                || operation is IObjectCreationOperation;
+                || operation is IObjectCreationOperation or IAnonymousObjectCreationOperation;
             _throwingOperations.Add(operation, throwing);
             return throwing;
         }
@@ -572,9 +581,13 @@ internal static partial class ScopeWalker
                     && (decimalType || isChecked && integral);
         }
 
+        private bool IsBoxing(IConversionOperation operation)
+            => operation.Operand.Type is { } source && operation.Type is { } destination
+                && ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination).IsBoxing;
+
         private bool ConversionMayThrow(IConversionOperation operation)
         {
-            if (operation.OperatorMethod is not null)
+            if (operation.OperatorMethod is not null || IsBoxing(operation))
                 return true;
             if (operation.IsTryCast || operation.ConstantValue.HasValue || operation.Conversion.IsIdentity)
                 return false;
