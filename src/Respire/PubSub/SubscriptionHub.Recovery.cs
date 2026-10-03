@@ -16,6 +16,17 @@ internal sealed partial class SubscriptionHub
 
     private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
 
+    private void OnUnexpectedConnectionClosed()
+    {
+        lock (_reconnectStateGate)
+        {
+            // Failed replacement sockets belong to the existing recovery episode. They
+            // must not replace a Sentinel publication signal already captured at its start.
+            if (!_disposed && _configuredRecoveryPhase == ConfiguredRecoveryPhase.Idle)
+                core.Options.ReconnectEpisodeStarted?.Invoke();
+        }
+    }
+
     private RespireConnection? GetConnectionForCaller(bool watch)
     {
         if (!watch || core.Options.ReconnectPolicy is null)
@@ -46,8 +57,7 @@ internal sealed partial class SubscriptionHub
             _configuredRecoveryPhase = ConfiguredRecoveryPhase.Recovering;
             _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
-        // Reserve ownership before starting any work. Observers are dispatched separately
-        // so synchronous disposal can await this reservation without waiting on itself.
+        // Reserve ownership before starting any work so synchronous disposal can await recovery.
         _ = RecoverConfiguredAsync(connection, policy, drained);
     }
 

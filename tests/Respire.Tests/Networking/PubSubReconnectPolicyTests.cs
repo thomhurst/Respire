@@ -32,6 +32,43 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
+    public async Task ReplacementClosesDoNotRestartTheReconnectEpisode()
+    {
+        await using var server = new FakeRespServer(4, Confirmation);
+        var episodes = 0;
+        var publication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? captured = null;
+        await using var client = RespireClient.Create(Options(server.Port, Policy()) with
+        {
+            ReconnectEpisodeStarted = () =>
+            {
+                Volatile.Write(ref captured, publication.Task);
+                Interlocked.Increment(ref episodes);
+            },
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        for (var count = 2; count <= 3; count++)
+        {
+            await WaitForCommandsAsync(server, count, deadline.Token);
+            if (count == 2)
+            {
+                // Publication during recovery grants the budget before replacement sockets
+                // fail. Their close callbacks must not capture the next, incomplete epoch.
+                publication.TrySetResult();
+                publication = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            server.CloseConnection(server.ReceivedConnectionIds[^1]);
+        }
+        await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref captured)!.IsCompleted).IsTrue();
+    }
+
+    [Test]
     public async Task FailedResubscriptionsShareOneBudgetAndExhaustionEndsLiveSubscriptions()
     {
         await using var server = new FakeRespServer(3, Confirmation) { CloseConnectionAfterCommand = 2 };
@@ -101,7 +138,11 @@ public class PubSubReconnectPolicyTests
         var reply = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(Confirmation)
             + "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n");
         await using var server = new FakeRespServer(3, reply) { CloseConnectionAfterCommand = 2 };
-        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)));
+        var episodes = 0;
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
+        {
+            ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
+        });
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -126,6 +167,7 @@ public class PubSubReconnectPolicyTests
             await Assert.That(reader.Current.Text).IsEqualTo("hello");
         }
         await Assert.That(attempts.ToArray()).IsEquivalentTo(new[] { 1, 1 });
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(2);
         await Assert.That(server.CommandsSeen).IsEqualTo(5);
         // Dispose the client before the subscription: the scripted server does not send
         // unsubscribe confirmations, and this test concerns recovery rather than unsubscribe.

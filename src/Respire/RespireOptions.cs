@@ -231,6 +231,8 @@ public sealed record RespireOptions
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
+    internal string? ReconnectTelemetryScope { get; init; }
+    internal Action? ReconnectEpisodeStarted { get; init; }
 
     /// <summary>Interval for background Redis Cluster topology refresh. Defaults to 60 seconds. Null,
     /// <see cref="TimeSpan.Zero"/>, or <see cref="Timeout.InfiniteTimeSpan"/> disables the periodic timer;
