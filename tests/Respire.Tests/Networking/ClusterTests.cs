@@ -850,6 +850,44 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_ReplicaSelectionRetriesPublishedRoutesWhileOldRefreshIsThrottled()
+    {
+        await using var oldReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command == "READONLY",
+        };
+        await using var newReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ") ? "$3\r\nnew\r\n"u8.ToArray() : null,
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(5),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        void Publish(int port, long generation) => router.ApplyTopology(
+            [new ClusterTopologyRange(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
+            {
+                Replicas = [new(new("127.0.0.1", port), "replica", [])],
+            }], router.TopologyVersion, generation);
+        Publish(oldReplica.Port, 1);
+        var slot = ClusterHash.GetSlot("key");
+        // Freeze the old set's throttle so scheduler delays cannot reopen its refresh budget.
+        var oldRoutes = new ClusterReplicaSet(ReplicaRoutes(client)[slot]!.Nodes, TimeSpan.FromMinutes(1), () => 0);
+        ReplicaRoutes(client)[slot] = oldRoutes;
+        await oldRoutes.JoinOrStartRefresh(() => Task.CompletedTask)!;
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var read = reads.Strings.GetStringAsync("key").AsTask();
+        await WaitForCommandsAsync(oldReplica, 1);
+        Publish(newReplica.Port, 2);
+        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("new");
+        await Assert.That(oldReplica.ReceivedCommands).DoesNotContain("GET key");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadFrom_MigrationReplicaCoverageDropsSourceRoutes(bool entireRange)
