@@ -13,8 +13,10 @@ that interval. Captured writes, by-reference escapes, and address-taken locals r
 conservative; array-index calculations do not expose their locals' storage.
 
 Each query processes fewer than 16,384 states from its work stack (`ReachabilityWalker.MaxProcessedStates`)
-and tracks at most 64 branch predicates (`FlowConditions.MaxPredicates`, the width
-of the `ulong` masks). If the state budget is exhausted, the search conservatively treats the
+and tracks at most 64 path facts (`FlowConditions.MaxPredicates`, the width
+of the `ulong` masks). These facts include branch predicates, non-null receivers,
+and whether an owning value was selected inside a wrapped call argument.
+If the state budget is exhausted, the search conservatively treats the
 unproven path as reachable. A warning in a very large or branch-heavy method can
 therefore reflect an analysis limit rather than a confirmed unsafe execution. The
 diagnostic retains its usual message; reaching the limit never suppresses a warning

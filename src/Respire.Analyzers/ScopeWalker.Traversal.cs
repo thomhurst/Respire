@@ -24,6 +24,10 @@ internal static partial class ScopeWalker
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startBlock, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
+        private readonly Dictionary<(int Block, int Position), List<(int TriggerBlock, ulong Flag)>> _transferGuards = new();
+        private readonly Dictionary<SyntaxNode, ulong> _transferTriggers = new();
+        private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
+        private ulong _transferFlags;
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
@@ -118,7 +122,7 @@ internal static partial class ScopeWalker
 
                 _earliestEntries[state] = entryPosition;
 
-                var firstBarrier = FindFirstBarrier(block, entryPosition, started);
+                var firstBarrier = FindFirstBarrier(block, entryPosition, started, known & values);
                 if (!started)
                     SeedCatchOrigins(block, catchOrigins, continuation, known, values);
                 EnqueueImplicitExceptionPaths(block, entryPosition, firstBarrier, continuation,
@@ -148,6 +152,20 @@ internal static partial class ScopeWalker
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
         {
             var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
+            var wrapped = false;
+            while (expression is not null)
+            {
+                ExpressionSyntax? wrapper = expression.Parent switch
+                {
+                    ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
+                    CastExpressionSyntax cast when cast.Expression == expression => cast,
+                    ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
+                    _ => null,
+                };
+                if (wrapper is null) break;
+                expression = GetOutermostTransparentExpression(wrapper);
+                wrapped = true;
+            }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
             var assignmentTransfer = false;
@@ -164,11 +182,29 @@ internal static partial class ScopeWalker
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
                         if (ContainsCall(operation, call))
-                            return (block, call switch
+                        {
+                            var position = call switch
                             {
                                 BaseObjectCreationExpressionSyntax { ArgumentList: { } constructorArguments } => constructorArguments.CloseParenToken.SpanStart,
                                 _ => call.Span.End - 1,
-                            });
+                            };
+                            if (wrapped)
+                            {
+                                var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
+                                var triggerBlock = graph.Blocks.FirstOrDefault(candidate =>
+                                    candidate.Operations.Concat(candidate.BranchValue is { } branchValue ? [branchValue] : [])
+                                        .Any(candidateOperation => ContainsReference(candidateOperation, reference)));
+                                var flag = _conditions.ReserveTransferFlag();
+                                if (triggerBlock is null || flag == 0) return (null, 0);
+                                _transferFlags |= flag;
+                                _transferTriggers[reference] = _transferTriggers.TryGetValue(reference, out var existing) ? existing | flag : flag;
+                                if (!_transferGuards.TryGetValue((block.Ordinal, position), out var guards))
+                                    _transferGuards.Add((block.Ordinal, position), guards = []);
+                                guards.Add((triggerBlock.Ordinal, flag));
+                            }
+                            else _unconditionalBarriers.Add((block.Ordinal, position));
+                            return (block, position);
+                        }
             }
             return (FindBlock(graph, barrier), barrier.SpanStart);
 
@@ -179,6 +215,10 @@ internal static partial class ScopeWalker
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
+
+            static bool ContainsReference(IOperation operation, SyntaxNode reference)
+                => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation
+                    || operation.ChildOperations.Any(child => ContainsReference(child, reference));
         }
 
         private List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> FindCatchOrigins()
@@ -248,7 +288,7 @@ internal static partial class ScopeWalker
             }
         }
 
-        private int FindFirstBarrier(BasicBlock block, int entryPosition, bool started)
+        private int FindFirstBarrier(BasicBlock block, int entryPosition, bool started, ulong activeTransfers)
         {
             if (!started || !_barrierPositions.TryGetValue(block.Ordinal, out var positions))
                 return int.MaxValue;
@@ -260,7 +300,12 @@ internal static partial class ScopeWalker
                 while (index < positions.Count && positions[index] == entryPosition)
                     index++;
             }
-            return index < positions.Count ? positions[index] : int.MaxValue;
+            for (; index < positions.Count; index++)
+                if (_unconditionalBarriers.Contains((block.Ordinal, positions[index]))
+                    || !_transferGuards.TryGetValue((block.Ordinal, positions[index]), out var guards)
+                    || guards.Any(guard => guard.TriggerBlock == block.Ordinal || (activeTransfers & guard.Flag) != 0))
+                    return positions[index];
+            return int.MaxValue;
         }
 
         private void EnqueueImplicitExceptionPaths(BasicBlock block, int entryPosition, int firstBarrier,
@@ -279,6 +324,12 @@ internal static partial class ScopeWalker
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
                 || operation.Syntax.SpanStart >= firstBarrier)
                 return;
+            if (operation is ILocalReferenceOperation or IParameterReferenceOperation
+                && _transferTriggers.TryGetValue(operation.Syntax, out var transferFlag))
+            {
+                known |= transferFlag;
+                values |= transferFlag;
+            }
 
             // Evaluate children before their parent's write. Each exception sees only writes
             // that have already executed, including writes in earlier call arguments.
@@ -778,6 +829,9 @@ internal static partial class ScopeWalker
 
         private void Dispatch(int id, bool started, ulong known, ulong values)
         {
+            // An exception abandons argument evaluation before any pending call can accept ownership.
+            known &= ~_transferFlags;
+            values &= ~_transferFlags;
             // Type tests are ordered. Unknown runtime types retain both possibilities; a
             // certain match reaches later handlers only when its filter rejects the exception.
             while (id != 0)

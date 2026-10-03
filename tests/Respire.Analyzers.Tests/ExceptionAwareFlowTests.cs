@@ -7,6 +7,34 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Take((result, 0), Throw());", true)]
+    [Arguments("Take((result, 0), 0);", false)]
+    [Arguments("Take((((result)), 0), 0);", false)]
+    [Arguments("Take((((result)), 0), Throw());", true)]
+    [Arguments("Take((choice ? result : existing, 0), Throw());", true)]
+    [Arguments("Take((choice ? result : existing, 0), 0);", true)]
+    [Arguments("Take((choice ? result : result, 0), 0);", false)]
+    [Arguments("TakeObject((object)result, Throw());", true)]
+    [Arguments("TakeObject((object)result, 0);", false)]
+    public async Task WrappedTransferWaitsForContainingCall(string transfer, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throw() => throw new InvalidOperationException();
+            static void Take((RespireResult Result, int Number) value, int ignored) => value.Result.Dispose();
+            static void TakeObject(object value, int ignored) => ((RespireResult)value).Dispose();
+            async Task Run(RespireClient client, RespireResult existing, bool choice)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch (InvalidOperationException) { }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("Throw()", true)]
     [Arguments("0", false)]
     public async Task FunctionPointerTransferWaitsForArguments(string argument, bool warning) => await Disposal.VerifyUnsafeAsync($$"""
@@ -87,7 +115,10 @@ public class ExceptionAwareFlowTests
     [Arguments("var holder = new Holder();", "Action reset = () => holder = null; reset();", true)]
     [Arguments("var holder = new Holder();", "", false, "holder.Take(result);")]
     [Arguments("var holder = input; if (holder is null) return;", "", false, "holder.Value = result;")]
-    public async Task NonNullReceiverAllowsOwnershipTransfer(string setup, string mutation, bool warning, string transfer = "holder.Field = result;")
+    [Arguments("var holder = new Holder();", "", false, "holder.Take(result);", "holder = null;")]
+    [Arguments("var holder = new Holder();", "holder = new Holder();", false)]
+    [Arguments("var holder = new Holder();", "if (input is null) holder = null;", true)]
+    public async Task NonNullReceiverAllowsOwnershipTransfer(string setup, string mutation, bool warning, string transfer = "holder.Field = result;", string after = "")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -109,6 +140,7 @@ public class ExceptionAwareFlowTests
                     {{mutation}}
                     try { {{transfer}} }
                     catch (NullReferenceException) { }
+                    {{after}}
                 }
             }
             """);

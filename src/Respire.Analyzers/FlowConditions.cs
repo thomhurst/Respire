@@ -20,9 +20,16 @@ internal sealed class FlowConditions
     private readonly HashSet<CaptureId> _ambiguousCaptures = [];
     private readonly HashSet<ISymbol> _unstable = new(SymbolEqualityComparer.Default);
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
-    private readonly HashSet<ISymbol> _written = new(SymbolEqualityComparer.Default);
-    private readonly Dictionary<ISymbol, IOperation> _initializers = new(SymbolEqualityComparer.Default);
-    private readonly List<(ISymbol Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
+    private readonly List<(ISymbol? Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
+
+    internal ulong ReserveTransferFlag()
+    {
+        if (_predicates.Count == MaxPredicates) return 0;
+        var flag = 1UL << _predicates.Count;
+        // Transfer flags share the bounded path-state masks but have no variable to invalidate.
+        _predicates.Add((null, null, BinaryOperatorKind.None));
+        return flag;
+    }
 
     internal FlowConditions(ControlFlowGraph graph, BasicBlock originBlock, CancellationToken cancellationToken)
     {
@@ -105,13 +112,6 @@ internal sealed class FlowConditions
             CollectReceiverSymbols(child);
     }
 
-    private void RecordWrite(IOperation target)
-    {
-        if (Symbol(target) is { } symbol) _written.Add(symbol);
-        if (target is ITupleOperation or IDeclarationExpressionOperation)
-            foreach (var child in target.ChildOperations) RecordWrite(child);
-    }
-
     private void Inspect(IOperation operation, bool nested = false)
     {
         _cancellationToken.ThrowIfCancellationRequested();
@@ -128,8 +128,6 @@ internal sealed class FlowConditions
                     _captures.Add(capture.Id, capture.Value);
                 break;
             case IAssignmentOperation assignment:
-                if (assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
-                    RecordWrite(assignment.Target);
                 // A declaration initializes the local once per execution. Locals declared in
                 // loops are excluded below as well: the next iteration can choose a new value.
                 if (nested && assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
@@ -140,11 +138,7 @@ internal sealed class FlowConditions
             case IVariableDeclaratorOperation { Symbol.RefKind: not RefKind.None, Initializer: { } initializer }:
                 Invalidate(initializer.Value);
                 break;
-            case IVariableDeclaratorOperation { Initializer: { } initializer } declarator:
-                _initializers[declarator.Symbol] = initializer.Value;
-                break;
             case IIncrementOrDecrementOperation increment:
-                RecordWrite(increment.Target);
                 if (nested) Invalidate(increment.Target);
                 break;
             case IArgumentOperation { Parameter.RefKind: not RefKind.None } argument:
@@ -172,7 +166,25 @@ internal sealed class FlowConditions
     internal void ForgetOwnWrite(IOperation operation, ref ulong known, ref ulong values)
     {
         if (operation is IAssignmentOperation assignment)
+        {
             Forget(assignment.Target, ref known, ref values);
+            if (assignment is ISimpleAssignmentOperation { IsRef: false }
+                && IsConstructedReceiver(assignment.Value)
+                && Symbol(assignment.Target) is { } symbol && _relevant.Contains(symbol)
+                && !_unstable.Contains(symbol)
+                && symbol is not ILocalSymbol { RefKind: not RefKind.None }
+                && symbol is not IParameterSymbol { RefKind: not RefKind.None })
+            {
+                // Construction proves non-null only after the assignment executes.
+                // Subsequent writes forget this fact through the same path-state mask.
+                var index = PredicateIndex(symbol, null, BinaryOperatorKind.Equals);
+                if (index >= 0)
+                {
+                    known |= 1UL << index;
+                    values &= ~(1UL << index);
+                }
+            }
+        }
         else if (operation is IIncrementOrDecrementOperation increment)
             Forget(increment.Target, ref known, ref values);
     }
@@ -239,8 +251,6 @@ internal sealed class FlowConditions
     {
         if (IsConstructedReceiver(operation)) return true;
         if (Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
-        if (!_written.Contains(symbol) && _initializers.TryGetValue(symbol, out var initializer)
-            && IsConstructedReceiver(initializer)) return true;
         for (var index = 0; index < _predicates.Count; index++)
         {
             var predicate = _predicates[index];
@@ -408,6 +418,19 @@ internal sealed class FlowConditions
                 return true;
         }
 
+        var index = PredicateIndex(symbol, comparison, comparisonOperator);
+        if (index < 0) return true;
+        var mask = 1UL << index;
+        if ((known & mask) != 0)
+            return ((values & mask) != 0) == expected;
+        known |= mask;
+        if (expected)
+            values |= mask;
+        return true;
+    }
+
+    private int PredicateIndex(ISymbol symbol, object? comparison, BinaryOperatorKind comparisonOperator)
+    {
         var index = _predicates.FindIndex(predicate =>
             SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
             && (predicate.Constant is ITypeSymbol leftType && comparison is ITypeSymbol rightType
@@ -417,16 +440,10 @@ internal sealed class FlowConditions
         if (index < 0)
         {
             if (_predicates.Count == MaxPredicates)
-                return true;
+                return -1;
             index = _predicates.Count;
             _predicates.Add((symbol, comparison, comparisonOperator));
         }
-        var mask = 1UL << index;
-        if ((known & mask) != 0)
-            return ((values & mask) != 0) == expected;
-        known |= mask;
-        if (expected)
-            values |= mask;
-        return true;
+        return index;
     }
 }
