@@ -174,7 +174,7 @@ internal static partial class ScopeWalker
 
             static bool ContainsCall(IOperation operation, SyntaxNode call)
             {
-                if (operation.Syntax == call && operation is IInvocationOperation or IDynamicInvocationOperation
+                if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation)
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
@@ -589,7 +589,7 @@ internal static partial class ScopeWalker
         {
             if (_throwingOperations.TryGetValue(operation, out var cached))
                 return cached;
-            var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
+            var throwing = operation is IInvocationOperation or IFunctionPointerInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
                 or IEventAssignmentOperation or IArrayCreationOperation
                 or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation

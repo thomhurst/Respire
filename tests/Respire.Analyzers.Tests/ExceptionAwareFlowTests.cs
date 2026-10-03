@@ -7,6 +7,76 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Throw()", true)]
+    [Arguments("0", false)]
+    public async Task FunctionPointerTransferWaitsForArguments(string argument, bool warning) => await Disposal.VerifyUnsafeAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throw() => throw new InvalidOperationException();
+            static void Take(RespireResult result, int ignored) => result.Dispose();
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                unsafe
+                {
+                    delegate*<RespireResult, int, void> callback = &Take;
+                    try { callback(result, {{argument}}); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FunctionPointerCallCanBypassCleanup(bool cleanupInCatch)
+    {
+        await Disposal.VerifyUnsafeAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Throw() => throw new InvalidOperationException();
+                async Task Run(RespireClient client)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    unsafe
+                    {
+                        delegate*<void> callback = &Throw;
+                        try { callback(); result.Dispose(); }
+                        catch (InvalidOperationException) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                    }
+                }
+            }
+            """);
+        await Pending.VerifyUnsafeAsync($$"""
+            using System;
+            using Respire;
+            class Caller
+            {
+                static void Throw() => throw new InvalidOperationException();
+                unsafe void Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    delegate*<void> callback = &Throw;
+                    try { callback(); batch.SendAsync().AsTask().GetAwaiter().GetResult(); }
+                    catch (InvalidOperationException)
+                    {
+                        {{(cleanupInCatch ? "batch.SendAsync().AsTask().GetAwaiter().GetResult();" : "")}}
+                    }
+                    Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("var holder = new Holder();", "", false)]
     [Arguments("var holder = input; if (holder is null) return;", "", false)]
     [Arguments("var holder = input; if (holder is not Holder) return;", "", false)]
