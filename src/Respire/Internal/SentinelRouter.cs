@@ -33,8 +33,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
     private Task? _notificationRediscovery;
     private TaskCompletionSource _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    // Background DNS checks for +switch-master sources. Disposal joins them with the monitors.
-    private readonly HashSet<Task> _switchSourceResolutions = []; // Guarded by _gate.
+    private SentinelBackgroundWork? _background;
+    private SentinelBackgroundWork Background { get { lock (_gate) return _background ??= new(_gate); } }
     // Optional observer for tests; production does not count or allocate notification test state.
     internal volatile Action? NotificationQueuedObserver;
     // Only the single notification worker reads/writes this deadline. _gate serializes worker
@@ -51,10 +51,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         get
         {
             lock (_gate) return _monitoring ??= new(core.Options, core.Logger, _gate, _discovery, _lifetime,
-                ObserveSentinelEventAsync, QueueDeliveryGapRediscovery);
+                ObserveSentinelEventAsync, QueueDeliveryGapRediscovery, Background);
         }
     }
     internal TimeProvider Clock { get => Monitoring.Clock; set => Monitoring.Clock = value; }
+    internal TimeProvider ShutdownClock { get; set; } = TimeProvider.System;
     internal Task CurrentMonitorRearm() => Monitoring.CurrentMonitorRearm();
 
     // Queries the configured and learned Sentinels directly, so replica reads do not depend on a
@@ -71,7 +72,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get => Monitoring.HostResolver; set => Monitoring.HostResolver = value; }
     internal int PendingSwitchSourceResolutions
     {
-        get { lock (_gate) return _switchSourceResolutions.Count; }
+        get => Background.Count(SentinelWorkKind.SourceResolution);
     }
     internal Task? NotificationRediscovery
     {
@@ -311,7 +312,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             // Retirement and its cleanup task become visible together to disposal. Once
             // disposal owns the router, it aborts every generation itself.
-            if (!generation.TryRetire() || _disposed || !ReferenceEquals(Current, generation)) return;
+            if (_disposed || !generation.TryRetire() || !ReferenceEquals(Current, generation)) return;
             // Unpublished candidates are disposed by their discovery owner. Only the current
             // published generation can lose client continuity or need background draining.
             // The transport admission check sees retirement before any waiting caller resumes.
@@ -422,33 +423,38 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             if (_disposeCompletion is not null) return new(_disposeCompletion.Task);
             _disposed = true;
+            var background = Monitoring.Stop();
             _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            _ = DisposeCoreAsync(_disposeCompletion);
+            _ = DisposeCoreAsync(_disposeCompletion, background);
             return new(_disposeCompletion.Task);
         }
     }
 
-    private async Task DisposeCoreAsync(TaskCompletionSource completion)
+    private async Task DisposeCoreAsync(TaskCompletionSource completion, Task[] monitorTasks)
     {
         try
         {
-            await _lifetime.CancelAsync().ConfigureAwait(false);
-            Task[] monitorTasks;
-            // Join notification rediscovery and switch-source DNS checks too, so a late attempt
-            // cannot publish or invalidate after disposal.
-            lock (_gate) monitorTasks = [.. Monitoring.Stop(),
-                _notificationRediscovery ?? Task.CompletedTask, .. _switchSourceResolutions];
             Exception? disposeError = null;
+            // Cancellation callbacks share the shutdown bound: an uncooperative callback
+            // must not prevent cleanup of generations. Registration already stopped under gate.
+            monitorTasks = [.. monitorTasks, _lifetime.CancelAsync()];
+            var stopping = CleanupTasks.WhenAllAsync(monitorTasks);
             // Bounded: a monitor client whose cleanup ignores cancellation must not hang disposal.
             // Stragglers cannot publish or retire afterwards, because both recheck _disposed under the gate.
-            try { await Task.WhenAll(monitorTasks).WaitAsync(NotificationShutdownTimeout).ConfigureAwait(false); }
-            catch (TimeoutException)
+            try { await stopping.WaitAsync(NotificationShutdownTimeout, ShutdownClock).ConfigureAwait(false); }
+            catch (TimeoutException) when (!stopping.IsFaulted)
             {
                 SafeLog(monitorTasks, static (logger, tasks) => logger.LogWarning(
                     "Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running",
                     NotificationShutdownTimeout, tasks.Count(task => !task.IsCompleted)));
             }
-            catch (Exception error) { disposeError = error; }
+            catch (Exception error) { disposeError = stopping.Exception?.InnerException ?? error; }
+            finally
+            {
+                // A timed-out join still owns its late failure; never leave it unobserved.
+                _ = stopping.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
             Generation[] owned;
             DedicatedConnectionPool[] corrections;
             // No discovery-gate wait is needed: _disposed is set before this snapshot, and

@@ -9,7 +9,8 @@ internal sealed partial class SentinelDiscoveryState
     internal const int MaximumDiscoveredEndpoints = 64;
     private readonly object _gate = new();
     private readonly List<RespireEndpoint> _endpoints = [];
-    private readonly HashSet<RespireEndpoint> _known = new(SentinelEndpointIdentity.EndpointComparer.Instance);
+    private readonly Dictionary<RespireEndpoint, long> _known = new(SentinelEndpointIdentity.EndpointComparer.Instance);
+    private long _membershipVersion;
     private readonly int _configuredCount;
     // Observe raises the epoch floor before transport/ROLE validation. Commit advances the
     // accepted epoch only after validation. Failed validation never lowers either floor;
@@ -98,7 +99,11 @@ internal sealed partial class SentinelDiscoveryState
     internal SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
     {
         foreach (var endpoint in configured)
-            if (_known.Add(endpoint)) _endpoints.Add(endpoint);
+            if (_known.TryAdd(endpoint, _membershipVersion + 1))
+            {
+                _membershipVersion++;
+                _endpoints.Add(endpoint);
+            }
         _configuredCount = _known.Count;
     }
 
@@ -106,8 +111,23 @@ internal sealed partial class SentinelDiscoveryState
 
     internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
 
-    // Returns the endpoints and a task that completes when a later TryAdd learns a new endpoint.
-    // Endpoints are never removed, so consumers only need to react to additions.
+    internal readonly record struct Membership(RespireEndpoint Endpoint, long Version);
+
+    // Versions preserve removal/re-addition even when notifications coalesce before
+    // the supervisor reads its next snapshot. Only current memberships are retained.
+    internal Membership[] MembershipSnapshot(out Task changed)
+    {
+        lock (_gate)
+        {
+            changed = _changed.Task;
+            var result = new Membership[_endpoints.Count];
+            for (var i = 0; i < result.Length; i++)
+                result[i] = new(_endpoints[i], _known[_endpoints[i]]);
+            return result;
+        }
+    }
+
+    // Returns the endpoints and a task that completes after a membership change.
     internal RespireEndpoint[] Snapshot(out Task changed)
     {
         lock (_gate)
@@ -122,7 +142,9 @@ internal sealed partial class SentinelDiscoveryState
         TaskCompletionSource changed;
         lock (_gate)
         {
-            if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints || !_known.Add(endpoint)) return false;
+            if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints
+                || !_known.TryAdd(endpoint, _membershipVersion + 1)) return false;
+            _membershipVersion++;
             _endpoints.Add(endpoint);
             changed = _changed;
             _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -130,4 +152,24 @@ internal sealed partial class SentinelDiscoveryState
         changed.TrySetResult();
         return true;
     }
+
+    // Configured endpoints occupy the immutable prefix. Removal only affects learned
+    // membership; evidence about accepted owners and epochs remains intact.
+    internal bool TryRemove(RespireEndpoint endpoint)
+    {
+        TaskCompletionSource changed;
+        lock (_gate)
+        {
+            var index = _endpoints.FindIndex(_configuredCount,
+                candidate => SentinelEndpointIdentity.EndpointComparer.Instance.Equals(candidate, endpoint));
+            if (index < 0) return false;
+            _known.Remove(_endpoints[index]);
+            _endpoints.RemoveAt(index);
+            changed = _changed;
+            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        changed.TrySetResult();
+        return true;
+    }
+
 }
