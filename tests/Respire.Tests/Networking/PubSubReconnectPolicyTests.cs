@@ -66,26 +66,19 @@ public class PubSubReconnectPolicyTests
         server.CloseConnection(server.ReceivedConnectionIds[0]);
         await WaitForCommandsAsync(server, 2, deadline.Token);
 
-        var hub = client.Core.Hub;
-        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var stateGate = typeof(SubscriptionHub).GetField("_reconnectStateGate", flags)!.GetValue(hub)!;
-        var controlGate = (SemaphoreSlim)typeof(SubscriptionHub).GetField("_controlGate", flags)!.GetValue(hub)!;
-        var closed = typeof(SubscriptionHub).GetMethod("OnUnexpectedConnectionClosed", flags)!;
+        var recovery = client.Core.Hub.RecoveryForTesting;
         Task? cleanup = null;
         await Task.Run(() =>
         {
-            lock (stateGate)
+            lock (recovery.StateGate)
             {
                 // Hold promotion until resubscription has passed its last IsConnected check
                 // and released the control gate. Deliver the close on this same thread so
                 // its observer can enter the reentrant state gate before promotion.
                 server.SendRawAsync(Confirmation, server.ReceivedConnectionIds[^1]).GetAwaiter().GetResult();
-                if (!SpinWait.SpinUntil(() => controlGate.CurrentCount == 1, Deadline))
+                if (!SpinWait.SpinUntil(() => recovery.IsControlIdle, Deadline))
                     throw new TimeoutException("Recovery did not reach the promotion boundary.");
-                var connection = (Respire.Networking.RespireConnection)typeof(SubscriptionHub)
-                    .GetField("_connection", flags)!.GetValue(hub)!;
-                closed.Invoke(hub, [connection]);
-                cleanup = connection.DisposeAsync().AsTask();
+                cleanup = recovery.CloseCurrentConnection();
             }
         }, deadline.Token);
         await cleanup!.WaitAsync(deadline.Token);

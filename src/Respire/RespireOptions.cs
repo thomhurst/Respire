@@ -232,6 +232,8 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
     internal string? ReconnectTelemetryScope { get; init; }
+    // Invoked synchronously under SubscriptionHub's recovery state lock. The callback must
+    // be non-blocking and non-reentrant; capture state only, without acquiring other locks.
     internal Action? ReconnectEpisodeStarted { get; init; }
 
     /// <summary>Interval for background Redis Cluster topology refresh. Defaults to 60 seconds. Null,

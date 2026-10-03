@@ -17,6 +17,23 @@ internal sealed partial class SubscriptionHub
 
     private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
 
+    // Test access for delivering a close after resubscription but before recovery promotion.
+    // Keep the synchronization in the test; ordinary recovery pays no callback or allocation cost.
+    internal RecoveryTestAccess RecoveryForTesting => new(this);
+
+    internal readonly struct RecoveryTestAccess(SubscriptionHub owner)
+    {
+        internal object StateGate => owner._reconnectStateGate;
+        internal bool IsControlIdle => owner._controlGate.CurrentCount == 1;
+
+        internal Task CloseCurrentConnection()
+        {
+            var connection = owner._connection ?? throw new InvalidOperationException("No recovery connection is present.");
+            owner.OnUnexpectedConnectionClosed(connection);
+            return connection.DisposeAsync().AsTask();
+        }
+    }
+
     private void OnUnexpectedConnectionClosed(RespireConnection connection)
     {
         lock (_reconnectStateGate)
