@@ -573,7 +573,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             var branch = selectedWhenTrue ? ifStatement.Statement : ifStatement.Else?.Statement;
             if (branch is not null
-                && HasUnconditionalFlush(context, scope, branch, batch, origin))
+                && HasUnconditionalFlush(context, scope, branch, batch, origin, read))
             {
                 return true;
             }
@@ -615,7 +615,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 candidate.Labels.Any(label => MatchesSwitchArm(arm, label)));
             if (section is not null
                 && HasAlignedSwitchPrefix(switchExpression, switchStatement, arm, section)
-                && HasUnconditionalFlush(context, scope, section, batch, origin))
+                && HasUnconditionalFlush(context, scope, section, batch, origin, read))
             {
                 return true;
             }
@@ -666,13 +666,29 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         SyntaxNode branch,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin)
+        InvocationExpressionSyntax origin,
+        ExpressionSyntax read)
     {
+        var branchStart = branch switch
+        {
+            BlockSyntax block => block.Statements.FirstOrDefault(),
+            SwitchSectionSyntax section => section.Statements.FirstOrDefault(),
+            StatementSyntax statement => statement,
+            _ => null,
+        };
+        if (branchStart is null)
+        {
+            return false;
+        }
+
         foreach (var flush in branch.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
         {
             if (IsFlushInvocation(context, flush, batch)
                 && GetCompletionExpression(context, flush) is { } completion
                 && IsTopLevelBranchStatement(completion, branch)
+                && !ScopeWalker.CanReachWithoutCrossing(
+                    context.SemanticModel, scope, branchStart, read, [completion], context.CancellationToken,
+                    includeStart: true)
                 && !IsReassignedBetween(context, scope, batch, origin, flush))
             {
                 return true;
