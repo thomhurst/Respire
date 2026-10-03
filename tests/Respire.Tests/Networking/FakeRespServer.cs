@@ -13,6 +13,9 @@ namespace Respire.Tests.Networking;
 /// </summary>
 internal sealed class FakeRespServer : IAsyncDisposable
 {
+    private static readonly object s_portGate = new();
+    private static readonly HashSet<int> s_usedPorts = [];
+
     /// <summary>Frames shared by the wire tests.</summary>
     public static readonly byte[] PingFrame = "*1\r\n$4\r\nPING\r\n"u8.ToArray();
     public static readonly byte[] OkReply = "+OK\r\n"u8.ToArray();
@@ -110,14 +113,44 @@ internal sealed class FakeRespServer : IAsyncDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
         _replies = replies;
-        _listener = new TcpListener(IPAddress.Loopback, 0);
-        _listener.Start();
+        _listener = StartListener();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _acceptTask = Task.Run(async () =>
         {
             await acceptGate.WaitAsync(_cts.Token);
             await RunAsync(maxConnections);
         });
+    }
+
+    internal static TcpListener StartListener(Func<TcpListener>? createListener = null)
+    {
+        // Failover tests stop a server while its client still knows that endpoint. Reusing
+        // the port can let that client consume another fixture's only accepted connection
+        // or read its unrelated topology. Keep endpoint identities unique for this process.
+        lock (s_portGate)
+        {
+            List<TcpListener>? rejected = null;
+            try
+            {
+                while (true)
+                {
+                    var listener = createListener?.Invoke() ?? new TcpListener(IPAddress.Loopback, 0);
+                    try { listener.Start(); }
+                    catch { listener.Stop(); throw; }
+                    if (s_usedPorts.Add(((IPEndPoint)listener.LocalEndpoint).Port)) return listener;
+
+                    // Keep rejected ports bound until allocation succeeds so the OS cannot
+                    // repeatedly return the same retired endpoint. Release rejected listeners
+                    // before returning the fresh listener or propagating an allocation failure.
+                    (rejected ??= []).Add(listener);
+                }
+            }
+            finally
+            {
+                if (rejected is not null)
+                    foreach (var listener in rejected) listener.Stop();
+            }
+        }
     }
 
     /// <summary>
