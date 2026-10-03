@@ -33,7 +33,6 @@ internal static partial class ScopeWalker
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
         private readonly List<CatchDispatch?> _dispatches = [null];
         private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool AllocationOnly, string? ExceptionType), int> _dispatchIds = new();
-        private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
         private readonly Dictionary<IOperation, bool> _throwingOperations = new();
         private readonly Stack<SearchState> _pending = new();
         private readonly Dictionary<SearchState, int> _earliestEntries = new();
@@ -89,7 +88,6 @@ internal static partial class ScopeWalker
 
             foreach (var positions in _barrierPositions.Values)
                 positions.Sort();
-            var catchOrigins = FindCatchOrigins();
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = MaxProcessedStates;
@@ -123,8 +121,6 @@ internal static partial class ScopeWalker
                 _earliestEntries[state] = entryPosition;
 
                 var firstBarrier = FindFirstBarrier(block, entryPosition, started, known & values);
-                if (!started)
-                    SeedCatchOrigins(block, catchOrigins, continuation, known, values);
                 EnqueueImplicitExceptionPaths(block, entryPosition, firstBarrier, continuation,
                     started, dispatch, ref known, ref values);
 
@@ -241,56 +237,6 @@ internal static partial class ScopeWalker
             _ => operation.Span.End - 1,
         };
 
-        private List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> FindCatchOrigins()
-        {
-            // Catch origins may also be entered by implicit exceptions. Discover those entries
-            // from their protected blocks so a catch nested in a finally keeps its continuation.
-            var catchOrigins = new List<(ControlFlowRegion Handler, ControlFlowRegion Protected)>();
-            for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-            {
-                if (region.Kind != ControlFlowRegionKind.Catch)
-                    continue;
-                var owner = region.EnclosingRegion;
-                if (owner?.Kind == ControlFlowRegionKind.FilterAndHandler)
-                    owner = owner.EnclosingRegion;
-                if (owner?.Kind == ControlFlowRegionKind.TryAndCatch)
-                    catchOrigins.Add((region, owner.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Try)));
-            }
-            return catchOrigins;
-        }
-
-        private void SeedCatchOrigins(BasicBlock block,
-            List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> catchOrigins,
-            int continuation, ulong known, ulong values)
-        {
-            foreach (var origin in catchOrigins)
-            {
-                if (block.Ordinal < origin.Protected.FirstBlockOrdinal
-                    || block.Ordinal > origin.Protected.LastBlockOrdinal)
-                    continue;
-                var unwind = CollectFinallyRegions(block.EnclosingRegion, origin.Protected);
-                var catchContinuation = CatchContinuation(origin.Handler, continuation);
-                if (origin.Handler.EnclosingRegion is { Kind: ControlFlowRegionKind.FilterAndHandler } filtered)
-                {
-                    var key = (block.Ordinal, origin.Handler, catchContinuation);
-                    if (!_catchOriginDispatchIds.TryGetValue(key, out var id))
-                    {
-                        var filter = filtered.NestedRegions.First(static region => region.Kind == ControlFlowRegionKind.Filter);
-                        id = _dispatches.Count;
-                        _dispatches.Add(new CatchDispatch(origin.Handler, filter, unwind.ToArray(),
-                            catchContinuation, next: 0, certain: true));
-                        _catchOriginDispatchIds.Add(key, id);
-                    }
-                    // Even an unknown implicit exception must pass the filter before
-                    // acquiring a value in its handler. Retain that selection evidence.
-                    Dispatch(id, started: false, known, values);
-                }
-                else
-                    Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
-                        catchContinuation, false, known, values, 0);
-            }
-        }
-
         private void EnqueueIteratorDisposal(BasicBlock block, int entryPosition, int firstBarrier,
             bool started, ulong known, ulong values)
         {
@@ -300,7 +246,7 @@ internal static partial class ScopeWalker
             {
                 if (operation.Kind == OperationKind.YieldReturn
                     && operation.Syntax.SpanStart > entryPosition
-                    && operation.Syntax.SpanStart < firstBarrier)
+                    && operation.Syntax.Span.End <= firstBarrier)
                 {
                     var unwind = CollectFinallyRegions(block.EnclosingRegion);
                     Enqueue(graph.Blocks[graph.Blocks.Length - 1], unwind, 0, started, known, values, 0);
@@ -439,6 +385,20 @@ internal static partial class ScopeWalker
                         if (arithmetic.DivideByZero)
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.DivideByZeroException"), started, known, values);
+                    }
+                    else if (exceptionSource is IConversionOperation conversion && ConversionExceptions(conversion) is { } conversionExceptions)
+                    {
+                        if (conversionExceptions.InvalidCast)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.InvalidCastException"), started, known, values);
+                        if (conversionExceptions.NullReference)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                        if (conversionExceptions.InvalidOperation)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.InvalidOperationException"), started, known, values);
+                        if (conversionExceptions.Overflow)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.OverflowException"), started, known, values);
                     }
                     else Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
@@ -948,6 +908,29 @@ internal static partial class ScopeWalker
             return (operation.IsChecked || IsCheckedContext(operation.Syntax)) && IsIntegral(destination)
                 || source.SpecialType == SpecialType.System_Decimal
                 || destination.SpecialType == SpecialType.System_Decimal;
+        }
+
+        private (bool InvalidCast, bool NullReference, bool InvalidOperation, bool Overflow)? ConversionExceptions(IConversionOperation operation)
+        {
+            if (operation.Operand.Type is not { } source || operation.Type is not { } destination || IsBoxing(operation))
+                return null;
+            var conversion = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
+            if (conversion.IsUserDefined || conversion.IsDynamic)
+                return null;
+            var nullableDestination = destination is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+            if (conversion.IsUnboxing)
+                return (true, !nullableDestination, false, false);
+            if (conversion.IsReference)
+                return (true, false, false, false);
+            var nullableSource = source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+            if (nullableSource) source = ((INamedTypeSymbol)source).TypeArguments[0];
+            if (nullableDestination) destination = ((INamedTypeSymbol)destination).TypeArguments[0];
+            var numeric = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
+            var overflow = !numeric.IsImplicit && ((operation.IsChecked || IsCheckedContext(operation.Syntax)) && IsIntegral(destination)
+                || source.SpecialType == SpecialType.System_Decimal && IsIntegral(destination)
+                || destination.SpecialType == SpecialType.System_Decimal
+                    && source.SpecialType is SpecialType.System_Single or SpecialType.System_Double);
+            return (false, false, nullableSource && !nullableDestination, overflow);
         }
 
         private bool IsCheckedContext(SyntaxNode syntax)

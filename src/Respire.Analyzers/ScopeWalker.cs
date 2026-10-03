@@ -252,11 +252,6 @@ internal static partial class ScopeWalker
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var barrierArray = barriers.ToArray();
-        if (barrierArray.Length == 0)
-        {
-            return false;
-        }
-
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
         if (graph is null)
         {

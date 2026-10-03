@@ -8,6 +8,123 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("throw null;", "InvalidOperationException", false)]
+    [Arguments("throw null;", "NullReferenceException", true)]
+    [Arguments("throw new ArgumentException();", "InvalidOperationException", false)]
+    [Arguments("throw new ArgumentException();", "OutOfMemoryException", true)]
+    [Arguments("Throws();", "InvalidOperationException", true)]
+    public async Task CatchOriginRequiresApplicableException(string operation, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client)
+                {
+                    try { {{operation}} }
+                    catch ({{catchType}})
+                    {
+                        var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using Respire;
+            class Caller
+            {
+                static void Throws() => throw new InvalidOperationException();
+                void Run(RespireClient client)
+                {
+                    try { {{operation}} }
+                    catch ({{catchType}})
+                    {
+                        var batch = client.CreateBatch();
+                        var pending = batch.GetStringAsync("key");
+                        Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public async Task YieldingOwnerTransfersBeforeIteratorDisposal() => await Disposal.VerifyAsync("""
+        using System.Collections.Generic;
+        using Respire;
+        class Caller
+        {
+            async IAsyncEnumerable<RespireResult> Run(RespireClient client)
+            {
+                var result = await client.ExecuteAsync("PING");
+                yield return result;
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("(string)boxed", "InvalidCastException", true)]
+    [Arguments("(string)boxed", "InvalidOperationException", false)]
+    [Arguments("(int)boxed", "InvalidCastException", true)]
+    [Arguments("(int)boxed", "NullReferenceException", true)]
+    [Arguments("(int)boxed", "InvalidOperationException", false)]
+    [Arguments("(int?)boxed", "NullReferenceException", false)]
+    [Arguments("(int?)boxed", "InvalidCastException", true)]
+    [Arguments("(int)nullable", "InvalidOperationException", true)]
+    [Arguments("(int)nullable", "InvalidCastException", false)]
+    [Arguments("checked((byte)number)", "OverflowException", true)]
+    [Arguments("checked((byte)number)", "InvalidOperationException", false)]
+    [Arguments("checked((byte)nullable)", "InvalidOperationException", true)]
+    [Arguments("checked((byte)nullable)", "OverflowException", true)]
+    [Arguments("checked((byte?)nullable)", "InvalidOperationException", false)]
+    [Arguments("checked((byte?)nullable)", "OverflowException", true)]
+    [Arguments("(int)fraction", "OverflowException", true)]
+    [Arguments("(int)fraction", "InvalidOperationException", false)]
+    [Arguments("(double)fraction", "OverflowException", false)]
+    [Arguments("checked((long)nullable)", "OverflowException", false)]
+    [Arguments("checked((long)nullable)", "InvalidOperationException", true)]
+    [Arguments("(string)GetObject()", "InvalidOperationException", true)]
+    public async Task BuiltInConversionsUseSpecificExceptions(string conversion, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static object GetObject() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, object boxed, int? nullable, int number, decimal fraction)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{conversion}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static object GetObject() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, object boxed, int? nullable, int number, decimal fraction)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{conversion}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     public async Task DeconstructionEvaluatesIndexBeforeRhsAtRuntime()
     {
         var flag = false;
