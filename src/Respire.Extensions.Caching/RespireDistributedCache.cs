@@ -421,9 +421,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         Func<RespireValue[]> args,
         RespireClient.TrackedConnectionIdentity originalConnection = default)
         => CorrectionCoordinator.ConvergeAsync(originalConnection,
-            _wireClient is { } wire && originalConnection.ServerClientId > 0
-                ? wire.Core.Corrections.CreateFence(wire, originalConnection) : null,
             (Cache: this, Script: script, Key: key, Args: args),
+            static (state, identity) => state.Cache._wireClient is { } wire
+                ? wire.Core.Corrections.CreateFence(wire, identity) : null,
             static (state, ordered, identity) => state.Cache.RunCorrectionPassAsync(
                 state.Script, state.Key, state.Args(), ordered, identity),
             CorrectionWaitBound, SendDelayTolerance);

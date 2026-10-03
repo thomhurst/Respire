@@ -51,7 +51,8 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         catch (Exception error)
         {
             if (acknowledged?.Invoke() == true) return CleanupAttemptResult.Succeeded;
-            return error is ObjectDisposedException && owner?.Disposed == true
+            // Legacy clients have no core to inspect, so preserve their terminal disposal contract.
+            return error is ObjectDisposedException && (owner is null || owner.Disposed)
                 || error is OperationCanceledException && stopping.IsCancellationRequested
                 ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed;
         }
@@ -99,17 +100,18 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         RespireClient.TrackedConnectionIdentity identity, CorrectionFence? fence,
         Func<bool, RespireClient.TrackedConnectionIdentity, Task> send,
         TimeSpan waitBound, TimeSpan tolerance)
-        => ConvergeAsync(identity, fence, send, static (callback, ordered, original) => callback(ordered, original),
-            waitBound, tolerance);
+        => ConvergeAsync(identity, (Fence: fence, Send: send), static (state, _) => state.Fence,
+            static (state, ordered, original) => state.Send(ordered, original), waitBound, tolerance);
 
     internal static async ValueTask ConvergeAsync<TState>(
-        RespireClient.TrackedConnectionIdentity identity, CorrectionFence? fence, TState state,
+        RespireClient.TrackedConnectionIdentity identity, TState state,
+        Func<TState, RespireClient.TrackedConnectionIdentity, CorrectionFence?> createFence,
         Func<TState, bool, RespireClient.TrackedConnectionIdentity, Task> send,
         TimeSpan waitBound, TimeSpan tolerance)
     {
         var previous = TimeSpan.MaxValue;
         var requiresOrdering = identity.ServerClientId > 0;
-        var canFence = fence is not null;
+        var canFence = requiresOrdering;
         while (true)
         {
             var sent = Stopwatch.GetTimestamp();
@@ -117,7 +119,10 @@ internal sealed class CorrectionCoordinator(ClientCore core)
             if (!await WaitAsync(pass, waitBound).ConfigureAwait(false))
             {
                 if (!canFence) return; // The idempotent ordered pass can still complete later.
-                await fence!.EnsureBoundedAsync().ConfigureAwait(false);
+                var fence = createFence(state, identity);
+                if (fence is null) return;
+                // Rejected or unanswered fences propagate; no dependent pass may run without proof.
+                await fence.EnsureBoundedAsync().ConfigureAwait(false);
                 canFence = false;
                 // Preserve the original peer and FIFO/ASK route until a broadcast completes.
                 identity = identity with { ServerClientId = 0 };
