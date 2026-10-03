@@ -287,7 +287,7 @@ public class ClusterReadOnlyTests
     [Arguments(true, true, 2)]
     public async Task StalledCandidate_RespectsPrimaryAndOverallDeadlines(bool duringConnect, bool cachedOwner, int expiryStage)
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         var stalledRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var seedRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
@@ -625,7 +625,7 @@ public class ClusterReadOnlyTests
     [Arguments(true)]
     public async Task FailedRecoveryPreservesConcurrentReplacementOnlyWhenAlreadyConnected(bool connected)
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
@@ -674,7 +674,7 @@ public class ClusterReadOnlyTests
     [Arguments(true, true)]
     public async Task RecoveryDeadlinePreservesOriginalErrorOrCallerCancellation(bool cancelCaller, bool configuredPolicy)
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions

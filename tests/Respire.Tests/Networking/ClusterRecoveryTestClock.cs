@@ -1,10 +1,10 @@
 namespace Respire.Tests.Networking;
 
 /// <summary>Advances deadlines only when the test has observed the relevant network operation.</summary>
-internal sealed class RecoveryTestClock : TimeProvider
+internal sealed class ClusterRecoveryTestClock : TimeProvider
 {
     private readonly object _gate = new();
-    private readonly List<RecoveryTimer> _timers = [];
+    private readonly List<ManualTimer> _timers = [];
     private long _ticks;
 
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
@@ -14,7 +14,7 @@ internal sealed class RecoveryTestClock : TimeProvider
     {
         lock (_gate)
         {
-            var timer = new RecoveryTimer(this, callback, state);
+            var timer = new ManualTimer(this, callback, state);
             timer.Change(dueTime, period);
             return timer;
         }
@@ -22,17 +22,17 @@ internal sealed class RecoveryTestClock : TimeProvider
 
     internal void Advance(TimeSpan elapsed)
     {
-        RecoveryTimer[] due;
+        ManualTimer[] due;
         lock (_gate)
         {
             _ticks += elapsed.Ticks;
-            due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
+            due = _timers.Where(timer => timer.Due <= _ticks).OrderBy(timer => timer.Due).ToArray();
             foreach (var timer in due) _timers.Remove(timer);
         }
         foreach (var timer in due) timer.Fire();
     }
 
-    private sealed class RecoveryTimer(RecoveryTestClock clock, TimerCallback callback, object? state) : ITimer
+    private sealed class ManualTimer(ClusterRecoveryTestClock clock, TimerCallback callback, object? state) : ITimer
     {
         private int _disposed;
         internal long Due { get; private set; }

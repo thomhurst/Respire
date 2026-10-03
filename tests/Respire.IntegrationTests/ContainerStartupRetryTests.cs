@@ -23,7 +23,11 @@ public class ContainerStartupRetryTests
     [Arguments("Ports are not available: listen tcp 127.0.0.1:32791: bind: An attempt was made to access a socket in a way forbidden by its access permissions.", false)]
     [Arguments("image pull failed: address already in use", false)]
     [Arguments("port is already allocated", false)]
-    public void RecognizesOnlyKnownFailuresForSelectedLoopbackPorts(string message, bool expected)
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: address already in use", true)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on UDP socket: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: permission denied", false)]
+    [Arguments("failed to listen on TCP socket: address already in use", false)]
+    public void RecognizesOnlyKnownPortBindingFailures(string message, bool expected)
         => ContainerPortCollision.IsMatch(ApiError(message), [32791]).Should().Be(expected);
 
     [Test]
@@ -42,7 +46,9 @@ public class ContainerStartupRetryTests
     }
 
     [Test]
-    public async Task ExhaustionUsesThreeFreshContainersAndRetainsAllFailures()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExhaustionUsesThreeFreshContainersAndRetainsAllFailures(bool addressOmitted)
     {
         var probes = new List<ContainerProbe>();
         var portsUsed = new HashSet<int>();
@@ -55,7 +61,9 @@ public class ContainerStartupRetryTests
                 ports.Should().OnlyContain(port => !portsUsed.Contains(port));
                 portsUsed.UnionWith(ports);
                 tokens.Add(token);
-                var failure = Collision(ports[0]);
+                var failure = addressOmitted
+                    ? ApiError("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: address already in use")
+                    : Collision(ports[0]);
                 failures.Add(failure);
                 var container = ContainerProbe.Create(_ => Task.FromException(failure));
                 probes.Add((ContainerProbe)container);

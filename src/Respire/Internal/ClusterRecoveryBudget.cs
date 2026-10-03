@@ -6,18 +6,21 @@ internal sealed class ClusterRecoveryBudget : IDisposable
     private readonly TimeProvider _clock;
     private readonly long _started;
     private readonly TimeSpan _duration;
-    private readonly Deadline _round;
-    private readonly Deadline _primaries;
-    private Deadline? _earlySeeds;
+    private readonly CancellationTokenSource _round;
+    private readonly CancellationTokenSource _primaries;
+    private CancellationTokenSource? _earlySeeds;
+    private readonly CancellationTokenSource? _roundDeadline;
+    private readonly CancellationTokenSource? _primaryDeadline;
+    private CancellationTokenSource? _earlySeedDeadline;
 
-    internal ClusterRecoveryBudget(CancellationToken callerToken, TimeSpan duration, TimeProvider? clock = null)
+    internal ClusterRecoveryBudget(CancellationToken callerToken, TimeSpan duration, TimeProvider clock)
     {
-        _clock = clock ?? TimeProvider.System;
-        _started = _clock.GetTimestamp();
+        _clock = clock;
+        _started = clock.GetTimestamp();
         _duration = duration;
-        _round = new Deadline(callerToken, duration, _clock);
-        _primaries = new Deadline(_round.Token,
-            TimeSpan.FromTicks(Math.Max(1, duration.Ticks / 2)), _clock);
+        _round = CreateDeadline(callerToken, duration, out _roundDeadline);
+        _primaries = CreateDeadline(_round.Token,
+            TimeSpan.FromTicks(Math.Max(1, duration.Ticks / 2)), out _primaryDeadline);
     }
 
     internal CancellationToken Token => _round.Token;
@@ -27,7 +30,7 @@ internal sealed class ClusterRecoveryBudget : IDisposable
         => CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, Token)
             || CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, PrimaryToken)
             || (_earlySeeds is not null
-                && CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, _earlySeeds.Value.Token));
+                && CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, _earlySeeds.Token));
 
     internal CancellationToken GetFallbackToken(bool last)
     {
@@ -41,10 +44,10 @@ internal sealed class ClusterRecoveryBudget : IDisposable
         if (_earlySeeds is null)
         {
             var remaining = _duration - _clock.GetElapsedTime(_started);
-            _earlySeeds = new Deadline(Token,
-                TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2)), _clock);
+            _earlySeeds = CreateDeadline(Token,
+                TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2)), out _earlySeedDeadline);
         }
-        return _earlySeeds.Value.Token;
+        return _earlySeeds.Token;
     }
 
     public void Dispose()
@@ -52,34 +55,21 @@ internal sealed class ClusterRecoveryBudget : IDisposable
         _earlySeeds?.Dispose();
         _primaries.Dispose();
         _round.Dispose();
+        _earlySeedDeadline?.Dispose();
+        _primaryDeadline?.Dispose();
+        _roundDeadline?.Dispose();
     }
 
-    private readonly struct Deadline : IDisposable
+    private CancellationTokenSource CreateDeadline(CancellationToken parent, TimeSpan duration,
+        out CancellationTokenSource? deadline)
     {
-        private readonly CancellationTokenSource _linked;
-        private readonly CancellationTokenSource? _timeout;
-
-        internal Deadline(CancellationToken parent, TimeSpan duration, TimeProvider clock)
+        if (ReferenceEquals(_clock, TimeProvider.System))
         {
-            // Keep the existing pooled cancellation path for production's system clock.
-            if (ReferenceEquals(clock, TimeProvider.System))
-            {
-                _timeout = null;
-                _linked = CommandTimeoutCancellation.Create(parent, duration);
-            }
-            else
-            {
-                _timeout = new CancellationTokenSource(duration, clock);
-                _linked = CancellationTokenSource.CreateLinkedTokenSource(parent, _timeout.Token);
-            }
+            deadline = null;
+            return CommandTimeoutCancellation.Create(parent, duration);
         }
 
-        internal CancellationToken Token => _linked.Token;
-
-        public void Dispose()
-        {
-            _linked.Dispose();
-            _timeout?.Dispose();
-        }
+        deadline = new CancellationTokenSource(duration, _clock);
+        return CancellationTokenSource.CreateLinkedTokenSource(parent, deadline.Token);
     }
 }

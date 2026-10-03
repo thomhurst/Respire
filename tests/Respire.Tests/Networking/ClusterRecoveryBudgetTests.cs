@@ -10,7 +10,7 @@ public class ClusterRecoveryBudgetTests
     [Test]
     public async Task TestClockTimersCanBeDisabledAndRearmedAfterFiring()
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         var fired = 0;
         using var timer = clock.CreateTimer(_ => fired++, null, TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
         timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -27,9 +27,9 @@ public class ClusterRecoveryBudgetTests
     }
 
     [Test]
-    public async Task PrimaryExpiryReservesSeedTimeUntilOverallDeadline()
+    public async Task PrimaryAndEarlySeedDeadlinesLeaveTheFinalSeedItsReservedTime()
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         using var budget = new ClusterRecoveryBudget(default, TimeSpan.FromSeconds(2), clock);
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(budget.PrimaryToken.IsCancellationRequested).IsTrue();
@@ -46,9 +46,9 @@ public class ClusterRecoveryBudgetTests
     }
 
     [Test]
-    public async Task DelayedPrimaryContinuationCannotExtendOverallDeadline()
+    public async Task DelayedContinuationCannotExtendTheOverallDeadline()
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         using var budget = new ClusterRecoveryBudget(default, TimeSpan.FromSeconds(2), clock);
         clock.Advance(TimeSpan.FromSeconds(2));
         await Assert.That(budget.PrimaryToken.IsCancellationRequested).IsTrue();
@@ -59,7 +59,7 @@ public class ClusterRecoveryBudgetTests
     [Test]
     public async Task LateSeedPhaseReservesHalfOfActualRemainingTime()
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         using var budget = new ClusterRecoveryBudget(default, TimeSpan.FromSeconds(2), clock);
         clock.Advance(TimeSpan.FromMilliseconds(1500));
         var early = budget.GetFallbackToken(last: false);
@@ -71,9 +71,9 @@ public class ClusterRecoveryBudgetTests
     }
 
     [Test]
-    public async Task CallerCancellationReachesEveryPhase()
+    public async Task CallerCancellationReachesEveryPhaseWithoutAdvancingTime()
     {
-        var clock = new RecoveryTestClock();
+        var clock = new ClusterRecoveryTestClock();
         using var caller = new CancellationTokenSource();
         using var budget = new ClusterRecoveryBudget(caller.Token, TimeSpan.FromSeconds(2), clock);
         var early = budget.GetFallbackToken(last: false);
