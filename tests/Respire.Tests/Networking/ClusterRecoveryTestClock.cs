@@ -26,7 +26,9 @@ internal sealed class ClusterRecoveryTestClock : TimeProvider
         lock (_gate)
         {
             _ticks += elapsed.Ticks;
-            due = _timers.Where(timer => timer.Due <= _ticks).OrderBy(timer => timer.Due).ToArray();
+            // Keep registration order: when both deadlines have elapsed, the round
+            // cancels first so a resumed phase cannot race an undelivered round timer.
+            due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
             foreach (var timer in due) _timers.Remove(timer);
         }
         foreach (var timer in due) timer.Fire();

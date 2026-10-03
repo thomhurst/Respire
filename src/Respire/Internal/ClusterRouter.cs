@@ -939,7 +939,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Waiting this caller's pending retry again would delay, or cancel, a finished recovery.
             if (!owner.IsConnected)
             {
-                // A failed flight cannot reconnect a cached owner outside its deadline.
+                // A failed flight for this slot cannot reconnect a cached owner outside its deadline.
+                // Callers that joined unrelated flights retain their own slot recovery above.
                 // Concurrent corrections to an already-connected owner remain usable.
                 if (!recovered && !join.NeedsOwnSlotRecovery)
                     ExceptionDispatchInfo.Capture(error).Throw();
