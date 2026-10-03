@@ -407,9 +407,19 @@ internal static partial class ScopeWalker
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
                     }
+                    else if (ArithmeticExceptions(exceptionSource) is { } arithmetic)
+                    {
+                        if (arithmetic.Overflow)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.OverflowException"), started, known, values);
+                        if (arithmetic.DivideByZero)
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.DivideByZeroException"), started, known, values);
+                    }
                     else Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         nullPath: transferFailure == TransferFailure.NullReceiver
-                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false },
+                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false }
+                            || IsFrameworkLength(exceptionSource),
                         allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
                             || exceptionSource is IArrayCreationOperation
                             || exceptionSource is IAnonymousObjectCreationOperation
@@ -422,8 +432,7 @@ internal static partial class ScopeWalker
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                     if (exceptionSource is IArrayCreationOperation arrayCreation
-                        && arrayCreation.DimensionSizes.Any(static size => size.ConstantValue is not { HasValue: true,
-                            Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0 }))
+                        && arrayCreation.DimensionSizes.Any(size => !IsNonNegativeLength(size)))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.OverflowException"), started, known, values);
                 }
@@ -723,6 +732,40 @@ internal static partial class ScopeWalker
             return kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder && (integral || decimalType)
                 || kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply
                     && (decimalType || isChecked && integral);
+        }
+
+        private static bool IsFrameworkLength(IOperation operation)
+            => operation is IPropertyReferenceOperation { Property.Name: "Length" or "LongLength",
+                Property.ContainingType.SpecialType: SpecialType.System_Array }
+                or IPropertyReferenceOperation { Property.Name: "Length", Property.ContainingType.SpecialType: SpecialType.System_String };
+
+        private bool IsNonNegativeLength(IOperation operation)
+        {
+            operation = _conditions.ResolveCapturedTarget(operation);
+            return IsFrameworkLength(operation) || operation.ConstantValue is { HasValue: true,
+                Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0 };
+        }
+
+        private static (bool Overflow, bool DivideByZero)? ArithmeticExceptions(IOperation operation)
+        {
+            var kind = operation switch
+            {
+                IBinaryOperation { OperatorMethod: null } binary => binary.OperatorKind,
+                ICompoundAssignmentOperation { OperatorMethod: null, Target: ILocalReferenceOperation or IParameterReferenceOperation } compound => compound.OperatorKind,
+                IIncrementOrDecrementOperation { OperatorMethod: null, Target: ILocalReferenceOperation or IParameterReferenceOperation } => BinaryOperatorKind.Add,
+                IUnaryOperation { OperatorMethod: null, OperatorKind: UnaryOperatorKind.Minus } => BinaryOperatorKind.Subtract,
+                _ => BinaryOperatorKind.None,
+            };
+            var type = operation.Type;
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
+            if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal) return null;
+            if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)
+                return (true, false);
+            if (kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder)
+                return (type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
+                    || type?.SpecialType == SpecialType.System_Decimal && kind == BinaryOperatorKind.Divide, true);
+            return null;
         }
 
         private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)

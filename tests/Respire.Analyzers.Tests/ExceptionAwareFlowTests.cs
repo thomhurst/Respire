@@ -7,8 +7,65 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = checked(value + 1);", "InvalidOperationException", false)]
+    [Arguments("_ = checked(value + 1);", "OverflowException", true)]
+    [Arguments("_ = checked(-value);", "InvalidOperationException", false)]
+    [Arguments("_ = checked(-value);", "OverflowException", true)]
+    [Arguments("checked { value++; }", "InvalidOperationException", false)]
+    [Arguments("checked { value++; }", "OverflowException", true)]
+    [Arguments("checked { value *= 2; }", "OverflowException", true)]
+    [Arguments("_ = value / divisor;", "InvalidOperationException", false)]
+    [Arguments("_ = value / divisor;", "DivideByZeroException", true)]
+    [Arguments("_ = value / divisor;", "OverflowException", true)]
+    [Arguments("_ = (uint)value / (uint)divisor;", "OverflowException", false)]
+    [Arguments("_ = value % divisor;", "DivideByZeroException", true)]
+    [Arguments("_ = value + Throws();", "InvalidOperationException", true)]
+    public async Task ArithmeticUsesSpecificExceptionTypes(string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int value, int divisor)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int value, int divisor)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("new int[1]", "InvalidOperationException", false)]
     [Arguments("new int[1]", "OverflowException", false)]
+    [Arguments("new int[buffer.Length]", "OverflowException", false)]
+    [Arguments("new int[buffer.Length - 1]", "OverflowException", true)]
+    [Arguments("new int[buffer.LongLength]", "OverflowException", false)]
+    [Arguments("new int[text.Length]", "OverflowException", false)]
+    [Arguments("new int[text.Length]", "InvalidOperationException", false)]
+    [Arguments("new int[buffer.Length]", "NullReferenceException", true)]
+    [Arguments("new int[buffer.Length]", "OutOfMemoryException", true)]
     [Arguments("new int[1]", "OutOfMemoryException", true)]
     [Arguments("new int[length]", "OverflowException", true)]
     [Arguments("new int[length]", "InvalidOperationException", false)]
@@ -25,7 +82,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int Length() => throw new InvalidOperationException();
-                async Task Run(RespireClient client, int length)
+                async Task Run(RespireClient client, int length, int[] buffer, string text)
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { _ = {{expression}}; result.Dispose(); }
@@ -40,7 +97,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int Length() => throw new InvalidOperationException();
-                async Task Run(RespireClient client, int length)
+                async Task Run(RespireClient client, int length, int[] buffer, string text)
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");
