@@ -6,6 +6,79 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("new int?()", true)]
+    [Arguments("default(int?)", true)]
+    [Arguments("default(string)!", true)]
+    [Arguments("null", true)]
+    [Arguments("\"value\"", false)]
+    [Arguments("new object()", false)]
+    [Arguments("42", false)]
+    public async Task ConditionalReturnContractUsesActualArgumentNullness(string argument, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            #nullable enable
+            using System;
+            using System.Diagnostics.CodeAnalysis;
+            using Respire;
+            public class Caller
+            {
+                [return: NotNullIfNotNull(nameof(value))]
+                private static RespirePending<string> Produce(object? value) => throw new Exception();
+                public void Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = Produce({{argument}}) ?? batch.GetStringAsync("key");
+                    Console.WriteLine({{read}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task ExceptionConstructorCanReachCorrelatedCatchExit(bool insideBranch)
+    {
+        var before = insideBranch ? "try { if (skip) throw new CustomException(); } catch (System.IO.IOException) { break; }"
+            : "if (skip) throw new CustomException();";
+        var outerCatch = insideBranch ? "catch (Exception) { throw; }" : "catch (System.IO.IOException) { }";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class CustomException : Exception
+            {
+                public CustomException() { throw new System.IO.IOException(); }
+            }
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client, int choice, bool skip)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = choice switch { 0 => first.GetStringAsync("a"), _ => second.GetStringAsync("b") };
+                    try
+                    {
+                        switch (choice)
+                        {
+                            case 0:
+                                {{before}}
+                                await first.SendAsync();
+                                break;
+                            default:
+                                await second.SendAsync();
+                                break;
+                        }
+                    }
+                    {{outerCatch}}
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("InvalidOperationException", "new ArgumentException()", false)]
     [Arguments("ArgumentException", "new ArgumentException()", true)]
     [Arguments("Exception", "new ArgumentException()", true)]
@@ -83,9 +156,15 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
-    [Arguments("break")]
-    [Arguments("continue")]
-    public async Task LoopJumpSkipsLaterReadInCurrentIteration(string jump) => await Verify.VerifyAsync(
+    [Arguments("break", false)]
+    [Arguments("break", true)]
+    [Arguments("continue", false)]
+    [Arguments("continue", true)]
+    [Arguments("return", false)]
+    [Arguments("return", true)]
+    [Arguments("throw new InvalidOperationException()", false)]
+    [Arguments("throw new InvalidOperationException()", true)]
+    public async Task ExitKindCrossedWithLoopAndFinallyRead(string jump, bool readInFinally) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -99,45 +178,14 @@ public class PendingReadBeforeFlushAnalyzerTests
                     var first = client.CreateBatch();
                     var second = client.CreateBatch();
                     var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
-                    if (choice)
-                    {
-                        if (skip) {{{jump}}};
-                        await first.SendAsync();
-                    }
-                    else await second.SendAsync();
-                    Console.WriteLine(pending.Result);
-                }
-            }
-        }
-        """);
-
-    [Test]
-    [Arguments("break")]
-    [Arguments("continue")]
-    public async Task LoopJumpStillExecutesFinallyRead(string jump) => await Verify.VerifyAsync(
-        $$$"""
-        using System;
-        using System.Threading.Tasks;
-        using Respire;
-        public class Caller
-        {
-            public async Task RunAsync(RespireClient client, bool choice, bool skip)
-            {
-                for (var index = 0; index < 2; index++)
-                {
-                    var first = client.CreateBatch();
-                    var second = client.CreateBatch();
-                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
-                    try
-                    {
+                    {{{(readInFinally ? "try {" : "")}}}
                         if (choice)
                         {
                             if (skip) {{{jump}}};
                             await first.SendAsync();
                         }
                         else await second.SendAsync();
-                    }
-                    finally { Console.WriteLine({|RESP002:pending.Result|}); }
+                    {{{(readInFinally ? "} finally { Console.WriteLine({|RESP002:pending.Result|}); }" : "Console.WriteLine(pending.Result);")}}}
                 }
             }
         }

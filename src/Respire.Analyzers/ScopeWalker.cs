@@ -16,6 +16,8 @@ internal static class ScopeWalker
     internal enum BarrierStartPolicy { Exclude, Include }
     internal enum ExitMode { Disposal, FlushProof }
     private enum CatchMatch { None, Possible, Guaranteed }
+    private static readonly string[] SimpleExceptionTypes =
+        ["System.Exception", "System.InvalidOperationException", "System.ArgumentException"];
 
     /// <summary>Whether an explicit exit can skip the statement following this one.</summary>
     public static bool CanBypassFollowingStatement(
@@ -207,11 +209,23 @@ internal static class ScopeWalker
     }
 
     private static ITypeSymbol? GetKnownThrownType(SemanticModel semanticModel, ThrowStatementSyntax thrown)
-        // A fresh exception is non-null. For new T(), retain its constraints without
-        // claiming an exact runtime type. Other expressions and rethrows remain unknown.
-        => thrown.Expression is { } expression && Unwrap(expression) is BaseObjectCreationExpressionSyntax
-            ? semanticModel.GetTypeInfo(expression).Type
-            : null;
+    {
+        // User constructors (including new T()) and argument evaluation can throw a
+        // different exception before the explicit throw. Keep their catches possible.
+        if (thrown.Expression is not { } expression
+            || semanticModel.GetOperation(Unwrap(expression)) is not IObjectCreationOperation creation
+            || creation.Initializer is not null
+            || creation.Arguments.Any(argument => !argument.Value.ConstantValue.HasValue
+                && argument.Value is not ILocalReferenceOperation and not IParameterReferenceOperation))
+            return null;
+
+        // These framework constructors only store the supplied message/inner exception.
+        // Other constructors remain opaque; this is not an interprocedural exception proof.
+        foreach (var name in SimpleExceptionTypes)
+            if (SymbolEqualityComparer.Default.Equals(creation.Type, semanticModel.Compilation.GetTypeByMetadataName(name)))
+                return creation.Type;
+        return null;
+    }
 
     private static CatchMatch MatchCatch(
         SemanticModel semanticModel, ITypeSymbol? thrownType, CatchClauseSyntax handler)
@@ -228,11 +242,15 @@ internal static class ScopeWalker
 
         if (handler.Declaration is not null)
         {
-            if (thrownType is null || semanticModel.GetTypeInfo(handler.Declaration.Type).Type is not { } caughtType)
+            if (semanticModel.GetTypeInfo(handler.Declaration.Type).Type is not { } caughtType)
                 return CatchMatch.Possible;
+            if (SymbolEqualityComparer.Default.Equals(caughtType,
+                    semanticModel.Compilation.GetTypeByMetadataName("System.Exception")))
+                return filterIsGuaranteed ? CatchMatch.Guaranteed : CatchMatch.Possible;
+            if (thrownType is null) return CatchMatch.Possible;
             if (semanticModel.Compilation.ClassifyConversion(thrownType, caughtType) is not
                 ({ IsImplicit: true, IsReference: true } or { IsIdentity: true }))
-                return thrownType is ITypeParameterSymbol ? CatchMatch.Possible : CatchMatch.None;
+                return CatchMatch.None;
         }
 
         return filterIsGuaranteed ? CatchMatch.Guaranteed : CatchMatch.Possible;
@@ -479,7 +497,8 @@ internal static class ScopeWalker
         SyntaxNode scope,
         SyntaxNode before,
         IEnumerable<SyntaxNode> barriers,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var barrierArray = barriers.ToArray();
         if (barrierArray.Length == 0)
@@ -506,7 +525,7 @@ internal static class ScopeWalker
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
             int.MaxValue,
-            barrierArray);
+            barrierArray, startPolicy);
     }
 
     /// <summary>True when a local or parameter used by a condition is written between two nodes.</summary>

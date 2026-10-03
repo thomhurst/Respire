@@ -435,7 +435,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         var value = argument.Value is IConversionOperation { IsImplicit: true } conversion ? conversion.Operand : argument.Value;
         return value.Type is { IsValueType: true, OriginalDefinition.SpecialType: not SpecialType.System_Nullable_T }
                || value.Syntax is ExpressionSyntax expression && IsDefinitelyNonNullPending(context, expression)
-               || value is IObjectCreationOperation;
+               || value.ConstantValue is { HasValue: true, Value: not null }
+               || value is IObjectCreationOperation { Type.IsReferenceType: true };
     }
 
     /// <summary>True when the local is declared somewhere this scope cannot see all of its uses.</summary>

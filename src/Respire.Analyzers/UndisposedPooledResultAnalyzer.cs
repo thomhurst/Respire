@@ -317,7 +317,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
         // An unbraced branch can start at the release itself; include that entry.
         return ScopeWalker.CollectivelyPostDominates(
-            context.SemanticModel, scope, branch, releases, context.CancellationToken, includeStart: true);
+            context.SemanticModel, scope, branch, releases, context.CancellationToken,
+            startPolicy: ScopeWalker.BarrierStartPolicy.Include);
     }
 
     private static bool SwitchAcquisitionsAreReleased(
