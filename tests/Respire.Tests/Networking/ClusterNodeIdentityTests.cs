@@ -57,17 +57,22 @@ public class ClusterNodeIdentityTests
                 ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply,
             SuppressReply = static command => command == "PING",
         };
+        // Connection setup uses a normal deadline; the controlled clock expires only the barrier.
+        var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
         };
         await using var node = await RespireConnectionMultiplexer.CreateAsync(
-            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                MaintenanceDrainTimeProvider = clock,
+            });
         var connection = node.GetConnection();
         await using var payload = new PausedUploadStream();
         var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, SetWhen.Always);
@@ -76,6 +81,7 @@ public class ClusterNodeIdentityTests
         try
         {
             var retirement = node.RetireAsync();
+            (await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5))).Fire();
             await Task.Delay(300);
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(retirement.IsCompleted).IsFalse();
