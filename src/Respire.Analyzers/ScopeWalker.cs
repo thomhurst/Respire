@@ -562,9 +562,10 @@ internal static class ScopeWalker
                 || SymbolEqualityComparer.Default.Equals(catchType, systemException);
             var exceptionType = exception?.Type;
             var certain = catchesAll || HasBaseType(exceptionType, catchType);
-            // Unknown/rethrown values and type parameters intentionally retain possible
+            // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
             // handlers. A fresh construction has an exact type; other values may be derived.
-            var possible = certain || exceptionType is null or ITypeParameterSymbol
+            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
+                || catchType is ITypeParameterSymbol
                 || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
             return (possible, certain);
         }
@@ -573,7 +574,10 @@ internal static class ScopeWalker
         {
             for (; type is not null; type = type.BaseType)
             {
-                if (SymbolEqualityComparer.Default.Equals(type, expected)) return true;
+                if (SymbolEqualityComparer.Default.Equals(type, expected))
+                {
+                    return true;
+                }
             }
             return false;
         }

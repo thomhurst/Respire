@@ -10,6 +10,7 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Arguments("ArgumentException", "new ArgumentException()", true)]
     [Arguments("Exception", "new ArgumentException()", true)]
     [Arguments("InvalidOperationException", "error", true)]
+    [Arguments("T", "new ArgumentException()", true)]
     public async Task FilteredCatchApplicabilityBeforeFinallyRead(string catchType, string thrown, bool warning)
     {
         var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
@@ -19,7 +20,7 @@ public class PendingReadBeforeFlushAnalyzerTests
             using Respire;
             public class Caller
             {
-                public async Task RunAsync(RespireClient client, bool handle, Exception error)
+                public async Task RunAsync<T>(RespireClient client, bool handle, Exception error) where T : Exception
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");
@@ -33,14 +34,16 @@ public class PendingReadBeforeFlushAnalyzerTests
     }
 
     [Test]
-    public async Task GenericFilteredCatchRemainsPossibleBeforeFinallyRead() => await Verify.VerifyAsync(
-        """
+    [Arguments("T")]
+    [Arguments("dynamic")]
+    public async Task UnknownFilteredCatchRemainsPossibleBeforeFinallyRead(string exceptionType) => await Verify.VerifyAsync(
+        $$"""
         using System;
         using System.Threading.Tasks;
         using Respire;
         public class Caller
         {
-            public async Task RunAsync<T>(RespireClient client, bool handle, T error) where T : Exception
+            public async Task RunAsync<T>(RespireClient client, bool handle, {{exceptionType}} error) where T : Exception
             {
                 var batch = client.CreateBatch();
                 var pending = batch.GetStringAsync("key");
