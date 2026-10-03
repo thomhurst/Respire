@@ -424,8 +424,9 @@ public class StringFastPathWireTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
         await server.SendRawAsync(Encoding.ASCII.GetBytes($"${payloadLength}\r\n"));
-        await server.SendRawAsync(new byte[payloadLength]);
-        await server.SendRawAsync("\r\n"u8.ToArray());
+        // The receive pipe deliberately stops draining before the full payload fits. Let
+        // the server write run alongside the consumer instead of requiring socket buffering.
+        var sending = server.SendRawAsync([.. new byte[payloadLength], (byte)'\r', (byte)'\n']);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         // The receive loop now waits on the full 64 KiB pipe, not on the server.
@@ -434,6 +435,7 @@ public class StringFastPathWireTests
 
         var copy = new MemoryStream();
         await stream!.CopyToAsync(copy).WaitAsync(TimeSpan.FromSeconds(5));
+        await sending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(copy.Length).IsEqualTo(payloadLength);
         await Assert.That(connection.IsConnected).IsTrue();
     }
@@ -477,12 +479,17 @@ public class StringFastPathWireTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
         await server.SendRawAsync("$262144\r\n"u8.ToArray());
-        await server.SendRawAsync(new byte[256 * 1024]);
+        var sending = server.SendRawAsync(new byte[256 * 1024]);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Task.Delay(100);
 
         await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         stream!.Dispose();
+        try { await sending.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception error) when (error is IOException or System.Net.Sockets.SocketException or ObjectDisposedException)
+        {
+            // Closing the unread connection may abort the server's backpressured write.
+        }
     }
 
     [Test]
