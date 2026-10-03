@@ -232,29 +232,23 @@ internal static class SentinelResolver
                     acceptedReporter?.Invoke(endpoint);
                     return result;
                 }
-                catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
-                    error, cancellationToken, connectTimeoutSource.Token))
+                catch (OperationCanceledException error) when (error.CancellationToken == connectTimeoutSource.Token)
                 {
-                    throw new OperationCanceledException(error.Message, error, cancellationToken);
-                }
-                catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
-                    && connectTimeoutSource.IsCancellationRequested)
-                {
+                    if (cancellationToken.IsCancellationRequested)
+                        throw new OperationCanceledException(error.Message, error, cancellationToken);
+                    if (!connectTimeoutSource.IsCancellationRequested) throw;
                     // The connection deadline fired while the caller token stayed live.
                     throw new RespireTimeoutException(
                         "CONNECT", options.ConnectTimeout, error,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
                 }
             }
-            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
-                error, cancellationToken, discoveryTimeoutSource.Token))
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
             {
-                // Preserve the upstream token identity for callers that distinguish their own
-                // deadline from Sentinel's candidate-discovery deadline.
-                throw new OperationCanceledException(error.Message, error, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
+                // Select caller cancellation once, then normalize only our own link. Separate
+                // filters can observe cancellation between checks and leak the private token.
+                if (error.CancellationToken == discoveryTimeoutSource.Token)
+                    throw new OperationCanceledException(error.Message, error, cancellationToken);
                 throw;
             }
             catch (Exception ex) when (SentinelExceptionPolicy.IsRecoverable(ex))
@@ -263,7 +257,7 @@ internal static class SentinelResolver
                 // The discovery deadline usually equals the caller's command timeout. When it
                 // fires first, report the same timeout the caller's deadline would have raised.
                 lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
-                    && (ex is RespireTimeoutException || ContainsCancellation(ex));
+                    && (ex is RespireTimeoutException || ContainsCancellation(ex, discoveryTimeoutSource.Token));
                 lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
@@ -296,10 +290,10 @@ internal static class SentinelResolver
         }
     }
 
-    private static bool ContainsCancellation(Exception error)
+    private static bool ContainsCancellation(Exception error, CancellationToken ownedToken)
     {
         for (Exception? cause = error; cause is not null; cause = cause.InnerException)
-            if (cause is OperationCanceledException) return true;
+            if (cause is OperationCanceledException cancellation && cancellation.CancellationToken == ownedToken) return true;
         return false;
     }
 
