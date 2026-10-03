@@ -89,6 +89,7 @@ jobs:
           reportgenerator \
             -reports:"TestResults/**/coverage.cobertura.xml" \
             -targetdir:"CoverageReport" \
+            -assemblyfilters:"-*Tests*;-*Benchmarks*;-*Samples*;-*Pipeline*" \
             -reporttypes:"Html;JsonSummary;MarkdownSummaryGithub;Cobertura"
       
       - name: Generate Test Report

@@ -24,8 +24,8 @@ internal static class StressTestRunner
     /// How long to wait for workers to drain after the stop signal. The clients take no
     /// per-operation cancellation token (and the wire layer must never cancel an
     /// in-flight send), so a server that stops replying leaves workers blocked inside
-    /// an await forever — this grace period converts that into a stalled result
-    /// instead of a job that hangs until the CI timeout.
+    /// an await forever — this grace period fails the run before later passes can
+    /// overlap abandoned workers, instead of hanging until the CI timeout.
     /// </summary>
     private const int WorkerJoinGraceSeconds = 30;
 
@@ -89,14 +89,13 @@ internal static class StressTestRunner
         // Workers exit at the next loop check; in-flight operations complete normally
         // rather than being cancelled mid-send. A worker stuck inside an await against
         // an unresponsive server can never observe the stop signal, so the join is
-        // bounded and an overrun is reported as a stall rather than hanging the run.
+        // bounded and an overrun aborts the run before any later pass can start.
         stopCts.Cancel();
         if (!await TryJoinAsync(workers, TimeSpan.FromSeconds(WorkerJoinGraceSeconds)).ConfigureAwait(false))
         {
-            Console.WriteLine(
+            throw new TimeoutException(
                 $"  [{scenario.Name}/{client.Name}] workers still blocked in-flight after {WorkerJoinGraceSeconds}s grace; " +
-                "abandoning them and reporting the pass as stalled");
-            stalled = true;
+                "aborting the run so abandoned workers cannot contaminate later passes.");
         }
 
         tracker.Stop();
