@@ -112,6 +112,43 @@ public class PendingReadBeforeFlushAnalyzerTests
     }
 
     [Test]
+    [Arguments("if (skip) throw new InvalidOperationException();", false)]
+    [Arguments("if (skip) break;", true)]
+    public async Task ExitInsideFinallyBeforeCorrelatedFlushDoesNotReachRead(string exit, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client, int choice, bool skip)
+                {
+                    try { Console.WriteLine("work"); }
+                    finally
+                    {
+                        var first = client.CreateBatch();
+                        var second = client.CreateBatch();
+                        var pending = choice switch { 0 => first.GetStringAsync("a"), _ => second.GetStringAsync("b") };
+                        switch (choice)
+                        {
+                            case 0:
+                                {{exit}}
+                                await first.SendAsync();
+                                break;
+                            default:
+                                await second.SendAsync();
+                                break;
+                        }
+                        Console.WriteLine({{read}});
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("InvalidOperationException", "new ArgumentException()", false)]
     [Arguments("ArgumentException", "new ArgumentException()", true)]
     [Arguments("Exception", "new ArgumentException()", true)]
@@ -857,6 +894,56 @@ public class PendingReadBeforeFlushAnalyzerTests
                 var pending = Produce(first.GetStringAsync("a")) ?? second.GetStringAsync("b");
                 await first.SendAsync();
                 Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("[return: NotNull]", "Produce(first)")]
+    [Arguments("[return: NotNullIfNotNull(nameof(fallback))]", "Produce(first, first.GetStringAsync(\"c\"))")]
+    public async Task NullableProducerWithNotNullReturnContractSkipsCoalescedBatch(
+        string returnContract, string call) => await Verify.VerifyAsync(
+        $$$"""
+        #nullable enable
+        using System;
+        using System.Diagnostics.CodeAnalysis;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            {{{returnContract}}}
+            private static RespirePending<string>? Produce(RespireBatch batch, RespirePending<string>? fallback = null)
+                => fallback ?? batch.GetStringAsync("a");
+            public async Task RunAsync(RespireClient client)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = {{{call}}} ?? second.GetStringAsync("b");
+                await first.SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task NullableProducerWithUnsatisfiedNotNullIfNotNullStillRequiresCoalescedBatchFlush() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Diagnostics.CodeAnalysis;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            [return: NotNullIfNotNull(nameof(fallback))]
+            private static RespirePending<string>? Produce(RespirePending<string>? fallback) => fallback;
+            public async Task RunAsync(RespireClient client)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = Produce(null) ?? second.GetStringAsync("b");
+                await first.SendAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
             }
         }
         """);

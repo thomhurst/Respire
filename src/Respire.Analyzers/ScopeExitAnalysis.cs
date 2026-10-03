@@ -85,7 +85,7 @@ internal static class ScopeExitAnalysis
 
         var enclosingTries = node.Ancestors().OfType<TryStatementSyntax>().ToArray();
         // Returning or throwing still executes enclosing finally blocks.
-        if (enclosingTries.Any(enclosingTry => enclosingTry.Finally?.Span.Contains(read.Span) == true))
+        if (enclosingTries.Any(enclosingTry => FinallyRunsReadAfterExit(enclosingTry, node, read)))
         {
             return false;
         }
@@ -109,11 +109,18 @@ internal static class ScopeExitAnalysis
         return GetThrownTypes(semanticModel, thrown).All(type => ThrowExitsBeforeRead(semanticModel, thrown, type, read));
     }
 
+    // An exit from the protected block or a handler runs the finally, reaching a read
+    // there. An exit from inside the finally itself leaves it without reaching the read.
+    private static bool FinallyRunsReadAfterExit(TryStatementSyntax enclosingTry, SyntaxNode exit, SyntaxNode read)
+        => enclosingTry.Finally is { } finallyClause
+           && finallyClause.Span.Contains(read.Span)
+           && !finallyClause.Span.Contains(exit.Span);
+
     private static bool ThrowExitsBeforeRead(
         SemanticModel semanticModel, ThrowStatementSyntax thrown, ThrownType thrownType, SyntaxNode read)
     {
         var enclosingTries = thrown.Ancestors().OfType<TryStatementSyntax>().ToArray();
-        if (enclosingTries.Any(enclosingTry => enclosingTry.Finally?.Span.Contains(read.Span) == true)) return false;
+        if (enclosingTries.Any(enclosingTry => FinallyRunsReadAfterExit(enclosingTry, thrown, read))) return false;
         foreach (var enclosingTry in enclosingTries)
         {
             if (!enclosingTry.Block.Span.Contains(thrown.Span)) continue;
@@ -153,7 +160,7 @@ internal static class ScopeExitAnalysis
         {
             foreach (var enclosingTry in thrown.Ancestors().OfType<TryStatementSyntax>())
             {
-                if (read is not null && enclosingTry.Finally?.Span.Contains(read.Span) == true) return false;
+                if (read is not null && FinallyRunsReadAfterExit(enclosingTry, thrown, read)) return false;
 
                 if (!enclosingTry.Block.Span.Contains(thrown.Span))
                 {

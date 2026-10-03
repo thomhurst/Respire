@@ -371,13 +371,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return false;
         }
 
-        // Use the producer's contract even in an oblivious caller. A legacy or
-        // explicitly nullable return cannot prove that the right operand is unreachable,
-        // and neither can a non-null return weakened by a return nullability attribute.
+        // Use the producer's contract even in an oblivious caller. A legacy return
+        // cannot prove that the right operand is unreachable, and neither can a non-null
+        // return weakened by a return nullability attribute. An explicitly nullable return
+        // proves it only through a NotNull or satisfied NotNullIfNotNull return attribute.
         if (context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                 is not IMethodSymbol
                 {
-                    ReturnNullableAnnotation: NullableAnnotation.NotAnnotated,
+                    ReturnNullableAnnotation: NullableAnnotation.NotAnnotated or NullableAnnotation.Annotated,
                     ReturnType: INamedTypeSymbol { OriginalDefinition: { } definition },
                 } method
             || definition.MetadataName != "RespirePending`1"
@@ -388,6 +389,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         var declared = (method.ReducedFrom ?? method).OriginalDefinition;
         var nonNullWhenArguments = new List<string>();
+        var returnsNotNull = false;
         foreach (var attribute in declared.GetReturnTypeAttributes())
         {
             if (attribute.AttributeClass?.ContainingNamespace.ToDisplayString() != "System.Diagnostics.CodeAnalysis")
@@ -399,6 +401,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             {
                 case "MaybeNullAttribute":
                     return false;
+                case "NotNullAttribute":
+                    returnsNotNull = true;
+                    break;
                 case "NotNullIfNotNullAttribute":
                     if (attribute.ConstructorArguments.Length != 1
                         || attribute.ConstructorArguments[0].Value is not string parameterName)
@@ -411,6 +416,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
         }
 
+        if (returnsNotNull)
+        {
+            return true;
+        }
+
         if (nonNullWhenArguments.Count > 0)
         {
             // The return is non-null only when a named argument is provably non-null.
@@ -421,7 +431,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                        && IsDefinitelyNonNullArgument(context, argument));
         }
 
-        return context.SemanticModel.GetTypeInfo(invocation, context.CancellationToken).Nullability.FlowState
+        return method.ReturnNullableAnnotation == NullableAnnotation.NotAnnotated
+               && context.SemanticModel.GetTypeInfo(invocation, context.CancellationToken).Nullability.FlowState
                != NullableFlowState.MaybeNull;
     }
 
