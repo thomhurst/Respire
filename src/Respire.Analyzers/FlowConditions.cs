@@ -22,11 +22,11 @@ internal sealed class FlowConditions
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
     private readonly List<(ISymbol? Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
 
-    internal ulong ReserveTransferFlag()
+    internal ulong ReservePathFlag()
     {
         if (_predicates.Count == MaxPredicates) return 0;
         var flag = 1UL << _predicates.Count;
-        // Transfer flags share the bounded path-state masks but have no variable to invalidate.
+        // Non-variable facts share the bounded path-state masks without write invalidation.
         _predicates.Add((null, null, BinaryOperatorKind.None));
         return flag;
     }
@@ -104,6 +104,7 @@ internal sealed class FlowConditions
         {
             IInvocationOperation invocation => invocation.Instance,
             IMemberReferenceOperation member => member.Instance,
+            IArrayElementReferenceOperation array => array.ArrayReference,
             _ => null,
         };
         if (receiver is not null && Symbol(receiver) is { } symbol)

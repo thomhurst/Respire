@@ -8,6 +8,125 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Microsoft.CSharp.RuntimeBinder.RuntimeBinderException", true)]
+    [Arguments("OutOfMemoryException", true)]
+    public async Task DynamicConstructorFailurePrecedesTransfer(string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } }
+        class Caller
+        {
+            async Task Run(RespireClient client, dynamic argument)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { _ = new Owner(result, argument); }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("if (values is null) return;", "_ = values[0];", "NullReferenceException", false)]
+    [Arguments("if (values is null) return;", "_ = values[0];", "IndexOutOfRangeException", true)]
+    [Arguments("if (values is null) return;", "values[0] = new object();", "ArrayTypeMismatchException", true)]
+    [Arguments("if (values is null) return; values = null;", "_ = values[0];", "NullReferenceException", true)]
+    [Arguments("", "_ = values[0];", "NullReferenceException", true)]
+    public async Task ArrayReceiverUsesNonNullEvidence(string setup, string operation, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, object[] values)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, object[] values)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("_ = Holder.Value;", false)]
+    [Arguments("Holder.Initialize();", false)]
+    [Arguments("_ = Holder.Property;", false)]
+    [Arguments("Holder.Property = 1;", false)]
+    [Arguments("_ = Holder.Value; try { throw new Exception(); } catch { }", false)]
+    [Arguments("_ = new Holder();", false)]
+    [Arguments("if (flag) _ = Holder.Value;", true)]
+    [Arguments("try { _ = Holder.Value; } catch { }", true)]
+    [Arguments("", true)]
+    public async Task SuccessfulTypeInitializationIsRemembered(string setup, bool warning)
+    {
+        const string declaration = """
+            class Holder
+            {
+                static Holder() { }
+                public static int Value;
+                public static int Property { get; set; }
+                public static void Initialize() { }
+                public static void Take(RespireResult result) => result.Dispose();
+                public static void Take(RespireBatch batch) => batch.SendAsync().AsTask().GetAwaiter().GetResult();
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client, bool flag)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { Holder.Take(result); }
+                    catch (TypeInitializationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                void Run(RespireClient client, bool flag)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { Holder.Take(batch); }
+                    catch (TypeInitializationException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Action owner = () => result.Dispose();", "OutOfMemoryException", true)]
     [Arguments("Action owner = delegate { result.Dispose(); };", "OutOfMemoryException", true)]
     [Arguments("Action owner = new Action(() => result.Dispose());", "OutOfMemoryException", true)]

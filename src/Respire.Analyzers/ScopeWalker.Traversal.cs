@@ -28,6 +28,7 @@ internal static partial class ScopeWalker
         private readonly Dictionary<SyntaxNode, ulong> _transferTriggers = new();
         private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
         private ulong _transferFlags;
+        private readonly Dictionary<INamedTypeSymbol, ulong> _initializedTypes = new(SymbolEqualityComparer.Default);
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
@@ -213,7 +214,7 @@ internal static partial class ScopeWalker
                                 var triggerBlock = graph.Blocks.FirstOrDefault(candidate =>
                                     candidate.Operations.Concat(candidate.BranchValue is { } branchValue ? [branchValue] : [])
                                         .Any(candidateOperation => ContainsReference(candidateOperation, reference)));
-                                var flag = _conditions.ReserveTransferFlag();
+                                var flag = _conditions.ReservePathFlag();
                                 if (triggerBlock is null || flag == 0) return (null, 0);
                                 _transferFlags |= flag;
                                 _transferTriggers[reference] = _transferTriggers.TryGetValue(reference, out var existing) ? existing | flag : flag;
@@ -379,6 +380,8 @@ internal static partial class ScopeWalker
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
                 && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } fieldReceiver }
                     && _conditions.IsKnownNonNull(fieldReceiver, known, values))
+                && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
+                    && IsTypeInitialized(exceptionSource, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
@@ -390,7 +393,8 @@ internal static partial class ScopeWalker
                     // only checks the receiver, bounds, and (for reference stores) covariance.
                     if (exceptionSource is IArrayElementReferenceOperation arrayAccess)
                     {
-                        Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                        if (!_conditions.IsKnownNonNull(arrayAccess.ArrayReference, known, values))
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
                         if (arrayAccess.Type?.IsValueType != true
@@ -442,7 +446,8 @@ internal static partial class ScopeWalker
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                     if (transferFailure == TransferFailure.Allocation
-                        && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } })
+                        && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
+                        && !IsTypeInitialized(exceptionSource, known, values))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.TypeInitializationException"), started, known, values);
                     if (exceptionSource is IArrayCreationOperation arrayCreation
@@ -450,6 +455,18 @@ internal static partial class ScopeWalker
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.OverflowException"), started, known, values);
                 }
+            }
+            // Only the normal continuation proves initialization succeeded. Keep this fact
+            // across writes and later exceptions; a successful type initializer never reruns.
+            if (InitializationType(exceptionSource) is { } initializedType)
+            {
+                if (!_initializedTypes.TryGetValue(initializedType, out var flag))
+                {
+                    flag = _conditions.ReservePathFlag();
+                    _initializedTypes.Add(initializedType, flag);
+                }
+                known |= flag;
+                values |= flag;
             }
             // Construction/allocation can fail before any initializer runs.
             if (initializer is not null)
@@ -461,6 +478,25 @@ internal static partial class ScopeWalker
         }
 
         private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
+
+        private bool IsTypeInitialized(IOperation operation, ulong known, ulong values)
+            => InitializationType(operation) is { } type && _initializedTypes.TryGetValue(type, out var flag)
+                && flag != 0 && (known & values & flag) != 0;
+
+        private static INamedTypeSymbol? InitializationType(IOperation operation)
+        {
+            var type = operation switch
+            {
+                IFieldReferenceOperation { Field: { IsStatic: true, IsConst: false } field } => field.ContainingType,
+                IPropertyReferenceOperation { Property.IsStatic: true } property => property.Property.ContainingType,
+                IInvocationOperation { TargetMethod.IsStatic: true } invocation => invocation.TargetMethod.ContainingType,
+                IObjectCreationOperation { Type: INamedTypeSymbol createdType } => createdType,
+                _ => null,
+            };
+            // With beforefieldinit, a method or constructor need not trigger initialization.
+            return type is not null && (operation is IFieldReferenceOperation && type.StaticConstructors.Length > 0
+                || type.StaticConstructors.Any(static constructor => !constructor.IsImplicitlyDeclared)) ? type : null;
+        }
 
         private void VisitDeconstructionLocations(IOperation target, BasicBlock block, int entryPosition, int firstBarrier,
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
@@ -506,14 +542,15 @@ internal static partial class ScopeWalker
             return operation switch
             {
                 IObjectCreationOperation { Type.IsReferenceType: true } => TransferFailure.Allocation,
-                IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
+                IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
                 IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IFieldReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IPropertyReferenceOperation { Property: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
-                    or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } } => TransferFailure.TypeInitialization,
+                    or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
+                    when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 _ => TransferFailure.None,
             };
         }
