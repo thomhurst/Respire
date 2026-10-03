@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -30,7 +29,7 @@ public class NugetVersionGeneratorModule : Module<string>
     {
         context.Logger.LogInformation("Generating version number...");
 
-        var gitVersion = await GitVersionDetails.CreateAsync(_settings.Value, cancellationToken);
+        var gitVersion = await GitVersionDetails.CreateAsync(_settings.Value, cancellationToken, context.Logger);
 
         Environment.SetEnvironmentVariable(VersionEnvironmentVariable, gitVersion.PackageVersion);
         Environment.SetEnvironmentVariable(LegacyVersionEnvironmentVariable, gitVersion.PackageVersion);
@@ -112,13 +111,14 @@ internal sealed record GitVersionDetails(
 
     public static async Task<GitVersionDetails> CreateAsync(
         GitVersioningSettings settings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
     {
-        var repositoryRoot = await RunGitAsync(Directory.GetCurrentDirectory(), cancellationToken, "rev-parse", "--show-toplevel");
+        var repositoryRoot = await GitCommand.RunAsync(Directory.GetCurrentDirectory(), cancellationToken, "rev-parse", "--show-toplevel");
         var branchName = await GetBranchNameAsync(repositoryRoot, cancellationToken);
-        var commitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
-        var shortCommitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
-        var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken);
+        var commitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
+        var shortCommitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
+        var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken, logger);
 
         var baseVersion = ParseVersion(latestVersionTag) ?? ParseVersion(settings.BaseVersion);
         if (baseVersion is null)
@@ -150,7 +150,7 @@ internal sealed record GitVersionDetails(
         string commitRange,
         CancellationToken cancellationToken)
     {
-        var heightText = await RunGitAsync(repositoryRoot, cancellationToken, "rev-list", "--count", commitRange);
+        var heightText = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-list", "--count", commitRange);
         return int.Parse(heightText, NumberStyles.None, CultureInfo.InvariantCulture);
     }
 
@@ -160,11 +160,11 @@ internal sealed record GitVersionDetails(
         int commitHeight,
         CancellationToken cancellationToken)
     {
-        var commitMessages = await RunGitAsync(repositoryRoot, cancellationToken, "log", "--reverse", "--format=%B%x1e", commitRange);
+        var commitMessages = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "log", "--reverse", "--format=%B%x1e", commitRange);
         return VersionIncrementResult.FromCommitMessages(commitMessages, commitHeight);
     }
 
-    private static async Task<string> GetBranchNameAsync(string repositoryRoot, CancellationToken cancellationToken)
+    internal static async Task<string> GetBranchNameAsync(string repositoryRoot, CancellationToken cancellationToken)
     {
         foreach (var value in new[]
                  {
@@ -179,25 +179,15 @@ internal sealed record GitVersionDetails(
             }
         }
 
-        var branch = await TryRunGitAsync(repositoryRoot, cancellationToken, "branch", "--show-current")
-            ?? await TryRunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "--abbrev-ref", "HEAD")
-            ?? "detached";
-
-        branch = NormalizeBranchName(branch);
-        return branch == "HEAD" ? "detached" : branch;
+        var branch = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "branch", "--show-current");
+        return string.IsNullOrWhiteSpace(branch) ? "detached" : NormalizeBranchName(branch);
     }
 
-    internal static async Task<string?> GetLatestStableVersionTagAsync(string repositoryRoot, CancellationToken cancellationToken)
-    {
-        List<string> arguments = ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--match", "V[0-9]*", "--match", "[0-9]*"];
-        while (await TryRunGitAsync(repositoryRoot, cancellationToken, arguments.ToArray()) is { } tag)
-        {
-            if (ParseVersion(tag) is not null) return tag;
-            arguments.Add("--exclude");
-            arguments.Add(tag);
-        }
-        return null;
-    }
+    internal static Task<string?> GetLatestStableVersionTagAsync(
+        string repositoryRoot, CancellationToken cancellationToken, ILogger? logger = null)
+        => IsolatedTagDescriber.DescribeAsync(repositoryRoot, cancellationToken, IsStableTag, logger);
+
+    private static bool IsStableTag(string? value) => ParseVersion(value) is not null;
 
     private static SemanticVersion? ParseVersion(string? value)
     {
@@ -235,64 +225,6 @@ internal sealed record GitVersionDetails(
         var sanitized = Regex.Replace(value.ToLowerInvariant(), "[^0-9a-z-]+", "-").Trim('-');
         if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit)) return $"branch-{sanitized}";
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
-    }
-
-    private static async Task<string?> TryRunGitAsync(
-        string repositoryRoot,
-        CancellationToken cancellationToken,
-        params string[] arguments)
-    {
-        try
-        {
-            return await RunGitAsync(repositoryRoot, cancellationToken, arguments);
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
-    private static async Task<string> RunGitAsync(
-        string repositoryRoot,
-        CancellationToken cancellationToken,
-        params string[] arguments)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = repositoryRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            }
-        };
-
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start git.");
-        }
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        await process.WaitForExitAsync(cancellationToken);
-
-        var stdout = (await stdoutTask).Trim();
-        var stderr = (await stderrTask).Trim();
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', arguments)} failed with exit code {process.ExitCode}: {stderr}");
-        }
-
-        return stdout;
     }
 
     private sealed record SemanticVersion(int Major, int Minor, int Patch)
