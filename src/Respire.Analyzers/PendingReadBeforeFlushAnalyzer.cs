@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Respire.Analyzers;
 
@@ -242,6 +243,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     yield return origin;
                 }
 
+                if (IsDefinitelyNonNullPending(context, coalesce.Left)) yield break;
+
                 foreach (var origin in ResolveOriginatingCalls(context, scope, coalesce.Right, read, resolving))
                 {
                     yield return origin;
@@ -362,11 +365,78 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
     private static bool IsDefinitelyNonNullPending(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
-        => ScopeWalker.Unwrap(expression) is InvocationExpressionSyntax
-           && context.SemanticModel.GetTypeInfo(expression, context.CancellationToken).Type
-               is INamedTypeSymbol { OriginalDefinition: { } definition }
-           && definition.MetadataName == "RespirePending`1"
-           && definition.ContainingNamespace.ToDisplayString() == "Respire";
+    {
+        if (ScopeWalker.Unwrap(expression) is not InvocationExpressionSyntax invocation)
+        {
+            return false;
+        }
+
+        // Use the producer's contract even in an oblivious caller. A legacy or
+        // explicitly nullable return cannot prove that the right operand is unreachable,
+        // and neither can a non-null return weakened by a return nullability attribute.
+        if (context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+                is not IMethodSymbol
+                {
+                    ReturnNullableAnnotation: NullableAnnotation.NotAnnotated,
+                    ReturnType: INamedTypeSymbol { OriginalDefinition: { } definition },
+                } method
+            || definition.MetadataName != "RespirePending`1"
+            || definition.ContainingNamespace.ToDisplayString() != "Respire")
+        {
+            return false;
+        }
+
+        var declared = (method.ReducedFrom ?? method).OriginalDefinition;
+        var nonNullWhenArguments = new List<string>();
+        foreach (var attribute in declared.GetReturnTypeAttributes())
+        {
+            if (attribute.AttributeClass?.ContainingNamespace.ToDisplayString() != "System.Diagnostics.CodeAnalysis")
+            {
+                continue;
+            }
+
+            switch (attribute.AttributeClass.Name)
+            {
+                case "MaybeNullAttribute":
+                    return false;
+                case "NotNullIfNotNullAttribute":
+                    if (attribute.ConstructorArguments.Length != 1
+                        || attribute.ConstructorArguments[0].Value is not string parameterName)
+                    {
+                        return false;
+                    }
+
+                    nonNullWhenArguments.Add(parameterName);
+                    break;
+            }
+        }
+
+        if (nonNullWhenArguments.Count > 0)
+        {
+            // The return is non-null only when a named argument is provably non-null.
+            return context.SemanticModel.GetOperation(invocation, context.CancellationToken) is IInvocationOperation operation
+                   && operation.Arguments.Any(argument =>
+                       argument.Parameter is { } parameter
+                       && nonNullWhenArguments.Contains(parameter.OriginalDefinition.Name)
+                       && IsDefinitelyNonNullArgument(context, argument));
+        }
+
+        return context.SemanticModel.GetTypeInfo(invocation, context.CancellationToken).Nullability.FlowState
+               != NullableFlowState.MaybeNull;
+    }
+
+    private static bool IsDefinitelyNonNullArgument(SyntaxNodeAnalysisContext context, IArgumentOperation argument)
+    {
+        if (argument.ArgumentKind != ArgumentKind.Explicit)
+        {
+            return false;
+        }
+
+        var value = argument.Value is IConversionOperation { IsImplicit: true } conversion ? conversion.Operand : argument.Value;
+        return value.Type is { IsValueType: true, OriginalDefinition.SpecialType: not SpecialType.System_Nullable_T }
+               || value.Syntax is ExpressionSyntax expression && IsDefinitelyNonNullPending(context, expression)
+               || value is IObjectCreationOperation;
+    }
 
     /// <summary>True when the local is declared somewhere this scope cannot see all of its uses.</summary>
     private static bool IsDeclaredOutside(SyntaxNode scope, ILocalSymbol local)
@@ -573,7 +643,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             var branch = selectedWhenTrue ? ifStatement.Statement : ifStatement.Else?.Statement;
             if (branch is not null
-                && HasUnconditionalFlush(context, scope, branch, batch, origin, read))
+                && HasUnconditionalFlush(context, scope, branch, batch, origin, read, conditional))
             {
                 return true;
             }
@@ -615,7 +685,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 candidate.Labels.Any(label => MatchesSwitchArm(arm, label)));
             if (section is not null
                 && HasAlignedSwitchPrefix(switchExpression, switchStatement, arm, section)
-                && HasUnconditionalFlush(context, scope, section, batch, origin, read))
+                && HasUnconditionalFlush(context, scope, section, batch, origin, read, switchExpression))
             {
                 return true;
             }
@@ -667,7 +737,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode branch,
         ILocalSymbol batch,
         InvocationExpressionSyntax origin,
-        ExpressionSyntax read)
+        ExpressionSyntax read,
+        ExpressionSyntax pendingSelection)
     {
         var branchStart = branch switch
         {
@@ -685,9 +756,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         {
             if (IsFlushInvocation(context, flush, batch)
                 && GetCompletionExpression(context, flush) is { } completion
-                && IsTopLevelBranchStatement(completion, branch)
+                && IsTopLevelBranchStatement(context.SemanticModel, completion, branch, read)
+                // A later iteration that recreates the pending value no longer carries
+                // this origin. Finally reads happen before that replacement and remain reachable.
                 && !ScopeWalker.CanReachWithoutCrossing(
-                    context.SemanticModel, scope, branchStart, read, [completion], context.CancellationToken,
+                    context.SemanticModel, scope, branchStart, read, [completion, pendingSelection], context.CancellationToken,
                     startPolicy: ScopeWalker.BarrierStartPolicy.Include)
                 && !IsReassignedBetween(context, scope, batch, origin, flush))
             {
@@ -698,9 +771,22 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static bool IsTopLevelBranchStatement(SyntaxNode completion, SyntaxNode branch)
+    private static bool IsTopLevelBranchStatement(
+        SemanticModel semanticModel, SyntaxNode completion, SyntaxNode branch, SyntaxNode read)
     {
         var statement = completion.FirstAncestorOrSelf<StatementSyntax>();
+        var statements = branch switch
+        {
+            BlockSyntax block => block.Statements,
+            SwitchSectionSyntax section => section.Statements,
+            _ => default,
+        };
+        if (statements.TakeWhile(previous => !ReferenceEquals(previous, statement))
+            .Any(previous => ScopeWalker.CanBypassFollowingStatement(semanticModel, previous, ScopeWalker.ExitMode.FlushProof, read)))
+        {
+            return false;
+        }
+
         return branch switch
         {
             BlockSyntax block => ReferenceEquals(statement?.Parent, block),

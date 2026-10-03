@@ -56,36 +56,178 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
-    [Arguments("break;", true)]
-    [Arguments("continue;", true)]
-    [Arguments("goto Done;", true)]
-    [Arguments("break;", false)]
-    [Arguments("continue;", false)]
-    [Arguments("goto Done;", false)]
-    public async Task LoopJumpRunsFinallyBeforePendingRead(string jump, bool flush)
-    {
-        var read = flush ? "pending.Result" : "{|RESP002:pending.Result|}";
-        await Verify.VerifyAsync($$"""
-            using System;
-            using System.Threading.Tasks;
-            using Respire;
-            public class Caller
+    public async Task ContinueWithoutReplacingPendingCanReachUnflushedRead() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
             {
-                public async Task RunAsync(RespireClient client)
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                for (var index = 0; index < 2; index++)
                 {
-                    var batch = client.CreateBatch();
-                    var pending = batch.GetStringAsync("key");
-                    do
+                    if (choice)
                     {
-                        try { {{jump}} }
-                        finally { {{(flush ? "await batch.SendAsync();" : "Console.WriteLine(1);")}} }
-                    } while (false);
-                Done:
-                    Console.WriteLine({{read}});
+                        if (skip) { choice = false; continue; }
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                    Console.WriteLine({|RESP002:pending.Result|});
                 }
             }
-            """);
-    }
+        }
+        """);
+
+    [Test]
+    [Arguments("break")]
+    [Arguments("continue")]
+    public async Task LoopJumpSkipsLaterReadInCurrentIteration(string jump) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                for (var index = 0; index < 2; index++)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    if (choice)
+                    {
+                        if (skip) {{{jump}}};
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                    Console.WriteLine(pending.Result);
+                }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("break")]
+    [Arguments("continue")]
+    public async Task LoopJumpStillExecutesFinallyRead(string jump) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                for (var index = 0; index < 2; index++)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    try
+                    {
+                        if (choice)
+                        {
+                            if (skip) {{{jump}}};
+                            await first.SendAsync();
+                        }
+                        else await second.SendAsync();
+                    }
+                    finally { Console.WriteLine({|RESP002:pending.Result|}); }
+                }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("exception")]
+    [Arguments("new T()")]
+    public async Task UnknownRuntimeExceptionTypeKeepsCompatibleCatchReachable(string thrown) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync<T>(RespireClient client, bool choice, bool skip, Exception exception)
+                where T : Exception, new()
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice)
+                    {
+                        if (skip) throw {{{thrown}}};
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                }
+                catch (InvalidOperationException) { }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("catch (ArgumentException) { }")]
+    [Arguments("catch (InvalidOperationException) when (false) { }")]
+    [Arguments("catch (InvalidOperationException) { return; } catch (Exception) { }")]
+    public async Task InapplicableCatchCannotReachCorrelatedRead(string handlers) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice)
+                    {
+                        if (skip) throw new InvalidOperationException();
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                }
+                {{{handlers}}}
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task LocalGotoConservativelyInvalidatesCorrelatedFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                if (choice)
+                {
+                    if (skip) { goto Resume; Resume:; }
+                    await first.SendAsync();
+                }
+                else await second.SendAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
 
     [Test]
     public async Task RethrowCaughtBeforeFinallyFlush_IsNotFlagged() => await Verify.VerifyAsync(
@@ -389,6 +531,431 @@ public class PendingReadBeforeFlushAnalyzerTests
                     finally { await batch.SendAsync(); }
                 }
                 finally { Console.WriteLine(pending.Result); }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw;")]
+    [Arguments("if (skip) return; else throw;")]
+    public async Task TerminatingCatchCannotReachCorrelatedRead(string handler) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice)
+                    {
+                        if (skip) throw new InvalidOperationException();
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                }
+                catch (InvalidOperationException) { {{{handler}}} }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new System.InvalidOperationException();")]
+    public async Task TerminalExitBeforeCorrelatedSwitchFlushCannotReachRead(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch { 0 => first.GetStringAsync("a"), _ => second.GetStringAsync("b") };
+                switch (choice)
+                {
+                    case 0:
+                        if (skip) {{{exit}}}
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReturnBeforeCorrelatedConditionalFlushCannotReachRead() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                if (choice)
+                {
+                    if (skip) return;
+                    await first.SendAsync();
+                }
+                else await second.SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("catch (InvalidOperationException) { }")]
+    [Arguments("catch (InvalidOperationException) { if (skip) return; }")]
+    [Arguments("catch (InvalidOperationException) when (skip) { return; } catch (Exception) { }")]
+    public async Task CaughtThrowBeforeFlushStillReachesRead(string handlers) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice)
+                    {
+                        if (skip) throw new InvalidOperationException();
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                }
+                {{{handlers}}}
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("var pending = MaybePending() ?? batch.GetStringAsync(\"key\");")]
+    [Arguments("var pending = MaybePending(); pending ??= batch.GetStringAsync(\"key\");")]
+    public async Task ObliviousProducerStillRequiresCoalescedBatchFlush(string declaration) => await Verify.VerifyAsync(
+        $$$"""
+        #nullable disable
+        using System;
+        using Respire;
+        public class Caller
+        {
+            private static RespirePending<string> MaybePending() => null;
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                {{{declaration}}}
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("yield return \"before\";")]
+    [Arguments("if (skip) yield break;")]
+    public async Task IteratorReadStillCrossesCorrelatedFlush(string suspension) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Collections.Generic;
+        using Respire;
+        public class Caller
+        {
+            public async IAsyncEnumerable<string> RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+                switch (choice)
+                {
+                    case 0:
+                        {{{suspension}}}
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                yield return pending.Result;
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("var pending = MaybePending() ?? batch.GetStringAsync(\"key\");")]
+    [Arguments("var pending = MaybePending(); pending ??= batch.GetStringAsync(\"key\");")]
+    public async Task NullableProducerStillRequiresCoalescedBatchFlush(string declaration) => await Verify.VerifyAsync(
+        $$$"""
+        #nullable enable
+        using System;
+        using Respire;
+        public class Caller
+        {
+            private static RespirePending<string>? MaybePending() => null;
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                {{{declaration}}}
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("[return: MaybeNull]", "enable", "Producers.MaybePending() ?? batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: MaybeNull]", "disable", "Producers.MaybePending() ?? batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: MaybeNull]", "enable", "Producers.MaybePending(); pending ??= batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: MaybeNull]", "disable", "Producers.MaybePending(); pending ??= batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: NotNullIfNotNull(nameof(fallback))]", "enable", "Producers.MaybePending() ?? batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: NotNullIfNotNull(nameof(fallback))]", "disable", "Producers.MaybePending() ?? batch.GetStringAsync(\"key\")")]
+    [Arguments("[return: NotNullIfNotNull(nameof(fallback))]", "enable", "Producers.MaybePending(null) ?? batch.GetStringAsync(\"key\")")]
+    public async Task MaybeNullProducerStillRequiresCoalescedBatchFlush(
+        string returnContract, string callerContext, string initializer) => await Verify.VerifyAsync(
+        $$$"""
+        #nullable enable
+        using System;
+        using System.Diagnostics.CodeAnalysis;
+        using Respire;
+        public static class Producers
+        {
+            {{{returnContract}}}
+            public static RespirePending<string> MaybePending(RespirePending<string>? fallback = null) => fallback!;
+        }
+        #nullable {{{callerContext}}}
+        public class Caller
+        {
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = {{{initializer}}};
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task NotNullIfNotNullProducerWithNonNullArgumentSkipsCoalescedBatch() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Diagnostics.CodeAnalysis;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            [return: NotNullIfNotNull(nameof(fallback))]
+            private static RespirePending<string> Produce(RespirePending<string>? fallback) => fallback!;
+            public async Task RunAsync(RespireClient client)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = Produce(first.GetStringAsync("a")) ?? second.GetStringAsync("b");
+                await first.SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task NonNullProducerWithUnrelatedReturnAttributeSkipsCoalescedBatch() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Diagnostics.CodeAnalysis;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            [return: NotNull]
+            private static RespirePending<string> Produce(RespireBatch batch) => batch.GetStringAsync("a");
+            public async Task RunAsync(RespireClient client)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = Produce(first) ?? second.GetStringAsync("b");
+                await first.SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("for (var index = 0; index < 2; index++) { if (skip) break; }")]
+    [Arguments("for (var index = 0; index < 2; index++) { if (skip) continue; }")]
+    [Arguments("while (skip) { break; }")]
+    [Arguments("do { if (skip) continue; } while (false);")]
+    [Arguments("foreach (var index in new[] { 1, 2 }) { if (skip) break; }")]
+    [Arguments("switch (skip) { case true: break; default: break; }")]
+    public async Task NestedExitDoesNotBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+                switch (choice)
+                {
+                    case 0:
+                        {{{nested}}}
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { break; }")]
+    [Arguments("try { if (skip) throw new InvalidOperationException(\"x\"); } catch (InvalidOperationException) { throw; } catch (Exception) { break; }")]
+    public async Task InapplicableHandlerExitDoesNotBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+                switch (choice)
+                {
+                    case 0:
+                        {{{nested}}}
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("try { if (skip) throw new ArgumentException(); } catch (ArgumentException) { break; }")]
+    [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) when (skip) { } catch (Exception) { break; }")]
+    [Arguments("try { Console.WriteLine(); } catch (ArgumentException) { break; }")]
+    public async Task ApplicableHandlerExitCanBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+                switch (choice)
+                {
+                    case 0:
+                        {{{nested}}}
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ConditionalBreakCanBypassCorrelatedSwitchFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+                switch (choice)
+                {
+                    case 0:
+                        if (skip) break;
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task NonNullCoalescingProducerDoesNotRequireTheUnreachableBatchFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = first.GetStringAsync("a") ?? second.GetStringAsync("b");
+                await first.SendAsync();
+                Console.WriteLine(pending.Result);
             }
         }
         """);

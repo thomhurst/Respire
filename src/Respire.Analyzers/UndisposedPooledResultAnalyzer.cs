@@ -315,8 +315,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             .Select(ScopeWalker.GetOutermostTransparentExpression)
             .ToArray();
 
+        // An unbraced branch can start at the release itself; include that entry.
         return ScopeWalker.CollectivelyPostDominates(
-            context.SemanticModel, scope, branch, releases, context.CancellationToken);
+            context.SemanticModel, scope, branch, releases, context.CancellationToken, includeStart: true);
     }
 
     private static bool SwitchAcquisitionsAreReleased(
@@ -355,7 +356,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
         {
             if (ifStatement.SpanStart <= acquisition.SpanStart
-                || !IsUnconditionallyReached(acquisition, ifStatement)
+                || !IsUnconditionallyReached(context.SemanticModel, acquisition, ifStatement)
                 || ScopeWalker.HasWriteBetween(
                     context.SemanticModel,
                     scope,
@@ -380,7 +381,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static bool IsUnconditionallyReached(SyntaxNode acquisition, StatementSyntax releaseStatement)
+    private static bool IsUnconditionallyReached(
+        SemanticModel semanticModel, SyntaxNode acquisition, StatementSyntax releaseStatement)
     {
         if (acquisition.FirstAncestorOrSelf<StatementSyntax>() is not { } acquisitionStatement
             || acquisitionStatement.Parent is not BlockSyntax block
@@ -399,11 +401,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return !block.Statements
             .Skip(acquisitionIndex + 1)
             .Take(releaseIndex - acquisitionIndex - 1)
-            .SelectMany(statement => statement.DescendantNodesAndSelf())
-            .Any(static node => node is ReturnStatementSyntax
-                or ThrowStatementSyntax
-                or GotoStatementSyntax
-                or YieldStatementSyntax);
+            .Any(statement => ScopeWalker.CanBypassFollowingStatement(semanticModel, statement, ScopeWalker.ExitMode.Disposal));
     }
 
     private static StatementSyntax? GetSelectedBranch(
