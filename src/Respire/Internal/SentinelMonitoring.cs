@@ -227,6 +227,16 @@ internal sealed class SentinelMonitoring(
     private async Task MonitorSentinelAsync(SentinelDiscoveryState.Membership membership, CancellationToken cancellationToken)
     {
         var endpoint = membership.Endpoint;
+        void ObserveConnectionState(RespireConnectionStateChange change)
+        {
+            if (change.ReconnectSource != RespireReconnectSource.SentinelMonitor) return;
+            lock (_gate)
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested) return;
+                _discovery.RecordConnection(membership,
+                    succeeded: (change.SourceState ?? change.State) == RespireConnectionState.Connected);
+            }
+        }
         var budget = new SentinelRetryBudget(options.ReconnectPolicy);
         var subscribedBefore = false;
         // Captured when a reconnect episode starts, not when the monitor parks: a publication
@@ -247,6 +257,7 @@ internal sealed class SentinelMonitoring(
                         if (budget.Attempts == 0)
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
                     }));
+                client.ConnectionStateChanged += ObserveConnectionState;
                 subscription = await client.SubscribeAsync(cancellationToken).ConfigureAwait(false);
                 _discovery.RecordConnection(membership, succeeded: true);
                 budget.Reset();
@@ -278,6 +289,7 @@ internal sealed class SentinelMonitoring(
             }
             finally
             {
+                if (client is not null) client.ConnectionStateChanged -= ObserveConnectionState;
                 // The single disposal path. On shutdown, close the client first so the subscription's
                 // UNSUBSCRIBE cannot wait on a live socket; otherwise unsubscribe before closing.
                 var shutdown = cancellationToken.IsCancellationRequested;

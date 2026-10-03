@@ -3,6 +3,7 @@ namespace Respire.Internal;
 // Transport seam for shutdown tests, including resources that ignore cancellation.
 internal interface ISentinelMonitorClient : IAsyncDisposable
 {
+    event Action<RespireConnectionStateChange>? ConnectionStateChanged;
     ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken);
 }
 
@@ -14,6 +15,12 @@ internal interface ISentinelMonitorSubscription : IAsyncDisposable, IAsyncEnumer
 internal sealed class SentinelMonitorClient(RespireOptions options) : ISentinelMonitorClient
 {
     private readonly RespireClient _client = RespireClient.Create(options);
+
+    public event Action<RespireConnectionStateChange>? ConnectionStateChanged
+    {
+        add => _client.ConnectionStateChanged += value;
+        remove => _client.ConnectionStateChanged -= value;
+    }
 
     public async ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken)
         => new Subscription(await _client.SubscribeAsync(
