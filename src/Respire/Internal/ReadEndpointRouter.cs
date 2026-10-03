@@ -16,9 +16,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     // connection stops accepting commands; the drain then waits for its reply.
     private static readonly TimeSpan s_retirementGrace = TimeSpan.FromSeconds(1);
 
+    private readonly object _entriesGate = new();
     private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new(RespireEndpointComparer.Instance);
     // Entries removed from the topology drain before closing so reads already using them can finish.
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();
+    // Release completed owners immediately. Bound retained exception identities and report
+    // overflow counts at disposal so topology churn cannot accumulate unlimited failure history.
+    private ReadRetirementFailures? _retirementFailures;
     private readonly SemaphoreSlim _sentinelRefreshGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private RespireEndpoint[] _replicas = string.IsNullOrWhiteSpace(core.Options.SentinelPrimaryName)
@@ -86,14 +90,27 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         var endpoints = Order(replicas);
         // Full fence: the sweep below must not read _entries before the new topology is visible.
         // A reader that inserts an entry the sweep misses then sees this array on its recheck.
-        Interlocked.Exchange(ref _replicas, endpoints);
+        lock (_entriesGate)
+        {
+            if (_disposed != 0) return;
+            Interlocked.Exchange(ref _replicas, endpoints);
+        }
         var retained = endpoints.ToHashSet(RespireEndpointComparer.Instance);
         foreach (var pair in _entries)
         {
-            if (retained.Contains(pair.Key) || !_entries.TryRemove(pair)) continue;
-            _retiring.TryAdd(pair.Value, 0);
-            _ = RetireAsync(pair.Value);
+            if (!retained.Contains(pair.Key)) RetireEntry(pair);
         }
+    }
+
+    private void RetireEntry(KeyValuePair<RespireEndpoint, Entry> pair)
+    {
+        lock (_entriesGate)
+        {
+            // Removal and retirement ownership must be atomic with the disposal snapshot.
+            if (_disposed != 0 || !_entries.TryRemove(pair)) return;
+            _retiring.TryAdd(pair.Value, 0);
+        }
+        _ = RetireAsync(pair.Value);
     }
 
     private static bool ContainsEndpoint(RespireEndpoint[] endpoints, RespireEndpoint endpoint)
@@ -128,14 +145,22 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             try { core.Logger?.LogDebug(error, "Draining a removed read replica at {Endpoint} failed", entry.Endpoint); }
             catch (Exception) { }
         }
-        // Router disposal owns entries that are still retiring.
-        if (!_retiring.TryRemove(entry, out _)) return;
+        // Keep the entry discoverable until cleanup finishes. Router disposal joins the same
+        // completion, including a failure that the background retirement already observed.
         try { await entry.DisposeAsync().ConfigureAwait(false); }
         catch (Exception error)
         {
+            lock (_entriesGate)
+            {
+                // If disposal already captured the entry, its shared completion owns this error.
+                if (_retiring.TryRemove(entry, out _))
+                    (_retirementFailures ??= new()).Add(error);
+            }
             try { core.Logger?.LogDebug(error, "Closing a removed read replica failed"); }
             catch (Exception) { }
+            return;
         }
+        _retiring.TryRemove(entry, out _);
     }
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
@@ -158,57 +183,52 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     /// <summary>Selects a read endpoint, then rents a separate connection for a blocking read.</summary>
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection, bool IsReplica)> RentDedicatedConnectionAsync(
-        RespireReadFrom readFrom, CancellationToken cancellationToken, string? preferredZone = null, bool? replicaOnly = null)
+        RespireReadFrom readFrom, CancellationToken cancellationToken, string? preferredZone = null, bool? replicaOnly = null,
+        ReadAttempt attempt = default)
     {
-        var candidateLimit = 0;
-        for (var attempt = 0; ; attempt++)
+        while (true)
         {
+            ObjectDisposedException.ThrowIf(core.Disposed, core);
             ThrowIfDisposed();
             cancellationToken.ThrowIfCancellationRequested();
             var selection = replicaOnly switch
             {
                 true => await GetReplicaAsync(cancellationToken,
-                    ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? RespireReadFrom.AzAffinity : RespireReadFrom.Replica).ConfigureAwait(false),
+                    ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? RespireReadFrom.AzAffinity : RespireReadFrom.Replica,
+                    attempt).ConfigureAwait(false),
                 false => default,
-                _ => await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false),
+                _ => await SelectAsync(readFrom, cancellationToken, attempt).ConfigureAwait(false),
             };
-            // Snapshot the candidate count after initial Sentinel discovery. Dedicated failures
-            // spend this finite acquisition budget, independently of Cluster redirect limits.
-            if (candidateLimit == 0)
-                candidateLimit = Math.Max(1, Volatile.Read(ref _replicas).Length
-                    + (replicaOnly == true || readFrom == RespireReadFrom.Replica ? 0 : 1));
             if (selection.Replica is not { } replica)
             {
+                var lease = await TryRentPrimaryReadAsync(cancellationToken, attempt,
+                    allowFallback: replicaOnly is null && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
+                        || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)), preferredZone,
+                    nearestPrimary: readFrom == RespireReadFrom.Nearest ? selection.Primary : null)
+                    .ConfigureAwait(false);
+                if (lease.Retired)
+                {
+                    if (attempt.TryRetryRetirement()) continue;
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(lease.Failure!).Throw();
+                }
+                if (lease.Failure is not { } error) return (lease.Pool!, lease.Connection!, false);
+                attempt.Add(lease.Pool?.Endpoint
+                    ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port));
+                if (readFrom == RespireReadFrom.Nearest)
+                {
+                    continue;
+                }
+                // The shared primary can be healthy while its dedicated handshake fails.
+                // Exclude that primary from the next selection instead of probing it again.
                 try
                 {
-                    var pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                    var lease = await core.RentDedicatedConnectionAsync(pool, cancellationToken, preferredZone: preferredZone,
-                        nearestLatency: readFrom == RespireReadFrom.Nearest ? NearestLatency : null).ConfigureAwait(false);
-                    return (lease.Pool, lease.Connection, false);
+                    return await RentDedicatedConnectionAsync(readFrom, cancellationToken, preferredZone, replicaOnly: true, attempt)
+                        .ConfigureAwait(false);
                 }
-                catch (Exception error) when (replicaOnly is null && IsReadCandidateFailure(error, cancellationToken)
-                    && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
-                        || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)))
+                catch (Exception fallback) when (IsReadCandidateFailure(fallback, cancellationToken))
                 {
-                    if (readFrom == RespireReadFrom.Nearest)
-                    {
-                        if (attempt + 1 >= candidateLimit) throw;
-                        // Acquisition records the actual failed pool owner, including a primary
-                        // selected after retirement. Rank the remaining candidates again.
-                        continue;
-                    }
-                    // The shared primary can be healthy while its dedicated handshake fails.
-                    // Exclude that primary from the next selection instead of probing it again.
-                    try
-                    {
-                        return await RentDedicatedConnectionAsync(readFrom, cancellationToken, preferredZone, replicaOnly: true)
-                            .ConfigureAwait(false);
-                    }
-                    catch (Exception fallback) when (IsReadCandidateFailure(fallback, cancellationToken))
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
-                        throw;
-                    }
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+                    throw;
                 }
             }
             try
@@ -219,10 +239,46 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 replica.MarkFailed();
-                if (attempt + 1 >= candidateLimit) throw;
+                // This operation remembers failures even when the shared cooldown is zero or
+                // expires during another handshake. Allocate the set only on the failure path.
+                attempt.Add(replica.Endpoint);
                 // No application command was accepted. Reselect after a failed dedicated
                 // handshake, failed ROLE check, or removal of this replica during acquisition.
             }
+        }
+    }
+
+    internal readonly record struct PrimaryReadLease(
+        DedicatedConnectionPool? Pool, RespireConnection? Connection, Exception? Failure, bool Retired = false);
+
+    internal async ValueTask<PrimaryReadLease> TryRentPrimaryReadAsync(
+        CancellationToken cancellationToken, ReadAttempt attempt, bool allowFallback, string? preferredZone,
+        RespireConnectionMultiplexer? nearestPrimary = null)
+    {
+        DedicatedConnectionPool? pool = null;
+        try
+        {
+            pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(core.Disposed, core);
+            cancellationToken.ThrowIfCancellationRequested();
+            attempt.ThrowIfFailed(pool.Endpoint);
+            var connection = await pool.RentAsync(cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
+            return new(pool, connection, null);
+        }
+        catch (Exception error) when (!core.Disposed && !cancellationToken.IsCancellationRequested && pool is { IsStopping: true }
+            && error is ObjectDisposedException or OperationCanceledException)
+        {
+            // Reselect the endpoint as well as the pool. Retirement alone does not exclude
+            // a healthy replacement at the same address; it is not a candidate failure.
+            return new(pool, null, error, Retired: true);
+        }
+        catch (Exception error) when (allowFallback && IsReadCandidateFailure(error, cancellationToken))
+        {
+            // A returned pool identifies the actual owner after failover. Discovery can fail
+            // before returning any pool; then cool the primary whose selection triggered it.
+            if (nearestPrimary is not null)
+                NearestLatency!.ConnectionFailed(pool?.MovingOwner ?? nearestPrimary);
+            return new(pool, null, error);
         }
     }
 
@@ -251,29 +307,30 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     internal bool IsCurrent(Entry entry)
         => _entries.TryGetValue(entry.Endpoint, out var current) && ReferenceEquals(current, entry);
 
-    internal async ValueTask<Selection> SelectAsync(RespireReadFrom readFrom, CancellationToken cancellationToken)
+    internal async ValueTask<Selection> SelectAsync(RespireReadFrom readFrom, CancellationToken cancellationToken,
+        ReadAttempt attempt = default)
     {
         switch (readFrom)
         {
             case RespireReadFrom.Nearest:
-                return await GetNearestAsync(cancellationToken).ConfigureAwait(false);
+                return await GetNearestAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
             case RespireReadFrom.PrimaryPreferred:
-                try { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
+                try { return await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false); }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
-                { return await GetReplicaAsync(cancellationToken).ConfigureAwait(false); }
+                { return await GetReplicaAsync(cancellationToken, attempt: attempt).ConfigureAwait(false); }
             case RespireReadFrom.Replica:
-                return await GetReplicaAsync(cancellationToken).ConfigureAwait(false);
+                return await GetReplicaAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
             case RespireReadFrom.ReplicaPreferred:
             case RespireReadFrom.AzAffinity:
             case RespireReadFrom.AzAffinityReplicasAndPrimary:
-                try { return await GetReplicaAsync(cancellationToken, readFrom).ConfigureAwait(false); }
+                try { return await GetReplicaAsync(cancellationToken, readFrom, attempt: attempt).ConfigureAwait(false); }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     return await GetPrimaryAsync(cancellationToken,
-                        ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
+                        ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null, attempt).ConfigureAwait(false);
                 }
             default:
-                return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);
+                return await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
         }
     }
 
@@ -282,16 +339,19 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         => !cancellationToken.IsCancellationRequested
             && error is RespireConnectionException or RespireTimeoutException or IOException or SocketException;
 
-    private async ValueTask<Selection> GetPrimaryAsync(CancellationToken cancellationToken, string? preferredZone = null)
+    private async ValueTask<Selection> GetPrimaryAsync(CancellationToken cancellationToken,
+        string? preferredZone = null, ReadAttempt attempt = default)
     {
+        if (attempt.HasFailures) attempt.ThrowIfFailed(core.Multiplexer.ActiveConnectionEndpoint);
         await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
+        if (attempt.HasFailures) attempt.ThrowIfFailed(multiplexer.ActiveConnectionEndpoint);
         return new Selection(preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
             null, multiplexer);
     }
 
     private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken,
-        RespireReadFrom readFrom = RespireReadFrom.Replica)
+        RespireReadFrom readFrom = RespireReadFrom.Replica, ReadAttempt attempt = default)
     {
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken).ConfigureAwait(false);
         if (endpoints.Length == 0)
@@ -299,7 +359,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         try
         {
-            return await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom).ConfigureAwait(false);
+            return await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom, attempt: attempt).ConfigureAwait(false);
         }
         catch (RespireConnectionException) when (core.Sentinel is { } refreshSentinel)
         {
@@ -312,13 +372,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 refreshed = Volatile.Read(ref _replicas);
             }
             if (SameEndpoints(refreshed, endpoints)) throw;
-            return await GetReplicaFromEndpointsAsync(refreshed, cancellationToken, readFrom).ConfigureAwait(false);
+            return await GetReplicaFromEndpointsAsync(refreshed, cancellationToken, readFrom, attempt: attempt).ConfigureAwait(false);
         }
     }
 
     internal async ValueTask<Selection> GetReplicaFromEndpointsAsync(
         RespireEndpoint[] endpoints, CancellationToken cancellationToken, RespireReadFrom readFrom = RespireReadFrom.Replica,
-        RespireConnection? excluded = null)
+        RespireConnection? excluded = null, ReadAttempt attempt = default)
     {
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
@@ -335,6 +395,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
+                if (attempt.IsFailed(endpoint)) continue;
                 if (excluded is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoint, excluded)) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
                 if (entry is null) continue;
@@ -360,11 +421,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 try
                 {
-                    var primary = await GetPrimaryAsync(cancellationToken, core.Options.ClientAvailabilityZone).ConfigureAwait(false);
+                    var primary = await GetPrimaryAsync(cancellationToken, core.Options.ClientAvailabilityZone, attempt).ConfigureAwait(false);
                     if (ReadFallbackPolicy.IsSameZone(primary.Connection, core.Options.ClientAvailabilityZone)
                         && (excluded is null || HedgedReadPolicy.IsDifferentPeer(excluded, primary.Connection))) return primary;
                 }
-                catch (Exception error) when (IsUnavailable(error, cancellationToken)) { lastError = error; }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
             }
             while (candidates.TryTake(out var fallback))
                 if (fallback.Connection.IsAcceptingCommands
@@ -471,16 +532,27 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _lifetime.CancelAsync().ConfigureAwait(false);
         if (Volatile.Read(ref NearestLatency) is { } latency) await latency.DisposeAsync().ConfigureAwait(false);
-        var entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
-        _entries.Clear();
-        _retiring.Clear();
+        Entry[] entries;
+        List<Exception>? failures;
+        lock (_entriesGate)
+        {
+            entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
+            failures = _retirementFailures?.Snapshot();
+            _retirementFailures = null;
+            _entries.Clear();
+            _retiring.Clear();
+        }
         Cursors.Clear();
-        await CleanupTasks.WhenAllAsync(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false);
+        try { await CleanupTasks.WhenAllAsync(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false); }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        CleanupTasks.Rethrow(failures);
     }
 
     internal readonly record struct Selection(
         RespireConnection Connection, Entry? Replica, RespireConnectionMultiplexer? Primary);
 
+    // Construction runs under the router lifecycle gate. Keep it side-effect-free; connection
+    // creation, callbacks, and asynchronous work belong in the acquisition methods.
     internal sealed class Entry(RespireEndpoint endpoint, ClientCore owner, ReadEndpointRouter router) : IAsyncDisposable
     {
         // Never disposed: a waiter racing with disposal must observe _closed, not a disposed gate.
@@ -492,7 +564,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         private Action<int, RespireConnectionStateChange>? _slotStateChanged;
         // Set when the entry stops serving reads (removal or disposal).
         private volatile bool _closed;
-        private bool _disposed;
+        private TaskCompletionSource? _disposeCompletion;
 
         internal RespireEndpoint Endpoint => endpoint;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;
@@ -675,19 +747,39 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         public async ValueTask DisposeAsync()
         {
-            RespireConnectionMultiplexer? multiplexer;
-            DedicatedConnectionPool? pool;
+            RespireConnectionMultiplexer? multiplexer = null;
+            DedicatedConnectionPool? pool = null;
+            TaskCompletionSource completion;
+            var ownsCleanup = false;
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_disposed) return;
-                _disposed = true;
-                _closed = true;
-                multiplexer = Volatile.Read(ref _multiplexer);
-                pool = _dedicatedPool;
-                Volatile.Write(ref _multiplexer, null);
+                if (_disposeCompletion is null)
+                {
+                    _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    ownsCleanup = true;
+                    _closed = true;
+                    multiplexer = Volatile.Read(ref _multiplexer);
+                    pool = _dedicatedPool;
+                    Volatile.Write(ref _multiplexer, null);
+                }
+                completion = _disposeCompletion;
             }
             finally { _gate.Release(); }
+            if (ownsCleanup)
+            {
+                try
+                {
+                    await DisposeResourcesAsync(multiplexer, pool).ConfigureAwait(false);
+                    completion.TrySetResult();
+                }
+                catch (Exception error) { completion.TrySetException(error); }
+            }
+            await completion.Task.ConfigureAwait(false);
+        }
+
+        private async Task DisposeResourcesAsync(RespireConnectionMultiplexer? multiplexer, DedicatedConnectionPool? pool)
+        {
             if (multiplexer is not null) DetachHandlers(multiplexer);
             try
             {

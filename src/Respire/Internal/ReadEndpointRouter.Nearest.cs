@@ -9,7 +9,7 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt attempt = default)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -21,11 +21,11 @@ internal sealed partial class ReadEndpointRouter
         Selection? primary = null;
         Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
-        if (sampler.CanConnect(primaryCandidate))
+        if (!attempt.IsFailed(primaryCandidate.ActiveConnectionEndpoint) && sampler.CanConnect(primaryCandidate))
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
@@ -54,6 +54,7 @@ internal sealed partial class ReadEndpointRouter
             }
             else
             {
+                if (attempt.IsFailed(endpoints[index - 1])) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
@@ -99,7 +100,7 @@ internal sealed partial class ReadEndpointRouter
         }
         if (retry)
             return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError).ConfigureAwait(false);
+                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }
@@ -126,23 +127,22 @@ internal sealed partial class ReadEndpointRouter
     {
         if (!_entries.TryGetValue(endpoint, out var entry))
         {
-            entry = _entries.GetOrAdd(endpoint, static (value, router) => new Entry(value, router.Core, router), this);
-            // Pairs with SetEndpoints so a late insertion sees the newer topology on recheck.
-            Interlocked.MemoryBarrier();
+            lock (_entriesGate)
+            {
+                ThrowIfDisposed();
+                entry = _entries.GetOrAdd(endpoint, static (value, router) => new Entry(value, router.Core, router), this);
+            }
+            // The gate pairs insertion with publication and the terminal ownership snapshot.
         }
         if (!ContainsEndpoint(Volatile.Read(ref _replicas), endpoint))
         {
-            if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-            {
-                _retiring.TryAdd(entry, 0);
-                _ = RetireAsync(entry);
-            }
+            RetireEntry(new(endpoint, entry));
             return null;
         }
         if (Volatile.Read(ref _disposed) != 0)
         {
-            if (_entries.TryRemove(new KeyValuePair<RespireEndpoint, Entry>(endpoint, entry)))
-                await entry.DisposeAsync().ConfigureAwait(false);
+            // Leave ownership visible to the router and join the entry's shared cleanup.
+            await entry.DisposeAsync().ConfigureAwait(false);
             ThrowIfDisposed();
         }
         return entry;

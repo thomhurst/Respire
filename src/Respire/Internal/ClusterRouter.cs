@@ -877,7 +877,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 throw;
             }
         }
-        public void SetTerminalError(DedicatedConnectionPool pool, Exception error) => _scope.SetTerminalError(error);
+        public void SetTerminalError(Exception error) => _scope.SetTerminalError(error);
         public void Dispose() => _scope.Dispose();
     }
 
