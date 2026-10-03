@@ -643,7 +643,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         }
 
         /// <summary>Acquires a current connection after validating its replication role.</summary>
-        internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null)
+        internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null,
+            ReadLatencySampler<RespireConnection>? sampler = null)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
             RespireConnection? selected = null;
@@ -653,6 +654,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 selected = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
                 selectedFrom = current;
+                // Nearest will reject the pending sample. Do not enqueue ROLE behind its
+                // unanswered PING before the selector can try another endpoint.
+                if (sampler?.HasPendingProbe(selected) == true) return selected;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
             }

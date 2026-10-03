@@ -13,6 +13,83 @@ public class NearestReadRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OutstandingProbesCannotHideAnUnsampledHealthyCandidate(bool cluster)
+    {
+        await using var primary = Server("primary");
+        await using var first = Server("first");
+        await using var second = Server("second");
+        await using var third = Server("third");
+        await using var healthy = Server("healthy");
+        var stalled = new[] { primary, first, second, third };
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, first.Port, second.Port, third.Port, healthy.Port)
+            : Reply(command, "primary");
+        foreach (var server in stalled) server.SuppressReply = command => command == "PING";
+        var options = Options(primary, first, second, third, healthy) with
+        {
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
+        if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+        await using var client = await RespireClient.ConnectAsync(options);
+        var slot = ClusterHash.GetSlot("key");
+        var connections = new Dictionary<int, RespireConnection>();
+        for (var index = 0; index < 12 && connections.Count < 4; index++)
+        {
+            var connection = cluster
+                ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default)
+                : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default);
+            connections[connection.Port] = connection;
+        }
+        await Assert.That(connections.Count).IsEqualTo(4);
+        connections[primary.Port] = cluster
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, default)
+            : client.Core.Multiplexer.GetConnection();
+        var sampler = ReadLatencySampler.Create();
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        var probes = stalled.Select(server => sampler.GetLatencyAsync(connections[server.Port], default).AsTask()).ToArray();
+        await Task.WhenAll(probes).WaitAsync(TimeSpan.FromSeconds(5));
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        for (var index = 0; index < 6; index++)
+            await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+                .IsEqualTo("healthy");
+        foreach (var server in stalled) await Assert.That(server.ReceivedCommands).DoesNotContain("GET key");
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task ClusterReplicaRefreshUsesThePublishedMovingEndpoint()
+    {
+        await using var source = Server("primary");
+        await using var target = Server("primary");
+        source.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(source.Port, 0, 16383) : Reply(command, "primary");
+        target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(target.Port, 0, 16383) : Reply(command, "primary");
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            UseCluster = true, ClusterTopologyRefreshInterval = null,
+        });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(0)!;
+        var connection = owner.GetConnection();
+        await source.SendRawAsync(System.Text.Encoding.ASCII.GetBytes(
+            $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (owner.ActiveConnectionEndpoint.Port != target.Port) await Task.Delay(1, deadline.Token);
+        await source.DisposeAsync();
+        router.SetSlotOwner(0, owner);
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
+        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, deadline.Token);
+        while (!target.ReceivedCommands.Contains("CLUSTER SLOTS")) await Task.Delay(1, deadline.Token);
+        await Assert.That(owner.Host).IsEqualTo("127.0.0.1");
+        await Assert.That(owner.Port).IsEqualTo(source.Port);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]

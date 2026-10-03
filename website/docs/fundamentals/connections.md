@@ -567,6 +567,8 @@ starts at most one probe per second. All candidates and any topology retry share
 sampling wait time per selection. Connection establishment retains its configured timeout. A probe
 that exceeds this budget still occupies its probe slot until its reply or connection failure:
 Respire does not queue repeated PINGs behind a stalled one, even with `CommandTimeout = null`.
+An unanswered probe also excludes that connection from Nearest selection until its FIFO reply
+completes, so an unsampled healthy candidate can serve the read.
 Sampling happens only
 when Nearest reads request it; ordinary Primary reads create no sampler and send no sampling PINGs.
 The first successful sample establishes the estimate. Later samples use one quarter of the new

@@ -21,7 +21,7 @@ internal static class NearestReadSelection
         cancellationToken.ThrowIfCancellationRequested();
         if (latency.IsCompletedSuccessfully) return latency;
         return wait is not null ? WaitAsync(latency, wait.Token, cancellationToken)
-            : ValueTask.FromResult(long.MaxValue);
+            : ValueTask.FromResult(ReadLatencySampler.Pending);
     }
 
     private static async ValueTask<long> WaitAsync(ValueTask<long> latency, CancellationToken waitToken,
@@ -31,7 +31,7 @@ internal static class NearestReadSelection
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return long.MaxValue;
+            return ReadLatencySampler.Pending;
         }
     }
 }
@@ -49,7 +49,8 @@ internal static class NearestReadSelection
 /// </description></item>
 /// <item><term>Pending samples</term><description>
 /// Wait under the original shared sampling deadline, then recheck connection and role eligibility.
-/// A sampling timeout supplies unknown latency; it does not make a healthy candidate ineligible.
+/// An unanswered probe excludes its connection until the FIFO reply completes. Unsampled
+/// candidates and completed probes without latency evidence remain eligible.
 /// </description></item>
 /// <item><term>Current winner</term><description>
 /// Revalidate its owner/membership and return. A usable candidate need not await background discovery.
@@ -126,6 +127,7 @@ internal struct NearestReadSelection<T>
 
     internal void Consider(T candidate, long latency, bool linked = true, int order = int.MaxValue)
     {
+        if (latency == ReadLatencySampler.Pending) return;
         if (_hasValue && (_linked && !linked || _linked == linked
             && (latency > _latency || latency == _latency && order >= _selectedOrder))) return;
         _selected = candidate;

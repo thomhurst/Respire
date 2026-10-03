@@ -17,8 +17,8 @@ public class ReadLatencySamplerTests
         var first = NearestReadSelection.GetLatencyAsync(new(firstProbe.Task), wait, default).AsTask();
         var second = NearestReadSelection.GetLatencyAsync(new(secondProbe.Task), wait, default).AsTask();
         await wait.CancelAsync();
-        await Assert.That(await first).IsEqualTo(long.MaxValue);
-        await Assert.That(await second).IsEqualTo(long.MaxValue);
+        await Assert.That(await first).IsEqualTo(ReadLatencySampler.Pending);
+        await Assert.That(await second).IsEqualTo(ReadLatencySampler.Pending);
         await Assert.That(firstProbe.Task.IsCompleted).IsFalse();
         await Assert.That(secondProbe.Task.IsCompleted).IsFalse();
         firstProbe.SetResult(10);
@@ -66,7 +66,7 @@ public class ReadLatencySamplerTests
         await using var sampler = ReadLatencySampler.Create();
         var connection = client.Core.Multiplexer.GetConnection();
         await Assert.That(await sampler.GetLatencyAsync(connection, default))
-            .IsEqualTo(ReadLatencySampler<Respire.Networking.RespireConnection>.Unknown);
+            .IsEqualTo(ReadLatencySampler.Pending);
         await Task.Delay(TimeSpan.FromMilliseconds(1_100));
         for (var index = 0; index < 20; index++) await sampler.GetLatencyAsync(connection, default);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
@@ -231,7 +231,7 @@ public class ReadLatencySamplerTests
     }
 
     [Test]
-    public async Task ProbeDeadlineReturnsUnknownWithoutReleasingOutstandingCommandCapacity()
+    public async Task ProbeDeadlineExcludesOutstandingCommandsButKeepsUnsampledCandidatesEligible()
     {
         await using var sampler = new ReadLatencySampler<object>(async (_, token) =>
         {
@@ -240,10 +240,16 @@ public class ReadLatencySamplerTests
         });
         var pending = Enumerable.Range(0, 4).Select(_ => sampler.GetLatencyAsync(new object(), default).AsTask()).ToArray();
         var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(results.All(result => result == ReadLatencySampler<object>.Unknown)).IsTrue();
+        await Assert.That(results.All(result => result == ReadLatencySampler.Pending)).IsTrue();
         var next = sampler.GetLatencyAsync(new object(), default).AsTask();
         await Assert.That(await next).IsEqualTo(ReadLatencySampler<object>.Unknown);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+        var selection = new NearestReadSelection<string>();
+        foreach (var latency in results) selection.Consider("blocked", latency);
+        await Assert.That(selection.TryGet(out _)).IsFalse();
+        selection.Consider("unsampled", await next);
+        await Assert.That(selection.TryGet(out var selected)).IsTrue();
+        await Assert.That(selected).IsEqualTo("unsampled");
         await sampler.DisposeAsync();
     }
 }

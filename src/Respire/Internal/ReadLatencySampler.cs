@@ -27,6 +27,9 @@ internal sealed class ReadLatencySampler<TConnection>(
     internal long SamplesStarted => Volatile.Read(ref _started);
     private long Now => clock?.Invoke() ?? Environment.TickCount64;
 
+    internal bool HasPendingProbe(TConnection connection)
+        => _samples.TryGetValue(connection, out var sample) && Volatile.Read(ref sample.Pending) is not null;
+
     internal bool CanConnect(object candidate)
         => !_connectionFailures.TryGetValue(candidate, out var retry) || Now >= Volatile.Read(ref retry.Value);
 
@@ -100,11 +103,14 @@ internal sealed class ReadLatencySampler<TConnection>(
             // Sampling is advisory. ACL denial, timeout, or transport failure removes latency
             // evidence; the router still decides connection and role eligibility independently.
         }
+        // An unanswered probe still occupies this connection's FIFO. Distinguish it
+        // from an unsampled or ACL-denied candidate that can safely accept a read.
+        if (!_stop.IsCancellationRequested && operation is { IsCompleted: false }) latency = ReadLatencySampler.Pending;
         lock (_gate)
         {
             // Failure deliberately invalidates even a young estimate: do not retain a known-fast
             // ranking after contrary probe evidence. Recovery starts a new, unsmoothed estimate.
-            Volatile.Write(ref sample.Measurement, latency == Unknown ? null : new Measurement(latency, Now));
+            Volatile.Write(ref sample.Measurement, latency < 0 || latency == Unknown ? null : new Measurement(latency, Now));
             probe.Result.TrySetResult(latency);
         }
         // A late reply is observed but not used as a latency estimate. Disposal cancels the
@@ -155,6 +161,7 @@ internal sealed class ReadLatencySampler<TConnection>(
 
 internal static class ReadLatencySampler
 {
+    internal const long Pending = -1;
     internal const int SamplingWaitMilliseconds = 1_000;
     private static readonly RawCommand s_ping = new(RespCommands.Ping);
 
