@@ -51,6 +51,29 @@ public class SentinelBackgroundWorkTests
     }
 
     [Test]
+    public async Task RepeatedMonitorFailuresRetainBoundedShutdownEvidence()
+    {
+        var owner = new SentinelBackgroundWork(new object());
+        var tasks = Enumerable.Range(0, 128).Select(index => owner.TryStart(SentinelWorkKind.Monitor,
+            () => Task.FromException(new IOException($"monitor episode {index}")))!).ToArray();
+        try { await Task.WhenAll(tasks).WaitAsync(Limit); } catch (Exception) { }
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        Task[] report;
+        do
+        {
+            report = owner.Stop();
+            // Observe each snapshot, including any synthetic omitted-history diagnostic.
+            try { await CleanupTasks.WhenAllAsync(report); } catch (Exception) { }
+            if (report.Length <= SentinelBackgroundWork.MaximumRetainedFailuresPerKind + 1) break;
+            await Task.Delay(1);
+        } while (System.Diagnostics.Stopwatch.GetElapsedTime(started) < Limit);
+        await Assert.That(report.Length).IsLessThanOrEqualTo(SentinelBackgroundWork.MaximumRetainedFailuresPerKind + 1);
+        var error = await Assert.That(() => CleanupTasks.WhenAllAsync(report)).ThrowsExactly<AggregateException>();
+        await Assert.That(error!.Flatten().InnerExceptions.Count).IsEqualTo(9);
+        await Assert.That(error.ToString()).Contains("120 earlier Sentinel background failures");
+    }
+
+    [Test]
     public async Task LearnedRemovalSignalsMembershipAndFreesCapacityWithoutRemovingSeeds()
     {
         var seed = new RespireEndpoint("seed", 26379);

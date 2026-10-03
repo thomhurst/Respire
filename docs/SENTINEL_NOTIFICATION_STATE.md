@@ -62,7 +62,7 @@ their observation-time owner when later DNS or publication changes the current o
 | Work | Owner and shutdown contract |
 | --- | --- |
 | Monitor supervisor, endpoint monitors, and removed-monitor cleanup | `SentinelBackgroundWork` registers every task under the router gate. `SentinelMonitoring` owns subscription resources, reconnect episodes, parsing, transport/clock/resolver seams, and publication rearm signals. Removed endpoints receive individual cancellation; their cleanup remains registered until completion. |
-| Notification rediscovery and switch-source DNS tasks | The same background owner registers these tasks while the router retains generation-sensitive evidence. Disposal sets `_disposed` and stops registration atomically, then cancels `_lifetime`. All background tasks and cancellation callbacks share one ten-second shutdown bound. A straggler must recheck disposal and its endpoint cancellation before publication or retirement. Successful tasks are released; faulted tasks remain available for aggregate shutdown reporting. |
+| Notification rediscovery and switch-source DNS tasks | The same background owner registers these tasks while the router retains generation-sensitive evidence. Disposal sets `_disposed` and stops registration atomically, then cancels `_lifetime`. All background tasks and cancellation callbacks share one ten-second shutdown bound. A straggler must recheck disposal and its endpoint cancellation before publication or retirement. Successful tasks are released; the last eight completed failures per work kind remain available for aggregate shutdown reporting, with a count of omitted earlier failures. Active tasks are never evicted by this history limit. |
 | Generation retirement and correction-fence drainage | Each owned generation retains its retirement task. Disposal starts cleanup for every owned connection/pool, then joins retirement tasks and propagates aggregated failures. Failed cleanup stays owned until disposal. |
 | State/health observer callbacks | Serialized in `_notifications`, outside publication locks. Pending application callbacks are suppressed after disposal; explicitly retained telemetry callbacks may still run. This chain is not joined because an active observer can synchronously dispose the client itself. |
 
@@ -76,7 +76,8 @@ Discovery signals both additions and explicit removal of learned endpoints. Conf
 endpoints cannot be removed, and the limit remains 64 learned endpoints. Removing membership
 does not erase primary/epoch evidence. No age-based pruning occurs here. A removed monitor
 cannot submit late messages or readiness, and re-adding its endpoint creates a new monitor
-with an independent delivery gap. Subscription history and reporter validation versions
+with an independent delivery gap. Membership versions preserve this restart even when removal
+and re-addition occur between supervisor snapshots. Subscription history and reporter validation versions
 remain available across that restart.
 
 Address resolution checks cancellation both before starting and after its resolver returns.

@@ -32,8 +32,9 @@ internal sealed class SentinelMonitoring(
     private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(options.SentinelPrimaryName ?? "");
     private TaskCompletionSource _readinessChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private sealed class EndpointMonitor(CancellationToken lifetime)
+    private sealed class EndpointMonitor(CancellationToken lifetime, long membershipVersion)
     {
+        internal readonly long MembershipVersion = membershipVersion;
         internal readonly CancellationTokenSource Lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         internal Task Task = Task.CompletedTask;
     }
@@ -167,13 +168,16 @@ internal sealed class SentinelMonitoring(
         {
             while (!_lifetime.IsCancellationRequested)
             {
-                var endpoints = _discovery.Snapshot(out var changed);
+                var memberships = _discovery.MembershipSnapshot(out var changed);
                 List<(RespireEndpoint Endpoint, Exception? Error)>? restarted = null;
                 lock (_gate)
                 {
                     if (_disposed) return;
-                    var current = new HashSet<RespireEndpoint>(endpoints, SentinelEndpointIdentity.EndpointComparer.Instance);
-                    foreach (var removed in _notificationMonitors.Keys.Where(endpoint => !current.Contains(endpoint)).ToArray())
+                    var current = memberships.ToDictionary(item => item.Endpoint, item => item.Version,
+                        SentinelEndpointIdentity.EndpointComparer.Instance);
+                    foreach (var removed in _notificationMonitors.Where(pair =>
+                        !current.TryGetValue(pair.Key, out var version) || version != pair.Value.MembershipVersion)
+                        .Select(pair => pair.Key).ToArray())
                     {
                         var monitor = _notificationMonitors[removed];
                         _notificationMonitors.Remove(removed);
@@ -188,15 +192,16 @@ internal sealed class SentinelMonitoring(
                         });
                         SignalReadinessChanged();
                     }
-                    foreach (var endpoint in endpoints)
+                    foreach (var membership in memberships)
                     {
+                        var endpoint = membership.Endpoint;
                         if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.Task.IsCompleted) continue;
                         if (monitor is not null)
                         {
                             (restarted ??= []).Add((endpoint, monitor.Task.Exception));
                             monitor.Lifetime.Dispose();
                         }
-                        monitor = new(_lifetime.Token);
+                        monitor = new(_lifetime.Token, membership.Version);
                         var started = monitor;
                         monitor.Task = _background.TryStart(SentinelWorkKind.Monitor,
                             () => MonitorSentinelAsync(endpoint, started.Lifetime.Token)) ?? Task.CompletedTask;

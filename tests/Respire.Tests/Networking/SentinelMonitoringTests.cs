@@ -228,6 +228,73 @@ public class SentinelMonitoringTests
     }
 
     [Test]
+    public async Task RemovalAndReadditionBetweenSnapshotsRestartsTheMonitor()
+    {
+        using var lifetime = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(Limit);
+        using var clock = new PausedSupervisorClock();
+        var seed = new RespireEndpoint("seed", 26379);
+        var peer = new RespireEndpoint("peer", 26379);
+        var discovery = new SentinelDiscoveryState([seed]);
+        discovery.TryAdd(peer);
+        var first = new SentinelMonitorProbe();
+        var removed = new SentinelMonitorProbe();
+        var replacement = new SentinelMonitorProbe();
+        var starts = 0;
+        var gaps = new System.Collections.Concurrent.ConcurrentQueue<(RespireEndpoint Endpoint, long Version)>();
+        var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
+            new object(), discovery, lifetime, (_, _, _, _) => ValueTask.CompletedTask,
+            (endpoint, version, _) => gaps.Enqueue((endpoint, version)))
+        {
+            Clock = clock,
+            ClientFactory = options => options.Endpoints[0] == seed ? first.Client
+                : Interlocked.Increment(ref starts) == 1 ? removed.Client : replacement.Client,
+        };
+        try
+        {
+            monitor.Published();
+            await clock.Waiting.Task.WaitAsync(Limit);
+            await monitor.WaitForSubscriptionsAsync(2, deadline.Token);
+            await Assert.That(discovery.TryRemove(peer)).IsTrue();
+            await Assert.That(discovery.TryAdd(peer)).IsTrue();
+            // The supervisor has not returned from its first wait yet, so it can only
+            // observe the final membership containing this same endpoint address.
+            clock.Release.Set();
+            await removed.Cancelled.Task.WaitAsync(Limit);
+            await removed.ClientCleanup.Task.WaitAsync(Limit);
+            await removed.SubscriptionCleanup.Task.WaitAsync(Limit);
+            await monitor.WaitForSubscriptionsAsync(2, deadline.Token);
+            await Assert.That(starts).IsEqualTo(2);
+            await Assert.That(gaps.Where(gap => gap.Endpoint == peer).Select(gap => gap.Version == 0).ToArray())
+                .IsEquivalentTo(new[] { false, true });
+        }
+        finally
+        {
+            clock.Release.Set();
+            var tasks = monitor.Stop();
+            await lifetime.CancelAsync();
+            await CleanupTasks.WhenAllAsync(tasks).WaitAsync(Limit);
+        }
+    }
+
+    private sealed class PausedSupervisorClock : TimeProvider, IDisposable
+    {
+        internal readonly TaskCompletionSource Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly ManualResetEventSlim Release = new();
+        private int _waits;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (Interlocked.Increment(ref _waits) == 1)
+            {
+                Waiting.TrySetResult();
+                if (!Release.Wait(Limit)) throw new TimeoutException("Supervisor snapshot was not released.");
+            }
+            return System.CreateTimer(callback, state, dueTime, period);
+        }
+        public void Dispose() => Release.Dispose();
+    }
+
+    [Test]
     public async Task DiscoveryRemovalCancelsAndJoinsMonitorAndRejectsItsLateMessages()
     {
         using var lifetime = new CancellationTokenSource();
