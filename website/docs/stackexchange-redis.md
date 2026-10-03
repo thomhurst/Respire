@@ -182,8 +182,8 @@ which decode UTF-8 and replace invalid byte sequences. This applies to strings, 
 sets, sorted sets, and `Keys.ScanAsync`. For binary data, use `GetBytesAsync` or the generic
 `<byte[]>` overloads, such as `GetAsync<byte[]>`, `Hashes.GetAllAsync<byte[]>`,
 `Lists.RangeAsync<byte[]>`, `Sets.MembersAsync<byte[]>`, and `SortedSets.RangeAsync<byte[]>`.
-Hash field names and scanned keys are always strings, so use raw `HGETALL` or `SCAN` commands when
-field names or keys are binary.
+Hash field names, stream field names, and scanned keys are always strings. Use raw `HGETALL`,
+`XADD`, stream read, or `SCAN` commands when field names or keys are binary.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
@@ -260,7 +260,7 @@ channel or payload. Disposing the subscription unsubscribes. See
 | `LockExtendAsync` | `Locks.ResetExpiryAsync` |
 | `LockReleaseAsync` | `Locks.ReleaseAsync` |
 | `LockQueryAsync` | `Locks.GetOwnerTokenAsync` |
-| — | `Locks.AcquireAsync` for managed handles with keep-alive |
+| — | `Locks.AcquireAsync(key, expiry, keepAlive: true)` for a managed handle that renews itself; keep-alive is opt-in |
 | `LuaScript.Prepare(source)` | `RespireScript.Create(source)`; rewrite `@name` parameters as `KEYS[n]` and `ARGV[n]` |
 | `ScriptEvaluateAsync(script, keys, values)` | `Scripts.ExecuteAsync(script, keys, args)` (`EVALSHA` with `EVAL` fallback) |
 | `db.WithKeyPrefix("tenant:")` | `redis.WithKeyPrefix("tenant:")` |
