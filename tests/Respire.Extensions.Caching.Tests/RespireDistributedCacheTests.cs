@@ -826,6 +826,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             };
             restrictedClient = await RespireClient.ConnectAsync(options);
             await restrictedClient.EnsureReliableCorrectionOrderingAsync();
+            using var reconnectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await Assert.That(await CountNamedClientsAsync()).IsEqualTo(1);
 
             // Replacements authenticate and complete their handshake, then fail CLIENT ID.
             // None is published, so each failed candidate must close its own socket.
@@ -843,14 +845,32 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 {
                 }
 
-                await Task.Delay(200);
+                // Ping can fail immediately after scheduling recovery. Await that attempt's
+                // cleanup instead of sampling CLIENT LIST while its handshake is still live.
+                while (restrictedClient.Core.Multiplexer.IsReconnecting)
+                    await Task.Delay(10, reconnectTimeout.Token);
             }
 
-            using var list = await Client.ExecuteAsync("CLIENT", "LIST");
-            var leaked = list.AsString()
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Count(line => line.Contains($"name={clientName}", StringComparison.Ordinal));
+            // Closing a local socket does not synchronously remove its server-side client.
+            // Once recovery is quiescent, allow Redis to process EOF without starting a new
+            // candidate. A genuinely leaked socket remains visible through the whole bound.
+            var closedAt = Stopwatch.GetTimestamp();
+            int leaked;
+            do
+            {
+                leaked = await CountNamedClientsAsync();
+                if (leaked == 0) break;
+                await Task.Delay(10, reconnectTimeout.Token);
+            }
+            while (Stopwatch.GetElapsedTime(closedAt) < TimeSpan.FromSeconds(5));
             await Assert.That(leaked).IsEqualTo(0);
+
+            async Task<int> CountNamedClientsAsync()
+            {
+                using var list = await Client.ExecuteAsync("CLIENT", ["LIST"], cancellationToken: reconnectTimeout.Token);
+                return list.AsString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Count(line => line.Contains($"name={clientName}", StringComparison.Ordinal));
+            }
         }
         finally
         {
