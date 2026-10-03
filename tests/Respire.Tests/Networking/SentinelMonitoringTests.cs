@@ -36,7 +36,12 @@ public class SentinelMonitoringTests
         // the probe's earlier callback before it can signal Cancelled, as a completed
         // cancellation-aware read can do during real monitor teardown.
         using var cleanup = lifetime.Token.Register(() =>
-            subscription.DisposeAsync().AsTask().GetAwaiter().GetResult());
+        {
+            var disposal = subscription.DisposeAsync();
+            if (!disposal.IsCompleted)
+                throw new InvalidOperationException("Probe cleanup must complete synchronously for this ordering test.");
+            disposal.GetAwaiter().GetResult();
+        });
         await lifetime.CancelAsync();
         await Assert.That(() => read).Throws<OperationCanceledException>();
         await Assert.That(probe.SubscriptionCleanup.Task.IsCompletedSuccessfully).IsTrue();

@@ -119,11 +119,16 @@ public partial class SentinelRoutingTests
         await using var client = RespireClient.Create(Options(sentinel.Port));
         var router = client.Core.Sentinel!;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probe = new SentinelMonitorProbe
         {
+            // Keep the registration alive until the callback really starts, even if
+            // the cancelled iterator finishes first and begins subscription cleanup.
+            DisposeSubscription = () => new(entered.Task),
             CancellationCallback = () =>
             {
+                entered.TrySetResult();
                 release.Task.GetAwaiter().GetResult();
                 exited.TrySetResult();
             },
@@ -136,7 +141,7 @@ public partial class SentinelRoutingTests
             await client.PingAsync();
             await SentinelTestSetup.WaitForStartupAsync(client);
             var disposal = client.DisposeAsync().AsTask();
-            await probe.Cancelled.Task.WaitAsync(Limit);
+            await entered.Task.WaitAsync(Limit);
             await Assert.That(exited.Task.IsCompleted).IsFalse();
             (await ReadFenceTimerAsync(clock, TimeSpan.FromSeconds(10))).Fire();
             await disposal.WaitAsync(Limit);
