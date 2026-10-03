@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
+using System.Net.Sockets;
 using Respire.Infrastructure;
 using Respire.Networking;
 using TUnit.Assertions;
@@ -26,31 +26,54 @@ public class MultiplexerRetirementTests
             ReplyOverride = (_, command) => command == "HELLO 3"
                 ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
-        var logger = new DisconnectFailureLogger(failures, distinct);
+        var sharedFailure = new InvalidOperationException("Injected disconnect failure.");
+        ConcurrentBag<Exception> injectedFailures = [];
+        ConcurrentBag<FailingDisposeStream> streams = [];
+        var created = 0;
         var options = new RespireOptions
         {
             Protocol = maintenance ? RespProtocol.Resp3 : RespProtocol.Resp2,
             MaintenanceNotifications = maintenance
                 ? RespireMaintenanceNotificationMode.Enabled : RespireMaintenanceNotificationMode.Disabled,
         };
+        var connectionOptions = options.ToConnectionOptions(enableMaintenanceNotifications: maintenance) with
+        {
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    var index = Interlocked.Increment(ref created);
+                    Exception? failure = null;
+                    if (index <= failures)
+                        failure = distinct ? new InvalidOperationException("Injected distinct disconnect failure.") : sharedFailure;
+                    var stream = new FailingDisposeStream(socket, failure, injectedFailures);
+                    streams.Add(stream);
+                    return stream;
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        };
         var node = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
-            connectionCount: 3, options: options.ToConnectionOptions(enableMaintenanceNotifications: maintenance), logger: logger);
+            connectionCount: 3, options: connectionOptions);
         var connections = Enumerable.Range(0, 3).Select(node.GetConnection).ToArray();
         try
         {
             var retirement = node.RetireAsync();
             var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).Throws<Exception>();
-            await Assert.That(logger.Disconnects).IsEqualTo(3);
-            await Assert.That(logger.Failures.Count).IsEqualTo(failures);
+            await Assert.That(streams.Count).IsEqualTo(3);
+            await Assert.That(streams.All(stream => stream.DisposeCalls > 0)).IsTrue();
+            await Assert.That(injectedFailures.Count).IsEqualTo(failures);
             if (distinct)
             {
                 await Assert.That(error).IsTypeOf<AggregateException>();
                 var aggregate = (AggregateException)error!;
                 await Assert.That(aggregate.InnerExceptions.Count).IsEqualTo(failures);
-                foreach (var failure in logger.Failures)
+                foreach (var failure in injectedFailures)
                     await Assert.That(aggregate.InnerExceptions.Contains(failure)).IsTrue();
             }
-            else await Assert.That(ReferenceEquals(error, logger.SharedFailure)).IsTrue();
+            else await Assert.That(ReferenceEquals(error, sharedFailure)).IsTrue();
 
             await Assert.That(ReferenceEquals(retirement, node.RetireAsync())).IsTrue();
             foreach (var connection in connections)
@@ -65,26 +88,24 @@ public class MultiplexerRetirementTests
         {
             // Disposal re-observes the same failed connection cleanup tasks.
             try { await node.DisposeAsync().AsTask().WaitAsync(Limit); }
-            catch (InvalidOperationException error) when (ReferenceEquals(error, logger.SharedFailure)) { }
-            catch (AggregateException error) when (error.InnerExceptions.All(logger.Failures.Contains)) { }
+            catch (InvalidOperationException error) when (ReferenceEquals(error, sharedFailure)) { }
+            catch (AggregateException error) when (error.InnerExceptions.All(injectedFailures.Contains)) { }
         }
     }
 
-    private sealed class DisconnectFailureLogger(int failures, bool distinct) : ILogger
+    private sealed class FailingDisposeStream(Socket socket, Exception? failure, ConcurrentBag<Exception> failures)
+        : NetworkStream(socket, ownsSocket: true)
     {
-        internal readonly InvalidOperationException SharedFailure = new("Injected disconnect failure.");
-        internal readonly ConcurrentBag<Exception> Failures = [];
-        internal int Disconnects;
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter)
+        internal int DisposeCalls;
+        protected override void Dispose(bool disposing)
         {
-            if (logLevel != LogLevel.Debug || !formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
-                return;
-            if (Interlocked.Increment(ref Disconnects) > failures) return;
-            var failure = distinct ? new InvalidOperationException("Injected distinct disconnect failure.") : SharedFailure;
-            Failures.Add(failure);
+            base.Dispose(disposing);
+            if (!disposing) return;
+            var call = Interlocked.Increment(ref DisposeCalls);
+            if (failure is null) return;
+            if (call == 1) failures.Add(failure);
+            // Abort may suppress the first disposal failure. Final cleanup must observe
+            // the same failure again, while each physical stream is counted only once.
             throw failure;
         }
     }
