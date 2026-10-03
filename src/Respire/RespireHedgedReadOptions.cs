@@ -22,6 +22,7 @@ public sealed record RespireHedgedReadOptions
     /// at most one hedge, so a long run of fast reads cannot fund an unbounded later burst.
     /// Eligible logical reads fund the budget after initial endpoint selection, including fast
     /// reads and reads with no second peer. It is not a percentage of only slow reads.
+    /// Primary-only reads and excluded commands do not contribute credit.
     /// </summary>
     public int MaximumExtraLoadPercent { get; init; } = 5;
 

@@ -364,9 +364,12 @@ public class HedgedReadTests
     }
 
     [Test]
-    public async Task WireLoadBudgetIsSharedAcrossViews()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WireLoadBudgetIsSharedAcrossViews(bool delayPrimaryReply)
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
+        if (delayPrimaryReply) primary.DelayCommand("GET ", 100);
         await using var replica = Replica(holdReads: true);
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
@@ -379,6 +382,10 @@ public class HedgedReadTests
         while (replica.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal)) != count
             || !primary.ReceivedCommands.Any(command => command.StartsWith("GET ", StringComparison.Ordinal)))
             await Task.Delay(1, deadline.Token);
+        // Receiving a hedge command does not mean its reply has reached the caller. Keep
+        // originals blocked until a hedge actually wins, including with a delayed reply.
+        var firstCompleted = await Task.WhenAny(reads).WaitAsync(deadline.Token);
+        await Assert.That(await firstCompleted).IsEqualTo("primary");
         await replica.SendRawAsync(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("$8\r\noriginal\r\n", count))));
         var values = await Task.WhenAll(reads).WaitAsync(deadline.Token);
         await Assert.That(values.Count(value => value == "primary")).IsGreaterThan(0);

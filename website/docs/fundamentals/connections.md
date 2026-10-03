@@ -582,7 +582,8 @@ can return stale data, including a replica hedge that beats a primary read.
 
 The client shares one budget across all its views. Each eligible logical read adds credit after
 initial endpoint selection, including fast reads and reads with no second eligible peer;
-starting a hedge consumes it. At 5%, at least twenty eligible reads fund one hedge. The budget
+starting a hedge consumes it. Primary-only reads and excluded commands do not add credit.
+At 5%, at least twenty eligible reads fund one hedge. The budget
 starts empty and stores at most one hedge, so fast reads cannot accumulate an unbounded burst.
 Concurrent reads may use less than the configured maximum. This bounds additional hedge starts,
 not bytes, server CPU, topology probes, or redirects. A saved credit can be spent in a later

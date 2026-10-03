@@ -99,6 +99,8 @@ public sealed partial class RespireClient
             : SendOnConnectionAsync(operation, connection, command, cancellationToken);
 
     private static bool IsFatalHedgeFailure(Exception error)
+        // This classifies exceptions delivered to a catch filter; it does not make
+        // runtime-fatal failures catchable or promise recovery from them.
         => error is OutOfMemoryException or StackOverflowException or AccessViolationException;
 
     private static async Task ObserveHedgeSelectionAsync(Task<RespireConnection?> selection)
