@@ -250,6 +250,7 @@ internal static partial class ScopeWalker
                 IObjectCreationOperation creation => creation.Initializer,
                 ITypeParameterObjectCreationOperation creation => creation.Initializer,
                 IDynamicObjectCreationOperation creation => creation.Initializer,
+                IWithOperation copy => copy.Initializer,
                 IArrayCreationOperation creation => creation.Initializer,
                 _ => null,
             };
@@ -489,6 +490,7 @@ internal static partial class ScopeWalker
                 or IEventAssignmentOperation or IArrayCreationOperation
                 or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                 or IDynamicObjectCreationOperation
+                or IWithOperation { CloneMethod: not null }
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }

@@ -148,7 +148,9 @@ internal sealed class FlowConditions
     };
 
     internal bool IsConstructedReceiver(IOperation operation)
-        => Unwrap(operation) is IObjectCreationOperation or IArrayCreationOperation;
+        => Unwrap(operation) is IObjectCreationOperation or IArrayCreationOperation or IWithOperation { CloneMethod: not null }
+            // The CFG lowers a record copy to the compiler-generated clone method.
+            or IInvocationOperation { TargetMethod: { Name: "<Clone>$", ContainingType.IsRecord: true } };
 
     internal IOperation ResolveCapturedTarget(IOperation operation) => Unwrap(operation);
 
@@ -167,7 +169,13 @@ internal sealed class FlowConditions
         IOperation operand = condition;
         object? comparison = true;
         var comparisonOperator = BinaryOperatorKind.Equals;
-        if (condition is IIsNullOperation isNull)
+        if (condition is IIsTypeOperation isType)
+        {
+            operand = isType.ValueOperand;
+            comparison = isType.TypeOperand;
+            comparisonOperator = BinaryOperatorKind.None;
+        }
+        else if (condition is IIsNullOperation isNull)
         {
             operand = isNull.Operand;
             comparison = null;
@@ -220,6 +228,16 @@ internal sealed class FlowConditions
                 comparison = relationalPattern.Value.ConstantValue.Value;
                 comparisonOperator = relationalPattern.OperatorKind;
             }
+            else if (pattern is ITypePatternOperation typePattern)
+            {
+                comparison = typePattern.MatchedType;
+                comparisonOperator = BinaryOperatorKind.None;
+            }
+            else if (pattern is IDeclarationPatternOperation { MatchesNull: false } declarationPattern)
+            {
+                comparison = declarationPattern.MatchedType;
+                comparisonOperator = BinaryOperatorKind.None;
+            }
             else
                 return true;
         }
@@ -271,7 +289,10 @@ internal sealed class FlowConditions
 
         var index = _predicates.FindIndex(predicate =>
             SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
-            && Equals(predicate.Constant, comparison) && predicate.Operator == comparisonOperator);
+            && (predicate.Constant is ITypeSymbol leftType && comparison is ITypeSymbol rightType
+                ? SymbolEqualityComparer.Default.Equals(leftType, rightType)
+                : Equals(predicate.Constant, comparison))
+            && predicate.Operator == comparisonOperator);
         if (index < 0)
         {
             if (_predicates.Count == MaxPredicates)

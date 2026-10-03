@@ -7,6 +7,50 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecordCopyCanBypassCleanup(bool cleanupInCatch)
+    {
+        const string record = """
+            record Holder
+            {
+                public Holder() { }
+                protected Holder(Holder other) { throw new System.Exception(); }
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{record}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder value)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { _ = value with { }; result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{record}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = value with { }; await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("static Holder() { throw new System.Exception(); }", true)]
     [Arguments("static int Other = Throw(); static int Throw() => throw new System.Exception();", true)]
     [Arguments("", false)]
@@ -48,6 +92,11 @@ public class ExceptionAwareFlowTests
     [Arguments("value is not null", "value is not null", "", false)]
     [Arguments("value is not null", "value != null", "", false)]
     [Arguments("value is not null", "value is null", "", true)]
+    [Arguments("value is string", "value is string", "", false)]
+    [Arguments("value is string", "value is string text", "", false)]
+    [Arguments("value is not string", "value is not string", "", false)]
+    [Arguments("value is string", "value is int", "", true)]
+    [Arguments("value is string", "value is string", "value = new object();", true)]
     [Arguments("choice", "choice", "buffer[choice ? 0 : 1] = 1;", false)]
     [Arguments("choice", "choice", "buffer[(choice = false) ? 0 : 1] = 1;", true)]
     public async Task StablePatternAndIndexPredicatesRemainCorrelated(string selection, string cleanup, string write, bool warning)
@@ -130,10 +179,11 @@ public class ExceptionAwareFlowTests
     [Arguments("new Holder(flag = false) { Value = true }", true)]
     [Arguments("new bool[] { flag = false }", false)]
     [Arguments("new bool[] { flag = false, Throws() }", true)]
+    [Arguments("new Holder() with { Value = (flag = false) }", false)]
     public async Task ConstructionExceptionsPrecedeInitializers(string creation, bool warning)
     {
         const string holder = """
-            class Holder
+            record Holder
             {
                 public Holder() { }
                 public Holder(bool value) { }
