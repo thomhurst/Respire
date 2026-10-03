@@ -567,17 +567,24 @@ starts at most one probe per second. All candidates and any topology retry share
 sampling wait time per selection. Connection establishment retains its configured timeout. A probe
 that exceeds this budget still occupies its probe slot until its reply or connection failure:
 Respire does not queue repeated PINGs behind a stalled one, even with `CommandTimeout = null`.
+An unanswered probe also excludes that connection from Nearest selection until its FIFO reply
+completes, so an unsampled healthy candidate can serve the read.
 Sampling happens only
 when Nearest reads request it; ordinary Primary reads create no sampler and send no sampling PINGs.
 The first successful sample establishes the estimate. Later samples use one quarter of the new
 measurement and three quarters of the previous estimate to reduce jitter.
 
-A sample younger than ten seconds can serve selection immediately while a refresh runs in the
-background. A cold or expired sample waits for an available shared probe within the selection's
-remaining sampling budget. Caller cancellation
+A sample younger than ten seconds can serve selection immediately when no probe is outstanding.
+The warm cached path takes no shared sampler lock and allocates no memory. Cold or pending
+probe waits can allocate; the zero-allocation guarantee applies only to warm cached selection.
+If a new probe is pending, selection waits within the shared one-second sampling budget even
+when the previous estimate remains fresh; it cannot send a read behind an unanswered PING.
+A cold or expired sample also waits for an available shared probe within that remaining budget. Caller cancellation
 stops that caller's wait without canceling the shared probe. When all probe slots are busy,
 unsampled candidates remain eligible with unknown latency. Measured candidates take precedence
 over unknown candidates; equal estimates, or entirely unknown estimates, rotate selection order.
+If every candidate has a pending probe, the bounded retry ends with a connection exception
+reporting that no healthy eligible endpoint is available; no read is queued behind those probes.
 PING failure or ACL denial removes the estimate without disqualifying an otherwise healthy,
 role-validated connection. Connection failures use a cooldown before retrying; configured and
 Sentinel replica cooldowns follow `ReplicaRefreshInterval`, while primary and Cluster candidate

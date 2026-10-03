@@ -40,6 +40,31 @@ public class SentinelMonitoringTests
     }
 
     [Test]
+    public async Task ProbeCleanupCanUnregisterAnAlreadyCancelledCallback()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var probe = new SentinelMonitorProbe();
+        await using var subscription = await probe.Client.SubscribeAsync(lifetime.Token);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var blocker = lifetime.Token.Register(() =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(Limit)) throw new TimeoutException("Cancellation callback was not released.");
+        });
+        var cancellation = lifetime.CancelAsync();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            await subscription.DisposeAsync();
+        }
+        finally { release.Set(); }
+        await cancellation.WaitAsync(Limit);
+        await Assert.That(probe.SubscriptionToken.IsCancellationRequested).IsTrue();
+        await Assert.That(probe.Cancelled.Task.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task ProbeDoesNotReportCancellationForNormalCompletion()
     {
         using var lifetime = new CancellationTokenSource();
@@ -50,6 +75,24 @@ public class SentinelMonitoringTests
         probe.Messages.Writer.TryComplete();
         await Assert.That(await messages.MoveNextAsync()).IsFalse();
         await Assert.That(probe.Cancelled.Task.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    public async Task StopRejectsLateDnsEvidenceBeforeCancellationCallbacksRun()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var monitor = Create(lifetime, (_, _) => { });
+        var reply = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queries = new List<string>();
+        monitor.HostResolver = (host, _) => { queries.Add(host); return reply.Task; };
+        var resolution = monitor.ResolveAddressesAsync("old.alias", default).AsTask();
+        monitor.Stop();
+        // Stop closes ownership synchronously; linked cancellation callbacks may still
+        // be waiting elsewhere, and an external resolver can ignore its token.
+        reply.SetResult([System.Net.IPAddress.Loopback]);
+        await Assert.That(await resolution.WaitAsync(Limit)).IsNull();
+        await Assert.That(await monitor.ResolveAddressesAsync("new.alias", default)).IsNull();
+        await Assert.That(queries).IsEquivalentTo(new[] { "old.alias" });
     }
 
     [Test]
@@ -327,9 +370,11 @@ public class SentinelMonitoringTests
             // The supervisor has not returned from its first wait yet, so it can only
             // observe the final membership containing this same endpoint address.
             clock.Release.Set();
-            await removed.Cancelled.Task.WaitAsync(Limit);
             await removed.ClientCleanup.Task.WaitAsync(Limit);
             await removed.SubscriptionCleanup.Task.WaitAsync(Limit);
+            // Cleanup can unregister the probe callback before CancelAsync invokes it.
+            // Observe the actual token state, not that optional callback's scheduling.
+            await Assert.That(removed.SubscriptionToken.IsCancellationRequested).IsTrue();
             await monitor.WaitForSubscriptionsAsync(2, deadline.Token);
             await Assert.That(starts).IsEqualTo(2);
             await Assert.That(gaps.Where(gap => gap.Endpoint == peer).Select(gap => gap.Version == 0).ToArray())
