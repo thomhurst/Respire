@@ -67,6 +67,19 @@ jobs:
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
       
+      - name: Run hedging regressions without operation tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: |
+          dotnet run --project tests/Respire.Tests/Respire.Tests.csproj \
+            -c Release \
+            -f ${{ matrix.framework }} \
+            --no-build -- \
+            --treenode-filter '/*/*/HedgedReadTests/*' \
+            --results-directory "$GITHUB_WORKSPACE/TestResults" \
+            --report-trx \
+            --report-trx-filename "Respire.HedgedReads.Uninstrumented-${{ matrix.framework }}.trx"
+
       - name: Generate Code Coverage Report
         if: always()
         run: |

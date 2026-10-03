@@ -24,6 +24,31 @@ internal static class RespireTelemetry
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
 
+    private static readonly Counter<long> HedgesSent = Meter.CreateCounter<long>(
+        "respire.read.hedge.sent", "{request}", "Additional idempotent read requests dispatched by hedging.");
+    private static readonly Counter<long> HedgesWon = Meter.CreateCounter<long>(
+        "respire.read.hedge.won", "{request}", "Hedged read requests whose successful response was returned.");
+    private static readonly Histogram<double> HedgeExtraLoad = Meter.CreateHistogram<double>(
+        "respire.read.hedge.extra_load", "1", "Extra requests per eligible logical read (zero or one); the mean is the extra-load ratio.");
+
+    internal static void RecordHedgeSent(RespireConnection connection)
+    {
+        try { HedgesSent.Add(1, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
+    }
+
+    internal static void RecordHedgeWon(RespireConnection connection)
+    {
+        try { HedgesWon.Add(1, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
+    }
+
+    internal static void RecordHedgeExtraLoad(RespireConnection connection, bool sent)
+    {
+        try { HedgeExtraLoad.Record(sent ? 1d : 0d, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
+    }
+
     public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
         "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
 

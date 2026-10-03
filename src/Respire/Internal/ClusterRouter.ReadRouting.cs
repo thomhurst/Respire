@@ -147,7 +147,8 @@ internal sealed partial class ClusterRouter
 
     private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
         ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded)
+        RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded,
+        RespireConnection? excludedPeer = null)
     {
         var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
@@ -158,7 +159,7 @@ internal sealed partial class ClusterRouter
             cancellationToken.ThrowIfCancellationRequested();
             while (candidates.TryNext(out var node))
             {
-                if (excluded?.Contains(node) == true) continue;
+                if (excluded?.Contains(node) == true || ReferenceEquals(node, excludedPeer?.Multiplexer)) continue;
                 cancellationToken.ThrowIfCancellationRequested();
                 attempted++;
                 try
@@ -170,6 +171,7 @@ internal sealed partial class ClusterRouter
                     if (routes.IsDueForRevalidation)
                         _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
                     var connection = GetNodeReadConnection(node, slot, readFrom);
+                    if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, connection)) continue;
                     if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
                         linked: true, readFrom))
                         return (connection, lastError, attempted);
@@ -184,7 +186,9 @@ internal sealed partial class ClusterRouter
                 try
                 {
                     var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded).ConfigureAwait(false);
-                    if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)) return (primary, lastError, attempted);
+                    if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)
+                        && (excludedPeer is null || HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary)))
+                        return (primary, lastError, attempted);
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
             }
