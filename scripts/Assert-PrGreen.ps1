@@ -27,7 +27,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$Pr,
-    [string]$Repo
+    [string]$Repo,
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +53,7 @@ catch {
 }
 
 if ($view.state -ne 'OPEN') { Deny "state=$($view.state) (need OPEN)" }
+if ($ExpectedHead -and $view.headRefOid -ne $ExpectedHead) { Deny 'PR head changed before gate validation' }
 if ($view.mergeable -ne 'MERGEABLE') { Deny "mergeable=$($view.mergeable) (need MERGEABLE)" }
 if ($view.mergeStateStatus -ne 'CLEAN') { Deny "mergeStateStatus=$($view.mergeStateStatus) (need CLEAN)" }
 

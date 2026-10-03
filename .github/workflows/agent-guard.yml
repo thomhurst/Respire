@@ -9,6 +9,8 @@ on:
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Assert-PrGreen.ps1
+      - scripts/Merge-Pr.ps1
+      - scripts/Test-PrMergeHead.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/scripts/pr-review-comment.sh
       - .github/scripts/test-pr-review-comment.sh
@@ -27,6 +29,8 @@ on:
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Assert-PrGreen.ps1
+      - scripts/Merge-Pr.ps1
+      - scripts/Test-PrMergeHead.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
       - .github/scripts/pr-review-comment.sh
       - .github/scripts/test-pr-review-comment.sh
@@ -69,6 +73,9 @@ jobs:
       - name: Verify PR review gate heuristics
         shell: pwsh
         run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - name: Verify merge head binding
+        shell: pwsh
+        run: ./scripts/Test-PrMergeHead.ps1
       - name: Verify review comment helper
         if: runner.os == 'Linux'
         shell: bash
