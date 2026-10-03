@@ -2174,6 +2174,7 @@ public sealed class StreamedSetTests
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
             catch (SocketException) when (_stop.IsCancellationRequested) { }
+            catch (ObjectDisposedException) when (_stop.IsCancellationRequested) { }
 
             await Task.WhenAll(_connections.ToArray());
         }
