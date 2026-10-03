@@ -131,11 +131,11 @@ public class BroadcastClientCacheTests
         var cache = scenario switch
         {
             0 => new RespireClientSideCacheOptions { TrackingMode = (RespireClientTrackingMode)123 },
-            1 => new RespireClientSideCacheOptions { BroadcastPrefixes = ["hot:"] },
+            1 => new RespireClientSideCacheOptions { KeyPrefixes = ["hot:", "hot:key"] },
             2 => Broadcast(["hot:", "hot:key"]),
             3 => Broadcast(["hot:", "hot:"]),
             4 => Broadcast([RespireKey.Empty, "hot:"]),
-            _ => new RespireClientSideCacheOptions { BroadcastPrefixes = null! },
+            _ => new RespireClientSideCacheOptions { KeyPrefixes = null! },
         };
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
@@ -169,7 +169,7 @@ public class BroadcastClientCacheTests
     [Test]
     public async Task BinaryPrefixMayEndInsideAnEncodedStringCharacter()
     {
-        var cache = new ClientSideCacheCoordinator(Broadcast([new byte[] { 0xc3 }]).SnapshotTracking());
+        var cache = new ClientSideCacheCoordinator(Broadcast([new byte[] { 0xc3 }]).ValidateAndSnapshot());
         RespireKey key = "é:key";
         var token = cache.BeginRead(in key);
         var response = RespValue.BulkString("value");
@@ -182,7 +182,7 @@ public class BroadcastClientCacheTests
     {
         var prefixes = Enumerable.Range(0, 256).Where(value => value % 3 == 0).Reverse()
             .Select(value => new RespireKey(new byte[] { (byte)value })).ToArray();
-        var cache = new ClientSideCacheCoordinator(Broadcast(prefixes).SnapshotTracking());
+        var cache = new ClientSideCacheCoordinator(Broadcast(prefixes).ValidateAndSnapshot());
         for (var value = 0; value < 256; value++)
         {
             RespireKey key = new byte[] { (byte)value, 0, 255 };
@@ -230,7 +230,7 @@ public class BroadcastClientCacheTests
     }
 
     private static RespireClientSideCacheOptions Broadcast(IReadOnlyList<RespireKey> prefixes)
-        => new() { TrackingMode = RespireClientTrackingMode.Broadcast, BroadcastPrefixes = prefixes };
+        => new() { TrackingMode = RespireClientTrackingMode.Broadcast, KeyPrefixes = prefixes };
 
     private static RespireOptions Options(FakeRespServer server, IReadOnlyList<RespireKey> prefixes)
         => new() { Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = Broadcast(prefixes) };

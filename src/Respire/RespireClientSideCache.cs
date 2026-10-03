@@ -7,64 +7,113 @@ using Respire.Protocol;
 
 namespace Respire;
 
-/// <summary>How Redis registers keys for client-cache invalidations.</summary>
+/// <summary>How Redis registers cached keys for invalidation.</summary>
 public enum RespireClientTrackingMode
 {
-    /// <summary>Track each cache miss with CLIENT CACHING YES. This is the default.</summary>
+    /// <summary>
+    /// Redis remembers each key this client reads (CLIENT TRACKING OPTIN) and invalidates only those
+    /// keys. Precise, at the cost of server memory per tracked key. This is the default.
+    /// </summary>
     OptIn,
-    /// <summary>Receive invalidations for all keys matching the configured physical prefixes.</summary>
+
+    /// <summary>
+    /// Redis invalidates every key matching <see cref="RespireClientSideCacheOptions.KeyPrefixes"/>
+    /// (CLIENT TRACKING BCAST), whether or not this client read it. No per-key server memory, but more
+    /// invalidation traffic. Best for a small set of hot, narrowly prefixed keys.
+    /// </summary>
     Broadcast,
 }
 
-/// <summary>Bounds and expiration policy for RESP3 server-assisted client-side caching.</summary>
+/// <summary>
+/// Configures RESP3 server-assisted client-side caching. Assign <c>new()</c> to
+/// <see cref="RespireOptions.ClientSideCache"/> to enable it with bounded defaults.
+/// </summary>
+/// <example>
+/// <code>
+/// ClientSideCache = new()
+/// {
+///     KeyPrefixes = ["product:", "price:"],
+///     MaxEntries = 50_000,
+///     LocalExpiration = TimeSpan.FromMinutes(1),
+/// }
+/// </code>
+/// </example>
 public sealed record RespireClientSideCacheOptions
 {
-    /// <summary>Reuse HGET field entries across HMGET requests. Defaults to false.</summary>
+    // Capacity and lifetime.
+
+    /// <summary>Maximum resident cache entries. Defaults to 10,000.</summary>
+    public int MaxEntries { get; init; } = 10_000;
+
+    /// <summary>Approximate maximum bytes owned by cached replies. Defaults to 64 MiB.</summary>
+    public long MaxSizeBytes { get; init; } = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum time an entry stays in the local cache, independent of the key's Redis TTL.
+    /// Defaults to five minutes. Null keeps entries until Redis invalidates them or they are evicted.
+    /// </summary>
+    /// <remarks>Redis invalidations normally remove changed entries immediately. This bound limits
+    /// staleness while a broken connection is still being detected.</remarks>
+    public TimeSpan? LocalExpiration { get; init; } = TimeSpan.FromMinutes(5);
+
+    // What is cached and how Redis tracks it.
+
+    /// <summary>
+    /// Physical key prefixes eligible for caching. Empty (the default) caches every eligible key.
+    /// </summary>
+    /// <remarks>
+    /// Reads of other keys go straight to Redis and are not tracked, except that an OptIn MGET
+    /// missing both covered and uncovered keys is tracked as one command; only covered replies
+    /// are cached. In
+    /// <see cref="RespireClientTrackingMode.Broadcast"/> mode the prefixes are also sent to Redis as
+    /// BCAST PREFIX arguments. Prefixes are binary-safe, must not overlap or repeat, and are matched
+    /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix"/> prefix.
+    /// The client snapshots this collection and its bytes.
+    /// </remarks>
+    public IReadOnlyList<RespireKey> KeyPrefixes { get; init; } = [];
+
+    /// <summary>How Redis tracks cached keys. Defaults to <see cref="RespireClientTrackingMode.OptIn"/>.</summary>
+    public RespireClientTrackingMode TrackingMode { get; init; }
+
+    // Optional behavior.
+
+    /// <summary>
+    /// Shares concurrent identical cache misses within this client so only one request reaches Redis
+    /// (stampede protection). Also shares <c>GetOrSetAsync</c> factories for the same key, type and TTL.
+    /// Defaults to false.
+    /// </summary>
+    /// <remarks>Off by default because sharing adds bookkeeping and result copies to every miss;
+    /// enable it for hot keys read concurrently. Each caller can cancel independently; the shared
+    /// request is canceled when its last caller leaves. The physical request retains its original
+    /// <see cref="RespireOptions.CommandTimeout"/> deadline; joining later does not restart it.</remarks>
+    public bool CoalesceConcurrentMisses { get; init; }
+
+    /// <summary>
+    /// Serves individual HMGET fields from cached HGET entries and fetches only the missing fields.
+    /// Defaults to false.
+    /// </summary>
     /// <remarks>Partial reads reduce transferred values for overlapping field lists but require
     /// more cache entries and allocations than exact-query caching. Results may combine values
     /// read at different times and do not form an atomic snapshot of the hash.
     /// Benchmark representative field counts and payload sizes.</remarks>
     public bool ReuseHashFields { get; init; }
 
-    /// <summary>Redis tracking mode. Defaults to OptIn.</summary>
-    public RespireClientTrackingMode TrackingMode { get; init; }
-
-    /// <summary>Literal binary-safe physical prefixes for Broadcast mode; empty means every key.</summary>
-    /// <remarks>Prefixes cannot overlap. Client key prefixes are not added automatically.
-    /// Reads outside this set bypass local storage. The client snapshots this collection and its bytes.</remarks>
-    public IReadOnlyList<RespireKey> BroadcastPrefixes { get; init; } = [];
-
-    /// <summary>Maximum resident keys. Defaults to 10,000.</summary>
-    public int MaxEntries { get; init; } = 10_000;
-
-    /// <summary>Approximate maximum owned cache bytes. Defaults to 64 MiB.</summary>
-    public long MaxSizeBytes { get; init; } = 64L * 1024 * 1024;
-
-    /// <summary>
-    /// Maximum local lifetime for an entry. Null relies only on Redis invalidations; the
-    /// default five-minute bound limits staleness while a broken connection is being detected.
-    /// </summary>
-    public TimeSpan? TimeToLive { get; init; } = TimeSpan.FromMinutes(5);
-
-    internal RespireClientSideCacheOptions SnapshotTracking()
+    internal RespireClientSideCacheOptions ValidateAndSnapshot()
     {
-        if (!Enum.IsDefined(TrackingMode))
-            throw new RespireConfigurationException("ClientSideCache.TrackingMode is invalid.");
-        if (BroadcastPrefixes is null)
-            throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes cannot be null.");
-        if (TrackingMode != RespireClientTrackingMode.Broadcast && BroadcastPrefixes.Count != 0)
-            throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes requires Broadcast tracking.");
-        return this with { BroadcastPrefixes = BroadcastPrefixSet.Create(BroadcastPrefixes) };
+        Require(Enum.IsDefined(TrackingMode), nameof(TrackingMode), "must be OptIn or Broadcast");
+        Require(KeyPrefixes is not null, nameof(KeyPrefixes), "cannot be null");
+        Require(MaxEntries >= 1, nameof(MaxEntries), "must be at least one");
+        Require(MaxSizeBytes >= 1, nameof(MaxSizeBytes), "must be at least one");
+        Require(LocalExpiration is null || LocalExpiration >= TimeSpan.FromMilliseconds(1),
+            nameof(LocalExpiration), "must be null or at least one millisecond");
+        return this with { KeyPrefixes = ClientCachePrefixSet.Create(KeyPrefixes!) };
     }
 
-    /// <summary>
-    /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
-    /// independently; the shared request is canceled when its last caller leaves. Defaults to false.
-    /// </summary>
-    /// <remarks>Each caller's cancellation token bounds only its own wait. The physical request
-    /// retains its original <see cref="RespireOptions.CommandTimeout"/> deadline; joining later
-    /// does not restart that deadline.</remarks>
-    public bool CoalesceConcurrentMisses { get; init; }
+    private static void Require(bool condition, string optionName, string requirement)
+    {
+        if (!condition)
+            throw new RespireConfigurationException($"RespireOptions.ClientSideCache.{optionName} {requirement}.");
+    }
 }
 
 /// <summary>Cumulative and current state of a Respire client-side cache.</summary>
@@ -93,8 +142,8 @@ public interface IRespireClientSideCache
     void Clear();
 
     /// <summary>Observes invalidations relevant to one physical key without adding Redis tracking.</summary>
-    /// <remarks>Subscribe before reading the key. OPTIN notifications require tracked reads; Broadcast
-    /// requires coverage by the configured prefixes. Callbacks run asynchronously, serially per
+    /// <remarks>Subscribe before reading the key. The key must be covered by
+    /// <see cref="RespireClientSideCacheOptions.KeyPrefixes"/>. OPTIN notifications require tracked reads. Callbacks run asynchronously, serially per
     /// subscription, with one coalesced pending notification. Recheck application state after every
     /// notification. Cancellation, subscription disposal, or client disposal stops future delivery;
     /// a callback already selected for execution may finish. The subscription snapshots binary key storage.
@@ -109,7 +158,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private const int EntryOverhead = 64;
 
     private readonly RespireClientSideCacheOptions _options;
-    private readonly BroadcastPrefixSet _broadcastPrefixes;
+    private readonly ClientCachePrefixSet _keyPrefixes;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
     private readonly Lock _queryLock = new();
     private CacheStore _store;
@@ -124,9 +173,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     public ClientSideCacheCoordinator(RespireClientSideCacheOptions options)
     {
         _options = options;
-        _broadcastPrefixes = options.TrackingMode == RespireClientTrackingMode.Broadcast
-            ? BroadcastPrefixSet.Create(options.BroadcastPrefixes)
-            : BroadcastPrefixSet.Empty;
+        _keyPrefixes = ClientCachePrefixSet.Create(options.KeyPrefixes);
         _store = new CacheStore(options, RecordEviction);
     }
 
@@ -351,11 +398,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     }
 
     internal bool CanTrack(in RespireKey key)
-        => _broadcastPrefixes.Contains(in key);
+        => _keyPrefixes.Contains(in key);
 
     private bool CanTrackAll(RespireKey[] keys)
     {
-        if (_broadcastPrefixes.Count == 0) return true;
+        if (_keyPrefixes.Count == 0) return true;
         foreach (var key in keys)
             if (!CanTrack(in key)) return false;
         return true;
@@ -914,7 +961,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
 
             var payload = response.IsNull ? null : response.AsSpan().ToArray();
-            var expiresAt = ExpirationTimestamp(_options.TimeToLive);
+            var expiresAt = ExpirationTimestamp(_options.LocalExpiration);
             var entry = new CacheEntry(payload, size, expiresAt);
             if (_entries.TryGetValue(key, out var previous))
             {
@@ -956,7 +1003,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
 
             entry = new QueryCacheEntry(
-                response.ToOwned(), dependencies, size, ExpirationTimestamp(_options.TimeToLive));
+                response.ToOwned(), dependencies, size, ExpirationTimestamp(_options.LocalExpiration));
             return true;
         }
 

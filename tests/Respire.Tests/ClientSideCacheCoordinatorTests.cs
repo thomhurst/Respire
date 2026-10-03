@@ -566,7 +566,7 @@ public class ClientSideCacheCoordinatorTests
         {
             MaxEntries = 2,
             MaxSizeBytes = 1_000_000,
-            TimeToLive = null,
+            LocalExpiration = null,
         });
 
         Insert(cache, "a", "1");
@@ -586,7 +586,7 @@ public class ClientSideCacheCoordinatorTests
             {
                 MaxEntries = 1,
                 MaxSizeBytes = 1_000_000,
-                TimeToLive = null,
+                LocalExpiration = null,
             });
 
             Parallel.For(0, 32, index => Insert(cache, $"key:{index}", "value"));
@@ -602,7 +602,7 @@ public class ClientSideCacheCoordinatorTests
         {
             MaxEntries = 10,
             MaxSizeBytes = 80,
-            TimeToLive = null,
+            LocalExpiration = null,
         });
 
         Insert(cache, "key", new string('x', 100));
@@ -615,7 +615,7 @@ public class ClientSideCacheCoordinatorTests
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions
         {
-            TimeToLive = TimeSpan.FromMilliseconds(10),
+            LocalExpiration = TimeSpan.FromMilliseconds(10),
         });
         Insert(cache, "key", "value");
 
@@ -661,7 +661,7 @@ public class ClientSideCacheCoordinatorTests
         {
             MaxEntries = 1,
             MaxSizeBytes = 1_000_000,
-            TimeToLive = null,
+            LocalExpiration = null,
         });
         Insert(cache, "value", "one");
         InsertQuery(cache, "length", RespValue.Integer(3));

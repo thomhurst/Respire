@@ -22,13 +22,29 @@ public sealed partial class RespireClient
         if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be at least one millisecond.");
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        var cache = _core.ClientCache
-            ?? throw new InvalidOperationException("GetOrSetAsync requires ClientSideCache to be enabled.");
+        if (_core.ClientCache is null)
+            throw new InvalidOperationException("GetOrSetAsync requires ClientSideCache to be enabled.");
         var resolvedKey = ResolveKey(key);
+        if (ReadCache is not { } cache)
+            return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, milliseconds, cancellationToken);
         if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
             return new ValueTask<T?>(DeserializeBorrowed<T>(in cached));
 
         return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, milliseconds, cache, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private async ValueTask<T?> GetOrSetUncachedAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
+        long milliseconds, CancellationToken cancellationToken)
+    {
+        // WithoutClientCache: read Redis directly and never join or populate local cache work.
+        using var response = await ProduceCacheAsideAsync(key, factory, milliseconds, cancellationToken, useCache: false)
+            .ConfigureAwait(false);
+        return DeserializeBorrowed<T>(in response);
     }
 
 #if NET
@@ -57,17 +73,20 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<RespValue> ProduceCacheAsideAsync<T>(RespireKey key,
-        Func<CancellationToken, ValueTask<T?>> factory, long milliseconds, CancellationToken cancellationToken)
+        Func<CancellationToken, ValueTask<T?>> factory, long milliseconds, CancellationToken cancellationToken,
+        bool useCache = true)
     {
         // Use normal tracked reads and their insertion fences. Never insert a SET reply into
         // the cache: the write can invalidate tracking, and another writer may already follow it.
         // The public entry already counted this caller's lookup. Recheck without counting
         // again because another producer may have filled the cache before this one starts.
         var cache = _core.ClientCache!;
-        var existing = cache.TryPeek(in key, out var cached)
-            ? cached.ToOwned()
-            : await GetAndCacheAsync(key, cache, cancellationToken,
-                static (RespireClient _, in RespValue value) => value.ToOwned()).ConfigureAwait(false);
+        var existing = !useCache
+            ? await SendAsync("GET", new Cmd1(Verbs.Get, key.AsValue()), cancellationToken).ConfigureAwait(false)
+            : cache.TryPeek(in key, out var cached)
+                ? cached.ToOwned()
+                : await GetAndCacheAsync(key, cache, cancellationToken,
+                    static (RespireClient _, in RespValue value) => value.ToOwned()).ConfigureAwait(false);
         if (!existing.IsNull) return existing;
         existing.Dispose();
 

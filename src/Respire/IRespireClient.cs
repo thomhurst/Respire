@@ -88,10 +88,11 @@ public interface IRespireClient : IAsyncDisposable
     /// Throwing shared-token callbacks can fault remaining waiters but cannot interrupt client cleanup.
     /// Without coalescing each call uses its own factory and cancellation. CommandTimeout bounds Redis
     /// commands, not the factory. Do not recursively request the same shared identity from its factory.
+    /// On a <see cref="WithoutClientCache"/> view the read goes to Redis and factories are never shared.
     /// Exceptions reach callers without automatic factory or accepted-write replay. A canceled accepted
     /// write may still execute. Results describe the successful read or atomic SET, not future state.
     /// Writes invalidate local entries; subsequent tracked reads repopulate them. Server expiry invalidates
-    /// through normal tracking delivery; the local cache TTL is configured separately.
+    /// through normal tracking delivery; ClientSideCache.LocalExpiration is configured separately.
     /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -343,4 +344,15 @@ public interface IRespireClient : IAsyncDisposable
     /// </exception>
     /// <exception cref="NotSupportedException">This implementation does not support read routing views.</exception>
     IRespireClient WithReadFrom(RespireReadFrom readFrom);
+
+    /// <summary>
+    /// A view whose reads always go to Redis instead of the client-side cache, for reads that must
+    /// observe the latest server value. Writes still invalidate cached entries.
+    /// </summary>
+    /// <remarks>
+    /// The view shares this client's connections and keeps its key prefix and read routing; disposing
+    /// it is a no-op. Returns the same client when client-side caching is disabled. Custom
+    /// implementations and decorators must implement this member; decorators should forward it.
+    /// </remarks>
+    IRespireClient WithoutClientCache();
 }

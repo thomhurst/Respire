@@ -130,7 +130,7 @@ public class RespireOptionsTests
             {
                 MaxEntries = (int)maxEntries,
                 MaxSizeBytes = maxSizeBytes,
-                TimeToLive = TimeSpan.FromMilliseconds(ttlMilliseconds),
+                LocalExpiration = TimeSpan.FromMilliseconds(ttlMilliseconds),
             },
         };
 

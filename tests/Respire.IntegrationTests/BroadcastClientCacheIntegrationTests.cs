@@ -86,7 +86,7 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
     }
 
     internal static RespireClientSideCacheOptions Broadcast(IReadOnlyList<RespireKey> prefixes)
-        => new() { TrackingMode = RespireClientTrackingMode.Broadcast, BroadcastPrefixes = prefixes };
+        => new() { TrackingMode = RespireClientTrackingMode.Broadcast, KeyPrefixes = prefixes };
 
     internal static async Task UntilAsync(Func<bool> condition)
     {

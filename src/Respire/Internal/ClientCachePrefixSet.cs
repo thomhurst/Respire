@@ -3,20 +3,20 @@ using Respire.Protocol;
 
 namespace Respire.Internal;
 
-/// <summary>Owned, non-overlapping prefixes with one validated binary-search index.</summary>
-internal sealed class BroadcastPrefixSet : IReadOnlyList<RespireKey>
+/// <summary>Owned, non-overlapping cache key prefixes with one validated binary-search index.</summary>
+internal sealed class ClientCachePrefixSet : IReadOnlyList<RespireKey>
 {
-    internal static readonly BroadcastPrefixSet Empty = new([], []);
+    internal static readonly ClientCachePrefixSet Empty = new([], []);
     private readonly RespireKey[] _wirePrefixes;
     private readonly ReadOnlyMemory<byte>[] _sortedPrefixes;
 
-    private BroadcastPrefixSet(RespireKey[] wirePrefixes, ReadOnlyMemory<byte>[] sortedPrefixes)
+    private ClientCachePrefixSet(RespireKey[] wirePrefixes, ReadOnlyMemory<byte>[] sortedPrefixes)
         => (_wirePrefixes, _sortedPrefixes) = (wirePrefixes, sortedPrefixes);
 
-    internal static BroadcastPrefixSet Create(IReadOnlyList<RespireKey> prefixes)
+    internal static ClientCachePrefixSet Create(IReadOnlyList<RespireKey> prefixes)
     {
         // This sealed type already owns immutable byte snapshots; sharing it is safe.
-        if (prefixes is BroadcastPrefixSet owned) return owned;
+        if (prefixes is ClientCachePrefixSet owned) return owned;
         if (prefixes.Count == 0) return Empty;
         var keys = new RespireKey[prefixes.Count];
         var sorted = new ReadOnlyMemory<byte>[prefixes.Count];
@@ -32,13 +32,13 @@ internal sealed class BroadcastPrefixSet : IReadOnlyList<RespireKey>
         for (var index = 1; index < sorted.Length; index++)
         {
             if (sorted[index].Span.StartsWith(sorted[index - 1].Span))
-                throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes must not overlap or repeat.");
+                throw new RespireConfigurationException("RespireOptions.ClientSideCache.KeyPrefixes must not overlap or repeat.");
         }
         // Preserve caller order on the wire; both arrays refer to the same owned bytes.
-        return new BroadcastPrefixSet(keys, sorted);
+        return new ClientCachePrefixSet(keys, sorted);
     }
 
-    // No PREFIX arguments means BCAST covers every key, not an empty coverage set.
+    // No prefixes means every key is covered, not an empty coverage set.
     internal bool Contains(in RespireKey key) => Count == 0 || key.StartsWithAny(this);
 
     internal bool Matches(ReadOnlySpan<byte> key)
