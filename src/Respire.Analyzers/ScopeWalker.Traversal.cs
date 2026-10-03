@@ -334,6 +334,7 @@ internal static partial class ScopeWalker
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
                             || IsAllocationOnlyInterpolation(exceptionSource)
+                            || exceptionSource is IDelegateCreationOperation delegateCreation && !DelegateCanDereferenceNull(delegateCreation)
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
                 }
@@ -549,6 +550,7 @@ internal static partial class ScopeWalker
                 or IWithOperation { CloneMethod: not null }
                 or IRecursivePatternOperation { DeconstructSymbol: not null }
                 or IInterpolatedStringOperation { ConstantValue.HasValue: false }
+                or IInterpolationOperation or IDelegateCreationOperation
                 or IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String, ConstantValue.HasValue: false }
                 or ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String }
                 or IBinaryOperation { OperatorMethod: not null }
@@ -575,11 +577,6 @@ internal static partial class ScopeWalker
                 || operation is ISlicePatternOperation { SliceSymbol: not null } slicePattern
                     && slicePattern.InputType.TypeKind != TypeKind.Array
                     && slicePattern.InputType.SpecialType != SpecialType.System_String
-                || operation is IDelegateCreationOperation
-                    { Target: IMethodReferenceOperation { Method.IsStatic: false, Instance: { } methodReceiver } }
-                    && methodReceiver.Type?.IsReferenceType == true
-                    && methodReceiver is not IInstanceReferenceOperation
-                    && !_conditions.IsConstructedReceiver(methodReceiver)
                 || !operation.ConstantValue.HasValue && (operation switch
                 {
                     IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
@@ -598,7 +595,10 @@ internal static partial class ScopeWalker
                     && field.ContainingType.StaticConstructors.Length != 0
                 || operation is IConversionOperation conversion
                     && ConversionMayThrow(conversion)
-                || operation is IObjectCreationOperation or IAnonymousObjectCreationOperation;
+                || operation is IAnonymousObjectCreationOperation
+                || operation is IObjectCreationOperation creation
+                    && !(creation.Type is INamedTypeSymbol { IsValueType: true, StaticConstructors.Length: 0 }
+                        && creation.Constructor is null or { IsImplicitlyDeclared: true });
             _throwingOperations.Add(operation, throwing);
             return throwing;
         }
@@ -614,17 +614,21 @@ internal static partial class ScopeWalker
                     && (decimalType || isChecked && integral);
         }
 
+        private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)
+            => operation.Target is IMethodReferenceOperation { Method.IsStatic: false, Instance: { } receiver }
+                && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
+                && !_conditions.IsConstructedReceiver(receiver);
+
         private static bool IsAllocationOnlyInterpolation(IOperation operation)
-            => operation is IInterpolatedStringOperation interpolated
-                && interpolated.Parts.All(static part => part is IInterpolatedStringTextOperation
-                    || part is IInterpolationOperation { FormatString: null } interpolation
+            => operation is IInterpolatedStringOperation
+                    || operation is IInterpolationOperation { FormatString: null } interpolation
                         && interpolation.Expression.Type?.SpecialType is SpecialType.System_String
                             or SpecialType.System_Char or SpecialType.System_Boolean
                             or SpecialType.System_SByte or SpecialType.System_Byte
                             or SpecialType.System_Int16 or SpecialType.System_UInt16
                             or SpecialType.System_Int32 or SpecialType.System_UInt32
                             or SpecialType.System_Int64 or SpecialType.System_UInt64
-                            or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal);
+                            or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal;
 
         private static bool IsStringOnlyConcatenation(IOperation operation)
             => operation switch

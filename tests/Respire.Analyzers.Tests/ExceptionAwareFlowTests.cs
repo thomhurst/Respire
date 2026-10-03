@@ -7,6 +7,52 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = $\"{value}{flag = false}\";", false)]
+    [Arguments("_ = $\"{flag = false}{value}\";", true)]
+    [Arguments("flag = false; _ = new Token();", false)]
+    [Arguments("flag = false; _ = new ThrowingToken();", true)]
+    public async Task FormattingAndValueConstructionRespectExecutionOrder(string expression, bool warning)
+    {
+        const string types = """
+            struct Token { }
+            struct ThrowingToken { public ThrowingToken() { throw new System.InvalidOperationException(); } }
+            class Value { public override string ToString() => throw new System.InvalidOperationException(); }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{types}}
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, bool flag, Value value)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    try { {{expression}} result.Dispose(); }
+                    catch (InvalidOperationException) { if (flag) result.Dispose(); }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{types}}
+            class Caller
+            {
+                async Task Run(RespireClient client, RespirePending<string> existing, bool flag, Value value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = flag ? batch.GetStringAsync("key") : existing;
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch (InvalidOperationException) { if (flag) await batch.SendAsync(); }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("value == null", true)]
     [Arguments("value != null", true)]
     [Arguments("value > 0", true)]
@@ -410,7 +456,10 @@ public class ExceptionAwareFlowTests
     [Arguments("holder.Method", true, false)]
     [Arguments("Holder.StaticMethod", false, false)]
     [Arguments("this.Method", false, false)]
-    public async Task MethodGroupCreationCanBypassCleanup(string methodGroup, bool cleanupInCatch, bool warning)
+    [Arguments("Holder.StaticMethod", false, true, "OutOfMemoryException")]
+    [Arguments("() => holder.Method()", false, true, "OutOfMemoryException")]
+    public async Task MethodGroupCreationCanBypassCleanup(string methodGroup, bool cleanupInCatch, bool warning,
+        string catchType = "NullReferenceException")
     {
         const string holder = "class Holder { public void Method() { } public static void StaticMethod() { } }";
         await Disposal.VerifyAsync($$"""
@@ -425,7 +474,7 @@ public class ExceptionAwareFlowTests
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { Action action = {{methodGroup}}; result.Dispose(); }
-                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                    catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
             }
             """);
@@ -442,7 +491,7 @@ public class ExceptionAwareFlowTests
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");
                     try { Action action = {{methodGroup}}; await batch.SendAsync(); }
-                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    catch ({{catchType}}) { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
                     Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
                 }
             }
