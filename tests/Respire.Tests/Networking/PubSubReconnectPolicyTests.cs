@@ -32,6 +32,101 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task DiscoveryTelemetryContainsListenerAndLoggerFailures()
+    {
+        var failure = new InvalidOperationException("Injected metric listener failure.");
+        using var logger = new ThrowingTelemetryLogger(failure);
+        using var listener = ThrowOnReconnectMeasurements(6379, failure);
+        var endpoint = new RespireEndpoint("127.0.0.1", 6379);
+
+        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, TimeSpan.Zero, logger);
+        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, null, logger);
+
+        await Assert.That(logger.Failures).IsEqualTo(2);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ThrowingTelemetryAndLoggerDoNotStrandRecoveryStates(bool scoped)
+    {
+        await using var server = new FakeRespServer(2, Confirmation);
+        var failure = new InvalidOperationException("Injected metric listener failure.");
+        using var logger = new ThrowingTelemetryLogger(failure);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
+        {
+            LoggerFactory = logger,
+            ReconnectTelemetryScope = scoped ? "sentinel-monitor" : null,
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        using var listener = ThrowOnReconnectMeasurements(server.Port, failure);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is not null) attempted.TrySetResult();
+            if (change.ReconnectExhausted) exhausted.TrySetResult();
+        };
+
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        await attempted.Task.WaitAsync(deadline.Token);
+        await WaitForCommandsAsync(server, 2, deadline.Token);
+        await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
+        await exhausted.Task.WaitAsync(deadline.Token);
+
+        await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        var states = changes.ToArray();
+        await Assert.That(states.Length).IsEqualTo(2);
+        await Assert.That(states[0].ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(states[0].ReconnectSource).IsEqualTo(scoped
+            ? RespireReconnectSource.SentinelMonitor : RespireReconnectSource.PubSub);
+        await Assert.That(states[1].ReconnectExhausted).IsTrue();
+        await Assert.That(Volatile.Read(ref logger.Failures)).IsEqualTo(2);
+    }
+
+    private static MeterListener ThrowOnReconnectMeasurements(int port, Exception failure)
+    {
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name is
+                "respire.connection.reconnect.attempt" or "respire.connection.reconnect.exhausted")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.port" && Equals(tag.Value, port)) throw failure;
+        });
+        listener.Start();
+        return listener;
+    }
+
+    private sealed class ThrowingTelemetryLogger(Exception failure) : ILoggerFactory, ILogger
+    {
+        internal int Failures;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!ReferenceEquals(exception, failure)) return;
+            Interlocked.Increment(ref Failures);
+            throw new InvalidOperationException("Injected logger failure.");
+        }
+    }
+
+    [Test]
     public async Task InitialHandshakeFailureDoesNotStartRecoveryEpisode()
     {
         await using var server = new FakeRespServer(4, Confirmation) { CloseConnectionAfterCommand = 1 };

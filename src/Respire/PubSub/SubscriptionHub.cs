@@ -677,7 +677,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             catch (Exception error)
             {
-                core.Logger?.LogWarning(error, "Pub/sub recovery metric observer threw");
+                TryLogWarning(error, "Pub/sub recovery metric observer threw");
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.

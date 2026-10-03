@@ -205,7 +205,9 @@ internal static class RespireTelemetry
         catch (Exception error)
         {
             // Meter listeners are user code and must not change discovery or its budget.
-            logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope);
+            try { logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope); }
+            catch (Exception logError) when (logError is not OutOfMemoryException)
+            { /* User loggers must not interrupt discovery or recovery notifications. */ }
         }
     }
 
