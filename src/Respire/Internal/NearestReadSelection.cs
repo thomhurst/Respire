@@ -16,18 +16,18 @@ internal static class NearestReadSelection
 
     /// <summary>
     /// Returns <paramref name="selected"/>, or with Nearest sampling the first socket without an
-    /// unanswered probe. A pending probe excludes only its own socket, so siblings are checked in a
-    /// fixed order (independent of concurrent cursor movement) before the endpoint is skipped.
+    /// unanswered probe or ROLE validation reservation. Either excludes only its own socket, so siblings
+    /// are checked in a fixed order (independent of concurrent cursor movement) before the endpoint is skipped.
     /// </summary>
     internal static RespireConnection? AvoidPendingProbe(RespireConnectionMultiplexer multiplexer, RespireConnection selected,
         ReadLatencySampler<RespireConnection>? sampler, string? preferredZone = null)
     {
-        if (sampler is null || !sampler.HasPendingProbe(selected)) return selected;
+        if (sampler is null || !sampler.IsOccupied(selected)) return selected;
         for (var index = 0; index < multiplexer.ConnectionCount; index++)
         {
             var sibling = preferredZone is null ? multiplexer.GetConnection(index)
                 : multiplexer.GetConnectionForZone(preferredZone, index);
-            if (!ReferenceEquals(sibling, selected) && !sampler.HasPendingProbe(sibling)) return sibling;
+            if (!ReferenceEquals(sibling, selected) && !sampler.IsOccupied(sibling)) return sibling;
         }
         return null;
     }

@@ -32,6 +32,14 @@ internal sealed class ReadLatencySampler<TConnection>(
     internal bool HasPendingProbe(TConnection connection)
         => _samples.TryGetValue(connection, out var sample) && Volatile.Read(ref sample.Pending) is not null;
 
+    /// <summary>
+    /// True while an unanswered probe or a ROLE validation reservation owns this connection's FIFO.
+    /// Selection treats either as occupied, since sampling reports both as <see cref="ReadLatencyResult.Pending"/>.
+    /// </summary>
+    internal bool IsOccupied(TConnection connection)
+        => _samples.TryGetValue(connection, out var sample)
+            && (Volatile.Read(ref sample.Pending) is not null || Volatile.Read(ref sample.Reservation) != 0);
+
     internal bool TryReserveForValidation(TConnection connection, out ValidationReservation reservation)
     {
         reservation = default;

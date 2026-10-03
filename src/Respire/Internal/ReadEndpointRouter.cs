@@ -722,7 +722,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
                 // The socket or its probe state may have changed while acquiring the gate.
                 if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands
-                    || sampler?.HasPendingProbe(selected) == true)
+                    || sampler?.IsOccupied(selected) == true)
                     selected = SelectSocket(_multiplexer, preferredZone, sampler);
                 if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)

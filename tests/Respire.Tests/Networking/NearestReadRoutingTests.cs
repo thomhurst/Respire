@@ -91,6 +91,44 @@ public class NearestReadRoutingTests
     }
 
     [Test]
+    public async Task SiblingSearchSkipsSocketsReservedForRoleValidation()
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var options = Options(primary, replica) with
+        {
+            Connections = 3, ReplicaRefreshInterval = TimeSpan.Zero,
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        var entry = selection.Replica!;
+        var multiplexer = selection.Connection.Multiplexer!;
+        // Validate every physical socket so none needs ROLE during the selections below.
+        for (var index = 0; index < 3; index++) await entry.GetConnectionAsync(deadline.Token);
+        var sockets = Enumerable.Range(0, 3).Select(multiplexer.GetConnection).ToArray();
+        await Assert.That(sockets.Distinct().Count()).IsEqualTo(3);
+        // The fixed-order sibling scan from the pending socket reaches the reserved socket before the idle one.
+        var (stalled, reserved, idle) = (sockets[0], sockets[1], sockets[2]);
+        var stall = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
+            ReferenceEquals(connection, stalled) ? new(stall.Task) : ValueTask.FromResult(10L));
+        await Assert.That(await sampler.GetLatencyAsync(stalled, deadline.Token)).IsEqualTo(ReadLatencyResult.Pending);
+        await Assert.That(sampler.TryReserveForValidation(reserved, out var reservation)).IsTrue();
+        try
+        {
+            using (reservation)
+            {
+                // Every cursor position, including the stalled and reserved sockets, must resolve to the idle sibling.
+                for (var index = 0; index < 6; index++)
+                    await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(idle);
+            }
+        }
+        finally { stall.SetResult(10); }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task PrimarySiblingSocketsAreCheckedBeforeExcludingThePrimary(bool cluster)
