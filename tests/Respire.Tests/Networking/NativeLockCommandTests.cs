@@ -11,7 +11,6 @@ public class NativeLockCommandTests
     [Test]
     [Arguments(0L)]
     [Arguments(-1L)]
-    [Arguments(9999L)]
     [Arguments(long.MinValue)]
     public async Task InvalidRenewalDurationFailsBeforeCapabilityProbing(long ticks)
     {
@@ -24,6 +23,27 @@ public class NativeLockCommandTests
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(1L, 1L)]
+    [Arguments(9999L, 1L)]
+    [Arguments(10000L, 1L)]
+    [Arguments(15000L, 2L)]
+    [Arguments(long.MaxValue, long.MaxValue / TimeSpan.TicksPerMillisecond)]
+    public async Task AcquisitionAndRawRenewalUseTheSameWholeMilliseconds(long ticks, long milliseconds)
+    {
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var expiry = TimeSpan.FromTicks(ticks);
+        var attempt = await client.Locks.AcquireAsync("key", expiry);
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(attempt.Lock.Duration.Ticks).IsEqualTo(milliseconds * TimeSpan.TicksPerMillisecond);
+        await Assert.That(await client.Locks.TryTakeAsync("raw", "owner", expiry)).IsTrue();
+        await Assert.That(await client.Locks.ResetExpiryAsync("raw", "owner", expiry)).IsTrue();
+        await Assert.That(server.ReceivedCommands[0]).EndsWith($" NX PX {milliseconds}");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo($"SET raw owner NX PX {milliseconds}");
+        await Assert.That(server.ReceivedCommands[2]).IsEqualTo($"SET raw owner IFEQ owner PX {milliseconds}");
     }
 
     internal static readonly byte[] UnknownDelex = "-ERR unknown command 'DELEX', with args beginning with: \r\n"u8.ToArray();

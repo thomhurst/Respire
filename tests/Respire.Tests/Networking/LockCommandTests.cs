@@ -203,7 +203,7 @@ public class LockCommandTests
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.Zero))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromTicks(1)))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromTicks(-1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Locks.ReleaseAsync("resource", default(RespireLockToken)))
             .Throws<ArgumentException>();
@@ -227,7 +227,7 @@ public class LockCommandTests
 
         await Assert.That(attempt.Acquired).IsTrue();
         await Assert.That(mutex.Key.ToString()).IsEqualTo("resource");
-        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(30));
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromMilliseconds(30_001));
         await Assert.That(mutex.RemainingEstimate).IsGreaterThan(TimeSpan.Zero);
         await Assert.That(mutex.RemainingEstimate).IsLessThanOrEqualTo(mutex.Duration);
         await Assert.That(mutex.ExpiresAtEstimate).IsGreaterThan(DateTimeOffset.UtcNow);
@@ -239,7 +239,7 @@ public class LockCommandTests
 
         await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
-            $"SET resource {token} NX PX 30000",
+            $"SET resource {token} NX PX 30001",
             $"DELEX resource IFEQ {token}",
         });
     }

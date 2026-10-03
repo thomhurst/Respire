@@ -522,7 +522,7 @@ public sealed class RespireLock : IAsyncDisposable
         }
     }
 
-    private static TimeSpan NormalizeDuration(TimeSpan duration)
+    internal static TimeSpan NormalizeDuration(TimeSpan duration)
     {
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
         if (duration.Ticks % TimeSpan.TicksPerMillisecond > 0
