@@ -245,6 +245,9 @@ internal static partial class ScopeWalker
             // Evaluate children before their parent's write. Each exception sees only writes
             // that have already executed, including writes in earlier call arguments.
             var exceptionSource = operation;
+            var arrayAllocation = operation.Type is IArrayTypeSymbol
+                && operation.Syntax is CollectionExpressionSyntax collection
+                && !collection.Elements.Any(static element => element is SpreadElementSyntax);
             IOperation? initializer = operation switch
             {
                 IObjectCreationOperation creation => creation.Initializer,
@@ -269,7 +272,7 @@ internal static partial class ScopeWalker
             else
             {
                 foreach (var child in operation.ChildOperations)
-                    if (child != initializer)
+                    if (child != initializer && !arrayAllocation)
                         Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
                 // Roslyn lowers conditional stores (including ??=) to assignments
                 // through captured targets. Their setters still run after the RHS.
@@ -289,9 +292,6 @@ internal static partial class ScopeWalker
                 {
                     // Element expressions have their own exception paths. A fixed array
                     // literal itself only allocates; spreads can execute arbitrary code.
-                    var arrayAllocation = exceptionSource.Type is IArrayTypeSymbol
-                        && exceptionSource.Syntax is CollectionExpressionSyntax collection
-                        && !collection.Elements.Any(static element => element is SpreadElementSyntax);
                     Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         arrayAllocation: arrayAllocation), started, known, values);
                 }
@@ -299,6 +299,9 @@ internal static partial class ScopeWalker
             // Construction/allocation can fail before any initializer runs.
             if (initializer is not null)
                 Visit(initializer, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            if (arrayAllocation)
+                foreach (var child in operation.ChildOperations)
+                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
         }
 

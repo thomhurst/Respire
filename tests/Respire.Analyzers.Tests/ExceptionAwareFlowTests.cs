@@ -7,6 +7,46 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("target.Mutate(ref choice)", true)]
+    [Arguments("target.Mutate(out choice)", true)]
+    [Arguments("target.Mutate(choice)", false)]
+    [Arguments("new Holder(target, ref choice)", true)]
+    public async Task DynamicReferenceArgumentsInvalidatePredicates(string call, bool warning)
+    {
+        const string holder = "class Holder { public Holder(object target, ref bool choice) { choice = false; } }";
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, bool choice, dynamic target)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    {{call}};
+                    if (choice) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                async Task Run(RespireClient client, RespirePending<string> existing, bool choice, dynamic target)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = choice ? batch.GetStringAsync("key") : existing;
+                    {{call}};
+                    if (choice) await batch.SendAsync();
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("[1, 2]", "InvalidOperationException", false)]
     [Arguments("[1, 2]", "OutOfMemoryException", true)]
     [Arguments("[Throw()]", "InvalidOperationException", true)]
@@ -383,6 +423,8 @@ public class ExceptionAwareFlowTests
     [Arguments("new bool[] { flag = false }", false)]
     [Arguments("new bool[] { flag = false, Throws() }", true)]
     [Arguments("new Holder() with { Value = (flag = false) }", false)]
+    [Arguments("(bool[])[flag = false]", false)]
+    [Arguments("(bool[])[flag = false, Throws()]", true)]
     public async Task ConstructionExceptionsPrecedeInitializers(string creation, bool warning)
     {
         const string holder = """

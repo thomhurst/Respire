@@ -114,6 +114,16 @@ internal sealed class FlowConditions
             case IArgumentOperation { Parameter.RefKind: not RefKind.None } argument:
                 Invalidate(argument.Value);
                 break;
+            case IDynamicInvocationOperation invocation:
+                for (var index = 0; index < invocation.Arguments.Length; index++)
+                    if (invocation.GetArgumentRefKind(index) is RefKind.Ref or RefKind.Out or RefKind.In)
+                        Invalidate(invocation.Arguments[index]);
+                break;
+            case IDynamicObjectCreationOperation creation:
+                for (var index = 0; index < creation.Arguments.Length; index++)
+                    if (creation.GetArgumentRefKind(index) is RefKind.Ref or RefKind.Out or RefKind.In)
+                        Invalidate(creation.Arguments[index]);
+                break;
             case IAddressOfOperation address:
                 Invalidate(address.Reference);
                 break;
