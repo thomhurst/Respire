@@ -668,6 +668,57 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    public async Task JoinedFailedRecoveryBoundsDisconnectedReplacementConnection()
+    {
+        var clock = new ClusterRecoveryTestClock();
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, Topology(replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true, Connections = 1, ClientName = "joined-recovery",
+            ConnectTimeout = TimeSpan.FromSeconds(30), CommandTimeout = null,
+            ClusterRecoveryClock = clock,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        var source = await router.GetConnectionAsync(100, CancellationToken.None, discovery: null);
+        seed.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            requested.TrySetResult();
+            return true;
+        };
+        replacement.SuppressReply = command =>
+        {
+            if (!command.StartsWith("CLIENT SETNAME ")) return false;
+            connecting.TrySetResult();
+            return true;
+        };
+        var firstError = new RespireServerException("READONLY first slot");
+        var first = router.GetRedirectConnectionAsync(firstError, source, CancellationToken.None, 100, discovery: null).AsTask();
+        await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var joinedError = new RespireServerException("READONLY joined slot");
+        var joined = router.GetRedirectConnectionAsync(joinedError, source, CancellationToken.None, 200, discovery: null).AsTask();
+        var newer = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port));
+        router.SetSlotOwner(200, newer);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await Assert.That(async () => await first.WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireServerException>();
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // An unrelated flight does not spend this slot's recovery budget. Its own
+        // connection attempt must still expire with that budget, not the socket timer.
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var error = await Assert.That(async () => await joined.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        await Assert.That(error).IsSameReferenceAs(joinedError);
+        await Assert.That(newer.IsConnected).IsFalse();
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
