@@ -80,7 +80,7 @@ public class SentinelConfigurationTests
             (candidate, _, _) => ValueTask.FromResult(candidate.PrimaryEndpoint), CancellationToken.None,
             previouslyValidatedPrimary: target, preferredTarget: target, notificationHint: hint);
         await Assert.That(selected.Port).IsEqualTo(target.Port);
-        await Assert.That(SentinelResolver.NormalizeHost(selected.Host)).IsEqualTo(target.Host);
+        await Assert.That(SentinelEndpointIdentity.NormalizeHost(selected.Host)).IsEqualTo(target.Host);
     }
 
     [Test]

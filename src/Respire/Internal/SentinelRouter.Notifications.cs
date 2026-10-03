@@ -43,7 +43,7 @@ internal sealed partial class SentinelRouter
                     var arrivedDuring = Current;
                     if (hint.OldPrimary is { } announcedSource && arrivedDuring?.ValidatedPeer is { } peer
                         && SameEndpoint(arrivedDuring.Endpoint, announcedSource))
-                        hint = hint.WithSourceAddresses(announcedSource, [SentinelResolver.NormalizeHost(peer.Host)]);
+                        hint = hint.WithSourceAddresses(announcedSource, [SentinelEndpointIdentity.NormalizeHost(peer.Host)]);
                     QueueNotificationRediscovery(in hint);
                     if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
                         && !SameEndpoint(arrivedDuring.Endpoint, source))
@@ -69,12 +69,12 @@ internal sealed partial class SentinelRouter
             // its publication. Their overlap cannot identify that peer as the old owner.
             if (!IPAddress.TryParse(oldPrimary.Host, out _))
             {
-                HashSet<string> resolvedTargets = new(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> resolvedTargets = new(SentinelEndpointIdentity.AddressComparer.Instance);
                 foreach (var target in hint.Targets)
                 {
                     if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _)) continue;
                     var targetAddresses = await Monitoring.ResolveAddressesAsync(target.Host, cancellationToken).ConfigureAwait(false);
-                    if (SentinelDiscoveryState.SingleAddress(target, targetAddresses) is { } targetAddress)
+                    if (new SentinelAddressEvidence(target, targetAddresses).SingleAddress is { } targetAddress)
                         resolvedTargets.Add(targetAddress);
                 }
                 if (resolvedTargets.Count > 0)
@@ -84,7 +84,7 @@ internal sealed partial class SentinelRouter
                     var knownPeer = arrivedDuring.ValidatedPeer;
                     addresses = Array.FindAll(addresses, address => !resolvedTargets.Contains(address)
                         || knownPeer is { } peer && peer.Port == oldPrimary.Port
-                            && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(peer.Host)));
+                            && SentinelEndpointIdentity.AddressComparer.Instance.Equals(address, peer.Host));
                     if (addresses.Length == 0) return;
                 }
             }
@@ -365,7 +365,7 @@ internal sealed partial class SentinelRouter
     // fencing and cycle protection below intentionally continue to match any known peer.
     private static bool IsConfirmedTarget(Generation current, RespireEndpoint endpoint)
         => IPAddress.TryParse(endpoint.Host, out var address)
-            && current.Multiplexer.AllCurrentPeersMatch(SentinelResolver.NormalizeAddress(address), endpoint.Port);
+            && current.Multiplexer.AllCurrentPeersMatch(SentinelEndpointIdentity.NormalizeAddress(address), endpoint.Port);
 
     private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses,
         bool allowHostnameIdentity = true)
@@ -374,7 +374,7 @@ internal sealed partial class SentinelRouter
         // A hostname can move behind an established socket. Source matching and explicit
         // cycle protection allow textual identity; target shortcuts require peer evidence.
         if ((allowHostnameIdentity || numeric) && SameEndpoint(current.Endpoint, endpoint)) return true;
-        if (numeric && current.Multiplexer.HasCurrentPeer(SentinelResolver.NormalizeAddress(literal!), endpoint.Port)) return true;
+        if (numeric && current.Multiplexer.HasCurrentPeer(SentinelEndpointIdentity.NormalizeAddress(literal!), endpoint.Port)) return true;
         if (addresses is not null)
             foreach (var address in addresses)
                 if (current.Multiplexer.HasCurrentPeer(address, endpoint.Port)) return true;
@@ -382,6 +382,6 @@ internal sealed partial class SentinelRouter
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)
-        => SentinelDiscoveryState.EndpointComparer.Instance.Equals(left, right);
+        => SentinelEndpointIdentity.EndpointComparer.Instance.Equals(left, right);
 
 }

@@ -7,16 +7,9 @@ internal readonly record struct SentinelHintKey(string Name, RespireEndpoint? Pr
 {
     public bool Equals(SentinelHintKey other)
         => StringComparer.Ordinal.Equals(Name, other.Name)
-            && SameEndpoint(Primary, other.Primary) && SameEndpoint(Peer, other.Peer);
+            && SentinelEndpointIdentity.SameEndpoint(Primary, other.Primary)
+            && SentinelEndpointIdentity.SameEndpoint(Peer, other.Peer);
 
     public override int GetHashCode()
-        => HashCode.Combine(Name, EndpointHashCode(Primary), EndpointHashCode(Peer));
-
-    private static bool SameEndpoint(RespireEndpoint? left, RespireEndpoint? right)
-        => left is { } endpoint
-            ? right is { } other && SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, other)
-            : right is null;
-
-    private static int EndpointHashCode(RespireEndpoint? endpoint)
-        => endpoint is { } value ? SentinelDiscoveryState.EndpointComparer.Instance.GetHashCode(value) : 0;
+        => HashCode.Combine(Name, SentinelEndpointIdentity.EndpointHashCode(Primary), SentinelEndpointIdentity.EndpointHashCode(Peer));
 }

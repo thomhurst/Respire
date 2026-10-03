@@ -9,7 +9,7 @@ internal sealed partial class SentinelDiscoveryState
     internal const int MaximumDiscoveredEndpoints = 64;
     private readonly object _gate = new();
     private readonly List<RespireEndpoint> _endpoints = [];
-    private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
+    private readonly HashSet<RespireEndpoint> _known = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private readonly int _configuredCount;
     // Observe raises the epoch floor before transport/ROLE validation. Commit advances the
     // accepted epoch only after validation. Failed validation never lowers either floor;
@@ -17,7 +17,7 @@ internal sealed partial class SentinelDiscoveryState
     private long? _acceptedEpoch;
     private RespireEndpoint? _observedPrimary;
     private long? _observedEpoch;
-    private string[]? _observedAddresses;
+    private SentinelAddressEvidence _observedEvidence;
     private RespireEndpoint? _observedValidatedPeer;
     private int _missingEpochWarning;
 
@@ -38,23 +38,9 @@ internal sealed partial class SentinelDiscoveryState
         if (_observedEpoch is not { } observed) return true;
         if (epoch is { } candidate && candidate > observed) return true;
         return (epoch is null || epoch == observed) && _observedPrimary is { } current
-            && (EndpointComparer.Instance.Equals(primary, current)
-                || primary.Port == current.Port && SameAddress(primary, current, addresses));
-    }
-
-    private bool SameAddress(RespireEndpoint primary, RespireEndpoint current, string[]? addresses)
-        => SingleAddress(primary, addresses) is { } candidate
-            && SingleAddress(current, _observedAddresses) is { } observed
-            && StringComparer.OrdinalIgnoreCase.Equals(candidate, observed);
-
-    internal static string? SingleAddress(RespireEndpoint endpoint, string[]? addresses)
-    {
-        if (System.Net.IPAddress.TryParse(endpoint.Host, out var literal)) return SentinelResolver.NormalizeAddress(literal);
-        if (addresses is not { Length: > 0 }) return null;
-        var address = SentinelResolver.NormalizeHost(addresses[0]);
-        for (var index = 1; index < addresses.Length; index++)
-            if (!StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(addresses[index]))) return null;
-        return address;
+            && (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, current)
+                || new SentinelAddressEvidence(primary, addresses).ConfirmsSameAddress(
+                    _observedValidatedPeer is { } peer ? new(peer, null) : _observedEvidence));
     }
 
     internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
@@ -69,7 +55,7 @@ internal sealed partial class SentinelDiscoveryState
         {
             _observedEpoch = candidate;
             _observedPrimary = primary;
-            _observedAddresses = addresses;
+            _observedEvidence = new(primary, addresses);
             _observedValidatedPeer = null;
         }
         return true;
@@ -98,15 +84,11 @@ internal sealed partial class SentinelDiscoveryState
                 throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
             if (_observedEpoch is not null && validatedPeer is { } peer)
             {
-                if (_observedValidatedPeer is { } acceptedPeer && !EndpointComparer.Instance.Equals(peer, acceptedPeer))
+                if (_observedValidatedPeer is { } acceptedPeer && !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(peer, acceptedPeer))
                     throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.");
                 // DNS only proposed candidates. ROLE established this physical owner, which
                 // a numeric fallback can confirm even when the original DNS set was ambiguous.
-                if (_observedValidatedPeer is null)
-                {
-                    _observedValidatedPeer = peer;
-                    _observedAddresses = [SentinelResolver.NormalizeHost(peer.Host)];
-                }
+                _observedValidatedPeer ??= peer;
             }
             _acceptedEpoch = epoch ?? _observedEpoch;
         }
@@ -147,15 +129,5 @@ internal sealed partial class SentinelDiscoveryState
         }
         changed.TrySetResult();
         return true;
-    }
-
-    internal sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
-    {
-        internal static readonly EndpointComparer Instance = new();
-        public bool Equals(RespireEndpoint x, RespireEndpoint y)
-            => x.Port == y.Port && StringComparer.OrdinalIgnoreCase.Equals(
-                SentinelResolver.NormalizeHost(x.Host), SentinelResolver.NormalizeHost(y.Host));
-        public int GetHashCode(RespireEndpoint endpoint)
-            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(SentinelResolver.NormalizeHost(endpoint.Host)), endpoint.Port);
     }
 }

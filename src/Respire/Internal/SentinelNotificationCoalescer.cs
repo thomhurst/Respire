@@ -1,25 +1,13 @@
 namespace Respire.Internal;
 
-// Endpoint identity uses EndpointComparer; Addresses are normalized DNS evidence for this
+// Endpoint identity uses SentinelEndpointIdentity; Addresses are DNS evidence for this
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
-internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses);
+internal readonly record struct SentinelSwitchSource(RespireEndpoint Endpoint, string[]? Addresses)
+{
+    internal SentinelAddressEvidence Evidence => new(Endpoint, Addresses);
+}
 internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
     SentinelValidatedPrimary? OwnerAtObservation = null);
-
-internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
-{
-    internal bool Matches(RespireEndpoint candidate, string[]? addresses)
-    {
-        // Fresh DNS evidence takes precedence over the hostname: its owner may have changed
-        // since ROLE validated the retained peer. Ambiguous address sets cannot confirm it.
-        if (Peer is { } peer && (addresses is { Length: > 0 }
-            || System.Net.IPAddress.TryParse(candidate.Host, out _)))
-            return peer.Port == candidate.Port
-                && SentinelDiscoveryState.SingleAddress(candidate, addresses) is { } address
-                && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(peer.Host));
-        return SentinelDiscoveryState.EndpointComparer.Instance.Equals(Endpoint, candidate);
-    }
-}
 
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
 internal readonly record struct SentinelHint(
@@ -73,7 +61,7 @@ internal readonly record struct SentinelHint(
             {
                 var isSource = false;
                 foreach (var source in Sources)
-                    if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)) { isSource = true; break; }
+                    if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, target)) { isSource = true; break; }
                 if (isSource) continue;
                 if (result is not null) return null;
                 result = target;
@@ -89,8 +77,8 @@ internal readonly record struct SentinelHint(
         for (var index = 0; index < Sources.Length; index++)
         {
             var source = Sources[index];
-            if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
-            if (source.Addresses is { } known && known.AsSpan().SequenceEqual(addresses)) return this;
+            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
+            if (source.Evidence.HasSameAddresses(addresses)) return this;
             var sources = (SentinelSwitchSource[])Sources.Clone();
             sources[index] = source with { Addresses = addresses };
             return this with { Sources = sources };
@@ -180,8 +168,8 @@ internal sealed class SentinelNotificationCoalescer
     private static bool SameSwitch(in SentinelHint left, in SentinelHint right)
         => left.Sources.Length == 1 && right.Sources.Length == 1
             && left.Targets.Length == 1 && right.Targets.Length == 1
-            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(left.Sources[0].Endpoint, right.Sources[0].Endpoint)
-            && SentinelDiscoveryState.EndpointComparer.Instance.Equals(left.Targets[0], right.Targets[0]);
+            && SentinelEndpointIdentity.EndpointComparer.Instance.Equals(left.Sources[0].Endpoint, right.Sources[0].Endpoint)
+            && SentinelEndpointIdentity.EndpointComparer.Instance.Equals(left.Targets[0], right.Targets[0]);
 
     private bool HasNewReporter(in SentinelHint hint)
     {
@@ -196,7 +184,7 @@ internal sealed class SentinelNotificationCoalescer
     private static bool ContainsReporter(SentinelHint? hint, RespireEndpoint reporter)
     {
         if (hint is not { } value) return false;
-        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        var comparer = SentinelEndpointIdentity.EndpointComparer.Instance;
         foreach (var endpoint in value.Reporters)
             if (comparer.Equals(endpoint, reporter)) return true;
         return false;
@@ -230,7 +218,7 @@ internal sealed class SentinelNotificationCoalescer
     private static SentinelDownReport[] UnionDownReports(SentinelDownReport[] first, SentinelDownReport[] second)
     {
         List<SentinelDownReport>? result = null;
-        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
+        var comparer = SentinelEndpointIdentity.EndpointComparer.Instance;
         foreach (var report in second)
         {
             var found = false;
@@ -254,7 +242,7 @@ internal sealed class SentinelNotificationCoalescer
     {
         foreach (var target in targets)
             foreach (var source in sources)
-                if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, source.Endpoint)) return true;
+                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(target, source.Endpoint)) return true;
         return false;
     }
 
@@ -262,12 +250,12 @@ internal sealed class SentinelNotificationCoalescer
     {
         if (first.Length == 0) return second;
         if (second.Length == 0 || ReferenceEquals(first, second)) return first;
-        var sources = new Dictionary<RespireEndpoint, string[]?>(SentinelDiscoveryState.EndpointComparer.Instance);
+        var sources = new Dictionary<RespireEndpoint, string[]?>(SentinelEndpointIdentity.EndpointComparer.Instance);
         foreach (var source in first.Concat(second))
         {
             if (!sources.TryGetValue(source.Endpoint, out var known)) sources.Add(source.Endpoint, source.Addresses);
             else if (source.Addresses is { } addresses)
-                sources[source.Endpoint] = (known ?? []).Union(addresses, StringComparer.OrdinalIgnoreCase).ToArray();
+                sources[source.Endpoint] = (known ?? []).Union(addresses, SentinelEndpointIdentity.AddressComparer.Instance).ToArray();
         }
         return sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray();
     }
@@ -288,7 +276,7 @@ internal sealed class SentinelNotificationCoalescer
             if (first.Length == 0) return second;
             if (second.Length == 0 || ContainsAll(first, second)) return first;
         }
-        var seen = new HashSet<RespireEndpoint>(SentinelDiscoveryState.EndpointComparer.Instance);
+        var seen = new HashSet<RespireEndpoint>(SentinelEndpointIdentity.EndpointComparer.Instance);
         if (excluded is { } endpoint) seen.Add(endpoint);
         var result = new List<RespireEndpoint>();
         Add(first);
@@ -308,7 +296,7 @@ internal sealed class SentinelNotificationCoalescer
         {
             var found = false;
             foreach (var endpoint in first)
-                if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, candidate)) { found = true; break; }
+                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, candidate)) { found = true; break; }
             if (!found) return false;
         }
         return true;
@@ -351,7 +339,7 @@ internal sealed class SentinelNotificationCoalescer
             {
                 var unqueriedReporters = next.Reporters
                     .Where(reporter => activeHint.ReportingSentinel is not { } activeReporter
-                        || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
+                        || !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
                 if (unqueriedReporters.Length > 0)
                 {
@@ -374,7 +362,7 @@ internal sealed class SentinelNotificationCoalescer
                 // not contribute a contradictory fence against that pending target.
                 if (next.Target is { } pendingTarget)
                     unqueried = unqueried with { Sources = unqueried.Sources.Where(source =>
-                        !SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToArray() };
+                        !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToArray() };
                 next = Merge(unqueried, in next);
                 next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
@@ -413,12 +401,10 @@ internal sealed class SentinelNotificationCoalescer
 
     private static bool MatchesValidatedSource(RespireEndpoint primary, RespireEndpoint? peer, SentinelSwitchSource source)
     {
-        if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, source.Endpoint)) return true;
+        if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, source.Endpoint)) return true;
         // Demotion matching is conservative, but consuming its fence requires unambiguous
         // identity. A DNS set containing several servers does not identify the validated one.
-        return peer is { } validated && source.Endpoint.Port == validated.Port
-            && SentinelDiscoveryState.SingleAddress(source.Endpoint, source.Addresses) is { } address
-            && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(validated.Host));
+        return peer is { } validated && source.Evidence.ConfirmsPeer(validated);
     }
 
     /// <summary>Discards superseded active evidence while retaining hints offered during its discovery.</summary>
