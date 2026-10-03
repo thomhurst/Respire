@@ -235,7 +235,7 @@ internal sealed partial class SentinelRouter
                 // primary from another reporter describing the outage already being recovered.
                 var downKey = sentinelEvent.OldPrimary is { } down
                     ? $"{_masterDownKey}:{SentinelResolver.NormalizeHost(down.Host).ToUpperInvariant()}:{down.Port}" : _masterDownKey;
-                QueueNotificationRediscovery(SentinelHint.FromDown(downKey, sentinel));
+                QueueNotificationRediscovery(SentinelHint.FromDown(downKey, sentinel, sentinelEvent.OldPrimary));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);

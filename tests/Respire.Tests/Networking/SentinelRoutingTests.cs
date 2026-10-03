@@ -987,10 +987,13 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments("primary.example", "primary.example")]
-    [Arguments("PRIMARY.example", "primary.EXAMPLE")]
-    [Arguments("::ffff:127.0.0.1", "127.0.0.1")]
-    public async Task SameOutageFromAnotherReporterCannotUndoPromotion(string firstHost, string secondHost)
+    [Arguments("localhost", "localhost", false)]
+    [Arguments("LOCALHOST", "localHOST", false)]
+    [Arguments("::ffff:127.0.0.1", "127.0.0.1", false)]
+    [Arguments("localhost", "localhost", true)]
+    [Arguments("LOCALHOST", "localHOST", true)]
+    [Arguments("::ffff:127.0.0.1", "127.0.0.1", true)]
+    public async Task SameOutageFromAnotherReporterCannotUndoPromotion(string firstHost, string secondHost, bool delayed)
     {
         await using var original = Primary();
         await using var promoted = Primary();
@@ -1000,13 +1003,22 @@ public class SentinelRoutingTests
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
-            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
-                ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+            sentinel.ReplyOverride = (id, command) =>
+            {
+                if (command == "SENTINEL MASTER mymaster") return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+                var reportedPort = ReferenceEquals(sentinel, first) ? Volatile.Read(ref firstPort) : original.Port;
+                if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" && reportedPort == original.Port
+                    && firstHost.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                    return AddressReply("localhost", original.Port);
+                return reply(id, command);
+            };
         }
-        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        await using var client = RespireClient.Create(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+        client.Core.Sentinel!.HostResolver = static (_, _) => Task.FromResult(new[] { IPAddress.Loopback });
+        await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second);
         var firstMonitor = first.ReceivedCommands.ToList()
@@ -1026,17 +1038,75 @@ public class SentinelRoutingTests
         await WaitForCommandCountAsync(first, query, firstQueries + 1);
         var blockedConnection = first.ReceivedConnectionIds[^1];
         var worker = router.NotificationRediscovery!;
+        if (delayed)
+        {
+            first.SuppressReply = null;
+            await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
+            await worker.WaitAsync(Limit);
+            await Assert.That(router.NotificationRediscovery).IsNull();
+        }
         await SendSentinelMessageAsync(second, second.ReceivedConnectionIds[secondMonitor], "+odown",
             $"master mymaster {secondHost} {original.Port} #quorum 2/2");
         await WaitForQueuedNotificationsAsync(router, queued + 2);
 
         // The second Sentinel still names the old server, which still answers ROLE master.
         // Equivalent outage identities must reconcile without undoing the first publication.
-        first.SuppressReply = null;
-        await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
-        await worker.WaitAsync(Limit);
+        if (!delayed)
+        {
+            first.SuppressReply = null;
+            await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
+            await worker.WaitAsync(Limit);
+        }
+        else if (router.NotificationRediscovery is { } delayedWorker) await delayedWorker.WaitAsync(Limit);
         await Assert.That(second.ReceivedCommands.Count(command => command == query)).IsGreaterThan(secondQueries);
         await Assert.That(client.Endpoint.Port).IsEqualTo(promoted.Port);
+
+        // A later outage of B can legitimately fail back to A without epoch metadata.
+        Volatile.Write(ref firstPort, original.Port);
+        await SendSentinelMessageAsync(first, first.ReceivedConnectionIds[firstMonitor], "+sdown",
+            $"master mymaster 127.0.0.1 {promoted.Port}");
+        await WaitForEndpointAsync(client, original.Port);
+        if (router.NotificationRediscovery is { } failback) await failback.WaitAsync(Limit);
+        // A recurring A outage is fresh after failback; old outage identity must not fence B.
+        Volatile.Write(ref firstPort, promoted.Port);
+        await SendSentinelMessageAsync(first, first.ReceivedConnectionIds[firstMonitor], "+sdown",
+            $"master mymaster {firstHost} {original.Port}");
+        await WaitForEndpointAsync(client, promoted.Port);
+    }
+
+    [Test]
+    public async Task DownReportQueuedDuringPublicationCanDescribeTheNextOutage()
+    {
+        await using var original = Primary();
+        await using var intermediate = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var monitor = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var monitorConnection = sentinel.ReceivedConnectionIds[monitor];
+        var router = client.Core.Sentinel!;
+        var queued = QueuedNotificationCount(router);
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var queries = sentinel.ReceivedCommands.Count(command => command == query);
+        sentinel.SuppressReply = command => command == query;
+        Volatile.Write(ref port, intermediate.Port);
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown",
+            $"master mymaster 127.0.0.1 {original.Port}");
+        await WaitForCommandCountAsync(sentinel, query, queries + 1);
+        var blockedConnection = sentinel.ReceivedConnectionIds[^1];
+        await SendSentinelMessageAsync(sentinel, monitorConnection, "+sdown",
+            $"master mymaster 127.0.0.1 {intermediate.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
+        Volatile.Write(ref port, promoted.Port);
+        sentinel.SuppressReply = null;
+        await sentinel.SendRawAsync(AddressReply(intermediate.Port), blockedConnection);
+        await WaitForEndpointAsync(client, promoted.Port);
     }
 
     [Test]
@@ -1428,9 +1498,8 @@ public class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
-        var unreachable = new FakeRespServer();
+        using var unreachable = new ReservedUnavailablePort();
         var deadPort = unreachable.Port;
-        await unreachable.DisposeAsync();
         var logger = new MonitorExhaustionLogger(deadPort);
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
@@ -1468,15 +1537,15 @@ public class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
-        await using var unreachable = new FakeRespServer(64, FakeRespServer.OkReply);
-        var deadPort = unreachable.Port;
-        if (closesBeforeSubscriptionAck)
+        using var refused = closesBeforeSubscriptionAck ? null : new ReservedUnavailablePort();
+        await using var unreachable = closesBeforeSubscriptionAck ? new FakeRespServer(64, FakeRespServer.OkReply) : null;
+        var deadPort = refused?.Port ?? unreachable!.Port;
+        if (unreachable is not null)
             unreachable.ReplyOverride = (id, command) =>
             {
                 if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) unreachable.CloseConnection(id);
                 return FakeRespServer.OkReply;
             };
-        else await unreachable.DisposeAsync();
         var logger = new MonitorExhaustionLogger(deadPort);
         // A distinctive delay identifies the dead monitor's retry timer on the gated clock.
         var retryDelay = TimeSpan.FromSeconds(7);
@@ -1716,6 +1785,7 @@ public class SentinelRoutingTests
     {
         private int _exhaustions;
         private int _resumptions;
+        private readonly ConcurrentQueue<string> _events = new();
         internal int Resumptions => Volatile.Read(ref _resumptions);
         internal int Exhaustions => Volatile.Read(ref _exhaustions);
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
@@ -1728,6 +1798,7 @@ public class SentinelRoutingTests
         {
             var message = formatter(state, exception);
             if (!message.Contains(":" + port, StringComparison.Ordinal)) return;
+            _events.Enqueue(exception is null ? message : $"{message}: {exception}");
             if (message.StartsWith("Sentinel event monitor exhausted reconnect attempts", StringComparison.Ordinal))
                 Interlocked.Increment(ref _exhaustions);
             else if (message.StartsWith("Sentinel event monitor at", StringComparison.Ordinal)
@@ -1738,13 +1809,17 @@ public class SentinelRoutingTests
         internal async Task WaitForExhaustionsAsync(int count)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            while (Volatile.Read(ref _exhaustions) < count) await Task.Delay(10, timeout.Token);
+            try { while (Volatile.Read(ref _exhaustions) < count) await Task.Delay(10, timeout.Token); }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            { throw new TimeoutException($"Expected {count} exhaustions; observed {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}"); }
         }
 
         internal async Task WaitForResumptionsAsync(int count)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            while (Volatile.Read(ref _resumptions) < count) await Task.Delay(10, timeout.Token);
+            try { while (Volatile.Read(ref _resumptions) < count) await Task.Delay(10, timeout.Token); }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            { throw new TimeoutException($"Expected {count} resumptions; observed {Resumptions}, exhaustions {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}"); }
         }
     }
 

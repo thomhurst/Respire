@@ -30,14 +30,27 @@ internal readonly record struct SentinelHint(
     // One reported outage, independent of reporter and changing quorum counts. Null means
     // mixed or non-down evidence, which cannot be classified as another report of this outage.
     internal string? DownKey { get; init; }
+    // Nonempty only when all merged evidence consists of parsed master-down reports.
+    // Unlike DownKey, this survives reports for several different affected endpoints.
+    internal RespireEndpoint[] DownPrimaries { get; init; } = [];
+
+    internal SentinelHint BindSupersededDownReports(SentinelValidatedPrimary current)
+    {
+        if (DownPrimaries.Length == 0 || ReconciliationPrimary is not null) return this;
+        foreach (var primary in DownPrimaries)
+            if (current.Matches(primary, null)) return this;
+        // A report about another owner cannot authorize metadata-free rollback. It can
+        // confirm the current peer or establish a genuinely newer configuration epoch.
+        return this with { ReconciliationPrimary = current };
+    }
 
     internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
         RespireEndpoint? target, RespireEndpoint reporter)
         => new(key, target is { } to ? [to] : [],
             source is { } from ? [new(from, null)] : [], [reporter], target is null);
 
-    internal static SentinelHint FromDown(string key, RespireEndpoint reporter)
-        => new(key, [], [], [reporter], true) { DownKey = key };
+    internal static SentinelHint FromDown(string key, RespireEndpoint reporter, RespireEndpoint? primary = null)
+        => new(key, [], [], [reporter], true) { DownKey = key, DownPrimaries = primary is { } affected ? [affected] : [] };
 
     internal static SentinelHint FromGap(RespireEndpoint reporter)
         => new("gap", [], [], [reporter], true);
@@ -197,6 +210,8 @@ internal sealed class SentinelNotificationCoalescer
             // An independent wake-up remains independent even when its key duplicates an
             // active reconciliation pass. Only two reconciliation-only hints retain a bound.
             DownKey = previous.DownKey == hint.DownKey ? hint.DownKey : null,
+            DownPrimaries = previous.DownPrimaries.Length > 0 && hint.DownPrimaries.Length > 0
+                ? UnionEndpoints(previous.DownPrimaries, hint.DownPrimaries) : [],
             ReconciliationPrimary = sources.Length == 0 && previous.ReconciliationPrimary is not null
                 ? hint.ReconciliationPrimary : null,
         };

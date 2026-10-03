@@ -199,6 +199,29 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    public async Task DownReportBindingRetainsMixedOutagesButAllowsCurrentOutagesAndGaps()
+    {
+        var current = new SentinelValidatedPrimary(NewPrimary, NewPrimary);
+        var first = SentinelHint.FromDown("old-down", OldPrimary, OldPrimary);
+        var other = SentinelHint.FromDown("other-down", OldPrimary, new("10.0.0.3", 6379));
+        var merged = SentinelNotificationCoalescer.Merge(first, in other);
+        await Assert.That(merged.DownKey).IsNull();
+        await Assert.That(merged.DownPrimaries.Length).IsEqualTo(2);
+        await Assert.That(merged.BindSupersededDownReports(current).ReconciliationPrimary).IsEqualTo(current);
+
+        var currentDown = SentinelHint.FromDown("current-down", OldPrimary, NewPrimary);
+        var withCurrent = SentinelNotificationCoalescer.Merge(merged, in currentDown);
+        await Assert.That(withCurrent.BindSupersededDownReports(current).ReconciliationPrimary).IsNull();
+        var gap = SentinelHint.FromGap(OldPrimary);
+        var withGap = SentinelNotificationCoalescer.Merge(merged, in gap);
+        await Assert.That(withGap.DownPrimaries).IsEmpty();
+        await Assert.That(withGap.BindSupersededDownReports(current).ReconciliationPrimary).IsNull();
+
+        var duplicate = SentinelNotificationCoalescer.Merge(first, in first);
+        await Assert.That(ReferenceEquals(duplicate.DownPrimaries, first.DownPrimaries)).IsTrue();
+    }
+
+    [Test]
     public async Task DuplicateWakeupsReuseEvidenceAndAddressUpdatesPreserveUnchangedSources()
     {
         var hint = SentinelHint.FromDown("down", OldPrimary);
