@@ -2193,7 +2193,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         bool keepUncoveredOwners = false,
         long? expectedTopologyVersion = null,
         object? snapshotBatch = null,
-        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null)
+        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null,
+        RespireConnection? queryConnection = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -2207,7 +2208,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _options.CommandTimeout ?? _options.ConnectTimeout);
         try
         {
-            var reply = await seed.GetConnection().SendAsync(
+            var reply = await (queryConnection ?? seed.GetConnection()).SendAsync(
                 new Cmd(Verbs.ClusterSlots), timeoutSource.Token).ConfigureAwait(false);
             try
             {
@@ -2366,6 +2367,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         var smigratedWorker = CloseSmigratedWorker();
         _stopRetirement.Cancel();
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
+        if (Volatile.Read(ref NearestLatency) is { } latency) await latency.DisposeAsync().ConfigureAwait(false);
         _smigratedNotifications.Writer.TryComplete();
         Task? refreshWorker;
         lock (_topologyRefreshWorkerGate) refreshWorker = Volatile.Read(ref _topologyRefreshWorker);

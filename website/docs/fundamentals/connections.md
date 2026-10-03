@@ -483,6 +483,54 @@ transactions stay on the primary. `Replica` fails when no validated replica is a
 `PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
 uses the primary when replica selection fails.
 
+### Nearest reads
+
+`RespireReadFrom.Nearest` selects the lowest measured latency among eligible primary and replica
+connections. It works with configured replica endpoints, Sentinel, and Redis Cluster slot routes.
+Writes and unknown commands retain primary routing. Like other replica-capable policies,
+Nearest can return stale data and does not guarantee read-your-writes consistency. Its views
+bypass the primary tracking cache, and cursor reads keep their original endpoint.
+
+Measurements use advisory `PING` commands on the physical connections that can serve the read.
+Each router starts at most four probes concurrently, with no waiting probe queue. Each connection
+starts at most one probe per second. All candidates and any topology retry share one second of
+sampling wait time per selection. Connection establishment retains its configured timeout. A probe
+that exceeds this budget still occupies its probe slot until its reply or connection failure:
+Respire does not queue repeated PINGs behind a stalled one, even with `CommandTimeout = null`.
+Sampling happens only
+when Nearest reads request it; ordinary Primary reads create no sampler and send no sampling PINGs.
+The first successful sample establishes the estimate. Later samples use one quarter of the new
+measurement and three quarters of the previous estimate to reduce jitter.
+
+A sample younger than ten seconds can serve selection immediately while a refresh runs in the
+background. A cold or expired sample waits for an available shared probe within the selection's
+remaining sampling budget. Caller cancellation
+stops that caller's wait without canceling the shared probe. When all probe slots are busy,
+unsampled candidates remain eligible with unknown latency. Measured candidates take precedence
+over unknown candidates; equal estimates, or entirely unknown estimates, rotate selection order.
+PING failure or ACL denial removes the estimate without disqualifying an otherwise healthy,
+role-validated connection. Connection failures use a cooldown before retrying; configured and
+Sentinel replica cooldowns follow `ReplicaRefreshInterval`, while primary and Cluster candidate
+cooldowns last one second. Replaced physical connections start with fresh estimates, and removed
+candidates cannot win a new selection. Existing connection draining and command replay rules apply.
+
+When a healthy primary is available, initial Sentinel or Cluster replica discovery runs in the
+background. Reads can use that primary until replicas are known. Cluster replica refresh uses
+temporary topology connections once Nearest sampling is active, so a stalled `CLUSTER SLOTS`
+reply does not block the primary's data connection. Shared discovery still coalesces requests and
+applies the existing refresh throttles and topology version checks.
+Each uncovered Cluster slot keeps its own background waiter, so a partial reply for another
+slot does not suppress its discovery. If cached Sentinel or Cluster candidates all fail, selection
+joins a pending or due refresh and retries once before reporting failure. This retry includes
+endpoints that recovered without changing address. A concurrent topology publication also gets
+one retry when it replaces every captured candidate, under the original sampling budget.
+Healthy cached candidates continue serving reads while that refresh runs.
+
+PING round-trip time includes local connection queues, server scheduling, and network delay.
+It does not measure geographic distance, replication lag, or the execution time of a particular
+read. Configured and Sentinel candidates still follow the replication-link preference described
+below, before comparing latency. Zone affinity is separate from this policy.
+
 Fallback happens only while a connection is being selected. Once a command has been written to a
 replica or the primary, a failure is returned to the caller and the command is not sent again,
 matching the rest of Respire: a command accepted by a failed connection is never replayed.

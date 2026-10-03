@@ -118,6 +118,8 @@ public class ClusterTests
     [Arguments(RespireReadFrom.Replica, false)]
     [Arguments(RespireReadFrom.ReplicaPreferred, false)]
     [Arguments(RespireReadFrom.Replica, true)]
+    [Arguments(RespireReadFrom.Nearest, false)]
+    [Arguments(RespireReadFrom.Nearest, true)]
     public async Task ReadFrom_BatchPreservesPrimaryCacheUnlessItContainsWrite(RespireReadFrom policy, bool includeWrite)
     {
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -136,6 +138,9 @@ public class ClusterTests
         });
         await client.GetStringAsync("cached");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         using var batch = client.WithReadFrom(policy).CreateBatch();
         var read = batch.Strings.GetString("key");
         if (includeWrite) _ = batch.Strings.Set("key", "value");
@@ -845,6 +850,44 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ReadFrom_ReplicaSelectionRetriesPublishedRoutesWhileOldRefreshIsThrottled()
+    {
+        await using var oldReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command == "READONLY",
+        };
+        await using var newReplica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ") ? "$3\r\nnew\r\n"u8.ToArray() : null,
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(5),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        var router = client.Core.Cluster!;
+        void Publish(int port, long generation) => router.ApplyTopology(
+            [new ClusterTopologyRange(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
+            {
+                Replicas = [new(new("127.0.0.1", port), "replica", [])],
+            }], router.TopologyVersion, generation);
+        Publish(oldReplica.Port, 1);
+        var slot = ClusterHash.GetSlot("key");
+        // Freeze the old set's throttle so scheduler delays cannot reopen its refresh budget.
+        var oldRoutes = new ClusterReplicaSet(ReplicaRoutes(client)[slot]!.Nodes, TimeSpan.FromMinutes(1), () => 0);
+        ReplicaRoutes(client)[slot] = oldRoutes;
+        await oldRoutes.JoinOrStartRefresh(() => Task.CompletedTask)!;
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        var read = reads.Strings.GetStringAsync("key").AsTask();
+        await WaitForCommandsAsync(oldReplica, 1);
+        Publish(newReplica.Port, 2);
+        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("new");
+        await Assert.That(oldReplica.ReceivedCommands).DoesNotContain("GET key");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadFrom_MigrationReplicaCoverageDropsSourceRoutes(bool entireRange)
@@ -1459,9 +1502,11 @@ public class ClusterTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry(bool partial)
+    [Arguments(false, RespireReadFrom.Replica)]
+    [Arguments(true, RespireReadFrom.Replica)]
+    [Arguments(false, RespireReadFrom.Nearest)]
+    [Arguments(true, RespireReadFrom.Nearest)]
+    public async Task ReadFrom_MovedRefreshesReplicaRoutesBeforeRetry(bool partial, RespireReadFrom policy)
     {
         var key = "{moved}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1488,7 +1533,10 @@ public class ClusterTests
 
         var otherSlot = (slot + 1) % ClusterHash.SlotCount;
         var otherRoutes = ReplicaRoutes(client)[otherSlot];
-        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica)
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == oldReplica.Port || connection.Port == newReplica.Port ? 10L : 100L));
+        await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("replicated");
         if (partial) await Assert.That(ReplicaRoutes(client)[otherSlot]).IsSameReferenceAs(otherRoutes);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
@@ -1640,7 +1688,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_StrictReplicaFailsOnAskWhilePreferredFollowsIt()
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    [Arguments(RespireReadFrom.Nearest)]
+    public async Task ReadFrom_StrictReplicaFailsOnAskWhilePreferredFollowsIt(RespireReadFrom policy)
     {
         var key = "{asked}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1665,7 +1715,10 @@ public class ClusterTests
         await Assert.That(error!.Message).Contains("ASK");
         await Assert.That(importing.ReceivedCommands).IsEmpty();
 
-        await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
+        if (policy == RespireReadFrom.Nearest)
+            client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
+                ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("importing");
         await Assert.That(importing.ReceivedCommands).IsEquivalentTo(["ASKING", $"GET {key}"]);
     }

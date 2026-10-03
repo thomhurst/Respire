@@ -363,7 +363,7 @@ public sealed record RespireOptions
         if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
 
-        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, or ReplicaPreferred");
+        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, ReplicaPreferred, or Nearest");
         Require(
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),

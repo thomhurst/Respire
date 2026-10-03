@@ -39,6 +39,8 @@ internal sealed partial class ClusterRouter
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(
         int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        if (readFrom == RespireReadFrom.Nearest)
+            return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
         if (readFrom is RespireReadFrom.PrimaryPreferred)
         {
             try
@@ -210,7 +212,7 @@ internal sealed partial class ClusterRouter
             try
             {
                 if (await FirstSuccessfulReplicaProbeAsync(attempts).ConfigureAwait(false)) return;
-                if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, error: null);
+                if (!refreshRound.PublishEmpty(this)) LogReplicaRefreshFailure(slot, refreshRound.Failure);
             }
             finally
             {
@@ -258,6 +260,18 @@ internal sealed partial class ClusterRouter
     {
         try
         {
+            if (Volatile.Read(ref NearestLatency) is not null)
+            {
+                // Nearest can serve a healthy primary while this advisory discovery is pending.
+                // Do not put CLUSTER SLOTS ahead of its reads in the data connection's FIFO.
+                await using var connection = await RespireConnection.ConnectAsync(node.Host, node.Port,
+                    _options.ToConnectionOptions(), _logger, cancellationToken).ConfigureAwait(false);
+                var load = await TryLoadSlotsAsync(node, cancellationToken,
+                    expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: refreshRound.SnapshotBatch,
+                    keepUncoveredOwners: true, requiredSlot: slot, replicaRefresh: refreshRound,
+                    queryConnection: connection).ConfigureAwait(false);
+                return load.Loaded && load.CoversRequiredSlot;
+            }
             return await TryRefreshTopologyAsync(node, cancellationToken, discovery: null,
                 expectedTopologyVersion, refreshRound.SnapshotBatch, keepUncoveredOwners: true, requiredSlot: slot,
                 replicaRefresh: refreshRound).ConfigureAwait(false);
@@ -265,6 +279,11 @@ internal sealed partial class ClusterRouter
         catch (Exception error) when (cancellationToken.IsCancellationRequested
             && (error is OperationCanceledException || IsDiscoveryFailure(error)))
         {
+            return false;
+        }
+        catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery: null))
+        {
+            refreshRound.RecordFailure(error);
             return false;
         }
     }

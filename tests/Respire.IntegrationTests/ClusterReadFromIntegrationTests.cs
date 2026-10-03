@@ -7,9 +7,11 @@ namespace Respire.IntegrationTests;
 public class ClusterReadFromIntegrationTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ReplicaReadsObserveUpdatesAndExpiry(RespProtocol protocol)
+    [Arguments(RespProtocol.Resp2, RespireReadFrom.Replica)]
+    [Arguments(RespProtocol.Resp3, RespireReadFrom.Replica)]
+    [Arguments(RespProtocol.Resp2, RespireReadFrom.Nearest)]
+    [Arguments(RespProtocol.Resp3, RespireReadFrom.Nearest)]
+    public async Task ReplicaReadsObserveUpdatesAndExpiry(RespProtocol protocol, RespireReadFrom policy)
     {
         await using var cluster = await RedisReadReplicaClusterTestContainer.StartAsync();
         var slots = await cluster.ClusterSlotsAsync();
@@ -21,7 +23,7 @@ public class ClusterReadFromIntegrationTests
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         var key = $"{{read-from-{Guid.NewGuid():N}}}:value";
-        var replica = client.WithReadFrom(RespireReadFrom.Replica);
+        var replica = client.WithReadFrom(policy);
 
         await client.Strings.SetAsync(key, "first");
         try
