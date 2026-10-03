@@ -7,6 +7,88 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("var holder = new Holder();", "", false)]
+    [Arguments("var holder = input; if (holder is null) return;", "", false)]
+    [Arguments("var holder = input; if (holder is not Holder) return;", "", false)]
+    [Arguments("var holder = input; if (holder == null) return;", "", false)]
+    [Arguments("var holder = new Holder();", "holder = null;", true)]
+    [Arguments("var holder = input; if (holder is null) return;", "holder = null;", true)]
+    [Arguments("var holder = new Holder();", "Reset(ref holder);", true)]
+    [Arguments("var holder = new Holder();", "Action reset = () => holder = null; reset();", true)]
+    [Arguments("var holder = new Holder();", "", false, "holder.Take(result);")]
+    [Arguments("var holder = input; if (holder is null) return;", "", false, "holder.Value = result;")]
+    public async Task NonNullReceiverAllowsOwnershipTransfer(string setup, string mutation, bool warning, string transfer = "holder.Field = result;")
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder
+            {
+                public RespireResult Field;
+                public RespireResult Value { set { value.Dispose(); } }
+                public void Take(RespireResult result) => result.Dispose();
+            }
+            class Caller
+            {
+                static void Reset(ref Holder holder) => holder = null;
+                async Task Run(RespireClient client, Holder input)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    {{mutation}}
+                    try { {{transfer}} }
+                    catch (NullReferenceException) { }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("_ = values[0];", "InvalidOperationException", false)]
+    [Arguments("_ = values[0];", "ArrayTypeMismatchException", false)]
+    [Arguments("_ = values[0];", "NullReferenceException", true)]
+    [Arguments("_ = values[0];", "IndexOutOfRangeException", true)]
+    [Arguments("_ = values[0];", "Exception", true)]
+    [Arguments("values[0] = new object();", "ArrayTypeMismatchException", true)]
+    [Arguments("_ = values[Index()];", "InvalidOperationException", true)]
+    public async Task ArrayAccessUsesSpecificExceptions(string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Index() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, object[] values)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Index() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, object[] values)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("holder.Value = result;", "NullReferenceException", true)]
     [Arguments("holder.Field = result;", "NullReferenceException", true)]
     [Arguments("buffer[index] = result;", "IndexOutOfRangeException", true)]

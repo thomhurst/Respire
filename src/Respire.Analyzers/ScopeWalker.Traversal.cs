@@ -28,7 +28,7 @@ internal static partial class ScopeWalker
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
         private readonly List<CatchDispatch?> _dispatches = [null];
-        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool AllocationOnly), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool AllocationOnly, string? ExceptionType), int> _dispatchIds = new();
         private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
         private readonly Dictionary<IOperation, bool> _throwingOperations = new();
         private readonly Stack<SearchState> _pending = new();
@@ -327,7 +327,7 @@ internal static partial class ScopeWalker
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks and dynamic binding happen before the callee accepts ownership.
             var transferFailure = operation.Syntax.Span.End - 1 == firstBarrier
-                ? GetTransferFailure(operation) : TransferFailure.None;
+                ? GetTransferFailure(operation, known, values) : TransferFailure.None;
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
@@ -338,9 +338,20 @@ internal static partial class ScopeWalker
                     Dispatch(_dispatches[dispatch]!.Next, started, known, values);
                 else if (block.FallThroughSuccessor is { } successor)
                 {
-                    // Elements and arguments have their own exception paths. Fixed arrays
-                    // and simple framework exception constructors only add allocation failure.
-                    Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                    // Index expressions have their own exception paths. Array access itself
+                    // only checks the receiver, bounds, and (for reference stores) covariance.
+                    if (exceptionSource is IArrayElementReferenceOperation arrayAccess)
+                    {
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                            implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
+                        if (arrayAccess.Type?.IsValueType != true
+                            && (operation is IAssignmentOperation
+                                || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
+                    }
+                    else Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         nullPath: transferFailure == TransferFailure.NullReceiver,
                         allocationOnly: arrayAllocation
                             || exceptionSource is IAnonymousObjectCreationOperation
@@ -365,7 +376,7 @@ internal static partial class ScopeWalker
 
         private enum TransferFailure { None, NullReceiver, Unknown }
 
-        private TransferFailure GetTransferFailure(IOperation operation)
+        private TransferFailure GetTransferFailure(IOperation operation, ulong known, ulong values)
         {
             if (operation is ISimpleAssignmentOperation assignment)
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
@@ -373,9 +384,9 @@ internal static partial class ScopeWalker
             {
                 IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
-                IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
-                IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
-                IFieldReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) => TransferFailure.NullReceiver,
+                IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
+                IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
+                IFieldReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IPropertyReferenceOperation { Property: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } } => TransferFailure.Unknown,
                 _ => TransferFailure.None,
@@ -495,9 +506,9 @@ internal static partial class ScopeWalker
         }
 
         private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false,
-            bool implicitException = false, bool allocationOnly = false)
+            bool implicitException = false, bool allocationOnly = false, string? implicitExceptionType = null)
         {
-            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, allocationOnly);
+            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, allocationOnly, implicitExceptionType);
             if (_dispatchIds.TryGetValue(key, out var existing))
                 return existing;
 
@@ -526,7 +537,8 @@ internal static partial class ScopeWalker
             {
                 exceptionType = nullPath
                     ? semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException")
-                    : allocationOnly ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException") : null;
+                    : allocationOnly ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException")
+                    : implicitExceptionType is not null ? semanticModel.Compilation.GetTypeByMetadataName(implicitExceptionType) : null;
                 exactType = exceptionType is not null;
             }
 

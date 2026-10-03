@@ -20,6 +20,8 @@ internal sealed class FlowConditions
     private readonly HashSet<CaptureId> _ambiguousCaptures = [];
     private readonly HashSet<ISymbol> _unstable = new(SymbolEqualityComparer.Default);
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<ISymbol> _written = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ISymbol, IOperation> _initializers = new(SymbolEqualityComparer.Default);
     private readonly List<(ISymbol Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
 
     internal FlowConditions(ControlFlowGraph graph, BasicBlock originBlock, CancellationToken cancellationToken)
@@ -51,7 +53,12 @@ internal sealed class FlowConditions
             if (!visited.Add(block.Ordinal))
                 continue;
             if (block.BranchValue is { } condition)
+            {
                 CollectRelevant(condition);
+                CollectReceiverSymbols(condition);
+            }
+            foreach (var operation in block.Operations)
+                CollectReceiverSymbols(operation);
             AddBranch(block.FallThroughSuccessor);
             AddBranch(block.ConditionalSuccessor);
             // Exceptional successors are implicit in Roslyn's CFG. Include their
@@ -82,6 +89,29 @@ internal sealed class FlowConditions
         foreach (var child in operation.ChildOperations) CollectRelevant(child);
     }
 
+    private void CollectReceiverSymbols(IOperation operation)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+        if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation) return;
+        var receiver = operation switch
+        {
+            IInvocationOperation invocation => invocation.Instance,
+            IMemberReferenceOperation member => member.Instance,
+            _ => null,
+        };
+        if (receiver is not null && Symbol(receiver) is { } symbol)
+            _relevant.Add(symbol);
+        foreach (var child in operation.ChildOperations)
+            CollectReceiverSymbols(child);
+    }
+
+    private void RecordWrite(IOperation target)
+    {
+        if (Symbol(target) is { } symbol) _written.Add(symbol);
+        if (target is ITupleOperation or IDeclarationExpressionOperation)
+            foreach (var child in target.ChildOperations) RecordWrite(child);
+    }
+
     private void Inspect(IOperation operation, bool nested = false)
     {
         _cancellationToken.ThrowIfCancellationRequested();
@@ -98,6 +128,8 @@ internal sealed class FlowConditions
                     _captures.Add(capture.Id, capture.Value);
                 break;
             case IAssignmentOperation assignment:
+                if (assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
+                    RecordWrite(assignment.Target);
                 // A declaration initializes the local once per execution. Locals declared in
                 // loops are excluded below as well: the next iteration can choose a new value.
                 if (nested && assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
@@ -108,8 +140,12 @@ internal sealed class FlowConditions
             case IVariableDeclaratorOperation { Symbol.RefKind: not RefKind.None, Initializer: { } initializer }:
                 Invalidate(initializer.Value);
                 break;
-            case IIncrementOrDecrementOperation increment when nested:
-                Invalidate(increment.Target);
+            case IVariableDeclaratorOperation { Initializer: { } initializer } declarator:
+                _initializers[declarator.Symbol] = initializer.Value;
+                break;
+            case IIncrementOrDecrementOperation increment:
+                RecordWrite(increment.Target);
+                if (nested) Invalidate(increment.Target);
                 break;
             case IArgumentOperation { Parameter.RefKind: not RefKind.None } argument:
                 Invalidate(argument.Value);
@@ -172,7 +208,9 @@ internal sealed class FlowConditions
         // Captures are compiler temporaries, never arbitrary user expressions to re-evaluate.
         for (var depth = 0; depth < 32; depth++)
         {
-            if (operation is IConversionOperation { Conversion.IsIdentity: true } conversion)
+            if (operation is IConversionOperation conversion
+                && (conversion.Conversion.IsIdentity
+                    || conversion is { IsImplicit: true, Conversion: { IsReference: true, IsUserDefined: false } }))
                 operation = conversion.Operand;
             else if (operation is IFlowCaptureReferenceOperation capture
                      && _captures.TryGetValue(capture.Id, out var value))
@@ -196,6 +234,24 @@ internal sealed class FlowConditions
             or IInvocationOperation { TargetMethod: { Name: "<Clone>$", ContainingType.IsRecord: true } };
 
     internal IOperation ResolveCapturedTarget(IOperation operation) => Unwrap(operation);
+
+    internal bool IsKnownNonNull(IOperation operation, ulong known, ulong values)
+    {
+        if (IsConstructedReceiver(operation)) return true;
+        if (Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
+        if (!_written.Contains(symbol) && _initializers.TryGetValue(symbol, out var initializer)
+            && IsConstructedReceiver(initializer)) return true;
+        for (var index = 0; index < _predicates.Count; index++)
+        {
+            var predicate = _predicates[index];
+            var mask = 1UL << index;
+            if ((known & mask) == 0 || !SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)) continue;
+            if (predicate is { Constant: null, Operator: BinaryOperatorKind.Equals } && (values & mask) == 0
+                || predicate is { Constant: ITypeSymbol, Operator: BinaryOperatorKind.None } && (values & mask) != 0)
+                return true;
+        }
+        return false;
+    }
 
     internal bool Constrain(IOperation? condition, bool expected, ref ulong known, ref ulong values)
     {
