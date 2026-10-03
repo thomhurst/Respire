@@ -2,6 +2,8 @@ namespace Respire.Internal;
 
 /// <summary>Counts replacement attempts after the initial Sentinel operation.</summary>
 /// <remarks>
+/// Keep this mutable budget in its owner's field or local; never pass it by value or
+/// copy it while an episode is active. Copies have independent attempt counts.
 /// The owning loop is the only writer. A monitor's transport-close callback can read
 /// <see cref="Attempts"/> to capture the publication signal for a new retry episode.
 /// Reset only after successful discovery/subscription or an observed monitor rearm signal;
@@ -21,11 +23,12 @@ internal struct SentinelRetryBudget(RespireReconnectPolicy? policy)
         if (policy?.MaxAttempts is { } maximum) Volatile.Write(ref _attempts, maximum);
     }
 
-    internal void StartRetry()
+    internal bool TryStartRetry()
     {
-        if (IsExhausted) throw new InvalidOperationException("The Sentinel retry budget is exhausted.");
+        if (IsExhausted) return false;
         // Unlimited episodes must not wrap to a negative attempt or backoff exponent.
         if (Attempts < int.MaxValue) Volatile.Write(ref _attempts, Attempts + 1);
+        return true;
     }
 
     internal TimeSpan GetDelay()

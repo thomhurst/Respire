@@ -118,7 +118,7 @@ internal sealed partial class SentinelRouter
             // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
             // initial subscription failure still receives a retry.
             if (subscriptionReconnectExhausted) budget.MarkSubscriptionExhausted();
-            if (budget.IsExhausted)
+            if (!budget.TryStartRetry())
             {
                 // Surface the lost fast path: respire.connection.reconnect.exhausted with
                 // respire.reconnect.scope=sentinel-monitor, plus a warning.
@@ -141,7 +141,6 @@ internal sealed partial class SentinelRouter
                 rearm = CurrentMonitorRearm();
                 continue;
             }
-            budget.StartRetry();
             var delay = budget.GetDelay();
             RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, delay, core.Logger);
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
@@ -496,7 +495,7 @@ internal sealed partial class SentinelRouter
                     _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     continue;
                 }
-                if (!succeeded && budget.IsExhausted)
+                if (!succeeded && !budget.TryStartRetry())
                 {
                     // Pending hints cannot bypass the shared retry budget.
                     _coalescer.Complete();
@@ -518,7 +517,6 @@ internal sealed partial class SentinelRouter
                         _notificationRediscovery = null;
                         return;
                     }
-                    budget.StartRetry();
                     retryDelay = budget.GetDelay();
                 }
                 else
@@ -527,7 +525,6 @@ internal sealed partial class SentinelRouter
                     // A newer hint restarts discovery at once. Count each failed attempt against
                     // the same policy budget; only success starts a fresh run.
                     if (succeeded) budget.Reset();
-                    else budget.StartRetry();
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
                         && IsConfirmedTarget(current, target))

@@ -17,11 +17,11 @@ public class SentinelRetryBudgetTests
         for (var attempt = 1; attempt <= maximum; attempt++)
         {
             await Assert.That(budget.IsExhausted).IsFalse();
-            budget.StartRetry();
+            await Assert.That(budget.TryStartRetry()).IsTrue();
             await Assert.That(budget.Attempts).IsEqualTo(attempt);
         }
         await Assert.That(budget.IsExhausted).IsTrue();
-        await Assert.That(() => budget.StartRetry()).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(budget.TryStartRetry()).IsFalse();
         await Assert.That(budget.Attempts).IsEqualTo(maximum);
     }
 
@@ -32,7 +32,7 @@ public class SentinelRetryBudgetTests
         int[] seconds = [1, 2, 4, 8, 16, 30, 30, 30];
         foreach (var expected in seconds)
         {
-            budget.StartRetry();
+            await Assert.That(budget.TryStartRetry()).IsTrue();
             await Assert.That(budget.GetDelay()).IsEqualTo(TimeSpan.FromSeconds(expected));
             await Assert.That(budget.IsExhausted).IsFalse();
         }
@@ -49,7 +49,7 @@ public class SentinelRetryBudgetTests
         int[] milliseconds = [20, 40, 50, 50];
         foreach (var expected in milliseconds)
         {
-            budget.StartRetry();
+            await Assert.That(budget.TryStartRetry()).IsTrue();
             await Assert.That(budget.GetDelay()).IsEqualTo(TimeSpan.FromMilliseconds(expected));
         }
         budget.MarkSubscriptionExhausted();
@@ -67,7 +67,7 @@ public class SentinelRetryBudgetTests
         budget.Reset();
         await Assert.That(budget.Attempts).IsEqualTo(0);
         await Assert.That(budget.IsExhausted).IsFalse();
-        budget.StartRetry();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
         await Assert.That(budget.GetDelay()).IsEqualTo(TimeSpan.FromMilliseconds(250));
     }
 
@@ -75,10 +75,10 @@ public class SentinelRetryBudgetTests
     public async Task SuccessfulEpisodeResetRestoresTheFirstDelay()
     {
         var budget = new SentinelRetryBudget(null);
-        budget.StartRetry();
-        budget.StartRetry();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
         budget.Reset();
-        budget.StartRetry();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
         await Assert.That(budget.Attempts).IsEqualTo(1);
         await Assert.That(budget.GetDelay()).IsEqualTo(TimeSpan.FromSeconds(1));
     }
@@ -88,8 +88,8 @@ public class SentinelRetryBudgetTests
     {
         var budget = new SentinelRetryBudget(new() { MaxAttempts = 2 });
         // Pending hints skip delay, but each failed discovery still spends one retry.
-        budget.StartRetry();
-        budget.StartRetry();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
+        await Assert.That(budget.TryStartRetry()).IsTrue();
         await Assert.That(budget.IsExhausted).IsTrue();
         await Assert.That(budget.Attempts).IsEqualTo(2);
     }
