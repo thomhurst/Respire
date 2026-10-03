@@ -231,31 +231,15 @@ public sealed partial class RespireClient
                             acquiringRedirectPool = true;
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                            // ASK does not publish a slot owner: preserve the topology observed before
-                            // target acquisition so a concurrent refresh invalidates this redirect.
-                            if (error.Code == RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
-                            var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                    error, connection, acquisitionToken, slot, discovery)
+                            var redirect = await AcquireUploadRedirectAsync(
+                                    cluster, error, connection, slot, discovery, acquisitionToken)
                                 .ConfigureAwait(false);
                             acquiringRedirectPool = false;
                             pool.Return(connection);
                             returned = true;
-                            pool = redirectedPool;
-                            // MOVED and READONLY recovery can publish a new owner during acquisition.
-                            if (error.Code != RespireErrorCodes.Ask)
-                                routeVersion = cluster.CaptureSlotVersion(slot);
-                            if (command is IReplayableStreamingRespCommand replayable)
-                            {
-                                try { replayable.ResetSourceForReplay(); }
-                                catch (Exception resetError) when (resetError is not OutOfMemoryException
-                                    and not AccessViolationException and not StackOverflowException)
-                                {
-                                    RethrowPreservingStackTrace(error);
-                                }
-                            }
-                            asking = error.Code == RespireErrorCodes.Ask
-                                ? new UploadAskState(connection, error) : default;
+                            (pool, routeVersion, asking) = redirect;
+                            // Release the source lease before invoking user-controlled replay reset.
+                            ResetUploadSourceForReplay(in command, error);
                             continue;
                         }
 
@@ -316,6 +300,32 @@ public sealed partial class RespireClient
             throw timeout;
         }
         finally { discovery?.Finish(); }
+    }
+
+    private static async ValueTask<(DedicatedConnectionPool Pool, ClusterRouter.StreamRouteVersion Version, UploadAskState Asking)>
+        AcquireUploadRedirectAsync(ClusterRouter cluster, RespireServerException error, RespireConnection source,
+            int? slot, ClusterRouter.DiscoveryRound? discovery, CancellationToken cancellationToken)
+    {
+        var asking = error.Code == RespireErrorCodes.Ask;
+        // ASK does not publish an owner; a concurrent topology change must invalidate it.
+        var version = asking ? cluster.CaptureSlotVersion(slot) : default;
+        var pool = await cluster.GetRedirectDedicatedPoolAsync(error, source, cancellationToken, slot, discovery)
+            .ConfigureAwait(false);
+        // MOVED and READONLY recovery can publish an owner during acquisition.
+        if (!asking) version = cluster.CaptureSlotVersion(slot);
+        return (pool, version, asking ? new UploadAskState(source, error) : default);
+    }
+
+    private static void ResetUploadSourceForReplay<TCommand>(in TCommand command, RespireServerException error)
+        where TCommand : struct, IRespCommand
+    {
+        if (command is not IReplayableStreamingRespCommand replayable) return;
+        try { replayable.ResetSourceForReplay(); }
+        catch (Exception resetError) when (resetError is not OutOfMemoryException
+            and not AccessViolationException and not StackOverflowException)
+        {
+            RethrowPreservingStackTrace(error);
+        }
     }
 
     // ASK identity must be set and cleared together. Slot version and discovery also serve

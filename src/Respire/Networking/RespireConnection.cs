@@ -762,7 +762,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
-            commandName, armCommandDeadline, pinToConnection: pinToConnection);
+            commandName, armCommandDeadline, pinToConnection: pinToConnection,
+            streamingRoute: DedicatedStreamRoute.None);
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>

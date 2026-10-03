@@ -76,12 +76,12 @@ internal sealed partial class RespireConnection
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
         in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
-        CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute = default)
-        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, asking, streamingRoute);
+        CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        RawCommand? prelude = null, DedicatedStreamRoute streamingRoute = default)
+        DedicatedStreamRoute streamingRoute, RawCommand? prelude = null)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
