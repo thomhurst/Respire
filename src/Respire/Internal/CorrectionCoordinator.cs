@@ -1,0 +1,160 @@
+using System.Diagnostics;
+
+namespace Respire.Internal;
+
+/// <summary>Owns correction ordering and bounded cleanup policy for one client core.</summary>
+internal sealed class CorrectionCoordinator(ClientCore core)
+{
+    internal CorrectionFence CreateFence(RespireClient client, RespireClient.TrackedConnectionIdentity identity)
+        => new(identity, client.SendCorrectionFenceAsync);
+
+    internal Task<bool> EnqueueAsync(
+        Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt, Func<bool>? shouldContinue,
+        CleanupRetryPolicy policy, Action<string> onAbandoned)
+    {
+        var queue = core.CoordinationCleanupQueue;
+        if (queue is not null)
+            return queue.EnqueueAsync(attempt, shouldContinue, policy.Limit, policy.InitialDelay,
+                policy.MaximumDelay, onAbandoned);
+        try { onAbandoned("client_disposed"); }
+        catch { /* Diagnostics must not stop cleanup callers. */ }
+        return Task.FromResult(false);
+    }
+
+    internal Task<bool> EnqueueFencedAsync(
+        CorrectionFence fence, Func<CancellationToken, ValueTask> correct,
+        TimeSpan attemptTimeout, CleanupRetryPolicy retry, Action<string, string> onAbandoned)
+        => EnqueueAsync(async cancellationToken =>
+        {
+            var ordered = await fence.TryAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
+            if (ordered != CleanupAttemptResult.Succeeded) return ordered;
+            return await AttemptAsync(correct, attemptTimeout, cancellationToken).ConfigureAwait(false);
+        }, null, retry, reason => onAbandoned(fence.IsAcknowledged ? "release" : "fence", reason));
+
+    /// <summary>Classifies one bounded attempt. Only acknowledged ordering survives a later local failure.</summary>
+    internal static ValueTask<CleanupAttemptResult> AttemptAsync(
+        Func<CancellationToken, ValueTask> attempt, TimeSpan timeout, CancellationToken stopping = default,
+        Func<bool>? acknowledged = null)
+        => AttemptAsync(attempt, static (send, token) => send(token), timeout, stopping, acknowledged);
+
+    internal static async ValueTask<CleanupAttemptResult> AttemptAsync<TState>(
+        TState state, Func<TState, CancellationToken, ValueTask> attempt,
+        TimeSpan timeout, CancellationToken stopping = default, Func<bool>? acknowledged = null)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+        bound.CancelAfter(timeout);
+        try
+        {
+            await attempt(state, bound.Token).ConfigureAwait(false);
+            return CleanupAttemptResult.Succeeded;
+        }
+        catch (Exception error)
+        {
+            if (acknowledged?.Invoke() == true) return CleanupAttemptResult.Succeeded;
+            return error is ObjectDisposedException || error is OperationCanceledException && stopping.IsCancellationRequested
+                ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed;
+        }
+    }
+
+    /// <summary>Bounds foreground observation without cancelling an already owed ordered correction.</summary>
+    internal static async ValueTask<bool> WaitAsync(Task correction, TimeSpan timeout)
+    {
+        try
+        {
+            await correction.WaitAsync(timeout).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            Observe(correction);
+            return false;
+        }
+    }
+
+    internal static async ValueTask<bool> WaitAsync(Task correction, CancellationToken foregroundDeadline)
+    {
+        try
+        {
+            await correction.WaitAsync(foregroundDeadline).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (foregroundDeadline.IsCancellationRequested)
+        {
+            Observe(correction);
+            return false;
+        }
+    }
+
+    internal static void Observe(Task correction)
+        => _ = correction.ContinueWith(static completed => _ = completed.Exception,
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    /// <summary>
+    /// Runs FIFO-ordered, shrink-only corrections until latency stops improving. The caller
+    /// calculates fresh TTL arguments for each send; a timeout never fabricates ordering proof.
+    /// </summary>
+    internal static ValueTask ConvergeAsync(
+        RespireClient.TrackedConnectionIdentity identity, CorrectionFence? fence,
+        Func<bool, RespireClient.TrackedConnectionIdentity, Task> send,
+        TimeSpan waitBound, TimeSpan tolerance)
+        => ConvergeAsync(identity, fence, send, static (callback, ordered, original) => callback(ordered, original),
+            waitBound, tolerance);
+
+    internal static async ValueTask ConvergeAsync<TState>(
+        RespireClient.TrackedConnectionIdentity identity, CorrectionFence? fence, TState state,
+        Func<TState, bool, RespireClient.TrackedConnectionIdentity, Task> send,
+        TimeSpan waitBound, TimeSpan tolerance)
+    {
+        var previous = TimeSpan.MaxValue;
+        var requiresOrdering = identity.ServerClientId > 0;
+        var canFence = fence is not null;
+        while (true)
+        {
+            var sent = Stopwatch.GetTimestamp();
+            var pass = send(state, requiresOrdering, identity);
+            if (!await WaitAsync(pass, waitBound).ConfigureAwait(false))
+            {
+                if (!canFence) return; // The idempotent ordered pass can still complete later.
+                await fence!.EnsureAsync().ConfigureAwait(false);
+                canFence = false;
+                // Preserve the original peer and FIFO/ASK route until a broadcast completes.
+                identity = identity with { ServerClientId = 0 };
+                previous = TimeSpan.MaxValue;
+                continue;
+            }
+            requiresOrdering = false;
+            identity = default; // A completed broadcast is FIFO proof, so subsequent passes need no kill.
+            canFence = false;
+            var roundTrip = Stopwatch.GetElapsedTime(sent);
+            if (roundTrip < tolerance || roundTrip > previous / 2) return;
+            previous = roundTrip;
+        }
+    }
+}
+
+/// <summary>
+/// One correction's immutable physical identity and monotonic fence acknowledgement.
+/// The owner serializes attempts (the cleanup queue runs one attempt per item at a time).
+/// </summary>
+internal sealed class CorrectionFence(
+    RespireClient.TrackedConnectionIdentity identity,
+    Func<RespireClient.TrackedConnectionIdentity, CancellationToken, Action, ValueTask> send)
+{
+    internal bool IsAcknowledged { get; private set; }
+
+    internal async ValueTask EnsureAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsAcknowledged) return;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
+        await send(identity, cancellationToken, () => IsAcknowledged = true).ConfigureAwait(false);
+        // Successful transport drain also proves ordering without sending CLIENT KILL.
+        IsAcknowledged = true;
+    }
+
+    internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default)
+        => IsAcknowledged ? new(CleanupAttemptResult.Succeeded)
+            : CorrectionCoordinator.AttemptAsync(EnsureAsync, timeout, stopping, () => IsAcknowledged);
+}
+
+internal readonly record struct CleanupRetryPolicy(TimeSpan Limit, TimeSpan InitialDelay, TimeSpan MaximumDelay);

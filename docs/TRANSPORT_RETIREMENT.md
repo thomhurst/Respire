@@ -189,11 +189,36 @@ Each caller declares its ordering contract:
 - `NotifyOnly` reports ownership loss for a compatible release without CLIENT permissions.
   It also cannot run a dependent correction.
 
-The dispatcher does not cancel cleanup with the abandoned command's token. Each cleanup
-retains its existing foreground bound, background ownership, TTL convergence, and retry policy.
-Consolidating those policies is tracked separately in #764; this boundary only centralizes
-outcome classification and correction dispatch. Untracked `IRespireClient` implementations
-retain best-effort cleanup because they cannot provide a physical connection identity.
+The dispatcher does not cancel cleanup with the abandoned command's token. The core-owned
+`CorrectionCoordinator` supplies fence state, bounded foreground observation, attempt
+classification, and background queue admission. A `CorrectionFence` captures the original
+physical identity once. Its acknowledgement is monotonic: a successful `CLIENT KILL` reply
+remains proof even if local socket retirement later fails. Queued release retries reuse that
+proof and never kill the same captured identity again. Rejected or unanswered fences cannot
+dispatch dependent corrections. Successful transport drain also establishes ordering without
+sending a kill to a potentially reused server client ID.
+
+The policies preserve different completion contracts:
+
+- Native extension and strict corrections propagate fence failures; compatible managed
+  release logs a fence failure while preserving its original error and ownership-loss notice.
+- Semaphore cleanup uses one-second attempts and foreground waits, with a one-minute retry
+  window and jittered exponential delays from 100 ms to five seconds. Disposal is terminal;
+  server errors and attempt timeouts remain retryable. Fence acknowledgement survives release
+  retries and local retirement failures. The existing core queue retains four workers, 256
+  queued items, and at most 256 admission waiters; overload and abandonment diagnostics remain.
+- Cache corrections first use owner-checked FIFO broadcasts. A completed broadcast proves
+  ordering without a kill. An overdue pass fences the captured connection before retrying,
+  retaining its original peer and ASK state until the broadcast completes. The cache supplies
+  fresh TTL arguments for each pass; the coordinator stops when latency no longer halves or
+  falls below the tolerance. A detached shrink-only pass remains observed and safe if it lands.
+- Hash-field lease cleanup retains its owner-checked scripts and current Sentinel/Cluster
+  route targeting. Shared foreground observation and capped probe delays bound the caller's
+  wait without cancelling already owed FIFO corrections. Later failures are observed.
+
+Untracked `IRespireClient` implementations retain best-effort cleanup because they cannot
+provide a physical connection identity. They use the same retry mechanics where applicable,
+but cannot obtain a core-owned queue or claim an explicit fence acknowledgement.
 
 ## Dedicated pool ownership
 
