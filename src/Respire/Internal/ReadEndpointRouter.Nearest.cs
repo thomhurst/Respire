@@ -90,7 +90,7 @@ internal sealed partial class ReadEndpointRouter
             if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
                     ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
                     : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
-            lastError = new RespireConnectionException("The read topology changed during selection.");
+            lastError ??= new RespireConnectionException("The read topology changed during selection.");
         }
         if (retry && Core.Sentinel is { } sentinel)
         {
