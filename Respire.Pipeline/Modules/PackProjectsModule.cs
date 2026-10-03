@@ -26,7 +26,7 @@ public class PackProjectsModule : Module<CommandResult[]>
         var packageProjects = _configuration.GetSection("PackageProjects").Get<string[]>() ?? new[]
         {
             "../src/Respire/Respire.csproj",
-            "../src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj"
+            "../src/Respire.DependencyInjection/Respire.DependencyInjection.csproj"
         };
 
         var version = NugetVersionGeneratorModule.GetGeneratedVersion();

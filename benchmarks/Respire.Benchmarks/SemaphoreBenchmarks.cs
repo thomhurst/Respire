@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 namespace Respire.Benchmarks;
 

@@ -5,10 +5,10 @@ description: Authenticate Respire with Microsoft Entra ID and renewable Azure ac
 
 # Azure Managed Redis authentication
 
-Install `Respire.Extensions.Azure` and `Azure.Identity`:
+Install `Respire.Azure` and `Azure.Identity`:
 
 ```sh
-dotnet add package Respire.Extensions.Azure
+dotnet add package Respire.Azure
 dotnet add package Azure.Identity
 ```
 
@@ -28,9 +28,9 @@ connection pools do not each reach Microsoft Entra ID. Add caching to a custom `
 that does not cache before passing it to the provider.
 
 ```csharp
-using Azure.Identity;
+using global::Azure.Identity;
 using Respire;
-using Respire.Extensions.Azure;
+using Respire.Azure;
 
 var credential = new DefaultAzureCredential();
 var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
@@ -48,11 +48,11 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 For dependency injection, assign the same provider through `RespireOptionsBuilder.CredentialProvider`:
 
 ```csharp
-using Azure.Identity;
+using global::Azure.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Respire;
-using Respire.Extensions.Azure;
-using Respire.Extensions.DependencyInjection;
+using Respire.Azure;
+using Respire.DependencyInjection;
 
 var credential = new DefaultAzureCredential();
 var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";

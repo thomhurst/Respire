@@ -34,11 +34,11 @@ public class CreateGitHubReleaseModuleTests
             new[]
             {
                 new FileInfo("Respire.1.2.3.nupkg"),
-                new FileInfo("Respire.Extensions.Caching.1.2.3.nupkg")
+                new FileInfo("Respire.Caching.1.2.3.nupkg")
             });
 
         await Assert.That(releaseBody).Contains("## What's Changed");
         await Assert.That(releaseBody).Contains("dotnet add package Respire --version 1.2.3");
-        await Assert.That(releaseBody).Contains("dotnet add package Respire.Extensions.Caching --version 1.2.3");
+        await Assert.That(releaseBody).Contains("dotnet add package Respire.Caching --version 1.2.3");
     }
 }

@@ -1,9 +1,9 @@
 using System.Text.Json.Serialization;
 using Respire;
-using Respire.Extensions.Json;
-using Redis.Search;
-using Respire.Extensions.TimeSeries;
-using Respire.Extensions.Probabilistic;
+using Respire.Json;
+using Respire.Search;
+using Respire.TimeSeries;
+using Respire.Probabilistic;
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })

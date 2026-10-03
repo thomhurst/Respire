@@ -1,7 +1,7 @@
 using System.Buffers;
 using K4os.Compression.LZ4;
 
-namespace Respire.Compression;
+namespace Respire.Compression.Lz4;
 
 /// <summary>LZ4 block compression using version 1 Respire frames and reserved algorithm ID 3.</summary>
 /// <remarks>Requires the optional Respire.Compression.Lz4 package. Payloads use raw LZ4 blocks,

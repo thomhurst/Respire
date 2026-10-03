@@ -3,6 +3,7 @@ const sidebars = {
   docsSidebar: [
     'intro',
     'getting-started',
+    'packages',
     'fundamentals/client-side-caching',
     {
       type: 'category',

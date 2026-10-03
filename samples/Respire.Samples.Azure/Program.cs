@@ -1,8 +1,8 @@
 using Azure.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Respire;
-using Respire.Extensions.Azure;
-using Respire.Extensions.DependencyInjection;
+using Respire.Azure;
+using Respire.DependencyInjection;
 
 // Set RUN_AZURE_REDIS_SAMPLE=1 to issue a command against a real Azure Managed Redis endpoint.
 // Connecting requires AZURE_MANAGED_REDIS_HOST and AZURE_MANAGED_REDIS_USER_OBJECT_ID; without

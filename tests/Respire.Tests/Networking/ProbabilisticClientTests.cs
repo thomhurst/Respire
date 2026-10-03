@@ -1,5 +1,5 @@
 using System.Text;
-using Respire.Extensions.Probabilistic;
+using Respire.Probabilistic;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

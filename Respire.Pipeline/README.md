@@ -164,6 +164,6 @@ info: Generated version: 0.1.266-ci.feature-optimization.266.a1b2c3d4
 info: Packing NuGet packages...
 info: Found 2 package files:
 info:   - Respire.0.1.266-ci.feature-optimization.266.a1b2c3d4.nupkg (245,760 bytes)
-info:   - Respire.Extensions.DependencyInjection.0.1.266-ci.feature-optimization.266.a1b2c3d4.nupkg (12,345 bytes)
+info:   - Respire.DependencyInjection.0.1.266-ci.feature-optimization.266.a1b2c3d4.nupkg (12,345 bytes)
 info: Completed copying 2 packages to local NuGet
 ```
