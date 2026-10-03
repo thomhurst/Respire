@@ -7,6 +7,58 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Holder.Run();")]
+    [Arguments("Holder.Value = 1;")]
+    [Arguments("_ = Holder.Value;")]
+    public async Task StaticMemberBodyCanBypassCleanup(string operation)
+    {
+        const string declaration = """
+            class Holder
+            {
+                static Holder() { }
+                public static void Run() => throw new InvalidOperationException();
+                public static int Value
+                {
+                    get => throw new InvalidOperationException();
+                    set => throw new InvalidOperationException();
+                }
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("TypeInitializationException", true)]
     [Arguments("InvalidOperationException", false)]
     public async Task StaticInitializationPrecedesBatchEscape(string catchType, bool warning) => await Pending.VerifyAsync($$"""

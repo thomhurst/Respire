@@ -399,7 +399,8 @@ internal static partial class ScopeWalker
                     exceptionSource = _conditions.ResolveCapturedTarget(target);
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
-            // Receiver checks, allocation and dynamic binding precede accepting ownership.
+            // Receiver checks, allocation, type initialization and dynamic binding precede
+            // callee entry, where responsibility transfers. Callee-body failures are excluded.
             var transferFailure = TransferPosition(operation.Syntax) == firstBarrier
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
             if (operation.Syntax.SpanStart > entryPosition

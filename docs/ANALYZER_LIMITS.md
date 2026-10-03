@@ -7,6 +7,14 @@ catch handlers. The search does not infer exception types across method calls or
 model failures of the disposal/flush operation itself. Uncaught implicit exceptions
 remain outside the proof.
 
+Passing an owned result or batch to another method or property setter transfers
+responsibility at callee entry. The search checks failures before entry, including
+argument evaluation, receiver checks, and type initialization. It does not inspect
+whether the callee subsequently throws before disposing the result or flushing the
+batch. A static method or accessor before a proof barrier still has its own opaque
+exception paths, even when its declaring type has a static constructor; those paths
+are not restricted to `TypeInitializationException`.
+
 Branch evidence is invalidated when a traversed assignment changes its local or
 parameter. Writes before selection or after the proof interval do not invalidate
 that interval. Captured writes, by-reference escapes, and address-taken locals remain
