@@ -1368,15 +1368,19 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DownReportAliasTimeoutPreservesCandidateDeadlineAndCallerCancellation(bool cancelCaller)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task DownReportAliasTimeoutPreservesCandidateDeadlineAndCallerCancellation(bool cancelCaller, bool expireCandidate)
     {
         const int primaryPort = 7001;
         await using var sentinel = HostnameSentinel(primaryPort);
         using var cancellation = new CancellationTokenSource();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var options = Options(sentinel.Port) with { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(200) };
+        var candidateEntered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishCandidate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadlines = Channel.CreateUnbounded<(CancellationTokenSource Source, TimeSpan Timeout)>();
+        var options = Options(sentinel.Port) with { ConnectTimeout = TimeSpan.FromMilliseconds(200) };
         var owner = new RespireEndpoint("127.0.0.1", primaryPort);
         var reporter = new RespireEndpoint("127.0.0.1", sentinel.Port);
         var hint = SentinelHint.FromDown("slow", reporter, new("slow.test", primaryPort))
@@ -1385,7 +1389,8 @@ public partial class SentinelRoutingTests
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync(options, async (candidate, _, token) =>
         {
             token.ThrowIfCancellationRequested();
-            await Task.Delay(50, token);
+            candidateEntered.TrySetResult(token);
+            await finishCandidate.Task.WaitAsync(token);
             validations++;
             return candidate.PrimaryEndpoint;
         }, cancellation.Token, notificationHint: hint, hostResolver: async (host, token) =>
@@ -1394,20 +1399,59 @@ public partial class SentinelRoutingTests
             entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return [];
+        }, createConnectTimeout: (caller, timeout) =>
+        {
+            // Production owns disposal; this test controls expiration independently of scheduling.
+            var source = CancellationTokenSource.CreateLinkedTokenSource(caller);
+            deadlines.Writer.TryWrite((source, timeout));
+            return source;
         }).AsTask();
-        await entered.Task.WaitAsync(Limit);
-        if (cancelCaller)
+        try
         {
-            cancellation.Cancel();
-            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
-            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
-            await Assert.That(validations).IsEqualTo(0);
+            await entered.Task.WaitAsync(Limit);
+            var aliasDeadline = await deadlines.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+            var aliasToken = aliasDeadline.Source.Token;
+            await Assert.That(aliasDeadline.Timeout).IsEqualTo(options.ConnectTimeout);
+            await Assert.That(deadlines.Reader.TryPeek(out _)).IsFalse();
+            if (cancelCaller)
+            {
+                cancellation.Cancel();
+                var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+                await Assert.That(validations).IsEqualTo(0);
+            }
+            else
+            {
+                aliasDeadline.Source.Cancel();
+                var candidateToken = await candidateEntered.Task.WaitAsync(Limit);
+                var candidateDeadline = await deadlines.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+                await Assert.That(candidateDeadline.Timeout).IsEqualTo(options.ConnectTimeout);
+                await Assert.That(candidateToken).IsEqualTo(candidateDeadline.Source.Token);
+                await Assert.That(candidateToken == aliasToken).IsFalse();
+                await Assert.That(aliasToken.IsCancellationRequested).IsTrue();
+                await Assert.That(candidateToken.IsCancellationRequested).IsFalse();
+                if (expireCandidate)
+                {
+                    candidateDeadline.Source.Cancel();
+                    var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
+                    await Assert.That(error!.InnerException is RespireTimeoutException).IsTrue();
+                    var timeout = (RespireTimeoutException)error.InnerException!;
+                    await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
+                    await Assert.That(timeout.Timeout).IsEqualTo(options.ConnectTimeout);
+                    await Assert.That(validations).IsEqualTo(0);
+                }
+                else
+                {
+                    finishCandidate.TrySetResult();
+                    var selected = await pending.WaitAsync(Limit);
+                    await Assert.That(selected.Host).IsEqualTo("owner.test");
+                    await Assert.That(validations).IsEqualTo(1);
+                }
+            }
         }
-        else
+        finally
         {
-            var selected = await pending.WaitAsync(Limit);
-            await Assert.That(selected.Host).IsEqualTo("owner.test");
-            await Assert.That(validations).IsEqualTo(1);
+            await cancellation.CancelAsync();
         }
     }
 

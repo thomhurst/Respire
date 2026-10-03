@@ -6,6 +6,88 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("InvalidOperationException", "new ArgumentException()", false)]
+    [Arguments("ArgumentException", "new ArgumentException()", true)]
+    [Arguments("Exception", "new ArgumentException()", true)]
+    [Arguments("InvalidOperationException", "error", true)]
+    [Arguments("T", "new ArgumentException()", true)]
+    public async Task FilteredCatchApplicabilityBeforeFinallyRead(string catchType, string thrown, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync<T>(RespireClient client, bool handle, Exception error) where T : Exception
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw {{thrown}}; }
+                    catch ({{catchType}}) when (handle) { Console.WriteLine("unflushed"); }
+                    catch (Exception) { await batch.SendAsync(); }
+                    finally { Console.WriteLine({{read}}); }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("T")]
+    [Arguments("dynamic")]
+    public async Task UnknownFilteredCatchRemainsPossibleBeforeFinallyRead(string exceptionType) => await Verify.VerifyAsync(
+        $$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync<T>(RespireClient client, bool handle, {{exceptionType}} error) where T : Exception
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { throw error; }
+                catch (InvalidOperationException) when (handle) { Console.WriteLine("unflushed"); }
+                catch (Exception) { await batch.SendAsync(); }
+                finally { Console.WriteLine({|RESP002:pending.Result|}); }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("break;", true)]
+    [Arguments("continue;", true)]
+    [Arguments("goto Done;", true)]
+    [Arguments("break;", false)]
+    [Arguments("continue;", false)]
+    [Arguments("goto Done;", false)]
+    public async Task LoopJumpRunsFinallyBeforePendingRead(string jump, bool flush)
+    {
+        var read = flush ? "pending.Result" : "{|RESP002:pending.Result|}";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    do
+                    {
+                        try { {{jump}} }
+                        finally { {{(flush ? "await batch.SendAsync();" : "Console.WriteLine(1);")}} }
+                    } while (false);
+                Done:
+                    Console.WriteLine({{read}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     public async Task RethrowCaughtBeforeFinallyFlush_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
