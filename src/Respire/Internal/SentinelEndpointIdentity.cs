@@ -67,6 +67,7 @@ internal readonly record struct SentinelAddressEvidence
     internal RespireEndpoint Endpoint { get; }
     internal string[]? Addresses { get; }
     private readonly SentinelEndpointIdentity _identity;
+    internal bool IsDefault => _identity.Host is null;
 
     internal SentinelAddressEvidence(RespireEndpoint endpoint, string[]? addresses)
     {
@@ -122,7 +123,7 @@ internal readonly record struct SentinelAddressEvidence
     // used to confirm ownership or consume a fence: those require ConfirmsPeer.
     internal bool CouldMatch(SentinelAddressEvidence candidate)
     {
-        if (_identity.Host is null || candidate._identity.Host is null || Endpoint.Port != candidate.Endpoint.Port) return false;
+        if (IsDefault || candidate.IsDefault || Endpoint.Port != candidate.Endpoint.Port) return false;
         if (Contains(candidate._identity.Host)) return true;
         if (candidate.Addresses is not null)
             foreach (var address in candidate.Addresses)
