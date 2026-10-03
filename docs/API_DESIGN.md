@@ -588,7 +588,7 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   READONLY retains its shared deadline and seed time reservation. Cluster lifecycle metadata
   uses `ClusterDiscovery` without changing physical-slot health; metrics identify the endpoint
   and `respire.reconnect.scope=cluster-discovery`. `ClusterTopologyRefreshInterval` defaults
-  to 60 seconds; null or zero disables periodic refresh. Concurrent refresh triggers are
+  to 60 seconds; null, zero, or `Timeout.InfiniteTimeSpan` disables periodic refresh. Concurrent refresh triggers are
   coalesced, and failed refreshes retain healthy routes while reporting the failure.
   See the [recovery guide](../website/docs/guides/reconnect-policy.md).
 - **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`
