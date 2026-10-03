@@ -2296,8 +2296,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _options.CommandTimeout ?? _options.ConnectTimeout);
         try
         {
-            var reply = await (queryConnection ?? seed.GetConnection()).SendAsync(
-                new Cmd(Verbs.ClusterSlots), timeoutSource.Token).ConfigureAwait(false);
+            var (connection, reply) = await SendTopologyQueryAsync(queryConnection ?? seed.GetConnection(),
+                queryConnection is null ? seed : null, timeoutSource.Token).ConfigureAwait(false);
             try
             {
                 if (reply.IsError)
@@ -2338,7 +2338,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                         continue;
                     }
 
-                    var preferred = new RespireEndpoint(string.IsNullOrEmpty(host) ? seed.Host : host, (int)port);
+                    var preferred = new RespireEndpoint(string.IsNullOrEmpty(host) ? connection.Host : host, (int)port);
                     var nodeId = primary.Length > 2 && !primary[2].IsNull ? primary[2].AsString() : null;
                     if (string.IsNullOrEmpty(nodeId))
                     {
@@ -2349,7 +2349,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     List<ClusterTopologyReplica> replicas = [];
                     for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
                     {
-                        if (TryParseReplica(values[replicaIndex], seed.Host) is not { } replica
+                        if (TryParseReplica(values[replicaIndex], connection.Host) is not { } replica
                             || MatchesPrimary(replica, preferred, nodeId, aliases)
                             || replicas.Any(existing => RespireEndpointComparer.Instance.Equals(existing.Endpoint, replica.Endpoint)))
                         {
@@ -2388,6 +2388,31 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // remains sufficient for correctness, so topology discovery is opportunistic for
             // connection/server failures. Incompatible configuration must still propagate.
             return (false, false, false);
+        }
+    }
+
+    /// <summary>
+    /// Sends CLUSTER SLOTS pinned to one socket and returns the socket that answered, so the
+    /// empty-host fallback names the actual responder. When <paramref name="owner"/> is supplied,
+    /// a MOVING handoff that retired the socket before admission retries on its replacement;
+    /// each retry needs a new publication, which bounds the loop.
+    /// </summary>
+    internal static async ValueTask<(RespireConnection Responder, Protocol.RespValue Reply)> SendTopologyQueryAsync(
+        RespireConnection connection, RespireConnectionMultiplexer? owner, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            try
+            {
+                var reply = await connection.SendAsync(new Cmd(Verbs.ClusterSlots), cancellationToken,
+                    pinToConnection: true).ConfigureAwait(false);
+                return (connection, reply);
+            }
+            catch (RespireConnectionRetiredException) when (owner?.GetConnection() is { } replacement
+                && !ReferenceEquals(replacement, connection))
+            {
+                connection = replacement;
+            }
         }
     }
 

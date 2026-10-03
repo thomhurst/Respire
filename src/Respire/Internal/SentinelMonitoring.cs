@@ -391,6 +391,7 @@ internal sealed class SentinelMonitoring(
     internal async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate) if (_disposed) return null;
         if (IPAddress.TryParse(host, out var literal)) return [SentinelEndpointIdentity.NormalizeAddress(literal)];
         try
         {
@@ -398,6 +399,9 @@ internal sealed class SentinelMonitoring(
             timeout.CancelAfter(options.ConnectTimeout);
             var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            // Stop closes ownership before asynchronous linked-token callbacks finish.
+            // Late DNS must not supply evidence or trigger a follow-up target lookup.
+            lock (_gate) if (_disposed) return null;
             return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
