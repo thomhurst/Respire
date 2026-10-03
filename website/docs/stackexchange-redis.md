@@ -10,8 +10,12 @@ multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, trans
 scripting — with a different API shape and some capabilities StackExchange.Redis does not provide.
 This page compares the two and maps common StackExchange.Redis code to Respire.
 
-Comparisons describe StackExchange.Redis 3.1.13, the version used by Respire's comparison
-benchmarks.
+Comparisons describe StackExchange.Redis 3.3.1, the version used by Respire's comparison
+benchmarks. Recheck the StackExchange.Redis claims on this page when that version changes.
+
+:::note Pre-release
+Respire's public API may still change before a stable release. See the [roadmap](./roadmap).
+:::
 
 ## Why switch
 
@@ -31,7 +35,7 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 
 | Capability | StackExchange.Redis | Respire |
 | --- | --- | --- |
-| Target frameworks | .NET Framework 4.6.1+, `netstandard2.0`, .NET 6+ | .NET 8 and .NET 10 |
+| Target frameworks | .NET Framework 4.6.1+, `netstandard2.0`, .NET 8+ | .NET 8 and .NET 10 |
 | API style | Synchronous and asynchronous methods | Asynchronous only (`ValueTask`) |
 | Command surface | Flat methods on `IDatabase` (`HashGet`, `ListLeftPush`) | Facets per data type (`redis.Hashes.GetStringAsync`) |
 | Values | `RedisValue` union | Typed results; `RespireValue` for arguments |
@@ -46,9 +50,9 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Read from replicas | `CommandFlags.PreferReplica` / `DemandReplica` per command | `ReadFrom` option or `WithReadFrom` view, with hedged and zone-aware reads |
 | Fire-and-forget | `CommandFlags.FireAndForget` on any command | `ExecuteFireAndForgetAsync` for raw commands |
 | Multiple databases | `GetDatabase(n)` per call | One database per client (`Database` option) |
-| Health-checked failover between deployments | `ConnectGroupAsync` connection groups | [`RespireFailoverGroup`](./guides/failover-groups) |
+| Health-checked failover between deployments | `ConnectGroupAsync` connection groups | [`RespireFailoverGroup`](./guides/failover-groups); read `ActiveClient` for each operation |
 | Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
-| `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching), with the same key layout |
+| `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
 | Module commands | Raw `Execute` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
 | Test double | None built in | [`Respire.Testing`](./guides/in-memory-testing) in-memory server |
 
@@ -78,6 +82,13 @@ switch.
   `SELECT` cannot switch a shared connection.
 - **Multiple endpoints need a mode.** A comma-delimited string with several endpoints must set
   `cluster=true` or `serviceName=...`. Respire rejects an ambiguous list instead of guessing.
+- **Failover groups do not move existing calls.** `RespireFailoverGroup` selects a deployment for
+  new operations only. Read `group.ActiveClient` for each operation instead of keeping a client
+  reference. In-flight calls on the old deployment are not replayed.
+- **Key scans cover the whole deployment.** `server.KeysAsync` scans one server. `Keys.ScanAsync`
+  scans the client's configured database, and every primary in Cluster mode.
+- **Subscriptions report delivery gaps.** A subscription stream yields `RespireMessageKind.Gap`
+  items after a reconnect or buffer overflow. Check `message.Kind` before reading the payload.
 
 ## Connecting
 
@@ -89,7 +100,8 @@ await using var redis = await RespireClient.ConnectAsync(
     "cache-a:6380,password=secret,ssl=true,defaultDatabase=2");
 ```
 
-Respire rejects unknown options with `ArgumentException` instead of ignoring them. See
+Respire rejects unknown options with `ArgumentException` instead of ignoring them. Remove
+StackExchange.Redis-only options such as `abortConnect` before you pass the string to Respire. See
 [StackExchange.Redis connection strings](./fundamentals/connections#stackexchangeredis-connection-strings)
 for the supported options. URIs such as `rediss://user:pass@cache-a:6380/2` and `RespireOptions`
 also work.
@@ -97,7 +109,7 @@ also work.
 | StackExchange.Redis | Respire |
 | --- | --- |
 | `ConnectionMultiplexer.ConnectAsync(config)` | `RespireClient.ConnectAsync(config)` |
-| `ConnectionMultiplexer.Connect(config)` with `AbortOnConnectFail=false` | `RespireClient.Create(config)` (connects lazily) |
+| `ConnectionMultiplexer.Connect(config)` with `abortConnect=false` | `RespireClient.Create(config)` without `abortConnect` (connects lazily) |
 | `multiplexer.GetDatabase()` | The client itself (`IRespireClient`) |
 | `multiplexer.GetDatabase(2)` | A separate client with `Database = 2` |
 | `multiplexer.GetSubscriber()` | `redis.SubscribeAsync` and `redis.PublishAsync` on the client |
@@ -157,7 +169,7 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `SetAddAsync`, `SetMembersAsync` | `Sets.AddAsync`, `Sets.MembersAsync` |
 | `SortedSetAddAsync`, `SortedSetRangeByScoreAsync` | `SortedSets.AddAsync`, `SortedSets.RangeByScoreAsync` |
 | `StreamAddAsync`, `StreamReadGroupAsync` | `Streams.AddAsync`, `Streams.ReadGroupAsync` (`IAsyncEnumerable`) |
-| `server.KeysAsync(pattern)` | `Keys.ScanAsync` (`IAsyncEnumerable`) |
+| `server.KeysAsync(pattern)` | `Keys.ScanAsync(pattern)` (`IAsyncEnumerable`; scans every primary in Cluster mode) |
 | `StringGetLeaseAsync` | `Strings.GetLeaseAsync` |
 | `ExecuteAsync("CMD", args)` | `ExecuteAsync("CMD", args)` or the generated `RespireCommands` catalog |
 | `CommandFlags.FireAndForget` | `ExecuteFireAndForgetAsync` |
@@ -188,7 +200,7 @@ bool applied;
 do
 {
     await using var watched = await redis.CreateTransactionAsync(["balance"]);
-    long current = long.Parse((await redis.GetStringAsync("balance"))!);
+    long current = long.Parse(await redis.GetStringAsync("balance") ?? "0");
     watched.Set("balance", current - 100);
     applied = await watched.CommitAsync();
 }
@@ -210,11 +222,20 @@ await using var subscription = await redis.SubscribeAsync("orders", token);
 
 await foreach (var message in subscription.WithCancellation(token))
 {
+    if (message.Kind == RespireMessageKind.Gap)
+    {
+        // Messages may have been lost. Reload authoritative state before continuing.
+        Console.Error.WriteLine($"Delivery gap: {message.Gap}");
+        continue;
+    }
+
     Console.WriteLine($"{message.Channel}: {message.Text}");
 }
 ```
 
-Disposing the subscription unsubscribes. See [pub/sub](./guides/pub-sub).
+A `Gap` item means messages may have been lost during a reconnect or buffer overflow; it has no
+channel or payload. Disposing the subscription unsubscribes. See
+[pub/sub](./guides/pub-sub#detecting-delivery-gaps).
 
 ## Locks, scripts, and key prefixes
 

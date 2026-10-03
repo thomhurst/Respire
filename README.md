@@ -93,7 +93,8 @@ string? job = await redis.Lists.LeftPopAsync(
 ### Pub/sub
 
 Subscriptions are async streams. Leaving the loop and disposing the subscription handles
-cleanup—no delegate bookkeeping required. `SubscribeAsync` returns once the server has
+cleanup—no delegate bookkeeping required. `Gap` items mark possible message loss after a
+reconnect or buffer overflow. `SubscribeAsync` returns once the server has
 acknowledged the SUBSCRIBE, so the next publish is guaranteed to reach it.
 
 ```csharp
@@ -101,6 +102,13 @@ await using var subscription = await redis.SubscribeAsync("orders", token);
 
 await foreach (var message in subscription.WithCancellation(token))
 {
+    if (message.Kind == RespireMessageKind.Gap)
+    {
+        // Messages may have been lost. Reload authoritative state before continuing.
+        Console.Error.WriteLine($"Delivery gap: {message.Gap}");
+        continue;
+    }
+
     Console.WriteLine($"{message.Channel}: {message.Text}");
 }
 ```
