@@ -7,7 +7,7 @@ internal static class SentinelHintBuilder
 {
     internal static SentinelHint Create(string Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
         RespireEndpoint[] Reporters, bool MustRediscover)
-        => new(new(Key), Targets, Sources, Reporters, MustRediscover);
+        => new(new(Key), [.. Targets], [.. Sources], [.. Reporters], MustRediscover);
 
     internal static SentinelHint Create(string Key, RespireEndpoint? Target = null, RespireEndpoint? OldPrimary = null,
         bool MustRediscover = false, string[]? OldPrimaryAddresses = null,

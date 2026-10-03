@@ -39,8 +39,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal volatile Action? NotificationQueuedObserver;
     // Only the single notification worker reads/writes this deadline. _gate serializes worker
     // publication and clearing _notificationRediscovery before a replacement worker can start.
-    private long _notificationDiscoveryNotBefore;
-    internal const int MinimumNotificationDiscoveryIntervalMilliseconds = 100;
+    internal const int MinimumNotificationDiscoveryIntervalMilliseconds = SentinelNotificationState.MinimumDiscoveryIntervalMilliseconds;
     private readonly string _masterDownKey = "master-down:" + core.Options.SentinelPrimaryName;
 
     internal Generation? Current => Volatile.Read(ref _current);
@@ -423,6 +422,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             if (_disposeCompletion is not null) return new(_disposeCompletion.Task);
             _disposed = true;
+            _coalescer.Transition(new(SentinelNotificationEventKind.Dispose));
             var background = Monitoring.Stop();
             _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _ = DisposeCoreAsync(_disposeCompletion, background);
@@ -495,6 +495,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     internal sealed class Generation : IConnectionGeneration, IAsyncDisposable
     {
+        internal SentinelGenerationIdentity Identity { get; } = new();
         private readonly SentinelRouter _owner;
         private readonly ClientCore _core;
         private readonly object _connectionsGate = new();
