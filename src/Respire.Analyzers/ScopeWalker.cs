@@ -264,6 +264,12 @@ internal static partial class ScopeWalker
             return false;
         }
 
+        // Without any release site, only an unreachable acquisition is safe.
+        // A reachable acquisition still needs release when execution never exits.
+        if (barrierArray.Length == 0)
+            return !PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue,
+                beforeBlock, before.SpanStart, [], cancellationToken: cancellationToken);
+
         return !PathExistsAvoiding(
             graph,
             semanticModel,

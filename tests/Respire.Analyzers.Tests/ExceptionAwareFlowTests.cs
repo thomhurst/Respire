@@ -8,6 +8,25 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("while (true) { }", false)]
+    [Arguments("loop: goto loop;", false)]
+    [Arguments("while (true) { await Task.Yield(); }", false)]
+    [Arguments("while (true) { }", true)]
+    public async Task ReachableOwnerWithoutReleaseWarnsInInfiniteLoop(string loop, bool dispose) => await Disposal.VerifyAsync($$"""
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client)
+            {
+                var {{(dispose ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                {{(dispose ? "result.Dispose();" : "")}}
+                {{loop}}
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("throw null;", "InvalidOperationException", false)]
     [Arguments("throw null;", "NullReferenceException", true)]
     [Arguments("throw new ArgumentException();", "InvalidOperationException", false)]
