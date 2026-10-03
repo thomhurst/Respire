@@ -11,13 +11,13 @@ public static class RespireCachingServiceCollectionExtensions
     /// <summary>
     /// Registers a Redis-backed <see cref="IDistributedCache"/> (which also implements
     /// <see cref="Microsoft.Extensions.Caching.Distributed.IBufferDistributedCache"/>) using
-    /// Respire. When <see cref="RespireCacheOptions.ClientOptions"/> or
-    /// <see cref="RespireCacheOptions.ConnectionString"/> is set the cache creates and owns its
+    /// Respire. When <see cref="RespireCacheRegistrationOptions.ClientOptions"/> or
+    /// <see cref="RespireCacheRegistrationOptions.ConnectionString"/> is set the cache creates and owns its
     /// own client — lazily, so startup never blocks on Redis; otherwise it uses the container's
     /// <see cref="IRespireClient"/>.
     /// </summary>
     public static IServiceCollection AddRespireDistributedCache(
-        this IServiceCollection services, Action<RespireCacheOptions> configure)
+        this IServiceCollection services, Action<RespireCacheRegistrationOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configure);
@@ -28,12 +28,12 @@ public static class RespireCachingServiceCollectionExtensions
         // registration (e.g. AddDistributedMemoryCache), matching AddStackExchangeRedisCache.
         services.AddSingleton<IDistributedCache>(provider =>
         {
-            var options = provider.GetRequiredService<IOptions<RespireCacheOptions>>().Value;
+            var options = provider.GetRequiredService<IOptions<RespireCacheRegistrationOptions>>().Value;
             RespireOptions? clientOptions = null;
             if (options.ClientOptions is { } configureClient)
             {
                 clientOptions = configureClient(provider) ?? throw new RespireConfigurationException(
-                    $"{nameof(RespireCacheOptions.ClientOptions)} returned null.");
+                    $"{nameof(RespireCacheRegistrationOptions.ClientOptions)} returned null.");
             }
             else if (options.ConnectionString is { } connectionString)
             {
@@ -52,7 +52,7 @@ public static class RespireCachingServiceCollectionExtensions
 
             var client = provider.GetService<IRespireClient>() ?? throw new RespireConfigurationException(
                 $"No {nameof(IRespireClient)} is registered and neither " +
-                $"{nameof(RespireCacheOptions.ClientOptions)} nor {nameof(RespireCacheOptions.ConnectionString)} " +
+                $"{nameof(RespireCacheRegistrationOptions.ClientOptions)} nor {nameof(RespireCacheRegistrationOptions.ConnectionString)} " +
                 "is set. Either register a client first or configure a cache-owned client.");
             return new RespireDistributedCache(client, options);
         });

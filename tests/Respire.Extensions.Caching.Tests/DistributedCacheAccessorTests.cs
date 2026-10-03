@@ -39,8 +39,6 @@ public class DistributedCacheAccessorTests
         await using (var cache = prefixed.AsDistributedCache(new RespireCacheOptions
         {
             InstanceName = "cache:",
-            ConnectionString = "unused:1",
-            ClientOptions = _ => throw new InvalidOperationException("Must use the supplied client."),
         }))
         {
             await Assert.That(Encoding.UTF8.GetString((await cache.GetAsync("key"))!)).IsEqualTo("hello");

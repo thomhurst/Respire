@@ -55,8 +55,9 @@ var cachedBytes = await cache.GetAsync("product:42");
 
 Each call creates a new adapter without network I/O. `InstanceName` adds to any existing
 client key prefix, and `ValueCodec` configures the adapter's payload encoding. The caller
-retains ownership of the client; disposing the adapter does not dispose it. `ConnectionString`
-and `ClientOptions` are ignored by this method because it uses the supplied client.
+retains ownership of the client; disposing the adapter does not dispose it. `RespireCacheOptions`
+holds only cache settings, so connection settings cannot be passed here. The registration
+methods take `RespireCacheRegistrationOptions`, which adds `ConnectionString` and `ClientOptions`.
 The existing `RespireDistributedCache` constructor remains available.
 
 Inject the framework abstraction into application code:
