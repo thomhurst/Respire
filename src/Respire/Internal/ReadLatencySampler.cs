@@ -11,6 +11,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     Func<TConnection, CancellationToken, ValueTask<long>> measure,
     Func<long>? clock = null) : IAsyncDisposable where TConnection : class
 {
+    /// <summary>No usable latency estimate; the connection can still be eligible for reads.</summary>
     internal const long Unknown = long.MaxValue;
     // Probe cadence is independent of the selection/measurement wait budget.
     internal const long IntervalMilliseconds = 1_000;
@@ -159,6 +160,7 @@ internal sealed class ReadLatencySampler<TConnection>(
 
 internal static class ReadLatencySampler
 {
+    /// <summary>An unanswered probe occupies the FIFO; exclude this connection from selection, unlike Unknown.</summary>
     internal const long Pending = -1;
     internal const int SamplingWaitMilliseconds = 1_000;
     private static readonly RawCommand s_ping = new(RespCommands.Ping);

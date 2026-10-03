@@ -13,6 +13,68 @@ public class NearestReadRoutingTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    public async Task MultipleConnectionsCheckTheSameSocketBeforeRoleValidation()
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var options = Options(primary, replica) with
+        {
+            Connections = 2, ReplicaRefreshInterval = TimeSpan.Zero,
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        var entry = selection.Replica!;
+        var blocked = selection.Connection;
+        var healthy = await entry.GetConnectionAsync(deadline.Token);
+        await Assert.That(healthy).IsNotSameReferenceAs(blocked);
+        // Advance once before starting PING: the next round-robin socket is healthy.
+        await Assert.That(await entry.GetConnectionAsync(deadline.Token)).IsSameReferenceAs(blocked);
+        replica.SuppressReply = command => command == "PING";
+        await using var sampler = ReadLatencySampler.Create();
+        await Assert.That(await sampler.GetLatencyAsync(blocked, deadline.Token)).IsEqualTo(ReadLatencySampler.Pending);
+
+        await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(healthy);
+        // The next selection reaches the blocked socket and excludes that exact socket.
+        await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AllPendingProbesFailWithoutQueuingARead(bool cluster)
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : Reply(command, "primary");
+        var options = Options(primary, replica) with { CommandTimeout = null, ConnectionIdleReadTimeout = null };
+        if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+        await using var client = await RespireClient.ConnectAsync(options);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var slot = ClusterHash.GetSlot("key");
+        var replicaConnection = cluster
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token)
+            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+        var primaryConnection = cluster
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, deadline.Token)
+            : client.Core.Multiplexer.GetConnection();
+        primary.SuppressReply = command => command == "PING";
+        replica.SuppressReply = command => command == "PING";
+        var sampler = ReadLatencySampler.Create();
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        await Task.WhenAll(sampler.GetLatencyAsync(primaryConnection, deadline.Token).AsTask(),
+            sampler.GetLatencyAsync(replicaConnection, deadline.Token).AsTask());
+        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+        await Assert.That(async () => await nearest.GetStringAsync("key", deadline.Token))
+            .Throws<RespireConnectionException>();
+        await Assert.That(primary.ReceivedCommands).DoesNotContain("GET key");
+        await Assert.That(replica.ReceivedCommands).DoesNotContain("GET key");
+    }
+
+    [Test]
     public async Task ExcludingPendingProbeDoesNotSkipTheNextDueRoleCheck()
     {
         await using var primary = Server("primary");

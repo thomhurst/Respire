@@ -644,20 +644,14 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         internal ValueTask<RespireConnection?> GetNearestConnectionAsync(
             ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken)
-        {
-            // Exclude this candidate for the whole selection, even if PING completes immediately
-            // afterwards. Returning the connection could let a fresh sample bypass a due ROLE check.
-            if (!_closed && Volatile.Read(ref _multiplexer) is { } current
-                && sampler.HasPendingProbe(current.GetConnection()))
-                return ValueTask.FromResult<RespireConnection?>(null);
-            return AcquireAsync();
-
-            async ValueTask<RespireConnection?> AcquireAsync()
-                => await GetConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
+            => GetConnectionCoreAsync(cancellationToken, preferredZone: null, sampler);
 
         /// <summary>Acquires a current connection after validating its replication role.</summary>
         internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null)
+            => (await GetConnectionCoreAsync(cancellationToken, preferredZone, sampler: null).ConfigureAwait(false))!;
+
+        private async ValueTask<RespireConnection?> GetConnectionCoreAsync(CancellationToken cancellationToken,
+            string? preferredZone, ReadLatencySampler<RespireConnection>? sampler)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
             RespireConnection? selected = null;
@@ -667,6 +661,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 selected = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
                 selectedFrom = current;
+                // Check the selected physical socket, without advancing round-robin twice.
+                // Exclusion lasts for this selection even if the pending probe completes next.
+                if (sampler?.HasPendingProbe(selected) == true) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
             }
@@ -725,6 +722,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
                 if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands)
                     selected = preferredZone is null ? _multiplexer.GetConnection() : _multiplexer.GetConnectionForZone(preferredZone);
+                // The socket or its probe state may have changed while acquiring the gate.
+                if (sampler?.HasPendingProbe(selected) == true) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
                 var checkedAt = Stopwatch.GetTimestamp();
