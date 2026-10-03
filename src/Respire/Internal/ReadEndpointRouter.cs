@@ -160,6 +160,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection, bool IsReplica)> RentDedicatedConnectionAsync(
         RespireReadFrom readFrom, CancellationToken cancellationToken, bool? replicaOnly = null)
     {
+        var candidateLimit = 0;
         for (var attempt = 0; ; attempt++)
         {
             ThrowIfDisposed();
@@ -170,12 +171,18 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 false => default,
                 _ => await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false),
             };
+            // Snapshot the candidate count after initial Sentinel discovery. Dedicated failures
+            // spend this finite acquisition budget, independently of Cluster redirect limits.
+            if (candidateLimit == 0)
+                candidateLimit = Math.Max(1, Volatile.Read(ref _replicas).Length
+                    + (replicaOnly == true || readFrom == RespireReadFrom.Replica ? 0 : 1));
             if (selection.Replica is not { } replica)
             {
                 try
                 {
                     var pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                    var lease = await core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
+                    var lease = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
+                        nearestLatency: readFrom == RespireReadFrom.Nearest ? NearestLatency : null).ConfigureAwait(false);
                     return (lease.Pool, lease.Connection, false);
                 }
                 catch (Exception error) when (replicaOnly is null && IsReadCandidateFailure(error, cancellationToken)
@@ -183,10 +190,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     if (readFrom == RespireReadFrom.Nearest)
                     {
-                        if (attempt >= ClusterRouter.RedirectLimit) throw;
-                        // Its shared socket can remain healthy while a dedicated handshake fails.
-                        // Cool down this owner and rank the remaining candidates by latency again.
-                        NearestLatency!.ConnectionFailed(selection.Primary!);
+                        if (attempt + 1 >= candidateLimit) throw;
+                        // Acquisition records the actual failed pool owner, including a primary
+                        // selected after retirement. Rank the remaining candidates again.
                         continue;
                     }
                     // The shared primary can be healthy while its dedicated handshake fails.
@@ -211,7 +217,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 replica.MarkFailed();
-                if (attempt >= ClusterRouter.RedirectLimit) throw;
+                if (attempt + 1 >= candidateLimit) throw;
                 // No application command was accepted. Reselect after a failed dedicated
                 // handshake, failed ROLE check, or removal of this replica during acquisition.
             }
@@ -251,13 +257,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 return await GetNearestAsync(cancellationToken).ConfigureAwait(false);
             case RespireReadFrom.PrimaryPreferred:
                 try { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
-                catch (Exception error) when (IsUnavailable(error, cancellationToken))
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 { return await GetReplicaAsync(cancellationToken).ConfigureAwait(false); }
             case RespireReadFrom.Replica:
                 return await GetReplicaAsync(cancellationToken).ConfigureAwait(false);
             case RespireReadFrom.ReplicaPreferred:
                 try { return await GetReplicaAsync(cancellationToken).ConfigureAwait(false); }
-                catch (Exception error) when (IsUnavailable(error, cancellationToken))
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 { return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false); }
             default:
                 return await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);

@@ -11,6 +11,164 @@ namespace Respire.Tests.Networking;
 public class ReadDedicatedRoutingTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LazyPrimaryDeadlineFallsBackUnlessCallerCancels(bool cancelCaller)
+    {
+        await using var primary = Node("primary", false);
+        await using var replica = Node("replica", true);
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(Options(primary, [replica], RespireReadFrom.PrimaryPreferred) with
+        {
+            TestingStreamFactory = OpenStreamAsync,
+            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+        });
+        using var caller = new CancellationTokenSource();
+        var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
+        await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await Assert.That(replica.CommandsSeen).IsEqualTo(0);
+        }
+        else
+        {
+            using var reply = await read.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(reply.AsString()).IsEqualTo("replica");
+            await Assert.That(caller.IsCancellationRequested).IsFalse();
+        }
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == primary.Port)
+            {
+                connecting.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            return await OpenSocketAsync(host, port, token);
+        }
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.Replica, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false)]
+    [Arguments(RespireReadFrom.Nearest, false)]
+    [Arguments(RespireReadFrom.Replica, true)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, true)]
+    [Arguments(RespireReadFrom.Nearest, true)]
+    public async Task DedicatedAcquisitionTriesEveryReplica(RespireReadFrom policy, bool allReplicasFail)
+    {
+        await using var primary = Node("primary", false);
+        var replicas = Enumerable.Range(0, 8).Select(_ => Node("replica", true)).ToArray();
+        var connections = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+        var attempts = 0;
+        try
+        {
+            await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, policy) with
+            {
+                TestingStreamFactory = OpenStreamAsync,
+            });
+            client.Core.ReadRouter.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
+            client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
+                (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 100L : 1L), () => 0L);
+            Task<RespireResult> ReadAsync() => client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            if (allReplicasFail && policy == RespireReadFrom.Replica)
+                await Assert.That(async () => await ReadAsync()).Throws<RespireConnectionException>();
+            else
+            {
+                using var reply = await ReadAsync();
+                await Assert.That(reply.AsString()).IsEqualTo(allReplicasFail ? "primary" : "replica");
+            }
+            await Assert.That(attempts).IsEqualTo(8);
+        }
+        finally
+        {
+            foreach (var replica in replicas) await replica.DisposeAsync();
+        }
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port != primary.Port && connections.AddOrUpdate(port, 1, (_, count) => count + 1) > 1)
+            {
+                var attempt = Interlocked.Increment(ref attempts);
+                if (allReplicasFail || attempt < 8) throw new RespireConnectionException("Dedicated handshake unavailable.");
+            }
+            return await OpenSocketAsync(host, port, token);
+        }
+    }
+
+    [Test]
+    public async Task NearestCoolsThePrimaryWhoseReplacementPoolFailed()
+    {
+        await using var oldPrimary = Node("old", false);
+        await using var newPrimary = Node("new", false);
+        await using var replica = Node("replica", true);
+        var currentPrimary = oldPrimary;
+        await using var sentinel = Sentinel(oldPrimary, () => [replica]);
+        var originalReply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+            ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${currentPrimary.Port.ToString().Length}\r\n{currentPrimary.Port}\r\n")
+            : originalReply(id, command);
+        var oldConnections = 0;
+        var newConnections = 0;
+        var oldRental = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest) with
+        {
+            SentinelPrimaryName = "primary", TestingStreamFactory = OpenStreamAsync,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        var router = client.Core.ReadRouter;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>(
+            (connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 100L : 1L), () => 0L);
+        await router.RefreshNowAsync(default);
+        var previous = client.Core.Sentinel!.Current!;
+        var previousPool = previous.Pool;
+        var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask();
+        await oldRental.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        currentPrimary = newPrimary;
+        previous.TryRetire();
+        var current = await client.Core.Sentinel.GetGenerationAsync(default);
+        var retirement = previousPool.RetireAsync().AsTask();
+        releaseOld.TrySetResult();
+        using var reply = await read.WaitAsync(TimeSpan.FromSeconds(10));
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.AsString()).IsEqualTo("replica");
+        await Assert.That(newConnections).IsEqualTo(2); // One shared connection and one failed dedicated attempt.
+        await Assert.That(router.NearestLatency.CanConnect(current.Multiplexer)).IsFalse();
+        await Assert.That(router.NearestLatency.CanConnect(previous.Multiplexer)).IsTrue();
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == oldPrimary.Port && Interlocked.Increment(ref oldConnections) > 1)
+            {
+                oldRental.TrySetResult();
+                await releaseOld.Task.WaitAsync(token);
+                throw new OperationCanceledException("The selected pool retired before admission.");
+            }
+            if (port == newPrimary.Port && Interlocked.Increment(ref newConnections) > 1)
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return await OpenSocketAsync(host, port, token);
+        }
+    }
+
+    private static async ValueTask<Stream> OpenSocketAsync(string host, int port, CancellationToken token)
+    {
+        var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(host, port, token);
+            return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+        }
+        catch { socket.Dispose(); throw; }
+    }
+
+    [Test]
     [Arguments(true, RespireReadFrom.Replica, "replica")]
     [Arguments(true, RespireReadFrom.ReplicaPreferred, "replica")]
     [Arguments(false, RespireReadFrom.PrimaryPreferred, "primary")]
