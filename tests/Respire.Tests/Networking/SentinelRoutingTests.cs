@@ -689,7 +689,9 @@ public class SentinelRoutingTests
         await using var promotedPrimary = Primary();
         await using var firstSentinel = Sentinel(() => stalePrimary.Port);
         var reportingPort = stalePrimary.Port;
-        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort));
+        // The epoch advances with the failover even if coalesced startup never queried this reporter.
+        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort),
+            () => Volatile.Read(ref reportingPort) == stalePrimary.Port ? 0 : 1);
         var options = Options(firstSentinel.Port) with
         {
             Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
@@ -732,7 +734,10 @@ public class SentinelRoutingTests
         await using var promotedPrimary = Primary();
         await using var firstSentinel = Sentinel(() => stalePrimary.Port);
         var reportingPort = stalePrimary.Port;
-        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort));
+        // Epochs belong to the simulated failover, not to whether startup happened to
+        // query this reporter before its subscription became live.
+        await using var reportingSentinel = Sentinel(() => Volatile.Read(ref reportingPort),
+            () => Volatile.Read(ref reportingPort) == stalePrimary.Port ? 0 : 1);
         var options = Options(firstSentinel.Port) with
         {
             Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
@@ -896,11 +901,37 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    public async Task InitialSentinelValidationWaitsForAllExpectedAcknowledgements()
+    public async Task CoveredStartupGapDoesNotRepeatRoleValidation()
     {
         await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var roles = primary.ReceivedCommands.Count(command => command == "ROLE");
+        var startup = SentinelHint.FromGap(new("127.0.0.1", sentinel.Port)) with
+        {
+            StartupSubscriptionVersion = router.Monitoring.SubscriptionVersion,
+        };
+        await router.GetGenerationAsync(default, forceDiscovery: true, notificationHint: startup);
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(roles);
+        // An actual reconnect/overflow gap still requires fresh validation.
+        await router.GetGenerationAsync(default, forceDiscovery: true,
+            notificationHint: startup with { StartupSubscriptionVersion = 0 });
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(roles + 1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InitialSentinelValidationWaitsForAllExpectedAcknowledgements(bool promotionBeforeAttach)
+    {
+        await using var primary = Primary();
+        await using var promoted = Primary();
         await using var first = Sentinel(() => primary.Port);
-        await using var second = Sentinel(() => primary.Port);
+        var reportedPort = primary.Port;
+        await using var second = Sentinel(() => Volatile.Read(ref reportedPort),
+            () => Volatile.Read(ref reportedPort) == primary.Port ? 0 : 1);
         second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -913,10 +944,12 @@ public class SentinelRoutingTests
         var index = second.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master"));
         var connection = second.ReceivedConnectionIds[index];
         var acknowledgements = second.ReplyOverride!(connection, second.ReceivedCommands[index]);
+        if (promotionBeforeAttach) Volatile.Write(ref reportedPort, promoted.Port);
         second.SuppressReply = null;
         await second.SendRawAsync(acknowledgements!, connection);
         await readiness.WaitAsync(Limit);
         await Assert.That(client.Core.Sentinel!.SubscribedSentinelCount).IsEqualTo(2);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(promotionBeforeAttach ? promoted.Port : primary.Port);
     }
 
     [Test]

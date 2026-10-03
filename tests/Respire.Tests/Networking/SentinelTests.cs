@@ -61,7 +61,7 @@ public class SentinelTests
         var sentinelTls = new SslClientAuthenticationOptions { TargetHost = "sentinel.example" };
         var endpoint = new RespireEndpoint("sentinel.example", 26379);
         var reconnectEpisodes = 0;
-        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        var options = SentinelMonitoring.CreateOptions(new RespireOptions
         {
             Endpoints = [new("redis.example", 6379)],
             Username = "data-user",
@@ -120,7 +120,7 @@ public class SentinelTests
             };
         }
 
-        var monitor = SentinelRouter.CreateSentinelMonitorOptions(options, new RespireEndpoint("sentinel.example", 26379));
+        var monitor = SentinelMonitoring.CreateOptions(options, new RespireEndpoint("sentinel.example", 26379));
 
         await Assert.That(monitor.Username).IsEqualTo(username);
         await Assert.That(monitor.Password).IsEqualTo(password);
@@ -142,7 +142,7 @@ public class SentinelTests
         var dataCredentials = new FixedCredentials("data-user", "data-password");
         var sentinelCredentials = new FixedCredentials("sentinel-user", "sentinel-password");
         var endpoint = new RespireEndpoint("sentinel.example", 26379);
-        var options = SentinelRouter.CreateSentinelMonitorOptions(new RespireOptions
+        var options = SentinelMonitoring.CreateOptions(new RespireOptions
         {
             Endpoints = [new("redis.example", 6379)],
             CredentialProvider = dataCredentials,

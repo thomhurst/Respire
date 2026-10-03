@@ -26,17 +26,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         ? [new RespireEndpoint("localhost", 26379)] : core.Options.Endpoints);
     private readonly HashSet<Generation> _owned = [];
     private readonly HashSet<DedicatedConnectionPool> _correctionPools = [];
-    // Keyed like discovery itself: configured seeds plus at most 64 learned endpoints. Discovery
-    // never forgets an endpoint, so removing a completed entry would only recreate it next pass.
-    // Aging learned endpoints and cancelling their monitors together is tracked in #695.
-    private readonly Dictionary<RespireEndpoint, Task> _notificationMonitors = new(SentinelDiscoveryState.EndpointComparer.Instance);
     private readonly SentinelNotificationCoalescer _coalescer = new(); // Guarded by _gate.
-    private readonly byte[] _serviceNameUtf8 = System.Text.Encoding.UTF8.GetBytes(core.Options.SentinelPrimaryName ?? "");
     private Generation? _current;
     private bool _disposed;
     private TaskCompletionSource? _disposeCompletion;
     private Task _notifications = Task.CompletedTask;
-    private Task _notificationMonitorSupervisor = Task.CompletedTask;
     private Task? _notificationRediscovery;
     private TaskCompletionSource _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
     // Background DNS checks for +switch-master sources. Disposal joins them with the monitors.
@@ -47,16 +41,21 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     // publication and clearing _notificationRediscovery before a replacement worker can start.
     private long _notificationDiscoveryNotBefore;
     internal const int MinimumNotificationDiscoveryIntervalMilliseconds = 100;
-    // Distinct Sentinels whose monitor has subscribed at least once. Reconnects do not add to it.
-    private readonly HashSet<RespireEndpoint> _subscribedSentinels = new(SentinelDiscoveryState.EndpointComparer.Instance); // Guarded by _gate.
-    // Completed and replaced on each publication. Monitors parked after exhausting their reconnect
-    // budget wait on it, because a published generation proves Sentinel discovery works again.
-    private TaskCompletionSource _monitorRearm = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string _masterDownKey = "master-down:" + core.Options.SentinelPrimaryName;
 
     internal Generation? Current => Volatile.Read(ref _current);
     internal RespireEndpoint[] DiscoveredEndpoints => _discovery.Snapshot();
-    internal TimeProvider Clock { get; set; } = TimeProvider.System;
+    private SentinelMonitoring? _monitoring;
+    internal SentinelMonitoring Monitoring
+    {
+        get
+        {
+            lock (_gate) return _monitoring ??= new(core.Options, core.Logger, _gate, _discovery, _lifetime,
+                ObserveSentinelEventAsync, QueueDeliveryGapRediscovery);
+        }
+    }
+    internal TimeProvider Clock { get => Monitoring.Clock; set => Monitoring.Clock = value; }
+    internal Task CurrentMonitorRearm() => Monitoring.CurrentMonitorRearm();
 
     // Queries the configured and learned Sentinels directly, so replica reads do not depend on a
     // reachable primary during an outage or failover window.
@@ -66,10 +65,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     /// <summary>Counts distinct Sentinels with an established monitor subscription. Tests use it as readiness.</summary>
     internal int SubscribedSentinelCount
     {
-        get { lock (_gate) return _subscribedSentinels.Count; }
+        get => Monitoring.SubscribedCount;
     }
     /// <summary>Resolves switch sources and discovered owner aliases within their discovery deadlines.</summary>
-    internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
+    internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get => Monitoring.HostResolver; set => Monitoring.HostResolver = value; }
     internal int PendingSwitchSourceResolutions
     {
         get { lock (_gate) return _switchSourceResolutions.Count; }
@@ -131,7 +130,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             // Another discovery owner may have published while this caller awaited the gate.
             var previous = Current;
-            if (!forceDiscovery && previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
+            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
+                && (!forceDiscovery || notificationHint is { StartupSubscriptionVersion: > 0 } startup
+                    && !Monitoring.NeedsStartupValidation(startup.StartupSubscriptionVersion))) return previous;
+            var subscriptionVersion = Monitoring.SubscriptionVersion;
             // Classify against the generation current after acquiring discovery ownership:
             // a down report queued during A-to-B publication may describe B's next outage.
             if (notificationHint is { } downHint && previous is not null)
@@ -156,6 +158,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     ObjectDisposedException.ThrowIf(_disposed, this);
                     if (replacement.IsRetired || !ReferenceEquals(Current, replacement))
                         throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
+                    Monitoring.Validated(subscriptionVersion);
                 }
                 return replacement;
             }
@@ -172,7 +175,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && old.ValidatedPeer is { } oldPeer && replacement.ValidatedPeer is { } replacementPeer
                     && SameEndpoint(oldPeer, replacementPeer)
                     && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
+                {
+                    Monitoring.Validated(subscriptionVersion);
                     return old;
+                }
                 if (old is not null) Invalidate(old);
                 Volatile.Write(ref _current, replacement);
                 unpublished = null;
@@ -183,10 +189,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                         new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
                         new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
                 QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
-                StartNotificationMonitoringLocked();
-                var rearm = Volatile.Read(ref _monitorRearm);
-                Volatile.Write(ref _monitorRearm, new(TaskCreationOptions.RunContinuationsAsynchronously));
-                rearm.TrySetResult();
+                Monitoring.Published();
+                Monitoring.Validated(subscriptionVersion);
             }
             return replacement;
         }
@@ -429,7 +433,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             Task[] monitorTasks;
             // Join notification rediscovery and switch-source DNS checks too, so a late attempt
             // cannot publish or invalidate after disposal.
-            lock (_gate) monitorTasks = [_notificationMonitorSupervisor, .. _notificationMonitors.Values,
+            lock (_gate) monitorTasks = [.. Monitoring.Stop(),
                 _notificationRediscovery ?? Task.CompletedTask, .. _switchSourceResolutions];
             Exception? disposeError = null;
             // Bounded: a monitor client whose cleanup ignores cancellation must not hang disposal.
