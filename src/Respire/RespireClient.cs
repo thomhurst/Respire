@@ -2100,22 +2100,23 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking)
         where TCommand : struct, IRespCommand
     {
+        var preferredZone = GetTransportReadZone(in command);
         if (sendAsking)
         {
             if (!_broadcastTracking)
             {
                 return ClusterRouter.SendTrackedAskingAsync(
-                    connection, in command, cancellationToken, operation);
+                    connection, in command, cancellationToken, operation, preferredZone);
             }
             return ClusterRouter.SendAskingAsync(
-                connection, in command, cancellationToken, operation);
+                connection, in command, cancellationToken, operation, preferredZone: preferredZone);
         }
 
         if (_broadcastTracking)
-            return connection.SendAsync(command, cancellationToken, commandName: operation);
+            return connection.SendAsync(command, cancellationToken, commandName: operation, preferredZone: preferredZone);
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
-            in caching, in command, cancellationToken, operation);
+            in caching, in command, cancellationToken, operation, preferredZone);
     }
 
 #if NET
@@ -2854,7 +2855,8 @@ public sealed partial class RespireClient : IRespireClient
         => RespireTelemetry.IsEnabled
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName)
-            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation);
+            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
+                preferredZone: GetTransportReadZone(in command));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -2876,7 +2878,8 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         try
         {
-            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation).ConfigureAwait(false);
+            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
+                preferredZone: GetTransportReadZone(in command)).ConfigureAwait(false);
             telemetry.Complete(
                 operation,
                 connection.Host,
@@ -3064,6 +3067,12 @@ public sealed partial class RespireClient : IRespireClient
         finally { discovery?.Finish(); }
     }
 
+    // The view's original policy survives role fallback; a physical retirement must retain
+    // its zone even after higher-level routing has narrowed eligibility to one server role.
+    private string? GetTransportReadZone<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
+        => command.ReadKind != ReadCommandKind.None && ReadFallbackPolicy.UsesAvailabilityZone(_readFrom)
+            ? _core.Options.ClientAvailabilityZone : null;
+
     // CommandTimeout is enforced by the connection's deadline sweep (commands are stamped at
     // enqueue), so no per-command CancellationTokenSource or timer is created here.
     private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
@@ -3077,9 +3086,9 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
         => sendAsking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute)
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command))
             : connection.SendCheckedAsync(in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute);
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command));
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
@@ -3221,10 +3230,11 @@ public sealed partial class RespireClient : IRespireClient
         if (sendAsking)
         {
             return ClusterRouter.SendAskingBulkStreamAsync(
-                connection, in command, cancellationToken, operation);
+                connection, in command, cancellationToken, operation, preferredZone: GetTransportReadZone(in command));
         }
 
-        return connection.SendBulkStreamAsync(in command, cancellationToken, operation);
+        return connection.SendBulkStreamAsync(in command, cancellationToken, operation,
+            preferredZone: GetTransportReadZone(in command));
     }
 
 #if NET
@@ -3256,9 +3266,11 @@ public sealed partial class RespireClient : IRespireClient
         {
             var stream = sendAsking
                 ? await ClusterRouter.SendAskingBulkStreamAsync(
-                    connection, in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false)
+                    connection, in command, cancellationToken, operation, CompleteTelemetry,
+                    GetTransportReadZone(in command)).ConfigureAwait(false)
                 : await connection.SendBulkStreamAsync(
-                    in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false);
+                    in command, cancellationToken, operation, CompleteTelemetry,
+                    GetTransportReadZone(in command)).ConfigureAwait(false);
             if (stream is null)
             {
                 CompleteTelemetry(null);

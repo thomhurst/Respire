@@ -144,13 +144,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// admitted, so the chain is bounded by handoff publications and cannot loop.</para>
     /// </remarks>
     private bool TryReroute(bool pinToConnection, CommandDeadline deadline, out RespireConnection target,
-        out CommandDeadline reroutedDeadline)
+        out CommandDeadline reroutedDeadline, string? preferredZone = null)
     {
         target = null!;
         reroutedDeadline = default;
         if (pinToConnection || _generation?.IsRetired == true || Multiplexer is not { IsRetired: false } multiplexer)
             return false;
-        var selected = multiplexer.GetConnection();
+        var selected = preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
         if (ReferenceEquals(selected, this) || Volatile.Read(ref selected._retired)) return false;
         target = selected;
         reroutedDeadline = GetReroutedCommandDeadline(deadline);
@@ -797,12 +797,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default,
         bool armCommandDeadline = true,
         string? commandName = null,
-        bool pinToConnection = false)
+        bool pinToConnection = false,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
             commandName, armCommandDeadline, pinToConnection: pinToConnection,
-            streamingRoute: DedicatedStreamRoute.None);
+            streamingRoute: DedicatedStreamRoute.None, preferredZone: preferredZone);
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
@@ -855,12 +856,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? commandName = null,
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
-        DedicatedStreamRoute streamingRoute = default)
+        DedicatedStreamRoute streamingRoute = default,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
             commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
-            streamingRoute: streamingRoute);
+            streamingRoute: streamingRoute, preferredZone: preferredZone);
 
     /// <summary>
     /// Sends a command through a typed in-flight source, avoiding intermediate async state
@@ -958,12 +960,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        Action<Exception?>? onFrameCompleted = null)
+        Action<Exception?>? onFrameCompleted = null,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(command,
             new BulkStreamPendingResponseSource(commandName, hasPrefixReply: false, onFrameCompleted,
                 cancellationToken, OnBulkStreamLifetimeCancelled),
-            discardRepliesBefore: 0, retainRepliesBefore: false, cancellationToken);
+            discardRepliesBefore: 0, retainRepliesBefore: false, cancellationToken, preferredZone: preferredZone);
 
     /// <summary>Atomically sends a checked prefix and a streaming command, as required for ASK redirects.</summary>
     internal ValueTask<Stream?> SendPrefixedBulkStreamAsync<TPrefix, TCommand>(
@@ -971,14 +974,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        Action<Exception?>? onFrameCompleted = null)
+        Action<Exception?>? onFrameCompleted = null,
+        string? preferredZone = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(
             new PrefixedCommand<TPrefix, TCommand>(prefix, command),
             new BulkStreamPendingResponseSource(commandName, hasPrefixReply: true, onFrameCompleted,
                 cancellationToken, OnBulkStreamLifetimeCancelled),
-            discardRepliesBefore: 1, retainRepliesBefore: true, cancellationToken);
+            discardRepliesBefore: 1, retainRepliesBefore: true, cancellationToken, preferredZone: preferredZone);
 
     private ValueTask<Stream?> SendBulkStreamCoreAsync<TCommand>(
         TCommand command,
@@ -986,7 +990,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         bool retainRepliesBefore,
         CancellationToken cancellationToken,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -997,13 +1002,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             enqueued = TryEnqueue(in command, source, out startedBatch,
                 discardRepliesBefore, retainRepliesBefore);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, discardRepliesBefore + 2);
             return target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted);
+                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted, preferredZone);
         }
         catch
         {
@@ -1020,7 +1025,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendBulkStreamSlowAsync(command, source, discardRepliesBefore,
-            retainRepliesBefore, cancellationToken, commandDeadline);
+            retainRepliesBefore, cancellationToken, commandDeadline, preferredZone);
     }
 
     private void OnBulkStreamLifetimeCancelled()
@@ -1049,7 +1054,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         bool retainRepliesBefore,
         CancellationToken cancellationToken,
-        CommandDeadline commandDeadline)
+        CommandDeadline commandDeadline, string? preferredZone)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1059,13 +1064,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 command, source, discardRepliesBefore, cancellationToken,
                 retainRepliesBefore: retainRepliesBefore, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             // The capacity wait reclaimed the unadmitted source; the target needs a fresh one.
             return await target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
-                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted).ConfigureAwait(false);
+                discardRepliesBefore, retainRepliesBefore, cancellationToken, rerouted, preferredZone).ConfigureAwait(false);
         }
 
         source.RegisterCancellation(cancellationToken);
@@ -1136,12 +1141,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default,
         string? commandName = null,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        string? preferredZone = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendPrefixedAsync(
             in prefix, in command, throwOnError: true, cancellationToken, commandName,
-            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute);
+            commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+            preferredZone: preferredZone);
 
     internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(
         in TPrefix prefix,
@@ -1152,7 +1159,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool armCommandDeadline = true,
         bool pinToConnection = false,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        string? preferredZone = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -1171,7 +1179,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             armCommandDeadline,
             pinToConnection: pinToConnection,
             commandDeadline: commandDeadline,
-            allowStreamingConnectionReroute: allowStreamingConnectionReroute);
+            allowStreamingConnectionReroute: allowStreamingConnectionReroute, preferredZone: preferredZone);
     }
 
     /// <summary>
@@ -1182,7 +1190,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TPrefix prefix,
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string commandName = "(command)")
+        string commandName = "(command)",
+        string? preferredZone = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -1197,7 +1206,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             repliesBeforeFinal: 1,
             firstQueueReply: 0,
             cancellationToken,
-            commandName);
+            commandName, preferredZone: preferredZone);
     }
 
     /// <summary>Appends two one-shot preludes and a command atomically.</summary>
@@ -1206,7 +1215,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TSecondPrefix secondPrefix,
         in TCommand command,
         CancellationToken cancellationToken = default,
-        string commandName = "(command)")
+        string commandName = "(command)",
+        string? preferredZone = null)
         where TFirstPrefix : struct, IRespCommand
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
@@ -1223,7 +1233,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             repliesBeforeFinal: 2,
             firstQueueReply: 0,
             cancellationToken,
-            commandName);
+            commandName, preferredZone: preferredZone);
     }
 
     private ValueTask<RespValue> SendMultiReplyCoreAsync<TCommand>(
@@ -1233,7 +1243,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1248,12 +1259,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             enqueued = TryEnqueue(
                 in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
             return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted);
+                rerouted, preferredZone);
         }
         catch
         {
@@ -1265,7 +1276,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return SendMultiReplySlowAsync(
                 command, source, repliesBeforeFinal, firstQueueReply, replyCount, cancellationToken,
-                commandName, cancellationTimeout, callerCancellationToken, commandDeadline);
+                commandName, cancellationTimeout, callerCancellationToken, commandDeadline, preferredZone);
         }
 
         ClampDeadline(source, commandDeadline);
@@ -1289,7 +1300,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         bool pinToConnection = false,
         bool allowStreamingConnectionReroute = true,
-        DedicatedStreamRoute streamingRoute = default)
+        DedicatedStreamRoute streamingRoute = default,
+        string? preferredZone = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1311,11 +1323,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 retainRepliesBefore: false, armCommandDeadline);
         }
         catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
-            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
+            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source);
             return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, rerouted);
+                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone);
         }
         catch
         {
@@ -1332,7 +1344,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
-            commandName, armCommandDeadline, commandDeadline, pinToConnection);
+            commandName, armCommandDeadline, commandDeadline, pinToConnection, preferredZone);
     }
 
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
@@ -1363,7 +1375,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// command has been written to the socket.
     /// </summary>
     public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default,
-        string? commandName = null, CommandDeadline capacityDeadline = default)
+        string? commandName = null, CommandDeadline capacityDeadline = default, string? preferredZone = null)
         where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1374,9 +1386,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueueForWrite(in command, commandName, out startedBatch, out writeTask);
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, capacityDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, capacityDeadline, out var target, out var rerouted, preferredZone))
         {
-            return target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted);
+            return target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone);
         }
 
         if (enqueued)
@@ -1385,7 +1397,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
-        return SendFireAndForgetSlowAsync(command, cancellationToken, commandName, capacityDeadline);
+        return SendFireAndForgetSlowAsync(command, cancellationToken, commandName, capacityDeadline, preferredZone);
     }
 
     private static ValueTask WaitForWriteAsync(Task writeTask, CancellationToken cancellationToken)
@@ -1726,7 +1738,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? commandName,
         bool armCommandDeadline,
         CommandDeadline commandDeadline,
-        bool pinToConnection)
+        bool pinToConnection, string? preferredZone)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1738,10 +1750,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
-            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted))
+            && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, rerouted).ConfigureAwait(false);
+                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone).ConfigureAwait(false);
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
@@ -1761,7 +1773,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName,
         TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
-        CommandDeadline commandDeadline)
+        CommandDeadline commandDeadline, string? preferredZone)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1791,12 +1803,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,
                 CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
             return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted).ConfigureAwait(false);
+                rerouted, preferredZone).ConfigureAwait(false);
         }
         catch
         {
@@ -1844,7 +1856,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken,
-        string? commandName, CommandDeadline capacityDeadline)
+        string? commandName, CommandDeadline capacityDeadline, string? preferredZone)
         where TCommand : struct, IRespCommand
     {
         // A rerouted send keeps the capacity budget that started on the retired socket.
@@ -1867,9 +1879,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     .ConfigureAwait(false);
             }
         }
-        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, deadline, out var target, out var rerouted))
+        catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, deadline, out var target, out var rerouted, preferredZone))
         {
-            await target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted).ConfigureAwait(false);
+            await target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone).ConfigureAwait(false);
             return;
         }
 

@@ -12,6 +12,168 @@ namespace Respire.Tests.Networking;
 public class AvailabilityZoneRoutingTests
 {
     [Test]
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(4, false)]
+    [Arguments(5, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(4, true)]
+    [Arguments(5, true)]
+    [Arguments(6, false)]
+    [Arguments(6, true)]
+    public async Task TransportRetirementKeepsOriginalZone(int mode, bool waitForCapacity)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "local", true);
+        ConfigureMixedSocketZones(replica);
+        replica.SuppressReply = command => command == "PING";
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
+            RespireReadFrom.AzAffinity) with { Connections = 4, MaxInflightCommands = 4 });
+        var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default);
+        var owner = selected.Multiplexer!;
+        var remote = Enumerable.Range(0, 4).Select(owner.GetConnection)
+            .First(connection => connection.AvailabilityZone == "remote");
+        var accepted = new List<Task<Respire.Protocol.RespValue>>();
+        if (waitForCapacity)
+        {
+            for (var index = 0; index < 4; index++)
+                accepted.Add(selected.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)).AsTask());
+        }
+        else await selected.RetireAsync();
+        // Model the post-selection MOVING boundary. The next ordinary selection picks a
+        // remote socket, while another local socket remains eligible on the same owner.
+        typeof(Respire.Infrastructure.RespireConnectionMultiplexer)
+            .GetField("_next", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(owner, unchecked((uint)(remote.MultiplexerSlot - 1)));
+        var command = new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key");
+        var read = ReadAsync();
+        Task retirement = Task.CompletedTask;
+        try
+        {
+            if (waitForCapacity)
+            {
+                await Assert.That(read.IsCompleted).IsFalse();
+                retirement = selected.RetireAsync();
+            }
+            await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("local");
+            await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+        }
+        finally
+        {
+            if (waitForCapacity)
+            {
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                while (replica.ReceivedCommands.Count(command => command == "PING") < 4)
+                    await Task.Delay(10, limit.Token);
+                var index = replica.ReceivedCommands.ToList().FindIndex(command => command == "PING");
+                await replica.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(),
+                    replica.ReceivedConnectionIds[index]);
+                foreach (var pending in accepted) (await pending.WaitAsync(limit.Token)).Dispose();
+                await retirement.WaitAsync(limit.Token);
+            }
+        }
+
+        async Task<string?> ReadAsync()
+        {
+            if (mode == 6)
+            {
+                await selected.SendFireAndForgetAsync(command, preferredZone: "local");
+                return await ObservedReadZoneAsync(replica);
+            }
+            if (mode is 2 or 3)
+            {
+                await using var stream = mode == 2
+                    ? await selected.SendBulkStreamAsync(command, preferredZone: "local")
+                    : await ClusterRouter.SendAskingBulkStreamAsync(selected, command, default, preferredZone: "local");
+                using var reader = new StreamReader(stream!);
+                return await reader.ReadToEndAsync();
+            }
+            var caching = new Respire.Commands.ClientCachingCommand();
+            using var reply = mode switch
+            {
+                4 => await selected.SendValidatedPrefixedAsync(caching, command, preferredZone: "local"),
+                5 => await ClusterRouter.SendTrackedAskingAsync(selected, command, default, preferredZone: "local"),
+                _ => await client.SendOnConnectionAsync("GET", selected, command, default, sendAsking: mode == 1),
+            };
+            return reply.AsString();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PublicReadKeepsZoneWhenSocketRetiresBeforeAdmission(int mode)
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "local", true);
+        ConfigureMixedSocketZones(replica);
+        if (mode == 1) ConfigureTopology(primary, replica);
+        var slot = ClusterHash.GetSlot("key");
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], mode == 1,
+            RespireReadFrom.AzAffinity) with { Connections = 4 });
+        var selected = mode == 1
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.AzAffinity, default)
+            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default);
+        var owner = selected.Multiplexer!;
+        var remote = Enumerable.Range(0, 4).Select(owner.GetConnection)
+            .First(connection => connection.AvailabilityZone == "remote");
+        var cursor = typeof(Respire.Infrastructure.RespireConnectionMultiplexer)
+            .GetField("_next", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var retired = 0;
+        Task retirement = Task.CompletedTask;
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.OperationName != "GET" || activity.GetTagItem("server.port") is not int port
+                    || port != replica.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0) return;
+                // Telemetry starts after endpoint/socket selection and before enqueue. Reproduce
+                // that exact retirement boundary without changing the live multiplexer owner.
+                var current = owner.GetConnectionForZone("local",
+                    mode == 1 ? slot : unchecked((int)(uint)cursor.GetValue(owner)!));
+                retirement = current.RetireAsync();
+                cursor.SetValue(owner, unchecked((uint)(remote.MultiplexerSlot - 1)));
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        string? result;
+        if (mode == 1)
+        {
+            using var batch = client.CreateBatch();
+            var pending = batch.Strings.GetString("key");
+            await batch.ExecuteAsync();
+            result = await pending;
+        }
+        else if (mode == 2)
+        {
+            await using var stream = await client.Strings.GetStreamAsync("key");
+            using var reader = new StreamReader(stream!);
+            result = await reader.ReadToEndAsync();
+        }
+        else if (mode == 3)
+        {
+            await client.ExecuteFireAndForgetAsync(RespireCommands.String.GET, ["key"]);
+            result = await ObservedReadZoneAsync(replica);
+        }
+        else result = await client.GetStringAsync("key");
+        await Assert.That(result).IsEqualTo("local");
+        await Assert.That(retired).IsEqualTo(1);
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(true)]
     [Arguments(false)]
@@ -1123,6 +1285,28 @@ public class AvailabilityZoneRoutingTests
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private static async Task<string> ObservedReadZoneAsync(FakeRespServer server)
+    {
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            var index = server.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("GET "));
+            if (index >= 0) return server.ReceivedConnectionIds[index] % 2 == 0 ? "local" : "remote";
+            await Task.Delay(10, limit.Token);
+        }
+    }
+
+    private static void ConfigureMixedSocketZones(FakeRespServer server)
+    {
+        var original = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command switch
+        {
+            "INFO SERVER" => Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n"),
+            _ when command.StartsWith("GET ") => Bulk(id % 2 == 0 ? "local" : "remote"),
+            _ => original(id, command),
+        };
     }
 
     private static FakeRespServer Sentinel(FakeRespServer primary, Func<FakeRespServer[]> replicas) => new(16)
