@@ -24,6 +24,11 @@ public class FakeRespServerTests
         await Assert.That(((IPEndPoint)listener.LocalEndpoint).Port).IsNotEqualTo(retiredPort);
         await Assert.That(allocations).IsGreaterThanOrEqualTo(2);
 
+        // Successful allocation must release every rejected listener as well.
+        using var probe = new TcpListener(IPAddress.Loopback, retiredPort);
+        probe.Start();
+        await Assert.That(((IPEndPoint)probe.LocalEndpoint).Port).IsEqualTo(retiredPort);
+
         // The replacement still accepts a connection on its fresh endpoint.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var client = new TcpClient();
