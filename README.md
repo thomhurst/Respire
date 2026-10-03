@@ -47,6 +47,9 @@ User? user = await redis.GetAsync<User>("user:1");
 - **Production-friendly.** Built-in reconnection, resubscribing pub/sub, OpenTelemetry,
   dependency injection, typed serialization, and testable interfaces.
 
+Coming from StackExchange.Redis? See the
+[comparison and migration guide](https://thomhurst.github.io/Respire/docs/stackexchange-redis).
+
 ## Everyday patterns
 
 ### Server-assisted client-side caching
@@ -70,13 +73,12 @@ invalidation and Respire evicts the local entry; the next read refreshes it lazi
 
 StackExchange.Redis 3.1.13 does not provide an equivalent built-in server-assisted local cache.
 Its keyspace-notification APIs can be used to build application-owned invalidation, but storage,
-bounds, command eligibility, and race handling remain application concerns. In an official net10
-BenchmarkDotNet short run, a cached Respire `GET` took 151.5 ns versus 186.5 μs for a
-StackExchange.Redis server read. That difference measures removing the network round trip—not a
-1,000× difference between the clients' uncached wire paths, which measured the same statistically.
+bounds, command eligibility, and race handling remain application concerns. A cache hit takes
+hundreds of nanoseconds instead of a network round trip. Uncached reads perform about the same
+in both clients.
 
 [Learn how client-side caching works](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching)
-or inspect the [benchmark run](https://github.com/thomhurst/Respire/actions/runs/31848970849).
+or see the [latest benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks).
 
 ### Blocking list reads
 

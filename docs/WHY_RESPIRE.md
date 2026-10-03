@@ -34,10 +34,9 @@ protection; the next read refreshes lazily. StackExchange.Redis 3.1.13 does not 
 equivalent built-in cache. Its keyspace notifications can support a custom solution, but the
 application must build and operate that solution.
 
-An official net10 BenchmarkDotNet short run measured cached Respire reads at 129.5–466.5 ns versus
-185.6–186.8 μs for StackExchange.Redis server reads. This is the value of removing the round trip;
-the two uncached clients measured the same statistically. See the
-[benchmark run](https://github.com/thomhurst/Respire/actions/runs/31848970849).
+Cache hits take hundreds of nanoseconds, while a server read in either client costs a full network
+round trip. This is the value of removing the round trip; uncached reads perform about the same in
+both clients. See the [latest benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks).
 
 ### 2. Blocking commands are first-class
 
@@ -89,7 +88,8 @@ Console.WriteLine(pending.Result);
 ```
 
 `benchmarks/Respire.ComparisonBenchmarks` tracks throughput and allocations against
-StackExchange.Redis.
+StackExchange.Redis. CI publishes the results as [benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks)
+and [stress tests](https://thomhurst.github.io/Respire/docs/stress-tests).
 
 ### 5. Modern .NET is the interface
 
@@ -127,9 +127,13 @@ The full surface, conventions, and roadmap live in
 
 ## When *not* to use Respire (yet)
 
-Respire supports Cluster sharded pub/sub, including resubscription after slot ownership changes.
-Sentinel supports event-driven primary discovery, reactive handoff after disconnect or READONLY,
-and validation of each replacement before application commands use it.
-StackExchange.Redis has a much longer production history and ecosystem. If that maturity
-outweighs Respire's server-assisted cache, blocking-command pool, and modern API,
-StackExchange.Redis remains the safer choice.
+- **You need a stable API.** Respire is pre-release, and its public API may still change.
+- **You target older runtimes.** Respire supports .NET 8 and .NET 10 only. StackExchange.Redis
+  also supports .NET Framework and `netstandard2.0`.
+- **You need synchronous calls.** Respire is asynchronous only.
+- **Maturity matters most.** StackExchange.Redis has a much longer production history and
+  ecosystem. If that outweighs Respire's server-assisted cache, blocking-command pool, and modern
+  API, StackExchange.Redis remains the safer choice.
+
+See [Coming from StackExchange.Redis](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
+for a feature comparison and an API migration map.
