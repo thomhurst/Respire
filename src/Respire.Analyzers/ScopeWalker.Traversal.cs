@@ -169,6 +169,9 @@ internal static partial class ScopeWalker
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
             var returnTransfer = expression?.Parent is ReturnStatementSyntax;
+            var initializerTransfer = expression?.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax };
+            if (initializerTransfer)
+                call = expression!.Parent!.Parent;
             var assignmentTransfer = false;
             var indexerTransfer = expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax };
             if (expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax { Parent: ElementAccessExpressionSyntax indexer } })
@@ -188,16 +191,16 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer || indexerTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
                         if (returnTransfer ? operation == block.BranchValue && operation.Syntax == call : ContainsCall(operation, call))
                         {
-                            // Returning a value transfers ownership only after its complete
-                            // expression, including a final conversion, has succeeded.
-                            var position = returnTransfer ? call.Span.End : TransferPosition(call);
+                            // Returns and local initializers transfer ownership only after
+                            // the complete expression, including its final conversion.
+                            var position = returnTransfer || initializerTransfer ? call.Span.End : TransferPosition(call);
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
@@ -372,6 +375,8 @@ internal static partial class ScopeWalker
             }
             else if (operation is IDeconstructionAssignmentOperation deconstruction)
             {
+                // Deconstruction evaluates target-location side effects before the RHS,
+                // but performs the target stores only after the RHS and conversions.
                 VisitDeconstructionLocations(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
                     started, dispatch, ref known, ref values);
                 Visit(deconstruction.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);

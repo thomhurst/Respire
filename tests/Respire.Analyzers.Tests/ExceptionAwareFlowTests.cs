@@ -1,3 +1,4 @@
+using TUnit.Assertions;
 using TUnit.Core;
 using Pending = Respire.Analyzers.Tests.AnalyzerVerifier<Respire.Analyzers.PendingReadBeforeFlushAnalyzer>;
 using Disposal = Respire.Analyzers.Tests.AnalyzerVerifier<Respire.Analyzers.UndisposedPooledResultAnalyzer>;
@@ -6,6 +7,71 @@ namespace Respire.Analyzers.Tests;
 
 public class ExceptionAwareFlowTests
 {
+    [Test]
+    public async Task DeconstructionEvaluatesIndexBeforeRhsAtRuntime()
+    {
+        var flag = false;
+        var rhsValue = true;
+        int[] array = [0];
+        var value = 0;
+        try { (array[Throws()], value) = ((flag = rhsValue) ? 0 : 0, 1); }
+        catch (InvalidOperationException) { }
+        await Assert.That(flag).IsFalse();
+        await Assert.That(value).IsEqualTo(0);
+
+        static int Throws() => throw new InvalidOperationException();
+    }
+
+    [Test]
+    [Arguments("var owner = (result, Throws());", "Exception", true)]
+    [Arguments("object owner = result;", "OutOfMemoryException", true)]
+    [Arguments("Owner owner = result;", "InvalidOperationException", true)]
+    [Arguments("var owner = (true ? result : default, Throws());", "Exception", true)]
+    [Arguments("IDisposable owner = result;", "OutOfMemoryException", true)]
+    [Arguments("object owner = result;", "InvalidOperationException", false)]
+    [Arguments("var owner = (result, 0);", "InvalidOperationException", false)]
+    [Arguments("RespireResult owner = result;", "OutOfMemoryException", false)]
+    public async Task LocalInitializerCompletesBeforeTransfer(string initializer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner
+        {
+            public static implicit operator Owner(RespireResult result) => throw new InvalidOperationException();
+        }
+        class Caller
+        {
+            static int Throws() => throw new Exception();
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{initializer}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("flag", true)]
+    [Arguments("true", false)]
+    public async Task DeconstructionTargetExceptionsPrecedeRhsWrites(string cleanupCondition, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder { public RespireResult Value { set { value.Dispose(); } } }
+        class Caller
+        {
+            static int Throws() => throw new Exception();
+            async Task Run(RespireClient client, bool flag, int[] array, Holder holder)
+            {
+                if (flag) return;
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { (array[Throws()], holder.Value) = ((flag = true) ? 0 : 0, result); }
+                catch { if ({{cleanupCondition}}) result.Dispose(); }
+            }
+        }
+        """);
+
     [Test]
     [Arguments("Holder.Run();")]
     [Arguments("Holder.Value = 1;")]
