@@ -1355,4 +1355,22 @@ foreach ($case in $headCases) {
     if ([bool]$reason -ne $case.Blocks) { throw "Head case '$($case.Name)' failed: $reason" }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases)."
+$reviewRequirementCases = @(
+    @{ Name = 'no Claude job'; Checks = @(@{ name = 'build'; conclusion = 'SUCCESS' }); Required = $false },
+    @{ Name = 'skipped dependency review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Required = $false },
+    @{ Name = 'successful review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SUCCESS' }); Required = $true },
+    @{ Name = 'neutral review'; Checks = @(@{ name = 'claude-review'; conclusion = 'NEUTRAL' }); Required = $true },
+    @{ Name = 'unknown conclusion fails closed'; Checks = @(@{ name = 'claude-review' }); Required = $true },
+    @{ Name = 'successful dispatch after skipped job'; Checks = @(
+        @{ name = 'claude-review'; conclusion = 'SKIPPED' },
+        @{ name = 'claude-review'; conclusion = 'SUCCESS' }
+    ); Required = $true }
+)
+foreach ($case in $reviewRequirementCases) {
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks
+    if ($required -ne $case.Required) { throw "Review requirement case '$($case.Name)' failed: $required" }
+    $reason = Get-UnansweredClaudeReviewReason -Comments @() -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required
+    if ([bool]$reason -ne $case.Required) { throw "Missing comment case '$($case.Name)' failed: $reason" }
+}
+
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases)."

@@ -20,11 +20,18 @@ bash "$script_dir/pr-review-comment.sh" '<!-- REVIEW_VERDICT: CLEAR -->'
 grep -Fx '<!-- claude-code-review -->' "$TEST_COMMENT"
 grep -Fx "<!-- REVIEW_HEAD_SHA: $REVIEW_HEAD_SHA -->" "$TEST_COMMENT"
 rm "$TEST_COMMENT"
+bash "$script_dir/pr-review-comment.sh" 'The REVIEW_HEAD_SHA marker binds clearance to the reviewed commit.'
+grep -Fx 'The REVIEW_HEAD_SHA marker binds clearance to the reviewed commit.' "$TEST_COMMENT"
+rm "$TEST_COMMENT"
 export TEST_CURRENT_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 if bash "$script_dir/pr-review-comment.sh" '<!-- REVIEW_VERDICT: CLEAR -->'; then exit 1; fi
 test ! -e "$TEST_COMMENT"
 export TEST_CURRENT_HEAD=$REVIEW_HEAD_SHA
 if bash "$script_dir/pr-review-comment.sh" "<!-- REVIEW_HEAD_SHA: $REVIEW_HEAD_SHA -->"; then exit 1; fi
+test ! -e "$TEST_COMMENT"
+if bash "$script_dir/pr-review-comment.sh" "<!-- review_head_sha: $REVIEW_HEAD_SHA -->"; then exit 1; fi
+test ! -e "$TEST_COMMENT"
+if bash "$script_dir/pr-review-comment.sh" $'<!--\nREVIEW_HEAD_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'; then exit 1; fi
 test ! -e "$TEST_COMMENT"
 export REVIEW_HEAD_SHA=invalid
 if bash "$script_dir/pr-review-comment.sh" '<!-- REVIEW_VERDICT: CLEAR -->'; then exit 1; fi

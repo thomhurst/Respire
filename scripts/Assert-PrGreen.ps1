@@ -200,7 +200,7 @@ foreach ($login in $candidateLogins) {
     }
 }
 
-$requiresClaude = @($checks | Where-Object { $_.name -eq 'claude-review' }).Count -gt 0
+$requiresClaude = Test-ClaudeReviewRequired -Checks $checks
 $claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins `
     -HeadSha $view.headRefOid -RequireReview:$requiresClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }

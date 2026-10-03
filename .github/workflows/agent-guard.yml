@@ -9,6 +9,8 @@ on:
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - .github/scripts/pr-review-comment.sh
+      - .github/scripts/test-pr-review-comment.sh
       - .github/workflows/agent-guard.yml
   push:
     branches: [main]
@@ -18,6 +20,8 @@ on:
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - .github/scripts/pr-review-comment.sh
+      - .github/scripts/test-pr-review-comment.sh
       - .github/workflows/agent-guard.yml
 
 permissions:
@@ -51,3 +55,7 @@ jobs:
       - name: Verify PR review gate heuristics
         shell: pwsh
         run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - name: Verify review comment helper
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-pr-review-comment.sh

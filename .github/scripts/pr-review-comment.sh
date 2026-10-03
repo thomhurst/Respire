@@ -27,7 +27,8 @@ if [[ -z ${body//[[:space:]]/} ]]; then
   echo "refusing to post an empty review comment" >&2
   exit 2
 fi
-if [[ $body == *REVIEW_HEAD_SHA* ]]; then
+head_marker_pattern='<!--[[:space:]]*REVIEW_HEAD_SHA[[:space:]]*:'
+if [[ ${body^^} =~ $head_marker_pattern ]]; then
   echo "the helper owns the reviewed commit marker" >&2
   exit 2
 fi

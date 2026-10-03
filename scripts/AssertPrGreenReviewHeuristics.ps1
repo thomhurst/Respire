@@ -1,3 +1,14 @@
+function Test-ClaudeReviewRequired {
+    [CmdletBinding()]
+    param([AllowNull()]$Checks)
+
+    # Dependency-update jobs intentionally skip Claude and cannot post a review.
+    # Unknown conclusions still require one; the check gate rejects them earlier.
+    return @($Checks | Where-Object {
+        $_.name -eq 'claude-review' -and $_.conclusion -ne 'SKIPPED'
+    }).Count -gt 0
+}
+
 function ConvertTo-UtcDateTimeOffset {
     [CmdletBinding()]
     param(
