@@ -179,7 +179,8 @@ internal sealed partial class SentinelRouter
                 lock (_gate)
                 {
                     transition = _coalescer.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
-                        new(NowMilliseconds: Environment.TickCount64, CurrentEvidence: CaptureGenerationEvidence(Current)));
+                        new(NowMilliseconds: Clock.GetElapsedTime(0, Clock.GetTimestamp()).Ticks / TimeSpan.TicksPerMillisecond,
+                            CurrentEvidence: CaptureGenerationEvidence(Current)));
                     ApplyNotificationTransitionLocked(in transition);
                 }
                 if (transition.Action == SentinelNotificationAction.Stop) return;
@@ -241,7 +242,7 @@ internal sealed partial class SentinelRouter
     {
         if (!transition.Interruptible)
         {
-            await Task.Delay(transition.Delay, _lifetime.Token).ConfigureAwait(false);
+            await Task.Delay(transition.Delay, Clock, _lifetime.Token).ConfigureAwait(false);
             return;
         }
         using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
@@ -269,6 +270,10 @@ internal sealed partial class SentinelRouter
     private void ApplyQueuedNotificationTransitionLocked(in SentinelNotificationTransition transition)
     {
         ApplyNotificationTransitionLocked(in transition);
+        // Queued Offer/SourceResolved events return RunNext only when activating idle
+        // state. Attempt outcomes continue inside the existing worker instead.
+        // TryStart refuses only after Stop. Disposal marks the reducer disposed and
+        // stops background registration under this same gate, so RunNext cannot be refused.
         if (transition.Action == SentinelNotificationAction.RunNext)
             _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
     }

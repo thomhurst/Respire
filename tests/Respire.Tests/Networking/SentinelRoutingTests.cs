@@ -310,16 +310,29 @@ public partial class SentinelRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
-        var watch = Stopwatch.StartNew();
+        var clock = new DiscoverySpacingClock();
+        router.Clock = clock;
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         for (var index = 0; index < 8; index++)
         {
+            var before = sentinel.ReceivedCommands.Count(command => command == query);
             router.QueueNotificationRediscovery(SentinelHintBuilder.Create($"fault-{index}", MustRediscover: true,
                 ReportingSentinel: new("127.0.0.1", sentinel.Port)));
+            if (index > 0)
+            {
+                var spacing = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+                await Assert.That(spacing.Delay).IsEqualTo(TimeSpan.FromMilliseconds(100));
+                clock.Advance(99);
+                spacing.Fire();
+                var remaining = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+                await Assert.That(remaining.Delay).IsEqualTo(TimeSpan.FromMilliseconds(1));
+                await Assert.That(sentinel.ReceivedCommands.Count(command => command == query)).IsEqualTo(before);
+                clock.Advance(1);
+                remaining.Fire();
+            }
             if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+            await Assert.That(sentinel.ReceivedCommands.Count(command => command == query)).IsGreaterThan(before);
         }
-        // Seven gaps are required; allow one interval of timing margin for the first worker.
-        await Assert.That(watch.ElapsedMilliseconds)
-            .IsGreaterThanOrEqualTo(6L * SentinelRouter.MinimumNotificationDiscoveryIntervalMilliseconds);
         await Assert.That(router.Current!.IsRetired).IsFalse();
     }
 
@@ -4731,6 +4744,27 @@ public partial class SentinelRoutingTests
     private sealed class FenceClock : TimeProvider
     {
         internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            // These tests control retry/fence delays. Spacing follows this provider's
+            // real timestamp; the dedicated spacing provider below controls both.
+            if (dueTime <= TimeSpan.FromMilliseconds(100) && dueTime > TimeSpan.Zero)
+                return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+            var timer = new FenceTimer(callback, state, dueTime);
+            Timers.Writer.TryWrite(timer);
+            return timer;
+        }
+    }
+
+    private sealed class DiscoverySpacingClock : TimeProvider
+    {
+        // Installed after startup; begin past the last System-clock spacing deadline.
+        private long _milliseconds = TimeProvider.System.GetElapsedTime(0, TimeProvider.System.GetTimestamp()).Ticks
+            / TimeSpan.TicksPerMillisecond + 1000;
+        internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Interlocked.Read(ref _milliseconds);
+        internal void Advance(long milliseconds) => Interlocked.Add(ref _milliseconds, milliseconds);
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new FenceTimer(callback, state, dueTime);

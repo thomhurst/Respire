@@ -166,6 +166,21 @@ pending hints spend the current retry budget. Exhaustion completes active and pe
 work. Without a policy, retries remain unlimited and backoff caps at 30 seconds. The
 100 ms minimum-discovery deadline survives worker completion and restart. Notifications
 can interrupt policy backoff but cannot bypass that shared deadline.
+The router obtains monotonic timestamps and schedules spacing delays through its injected
+`TimeProvider`, the same provider used for policy backoff. A timer wake-up rechecks the
+deadline before starting discovery, including when a test timer fires early.
+
+| Attempt outcome | Retry attempts | Consecutive failures | Next action |
+| --- | --- | --- | --- |
+| No active hint | Unchanged | Unchanged | Stop. |
+| Success superseded by another generation | Reset to zero | Reset to zero; report the prior failure count | Run genuine pending work, otherwise stop. |
+| Success for the current generation | Reset to zero | Reset to zero; report the prior failure count | Reconcile pending work, then run or stop. |
+| Failure with exhausted policy | Unchanged; exhaustion is checked before increment | Increment, saturating at `int.MaxValue` | Clear active/pending work and stop. |
+| Failure with retry budget and no pending hint | Increment, saturating at `int.MaxValue` | Increment, saturating at `int.MaxValue` | Wait for interruptible policy backoff. |
+| Failure with retry budget and pending hint | Increment, saturating at `int.MaxValue` | Increment, saturating at `int.MaxValue` | Run pending work, or stop if its target is already confirmed and it does not require rediscovery. |
+
+Completing a worker clears its hints, not its counters or spacing deadline. Starting a
+new idle worker resets both counters. Taking pending work during backoff preserves them.
 
 Recovery logging remains outside the gate and precedes reconciliation. Since callbacks
 can permit a competing publication, the router captures the current generation after
