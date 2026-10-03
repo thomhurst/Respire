@@ -170,6 +170,17 @@ internal static partial class ScopeWalker
                 ? arguments.Parent : expression;
             var returnTransfer = wrapped && expression?.Parent is ReturnStatementSyntax;
             var assignmentTransfer = false;
+            var indexerTransfer = expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax };
+            if (expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax { Parent: ElementAccessExpressionSyntax indexer } })
+            {
+                call = indexer;
+                if (indexer.Parent is AssignmentExpressionSyntax indexedAssignment
+                    && indexedAssignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && indexedAssignment.Left == indexer)
+                {
+                    call = indexedAssignment;
+                    assignmentTransfer = true;
+                }
+            }
             if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
                 && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression)
@@ -177,7 +188,7 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || indexerTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
@@ -210,7 +221,8 @@ internal static partial class ScopeWalker
             static bool ContainsCall(IOperation operation, SyntaxNode call)
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
-                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation)
+                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation
+                    or IPropertyReferenceOperation or IDynamicIndexerAccessOperation)
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
@@ -422,6 +434,7 @@ internal static partial class ScopeWalker
                             || IsFrameworkLength(exceptionSource),
                         allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
                             || exceptionSource is IArrayCreationOperation
+                            || IsTrivialReferenceConstruction(exceptionSource)
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
@@ -738,6 +751,27 @@ internal static partial class ScopeWalker
             => operation is IPropertyReferenceOperation { Property.Name: "Length" or "LongLength",
                 Property.ContainingType.SpecialType: SpecialType.System_Array }
                 or IPropertyReferenceOperation { Property.Name: "Length", Property.ContainingType.SpecialType: SpecialType.System_String };
+
+        private bool IsTrivialReferenceConstruction(IOperation operation)
+        {
+            if (operation is not IObjectCreationOperation { Type: INamedTypeSymbol type } creation) return false;
+            if (type.SpecialType == SpecialType.System_Object) return true;
+            if (creation.Constructor is not { IsImplicitlyDeclared: true }
+                || type.BaseType?.SpecialType != SpecialType.System_Object
+                || type.StaticConstructors.Length != 0 || type.DeclaringSyntaxReferences.Length == 0) return false;
+            foreach (var reference in type.DeclaringSyntaxReferences)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (reference.GetSyntax(cancellationToken) is not TypeDeclarationSyntax declaration) return false;
+                foreach (var member in declaration.Members)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (member is BaseFieldDeclarationSyntax field && field.Declaration.Variables.Any(static variable => variable.Initializer is not null)
+                        || member is PropertyDeclarationSyntax { Initializer: not null }) return false;
+                }
+            }
+            return true;
+        }
 
         private bool IsNonNegativeLength(IOperation operation)
         {

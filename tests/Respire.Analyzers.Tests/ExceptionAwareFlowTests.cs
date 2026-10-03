@@ -7,6 +7,83 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("holder[result, 0] = Throws();", "Exception", true)]
+    [Arguments("holder[result, Throws()] = 0;", "Exception", true)]
+    [Arguments("holder[result, 0] = 0;", "NullReferenceException", true)]
+    [Arguments("holder[result, 0] = 0;", "InvalidOperationException", false)]
+    [Arguments("_ = holder[result, Throws()];", "Exception", true)]
+    [Arguments("_ = holder[result, 0];", "InvalidOperationException", false)]
+    [Arguments("holder[result, 0] += Throws();", "InvalidOperationException", false)]
+    public async Task IndexerTransferWaitsForAccessor(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder
+        {
+            public int this[RespireResult result, int ignored]
+            {
+                get { result.Dispose(); return 0; }
+                set { result.Dispose(); }
+            }
+        }
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            async Task Run(RespireClient client, Holder holder)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("sealed class Token { }", "new Token()", "InvalidOperationException", false)]
+    [Arguments("sealed class Token { }", "new Token()", "OutOfMemoryException", true)]
+    [Arguments("", "new object()", "InvalidOperationException", false)]
+    [Arguments("class Token { public Token() { throw new InvalidOperationException(); } }", "new Token()", "InvalidOperationException", true)]
+    [Arguments("class Token { int field = Throw(); static int Throw() => throw new InvalidOperationException(); }", "new Token()", "InvalidOperationException", true)]
+    [Arguments("class Token { public int Value { get; } = Throw(); static int Throw() => throw new InvalidOperationException(); }", "new Token()", "InvalidOperationException", true)]
+    [Arguments("class Base { public Base() { throw new InvalidOperationException(); } } class Token : Base { }", "new Token()", "InvalidOperationException", true)]
+    [Arguments("class Token { static Token() { throw new Exception(); } }", "new Token()", "TypeInitializationException", true)]
+    public async Task TrivialReferenceConstructionOnlyAddsAllocationFailure(string declaration, string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{expression}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{expression}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("sbyte", "checked { value /= -1; }", "OverflowException", true)]
     [Arguments("short", "checked { value /= -1; }", "OverflowException", true)]
     [Arguments("sbyte?", "checked { value /= -1; }", "OverflowException", true)]
