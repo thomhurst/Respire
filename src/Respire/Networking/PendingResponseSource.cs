@@ -31,7 +31,12 @@ internal abstract class PendingResponse
     /// <see cref="CommandDeadline.None"/>. Written before the ring slot is published, read
     /// afterwards by the deadline sweep (its only reader).
     /// </summary>
-    internal CommandDeadline Deadline;
+    private long _deadline;
+    internal CommandDeadline Deadline
+    {
+        get => CommandDeadline.FromRawValue(Volatile.Read(ref _deadline));
+        set => Volatile.Write(ref _deadline, value.RawValue);
+    }
     internal long WriteStart;
     internal long WriteEnd;
 
@@ -53,6 +58,16 @@ internal abstract class PendingResponse
             return false;
         }
 
+        SetResultCore(in result);
+        return true;
+    }
+
+    // The receive loop reserves completion before handing the reply to the scheduler.
+    // Cancellation must not discard a reply already parsed while an earlier continuation runs.
+    internal virtual bool TryReserveResult() => TryAcquireCompletion();
+
+    internal virtual bool CompleteReservedResult(in RespValue result)
+    {
         SetResultCore(in result);
         return true;
     }
@@ -187,6 +202,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     private int _replyCount;
     private int _firstQueueReply;
     private int _replyIndex;
+    private int _receivedReplyIndex;
     private bool _hasQueueError;
     private string? _commandName;
 
@@ -226,7 +242,14 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         return source;
     }
 
-    public override bool TrySetResult(in RespValue result)
+    internal override bool TryReserveResult()
+        => _receivedReplyIndex++ < _replyCount - 1 || base.TryReserveResult();
+
+    internal override bool CompleteReservedResult(in RespValue result) => CompleteResult(in result, reserved: true);
+
+    public override bool TrySetResult(in RespValue result) => CompleteResult(in result, reserved: false);
+
+    private bool CompleteResult(in RespValue result, bool reserved)
     {
         var index = _replyIndex++;
         if (index < _replyCount - 1)
@@ -253,7 +276,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             _hasQueueError = false;
         }
 
-        if (!base.TrySetResult(in completion))
+        if (!(reserved ? base.CompleteReservedResult(in completion) : base.TrySetResult(in completion)))
         {
             completion.Dispose();
         }
@@ -317,6 +340,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             source._replyCount = 0;
             source._firstQueueReply = 0;
             source._replyIndex = 0;
+            source._receivedReplyIndex = 0;
             source._hasQueueError = false;
             source._commandName = null;
             source._timeoutConnection = null;

@@ -2126,7 +2126,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
                     {
                         synchronousBatches = 0;
-                        await Task.Yield();
+                        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
                     }
                 }
             }
@@ -2673,8 +2673,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        // Deferred: the scheduler runs TrySetResult + ReleaseRef on a pool thread, one work
-        // item per receive drain rather than one per reply.
+        // Reserve completion now; the scheduler delivers it and releases the receive reference
+        // on a pool thread, one work item per receive drain rather than one per reply.
         _completions.Add(source, in value);
     }
 

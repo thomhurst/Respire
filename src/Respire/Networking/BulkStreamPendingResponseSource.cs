@@ -26,6 +26,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private Exception? _payloadAbortError;
     private int _prefixReceived;
     private int _replyIndex;
+    private int _receivedReplyIndex;
     private bool _isMissing;
 
     internal BulkStreamPendingResponseSource(
@@ -130,7 +131,14 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         }
     }
 
-    public override bool TrySetResult(in RespValue result)
+    internal override bool TryReserveResult()
+        => _hasPrefixReply && _receivedReplyIndex++ == 0 || base.TryReserveResult();
+
+    internal override bool CompleteReservedResult(in RespValue result) => CompleteResult(in result, reserved: true);
+
+    public override bool TrySetResult(in RespValue result) => CompleteResult(in result, reserved: false);
+
+    private bool CompleteResult(in RespValue result, bool reserved)
     {
         if (_hasPrefixReply && _replyIndex++ == 0)
         {
@@ -152,11 +160,12 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             result.Dispose();
-            TrySetException(prefixError);
+            if (reserved) SetExceptionCore(PrepareException(prefixError));
+            else TrySetException(prefixError);
             return true;
         }
 
-        return base.TrySetResult(in result);
+        return reserved ? base.CompleteReservedResult(in result) : base.TrySetResult(in result);
     }
 
     protected override void SetResultCore(in RespValue result)

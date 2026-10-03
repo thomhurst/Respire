@@ -65,6 +65,12 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// <summary>Defers one completion. Receive loop only.</summary>
     public void Add(PendingResponse source, in RespValue value)
     {
+        if (!source.TryReserveResult())
+        {
+            value.Dispose();
+            source.ReleaseRef();
+            return;
+        }
         if (_fillingCount == _filling.Length)
         {
             Array.Resize(ref _filling, _filling.Length * 2);
@@ -160,7 +166,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 var value = entry.Value;
                 entry = default;
                 runner.Next = i + 1;
-                if (!source.TrySetResult(in value))
+                if (!source.CompleteReservedResult(in value))
                 {
                     // Lost to cancellation or connection failure; the reply still had to be
                     // consumed from the wire.
