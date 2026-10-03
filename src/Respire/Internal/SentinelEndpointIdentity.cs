@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 
 namespace Respire.Internal;
@@ -60,42 +61,69 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
     }
 }
 
-// Addresses belong to one observation/lookup lifetime. Consumers retain the existing
-// arrays without copying on duplicate hints; unions create a new evidence snapshot.
+// Addresses belong to one observation/lookup lifetime. External arrays are snapshotted;
+// immutable snapshots retain storage on duplicates and copy only when evidence changes.
 internal readonly record struct SentinelAddressEvidence
 {
     internal RespireEndpoint Endpoint { get; }
-    internal string[]? Addresses { get; }
+    internal ImmutableArray<string> Addresses { get; }
     private readonly SentinelEndpointIdentity _identity;
     internal bool IsDefault => _identity.Host is null;
 
     internal SentinelAddressEvidence(RespireEndpoint endpoint, string[]? addresses)
+        : this(addresses is null ? default : ImmutableArray.CreateRange(addresses), endpoint) { }
+
+    private SentinelAddressEvidence(ImmutableArray<string> addresses, RespireEndpoint endpoint)
     {
         Endpoint = endpoint;
         _identity = new(endpoint);
         Addresses = NormalizeAddresses(addresses);
     }
 
-    private static string[]? NormalizeAddresses(string[]? addresses)
+    internal static SentinelAddressEvidence FromSnapshot(RespireEndpoint endpoint, ImmutableArray<string> addresses)
+        => new(addresses, endpoint);
+
+    private static ImmutableArray<string> NormalizeAddresses(ImmutableArray<string> addresses)
     {
-        if (addresses is null) return null;
-        string[]? normalized = null;
+        if (addresses.IsDefaultOrEmpty) return addresses;
+        ImmutableArray<string>.Builder? normalized = null;
         for (var index = 0; index < addresses.Length; index++)
         {
             var address = SentinelEndpointIdentity.NormalizeHost(addresses[index]);
             if (StringComparer.Ordinal.Equals(address, addresses[index])) continue;
-            normalized ??= (string[])addresses.Clone();
+            normalized ??= addresses.ToBuilder();
             normalized[index] = address;
         }
-        return normalized ?? addresses;
+        return normalized?.ToImmutable() ?? addresses;
     }
 
     internal bool HasSameAddresses(string[] addresses)
     {
-        if (Addresses is not { } known || known.Length != addresses.Length) return false;
-        for (var index = 0; index < known.Length; index++)
-            if (!SentinelEndpointIdentity.AddressComparer.Instance.Equals(known[index], addresses[index])) return false;
+        if (Addresses.IsDefault || Addresses.Length != addresses.Length) return false;
+        for (var index = 0; index < Addresses.Length; index++)
+            if (!SentinelEndpointIdentity.AddressComparer.Instance.Equals(Addresses[index], addresses[index])) return false;
         return true;
+    }
+
+    internal bool HasSameSnapshot(SentinelAddressEvidence other)
+    {
+        if (IsDefault || other.IsDefault) return IsDefault && other.IsDefault;
+        if (!_identity.Equals(other._identity)
+            || Addresses.IsDefault != other.Addresses.IsDefault) return false;
+        if (Addresses.IsDefault) return true;
+        return ContainsAll(Addresses, other.Addresses) && ContainsAll(other.Addresses, Addresses);
+
+        static bool ContainsAll(ImmutableArray<string> known, ImmutableArray<string> candidates)
+        {
+            foreach (var candidate in candidates)
+            {
+                var found = false;
+                foreach (var address in known)
+                    if (StringComparer.OrdinalIgnoreCase.Equals(address, candidate)) { found = true; break; }
+                if (!found) return false;
+            }
+            return true;
+        }
     }
 
     internal string? SingleAddress
@@ -103,7 +131,7 @@ internal readonly record struct SentinelAddressEvidence
         get
         {
             if (_identity.IsNumeric) return _identity.Host;
-            if (Addresses is not { Length: > 0 }) return null;
+            if (Addresses.IsDefaultOrEmpty) return null;
             var address = Addresses[0];
             for (var index = 1; index < Addresses.Length; index++)
                 if (!StringComparer.OrdinalIgnoreCase.Equals(address, Addresses[index])) return null;
@@ -125,7 +153,7 @@ internal readonly record struct SentinelAddressEvidence
     {
         if (IsDefault || candidate.IsDefault || Endpoint.Port != candidate.Endpoint.Port) return false;
         if (Contains(candidate._identity.Host)) return true;
-        if (candidate.Addresses is not null)
+        if (!candidate.Addresses.IsDefaultOrEmpty)
             foreach (var address in candidate.Addresses)
                 if (Contains(address)) return true;
         return false;
@@ -137,7 +165,7 @@ internal readonly record struct SentinelAddressEvidence
         // comparisons never parse IPs or allocate inside the Cartesian comparison loop.
         var comparer = StringComparer.OrdinalIgnoreCase;
         if (comparer.Equals(_identity.Host, host)) return true;
-        if (Addresses is not null)
+        if (!Addresses.IsDefaultOrEmpty)
             foreach (var address in Addresses)
                 if (comparer.Equals(address, host)) return true;
         return false;

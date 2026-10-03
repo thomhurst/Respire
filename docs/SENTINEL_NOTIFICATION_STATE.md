@@ -2,8 +2,9 @@
 
 `SentinelMonitoring` supervises subscriptions. `SentinelRouter.Notifications` runs one
 notification discovery worker. `SentinelBackgroundWork` registers both components' tasks
-under the router gate. `SentinelNotificationCoalescer` is synchronous state owned by that
-gate. Network queries and DNS resolution happen outside it.
+under the router gate. `SentinelNotificationCoalescer` applies the pure
+`SentinelNotificationState.Transition` function under that gate. Network queries and DNS
+resolution happen outside it.
 
 ## Review boundaries
 
@@ -49,9 +50,9 @@ example). IPv6 scope IDs remain part of identity: identical link-local addresses
 different interfaces are distinct peers. Interface-name syntax follows the runtime parser;
 identity comparison performs no additional interface lookup.
 
-`SentinelAddressEvidence` normalizes and retains the candidates from one observation or
-lookup lifetime. It reuses already canonical arrays and copies only when normalization
-changes an address. Repeated matching compares retained canonical strings without parsing
+`SentinelAddressEvidence` normalizes and retains immutable candidates from one observation or
+lookup lifetime. It copies caller-owned arrays and reuses already canonical immutable
+snapshots. Repeated matching compares retained canonical strings without parsing
 IPs in the address-pair loop. Switch sources retain this evidence across matching calls.
 Evidence provides typed value equality so comparing or hashing switch sources does not
 box its fields. Equality retains array-snapshot identity; ownership and alias matching
@@ -59,7 +60,25 @@ still use the explicit operations below. Default evidence never matches an obser
 Its conservative `CouldMatch` operation can fence a possible demoted source, but ownership
 confirmation uses `ConfirmsPeer` and requires one unambiguous address. Overlapping sets of
 several addresses cannot confirm an owner or consume its demotion fence. Duplicate evidence
-keeps existing arrays; unions produce a new snapshot without assigning chronology.
+keeps existing immutable storage; unions produce a new snapshot without assigning chronology.
+
+Hints retain immutable source, target, reporter, and down-report collections.
+`SentinelNotificationState` returns a new value for each coalescing operation. Lookup
+records use an immutable dictionary keyed by lookup lifetime, so later offers and lookup
+completion cannot change an earlier state snapshot.
+
+Each hint also carries a `SentinelReporterLedger`. It retains the original switch,
+down, or gap observations with their reporter, source/target, validated owner at receipt,
+observed and accepted epoch facts, and completed source/target DNS evidence. Context is captured
+once under the router gate. A later publication or DNS-triggered requeue cannot replace
+an observation's owner or fill in an owner that was absent at receipt.
+
+The ledger's cached down-report projection supplies reporter-specific outage reconciliation.
+Mixing an independent gap or switch suppresses that projection on the effective hint,
+while retaining the original observations in the ledger. Consuming a source fence after
+validation likewise leaves its original observation intact. Unique owner, epoch, or DNS
+evidence from an existing reporter remains pending; identical evidence reuses immutable
+storage. Neither ledger order nor DNS completion order establishes failover chronology.
 
 `SentinelValidatedPrimary` keeps the advertised endpoint separate from the physical peer
 accepted by ROLE. Discovery retains provisional DNS evidence separately from its accepted
@@ -118,6 +137,55 @@ has completed. The shared test helper no longer polls a subscription count.
 The pure reducer remains tracked by #727 and must preserve these joining and reentrancy contracts.
 
 ## State transitions
+
+Transition inputs cover notification offers, attempt preparation and success/failure,
+source-lookup registration/completion, and disposal. Time, retry policy, jitter samples,
+the exact returned generation, and validated owner/peer facts are explicit inputs.
+The reducer returns `Stop`, `RunNext`, or `RetryAfter(delay)` for worker decisions;
+evidence-only changes return `None`. The router replaces pending signals atomically with
+state changes, then executes discovery, waits, and retirement effects.
+
+`SentinelGenerationEvidence` captures the generation identity, endpoint, validated peer,
+retirement state, and accepting command peers. Source and cycle matching may use any
+captured peer; skipping discovery requires one confirmed peer for every command slot.
+Each generation owns one `SentinelGenerationIdentity` token with no transport or mutable
+state. Reducer inputs and retirement effects accept only this token type.
+The reducer returns the exact generation identity to retire. Under the same gate, the
+router verifies that identity is still current and disposal has not begun, then performs
+retirement. No live transport is read by the reducer.
+
+Source DNS completion includes the collected target DNS answers and snapshots of the
+current and lookup generations. The reducer filters unambiguous target overlap while
+preserving a known demoted peer, checks intervening-generation protection, and decides
+whether to queue rediscovery. The ledger retains the actual DNS answers separately from
+filtered source fences. An empty filtered result does not manufacture demotion evidence;
+an ambiguous target answer cannot prove that the source is the promoted owner.
+
+Retry attempts and consecutive failures are separate state fields. Success resets both;
+pending hints spend the current retry budget. Exhaustion completes active and pending
+work. Without a policy, retries remain unlimited and backoff caps at 30 seconds. The
+100 ms minimum-discovery deadline survives worker completion and restart. Notifications
+can interrupt policy backoff but cannot bypass that shared deadline.
+The router obtains monotonic timestamps and schedules spacing delays through its injected
+`TimeProvider`, the same provider used for policy backoff. A timer wake-up rechecks the
+deadline before starting discovery, including when a test timer fires early.
+
+| Attempt outcome | Retry attempts | Consecutive failures | Next action |
+| --- | --- | --- | --- |
+| No active hint | Unchanged | Unchanged | Stop. |
+| Success superseded by another generation | Reset to zero | Reset to zero; report the prior failure count | Run genuine pending work, otherwise stop. |
+| Success for the current generation | Reset to zero | Reset to zero; report the prior failure count | Reconcile pending work, then run or stop. |
+| Failure with exhausted policy | Unchanged; exhaustion is checked before increment | Increment, saturating at `int.MaxValue` | Clear active/pending work and stop. |
+| Failure with retry budget and no pending hint | Increment, saturating at `int.MaxValue` | Increment, saturating at `int.MaxValue` | Wait for interruptible policy backoff. |
+| Failure with retry budget and pending hint | Increment, saturating at `int.MaxValue` | Increment, saturating at `int.MaxValue` | Run pending work, or stop if its target is already confirmed and it does not require rediscovery. |
+
+Completing a worker clears its hints, not its counters or spacing deadline. Starting a
+new idle worker resets both counters. Taking pending work during backoff preserves them.
+
+Recovery logging remains outside the gate and precedes reconciliation. Since callbacks
+can permit a competing publication, the router captures the current generation after
+logging returns. Supersession compares that identity with the exact discovery result;
+matching endpoint text alone is insufficient.
 
 | State/event | Transition |
 | --- | --- |

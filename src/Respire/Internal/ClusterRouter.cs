@@ -958,7 +958,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ClearSlotOwner(slot, owner);
         }
         var (primaries, fallbacks) = BuildReadOnlyCandidates(source);
-        using var budget = new ClusterRecoveryBudget(cancellationToken, _options.ConnectTimeout);
+        using var budget = new ClusterRecoveryBudget(cancellationToken, _options.ConnectTimeout, _options.ClusterRecoveryClock);
         try
         {
             // Cached-owner probing and all discovered primaries share one half-round phase.

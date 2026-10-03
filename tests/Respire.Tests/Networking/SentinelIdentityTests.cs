@@ -27,8 +27,8 @@ public class SentinelIdentityTests
     public async Task SwitchSourceEqualityAndHashingDoNotAllocate()
     {
         var source = new SentinelSwitchSource(new("primary.test", 6379), ["192.0.2.1"]);
-        var same = new SentinelSwitchSource(source.Endpoint, source.Addresses);
-        var other = new SentinelSwitchSource(new("primary.test", 6380), source.Addresses);
+        var same = SentinelSwitchSource.FromSnapshot(source.Endpoint, source.Addresses);
+        var other = SentinelSwitchSource.FromSnapshot(new("primary.test", 6380), source.Addresses);
         await Assert.That(source.Equals(same)).IsTrue();
         await Assert.That(source.Equals(other)).IsFalse();
         _ = MeasureSourceEquality(source, same, false);
@@ -82,9 +82,10 @@ public class SentinelIdentityTests
             [.. Enumerable.Range(1, 15).Select(index => $"198.51.100.{index}"), "192.0.2.16"]);
         await Assert.That(sourceAddresses[15]).IsEqualTo("::ffff:192.0.2.16");
         await Assert.That(source.Addresses![15]).IsEqualTo("192.0.2.16");
-        await Assert.That(ReferenceEquals(source.Addresses, sourceAddresses)).IsFalse();
-        var alreadyNormalized = new SentinelAddressEvidence(source.Endpoint, source.Addresses);
-        await Assert.That(ReferenceEquals(alreadyNormalized.Addresses, source.Addresses)).IsTrue();
+        sourceAddresses[15] = "203.0.113.99";
+        await Assert.That(source.Addresses[15]).IsEqualTo("192.0.2.16");
+        var alreadyNormalized = SentinelAddressEvidence.FromSnapshot(source.Endpoint, source.Addresses);
+        await Assert.That(alreadyNormalized.Addresses == source.Addresses).IsTrue();
         _ = MeasureMatching(source, candidate, false);
         _ = MeasureMatching(source, candidate, true);
         var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
@@ -152,7 +153,7 @@ public class SentinelIdentityTests
         for (var index = 0; index < 1_000; index++)
         {
             var duplicate = hint.WithSourceAddresses(source, addresses);
-            GC.KeepAlive(duplicate.Sources);
+            GC.KeepAlive(duplicate.Sources[0].Endpoint.Host);
             if (allocate) GC.KeepAlive(AllocateControl());
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
@@ -220,7 +221,7 @@ public class SentinelIdentityTests
             await Assert.That(ambiguous.ConfirmsSameAddress(evidence)).IsFalse();
             await Assert.That(evidence.ConfirmsSameAddress(ambiguous)).IsFalse();
             await Assert.That(ambiguous.CouldMatch(new(new(host, port + 1), null))).IsFalse();
-            await Assert.That(new SentinelValidatedPrimary(evidence.Endpoint, peer).Matches(evidence.Endpoint, ambiguous.Addresses)).IsFalse();
+            await Assert.That(new SentinelValidatedPrimary(evidence.Endpoint, peer).Matches(evidence.Endpoint, ambiguous.Addresses.ToArray())).IsFalse();
         }
     }
 
@@ -241,10 +242,10 @@ public class SentinelIdentityTests
         await Assert.That(merged.Reporters.Length).IsEqualTo(1);
         await Assert.That(merged.Sources[0].Addresses!.Length).IsEqualTo(1);
         await Assert.That(merged.Sources[0].Evidence.ConfirmsPeer(new("192.0.2.1", 6379))).IsTrue();
-        await Assert.That(ReferenceEquals(first.Sources,
-            first.WithSourceAddresses(source, ["::ffff:192.0.2.1"]).Sources)).IsTrue();
-        await Assert.That(ReferenceEquals(first.Targets, merged.Targets)).IsTrue();
-        await Assert.That(ReferenceEquals(first.Reporters, merged.Reporters)).IsTrue();
+        await Assert.That(first.Sources ==
+            first.WithSourceAddresses(source, ["::ffff:192.0.2.1"]).Sources).IsTrue();
+        await Assert.That(first.Targets == merged.Targets).IsTrue();
+        await Assert.That(first.Reporters == merged.Reporters).IsTrue();
     }
 
     [Test]
@@ -258,7 +259,7 @@ public class SentinelIdentityTests
         var first = SentinelHint.FromDown("down", reporter, endpoint, owner);
         var duplicate = SentinelHint.FromDown("down", reporter, endpoint, alias);
         var merged = SentinelNotificationCoalescer.Merge(first, in duplicate);
-        await Assert.That(ReferenceEquals(first.DownReports, merged.DownReports)).IsTrue();
+        await Assert.That(first.DownReports == merged.DownReports).IsTrue();
         var later = SentinelHint.FromDown("down", reporter, endpoint, nextOwner);
         merged = SentinelNotificationCoalescer.Merge(merged, in later);
         await Assert.That(merged.DownReports.Length).IsEqualTo(2);
