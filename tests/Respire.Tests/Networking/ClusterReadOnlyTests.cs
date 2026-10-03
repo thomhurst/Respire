@@ -276,17 +276,25 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task StalledCandidate_LeavesTimeForHealthySeed(bool duringConnect, bool cachedOwner)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task StalledCandidate_LeavesTimeForHealthySeed(bool duringConnect, bool cachedOwner, bool expireRound)
     {
+        var clock = new RecoveryTestClock();
+        var stalledRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(FakeRespServer.OkReply, ReadOnlyReply);
         await using var stalled = new FakeRespServer(FakeRespServer.OkReply);
-        stalled.SuppressReply = command => duringConnect
-            ? command.StartsWith("CLIENT SETNAME ")
-            : command == "CLUSTER SLOTS";
+        stalled.SuppressReply = command =>
+        {
+            var suppress = duringConnect ? command.StartsWith("CLIENT SETNAME ") : command == "CLUSTER SLOTS";
+            if (suppress) stalledRequest.TrySetResult();
+            return suppress;
+        };
         var initial = SplitTopology(stalled.Port, replica.Port);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, initial, Topology(replacement.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -295,6 +303,7 @@ public class ClusterReadOnlyTests
             UseCluster = true,
             Connections = 1,
             ClientName = "recovery",
+            ClusterRecoveryClock = clock,
             ConnectTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -315,6 +324,21 @@ public class ClusterReadOnlyTests
                 router.GetMultiplexer(new RespireEndpoint("127.0.0.1", stalled.Port)));
         }
         await replica.SendRawAsync(ReadOnlyReply);
+
+        await stalledRequest.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // No real-time scheduling margin is required. Expiring the whole round models a
+        // primary continuation that cannot resume until the seed reservation is also gone.
+        clock.Advance(TimeSpan.FromSeconds(expireRound ? 2 : 1));
+
+        if (expireRound)
+        {
+            var error = await Assert.That(async () => await write.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.ReadOnly);
+            await Assert.That(replacement.ReceivedCommands).IsEmpty();
+            await Assert.That(seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(1);
+            return;
+        }
 
         await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(stalled.ReceivedCommands).Contains(duringConnect ? "CLIENT SETNAME recovery" : "CLUSTER SLOTS");
@@ -573,6 +597,49 @@ public class ClusterReadOnlyTests
 
         await Assert.That(recovered.Port).IsEqualTo(replacement.Port);
         await Assert.That(topologyRequests).IsGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RecoveryDeadlinePreservesOriginalErrorOrCallerCancellation(bool cancelCaller, bool configuredPolicy)
+    {
+        var clock = new RecoveryTestClock();
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var seed = new FakeRespServer(Topology(replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            ClusterRecoveryClock = clock,
+            ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        var router = client.Core.Cluster!;
+        var slot = ClusterHash.GetSlot("key");
+        var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null);
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        seed.SuppressReply = _ => { requested.TrySetResult(); return true; };
+        using var caller = new CancellationTokenSource();
+        var original = new RespireServerException("READONLY original rejection");
+        var recovery = router.GetRedirectConnectionAsync(original, source, caller.Token, slot, discovery: null).AsTask();
+        await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await recovery.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(2));
+            var error = await Assert.That(async () => await recovery.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireServerException>();
+            await Assert.That(ReferenceEquals(error, original)).IsTrue();
+        }
     }
 
     [Test]

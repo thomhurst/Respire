@@ -924,7 +924,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (discovery is { HasPendingFailure: false })
                 discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
             var join = JoinReadOnlyRefresh(error, source, slot, discovery);
-            _ = await AwaitSharedRefreshAsync(join.Flight, cancellationToken, discovery).ConfigureAwait(false);
+            var recovered = await AwaitSharedRefreshAsync(join.Flight, cancellationToken, discovery).ConfigureAwait(false);
+            // A failed flight may leave an unavailable cached owner in the slot map. Do not
+            // reconnect that owner outside the recovery deadline. Unrelated flights still
+            // require this caller's own slot recovery below.
+            if (!recovered && !join.NeedsOwnSlotRecovery)
+                ExceptionDispatchInfo.Capture(error).Throw();
             var owner = RoutingSnapshot[slot].Primary;
             if ((owner is null || IsSameEndpoint(owner, source)) && join.NeedsOwnSlotRecovery)
             {
@@ -958,7 +963,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ClearSlotOwner(slot, owner);
         }
         var (primaries, fallbacks) = BuildReadOnlyCandidates(source);
-        using var budget = new ClusterRecoveryBudget(cancellationToken, _options.ConnectTimeout);
+        using var budget = new ClusterRecoveryBudget(cancellationToken, _options.ConnectTimeout, _options.ClusterRecoveryClock);
         try
         {
             // Cached-owner probing and all discovered primaries share one half-round phase.
