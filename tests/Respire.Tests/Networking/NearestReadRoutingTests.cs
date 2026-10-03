@@ -46,8 +46,14 @@ public class NearestReadRoutingTests
         // Unknown latency does not make a replica ineligible. Establish the primary's
         // usable sample before timing the three stalled replica samples; otherwise a late
         // primary PONG makes every latency unknown and rotation can select a stalled replica.
-        // Freeze sample age/cadence, not the real sampling wait deadline.
-        var sampler = ReadLatencySampler.Create(static () => 0);
+        // Freeze sample age/cadence, not the real sampling wait deadline. Record when each
+        // real PING probe starts, so the shared budget is asserted without a wall-clock race.
+        var probeStarts = new System.Collections.Concurrent.ConcurrentQueue<(RespireConnection Connection, long Timestamp)>();
+        var sampler = new ReadLatencySampler<RespireConnection>((connection, token) =>
+        {
+            probeStarts.Enqueue((connection, System.Diagnostics.Stopwatch.GetTimestamp()));
+            return ReadLatencySampler.MeasureAsync(connection, token);
+        }, static () => 0);
         if (cluster) client.Core.Cluster!.NearestLatency = sampler;
         else client.Core.ReadRouter.NearestLatency = sampler;
         var slot = ClusterHash.GetSlot("key");
@@ -61,9 +67,13 @@ public class NearestReadRoutingTests
         // must keep this test independent of when another PONG could be processed.
         primary.DelayCommand("PING", 1_500);
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
-        // Three stalled samples previously consumed three independent one-second waits.
+        // Three stalled samples previously consumed three independent one-second waits: each
+        // replica probe started only after the previous wait expired. A loaded CI scheduler can
+        // delay the read's completion past any fixed outer bound (#792), but cannot make the
+        // sampling timer fire early. So assert that every replica probe started before the shared
+        // budget could expire; the outer wait only guards liveness.
         string? result;
-        try { result = await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2.5)); }
+        try { result = await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(10)); }
         catch (TimeoutException error)
         {
             throw new TimeoutException($"Sampling GET did not complete. Primary: {string.Join(", ", primary.ReceivedCommands)}; "
@@ -72,6 +82,11 @@ public class NearestReadRoutingTests
         }
         await Assert.That(result).IsEqualTo("primary");
         await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
+        var replicaStarts = probeStarts.Where(start => !ReferenceEquals(start.Connection, primaryConnection))
+            .Select(start => start.Timestamp).ToArray();
+        await Assert.That(replicaStarts.Length).IsEqualTo(3);
+        await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(replicaStarts.Min(), replicaStarts.Max()))
+            .IsLessThan(TimeSpan.FromMilliseconds(ReadLatencySampler.SamplingWaitMilliseconds));
         await Assert.That(primary.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
         foreach (var replica in new[] { first, second, third })
             await Assert.That(replica.ReceivedCommands.Contains("GET key")).IsFalse();
