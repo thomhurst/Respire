@@ -361,7 +361,8 @@ different order on each pass), and keeps the last published slot map when discov
 partial `CLUSTER SLOTS` reply, for example from a cluster with `cluster-require-full-coverage no`
 that has lost a shard, updates the slots it covers and keeps the previous owners of the rest. Replica endpoints, node IDs, and aliases from `CLUSTER SLOTS` stay current
 in router metadata and are used as refresh fallbacks when every primary and seed fails; command
-routing still uses primaries (reading from replicas is out of scope).
+routing uses primaries by default. Read policies can select replicas for eligible commands,
+as described in [Read from replicas](#read-from-replicas).
 
 ## Redis Sentinel
 
@@ -478,8 +479,11 @@ configuration keeps its current validation and connection-time fallback behavior
 
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
 it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
-them read-only. For standalone and Sentinel clients, caller-defined commands, writes, blocking operations, subscriptions, batches, and
-transactions stay on the primary. `Replica` fails when no validated replica is available.
+them read-only, including eligible blocking reads such as `XREAD BLOCK`. For standalone and
+Sentinel clients, caller-defined commands, writes (including blocking commands that modify
+data), subscriptions, batches, and transactions stay on the primary. Eligible blocking reads
+rent a dedicated connection from the endpoint selected by the read policy.
+`Replica` fails when no validated replica is available.
 `PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
 uses the primary when replica selection fails.
 
