@@ -87,7 +87,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     // Docker startup without changing global state or the public fixture API.
     internal static async Task<RespireContainerFixture> StartAsync(
         RespireContainerOptions options, CancellationToken cancellationToken,
-        Func<int[], CancellationToken, Task<IContainer>>? createContainer)
+        Func<int[], CancellationToken, Task<IContainer>>? createContainer, TimeProvider? timeProvider = null)
     {
         if (!Enum.IsDefined(options.Server)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown server family.");
         if (!Enum.IsDefined(options.Topology)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown topology.");
@@ -95,8 +95,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         if (options.StartupTimeout <= TimeSpan.Zero || options.StartupTimeout.TotalMilliseconds > uint.MaxValue - 1)
             throw new ArgumentOutOfRangeException(nameof(options), "StartupTimeout must be finite and positive.");
         cancellationToken.ThrowIfCancellationRequested();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(options.StartupTimeout);
+        using var startupDeadline = new CancellationTokenSource(options.StartupTimeout, timeProvider ?? TimeProvider.System);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, startupDeadline.Token);
         var excludedPorts = new HashSet<int>();
         var collisions = new List<Exception>();
         for (var attempt = 1; ; attempt++)
@@ -104,6 +104,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             RespireContainerFixture? fixture = null;
             int[] ports = [];
             var startingContainer = false;
+            var containerStarted = false;
             try
             {
                 deadline.Token.ThrowIfCancellationRequested();
@@ -120,6 +121,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 startingContainer = true;
                 await container.StartAsync(deadline.Token).ConfigureAwait(false);
                 startingContainer = false;
+                containerStarted = true;
                 if (!IsLocalHost(container.Hostname))
                     throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
                 await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
@@ -140,11 +142,24 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 startupError.Data["RespireFixture.ContainerId"] = containerId;
                 if (fixture is not null)
                 {
+                    string? diagnostics = null;
+                    if (containerStarted)
+                    {
+                        diagnostics = await ContainerStartupDiagnostics.CaptureAsync(fixture._container, ports, timeProvider).ConfigureAwait(false);
+                        startupError.Data["RespireFixture.DaemonLogs"] = diagnostics;
+                    }
                     try { await fixture.DisposeAsync().ConfigureAwait(false); }
                     catch (Exception cleanupError)
                     {
                         throw new AggregateException($"Fixture startup and cleanup both failed (container: {containerId ?? "unavailable"}).",
                             collisions.Append(startupError).Append(cleanupError));
+                    }
+                    finally
+                    {
+                        // Test runners receive the tail automatically, but output cannot
+                        // delay container cleanup or replace the original failure.
+                        if (diagnostics is not null)
+                            await ContainerStartupDiagnostics.ReportAsync(diagnostics).ConfigureAwait(false);
                     }
                 }
                 // Cleanup is always awaited. No fresh container starts after cancellation,
@@ -290,8 +305,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         }
     }
 
+    internal static string DaemonLogPath(int port) => $"/tmp/respire-fixture/{Number(port)}.log";
+
     private static string BaseConfiguration(int port)
-        => $"port {port}\nbind 0.0.0.0\nprotected-mode no\ndaemonize yes\nsave \"\"\nappendonly no\npidfile /tmp/respire-fixture/{port}.pid\nlogfile /tmp/respire-fixture/{port}.log\ndir /tmp/respire-fixture\ndbfilename {port}.rdb\n";
+        => $"port {port}\nbind 0.0.0.0\nprotected-mode no\ndaemonize yes\nsave \"\"\nappendonly no\npidfile /tmp/respire-fixture/{port}.pid\nlogfile {DaemonLogPath(port)}\ndir /tmp/respire-fixture\ndbfilename {port}.rdb\n";
 
     private async Task StartServerAsync(int index, string config, bool sentinel, CancellationToken cancellationToken)
     {

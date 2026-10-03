@@ -148,6 +148,8 @@ public class ContainerFixtureIntegrationTests
         failure.Which.Data["RespireFixture.StartupStep"].Should().BeOfType<string>()
             .Which.Should().Contain("valkey-server");
         failure.Which.Data["RespireFixture.LastReadinessResponse"].Should().BeOfType<string>();
+        failure.Which.Data["RespireFixture.DaemonLogs"].Should().BeOfType<string>().Which
+            .Should().Contain("6379.log");
         var identity = Regex.Match(failure.Which.Message, @"Fixture container ([a-f0-9]{64}) command");
         identity.Success.Should().BeTrue();
         await AssertContainerRemovedAsync(identity.Groups[1].Value);
