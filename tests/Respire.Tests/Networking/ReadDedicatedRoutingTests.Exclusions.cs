@@ -11,6 +11,39 @@ namespace Respire.Tests.Networking;
 public partial class ReadDedicatedRoutingTests
 {
     [Test]
+    public async Task FixtureStartupWaitsForSentinelRevalidation()
+    {
+        await using var primary = Node("primary", false);
+        await using var sentinel = Sentinel(primary, () => []);
+        var discoveries = 0;
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sentinel.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                || Interlocked.Increment(ref discoveries) == 1) return false;
+            blocked.TrySetResult();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
+            with { SentinelPrimaryName = "primary" });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await blocked.Task.WaitAsync(deadline.Token);
+        while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, deadline.Token);
+        var ready = WaitForSentinelStartupAsync(client);
+        try { await Assert.That(ready.IsCompleted).IsFalse(); }
+        finally
+        {
+            var index = sentinel.ReceivedCommands.ToList()
+                .FindLastIndex(command => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "));
+            var connection = sentinel.ReceivedConnectionIds[index];
+            sentinel.SuppressReply = null;
+            await sentinel.SendRawAsync(sentinel.ReplyOverride!(connection, sentinel.ReceivedCommands[index])!, connection);
+        }
+        await ready.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(client.Core.Sentinel!.SubscribedSentinelCount).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task NearestCoolsPrimaryWhenDiscoveryFailsBeforePoolAcquisition()
     {
         await using var primary = Node("primary", false);
@@ -18,6 +51,7 @@ public partial class ReadDedicatedRoutingTests
         await using var sentinel = Sentinel(primary, () => [replica]);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
             with { SentinelPrimaryName = "primary" });
+        await WaitForSentinelStartupAsync(client);
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(default);
         var generation = client.Core.Sentinel!.Current!;

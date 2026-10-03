@@ -20,9 +20,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new(RespireEndpointComparer.Instance);
     // Entries removed from the topology drain before closing so reads already using them can finish.
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();
-    // Completed owners can be released immediately. Keep only unique failure identities until
-    // router disposal so pruning never hides a background cleanup failure.
-    private HashSet<Exception>? _retirementFailures;
+    // Release completed owners immediately. Bound retained exception identities and report
+    // overflow counts at disposal so topology churn cannot accumulate unlimited failure history.
+    private ReadRetirementFailures? _retirementFailures;
     private readonly SemaphoreSlim _sentinelRefreshGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private RespireEndpoint[] _replicas = string.IsNullOrWhiteSpace(core.Options.SentinelPrimaryName)
@@ -154,7 +154,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 // If disposal already captured the entry, its shared completion owns this error.
                 if (_retiring.TryRemove(entry, out _))
-                    (_retirementFailures ??= new(ReferenceEqualityComparer.Instance)).Add(error);
+                    (_retirementFailures ??= new()).Add(error);
             }
             try { core.Logger?.LogDebug(error, "Closing a removed read replica failed"); }
             catch (Exception) { }
@@ -537,7 +537,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         lock (_entriesGate)
         {
             entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
-            failures = _retirementFailures?.ToList();
+            failures = _retirementFailures?.Snapshot();
             _retirementFailures = null;
             _entries.Clear();
             _retiring.Clear();

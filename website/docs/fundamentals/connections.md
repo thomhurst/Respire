@@ -690,6 +690,11 @@ while it makes progress. A streamed reply that receives no data for 30 seconds (
 read or disposed: the replica then closes and the stream fails. Disposing the client closes any
 replica that is still draining.
 
+Completed replica retirement failures retain up to 64 distinct exceptions until client disposal.
+Disposal reports those exceptions plus a count of additional failure occurrences whose details
+were not retained. Debug logging can capture individual retirement failures as they happen.
+Cleanup still in progress remains owned and joined by disposal.
+
 ### Availability-zone affinity
 
 Set `ClientAvailabilityZone` before connecting, then choose an affinity policy as the
