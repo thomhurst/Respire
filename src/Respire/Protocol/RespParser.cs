@@ -22,6 +22,7 @@ internal enum RespParseStatus : byte
     NeedMoreData,
     InvalidData,
     NeedDirectFill,
+    SkippedAttribute,
 }
 
 internal static class RespParser

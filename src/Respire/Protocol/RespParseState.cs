@@ -9,7 +9,7 @@ internal readonly record struct RespDirectFillRequest(RespDataType Type, int Pay
 /// Reusable connection parser that retains completed aggregate children and decoded bulk
 /// headers across receives. Consumed bytes may be compacted immediately by the caller.
 /// </summary>
-internal sealed class RespParseState(int directFillThreshold) : IDisposable
+internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttributes = false) : IDisposable
 {
     private AggregateFrame[] _frames = new AggregateFrame[4];
     private int _depth;
@@ -77,7 +77,7 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                 {
                     return RespParseStatus.Done;
                 }
-
+                if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
                 continue;
             }
 
@@ -96,7 +96,7 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                     {
                         return RespParseStatus.Done;
                     }
-
+                    if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
                     continue;
                 }
 
@@ -119,6 +119,7 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                 if (discard)
                 {
                     immediate.Dispose();
+                    if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
                     continue;
                 }
 
@@ -126,7 +127,7 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                 {
                     return RespParseStatus.Done;
                 }
-
+                if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
                 continue;
             }
 
@@ -142,6 +143,7 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
             {
                 return RespParseStatus.Done;
             }
+            if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
         }
     }
 

@@ -2143,7 +2143,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private async Task ReceiveLoopAsync()
     {
         var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
-        var parser = new RespParseState(DirectFillThreshold);
+        // Return to the bulk-header path after top-level RESP3 attributes, including
+        // fragmented metadata, before the parser consumes a streamed payload.
+        var parser = new RespParseState(DirectFillThreshold, stopAfterAttributes: true);
         var start = 0;
         var end = 0;
         long responseBytes = 0;
@@ -2162,7 +2164,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     RespParseStatus status;
                     RespValue value;
                     RespDirectFillRequest directFill = default;
-                    if (parser.IsIdle)
+                    if (parser.IsIdle && bufferedData[start] != (byte)'|')
                     {
                         var hasBulkHeader = RespParser.TryPeekBulkHeader(
                             bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
@@ -2199,6 +2201,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                                 else
                                 {
                                     start = headerEnd;
+                                    _completions.Flush();
                                     var streamed = await ReceiveBulkStreamAsync(
                                         buffer, start, end, streamSource, (int)bulkLength).ConfigureAwait(false);
                                     start = streamed.Start;
@@ -2275,6 +2278,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                     switch (status)
                     {
+                        case RespParseStatus.SkippedAttribute:
+                            break;
                         case RespParseStatus.Done:
                             responseBytes = 0;
                             CompleteResponse(in value);
