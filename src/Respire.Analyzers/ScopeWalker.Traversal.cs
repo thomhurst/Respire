@@ -8,7 +8,7 @@ internal static partial class ScopeWalker
 {
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
-        INamedTypeSymbol? systemException,
+        SemanticModel semanticModel,
         BasicBlock startBlock,
         int startPosition,
         BasicBlock targetBlock,
@@ -17,7 +17,7 @@ internal static partial class ScopeWalker
         BarrierStartPolicy startPolicy,
         CancellationToken cancellationToken)
     {
-        private readonly INamedTypeSymbol? _systemException = systemException;
+        private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startPosition, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         // Interned continuations keep each finally's return destination in the search state.
@@ -142,6 +142,13 @@ internal static partial class ScopeWalker
                         .DefaultIfEmpty(int.MaxValue).Min()
                     : int.MaxValue;
 
+                // Opaque calls before a proof barrier can enter local handlers. Barrier
+                // failure and uncaught implicit exceptions remain outside this proof.
+                if (dispatch == 0 && block.FallThroughSuccessor is { } successor
+                    && block.Operations.Any(operation => operation.Syntax.SpanStart > entryPosition
+                        && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation)))
+                    Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+
                 if (started && block.Ordinal == targetBlock.Ordinal
                     && targetPosition > entryPosition
                     && targetPosition <= firstBarrier)
@@ -171,6 +178,10 @@ internal static partial class ScopeWalker
                     continue;
                 }
 
+                foreach (var operation in block.Operations)
+                    _conditions.ForgetWrites(operation, ref known, ref values);
+                if (block.BranchValue is { } branchValue)
+                    _conditions.ForgetWrites(branchValue, ref known, ref values);
                 Follow(block.FallThroughSuccessor, continuation, started, known, values, dispatch);
                 Follow(block.ConditionalSuccessor, continuation, started, known, values, dispatch);
             }
@@ -253,15 +264,20 @@ internal static partial class ScopeWalker
             if (branch.Semantics is ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow)
             {
                 Dispatch(GetDispatch(branch, continuation), started, known, values);
+                if (branch.Semantics == ControlFlowBranchSemantics.Throw)
+                {
+                    var exception = branch.Source.BranchValue;
+                    while (exception is IConversionOperation { OperatorMethod: null } conversion)
+                        exception = conversion.Operand;
+                    if (exception is ILocalReferenceOperation or IParameterReferenceOperation
+                        && ScopeExitAnalysis.GetExactThrownType(semanticModel, exception) is null)
+                        Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
+                }
                 return;
             }
 
             var finalizers = branch.FinallyRegions.AsEnumerable();
             var destination = branch.Destination;
-            // Do not carry a selection from one loop iteration into the next. In particular,
-            // a newly acquired owner must not inherit a previous iteration's flush proof.
-            if (destination is not null && destination.Ordinal <= branch.Source.Ordinal)
-                known = values = 0;
             Enqueue(destination, finalizers, continuation, started, known, values, dispatch);
         }
 
@@ -278,21 +294,23 @@ internal static partial class ScopeWalker
         }
 
         private readonly List<CatchDispatch?> _dispatches = [null];
-        private readonly Dictionary<(int Block, int Continuation), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit), int> _dispatchIds = new();
         private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
 
-        private int GetDispatch(ControlFlowBranch branch, int continuation)
+        private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false, bool implicitException = false)
         {
-            var key = (branch.Source.Ordinal, continuation);
+            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException);
             if (_dispatchIds.TryGetValue(key, out var existing))
                 return existing;
 
             var exception = branch.Source.BranchValue;
-            while (exception is IConversionOperation conversion)
+            while (exception is IConversionOperation { OperatorMethod: null } conversion)
                 exception = conversion.Operand;
-            ITypeSymbol? exceptionType = exception?.Type;
-            var exactType = exception is IObjectCreationOperation;
-            if (exception?.ConstantValue is { HasValue: true, Value: null })
+            ITypeSymbol? exceptionType = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception);
+            var exactType = exceptionType is not null;
+            var possiblyNull = !exactType && exception is ILocalReferenceOperation or IParameterReferenceOperation;
+            exceptionType ??= possiblyNull ? exception?.Type : null;
+            if (nullPath || exception?.ConstantValue is { HasValue: true, Value: null })
             {
                 exceptionType = _systemException?.ContainingNamespace.GetTypeMembers("NullReferenceException").FirstOrDefault();
                 exactType = true;
@@ -307,6 +325,11 @@ internal static partial class ScopeWalker
                         break;
                     }
                 }
+            }
+            if (implicitException)
+            {
+                exceptionType = null;
+                exactType = false;
             }
 
             var unwind = new List<ControlFlowRegion>();
@@ -336,8 +359,12 @@ internal static partial class ScopeWalker
                     unwind.Add(region.EnclosingRegion.NestedRegions.Last());
             }
 
-            var next = _dispatches.Count;
-            _dispatches.Add(new CatchDispatch(null, null, unwind.ToArray(), 0, 0, true));
+            var next = 0;
+            if (!implicitException)
+            {
+                next = _dispatches.Count;
+                _dispatches.Add(new CatchDispatch(null, null, unwind.ToArray(), 0, 0, true));
+            }
             foreach (var candidate in candidates.AsEnumerable().Reverse())
             {
                 var id = _dispatches.Count;
@@ -347,6 +374,19 @@ internal static partial class ScopeWalker
             }
             _dispatchIds.Add(key, next);
             return next;
+        }
+
+        private bool MayThrow(IOperation operation)
+        {
+            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation)
+                return false;
+            if (operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
+                or IDynamicInvocationOperation or IArrayElementReferenceOperation
+                || operation is IConversionOperation { OperatorMethod: not null })
+                return true;
+            if (operation is IObjectCreationOperation)
+                return ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
+            return operation.ChildOperations.Any(MayThrow);
         }
 
         private int CatchContinuation(ControlFlowRegion handler, int continuation)
@@ -391,9 +431,11 @@ internal static partial class ScopeWalker
             var certain = catchesAll || HasBaseType(exceptionType, catchType);
             // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
             // handlers. A fresh construction has an exact type; other values may be derived.
-            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
+            var possible = certain || exceptionType is null or IDynamicTypeSymbol
                 || catchType is ITypeParameterSymbol
-                || !exactType && HasBaseType(catchType, exceptionType);
+                || !exactType && (exceptionType is ITypeParameterSymbol parameter
+                    ? parameter.ConstraintTypes.All(constraint => HasBaseType(catchType, constraint))
+                    : HasBaseType(catchType, exceptionType));
             return (possible, certain);
         }
 

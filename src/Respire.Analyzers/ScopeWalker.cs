@@ -123,9 +123,9 @@ internal static partial class ScopeWalker
             return false;
         }
 
-        var systemException = GetSystemException(semanticModel);
-        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken)
-               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before], cancellationToken: cancellationToken);
+
+        return PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken)
+               && !PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before], cancellationToken: cancellationToken);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -148,7 +148,7 @@ internal static partial class ScopeWalker
             return false;
         }
 
-        return !PathExistsAvoiding(graph, GetSystemException(semanticModel), beforeBlock, before.SpanStart,
+        return !PathExistsAvoiding(graph, semanticModel, beforeBlock, before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1], int.MaxValue, [after], cancellationToken: cancellationToken);
     }
 
@@ -173,7 +173,7 @@ internal static partial class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel,
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken);
     }
 
@@ -205,7 +205,7 @@ internal static partial class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel,
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy, cancellationToken);
     }
 
@@ -236,7 +236,7 @@ internal static partial class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel,
             graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray, cancellationToken: cancellationToken);
     }
 
@@ -269,7 +269,7 @@ internal static partial class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
-            GetSystemException(semanticModel),
+            semanticModel,
             beforeBlock,
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
@@ -277,12 +277,9 @@ internal static partial class ScopeWalker
             barrierArray, startPolicy, cancellationToken);
     }
 
-    private static INamedTypeSymbol? GetSystemException(SemanticModel semanticModel)
-        => semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
-
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
-        INamedTypeSymbol? systemException,
+        SemanticModel semanticModel,
         BasicBlock startBlock,
         int startPosition,
         BasicBlock targetBlock,
@@ -290,7 +287,7 @@ internal static partial class ScopeWalker
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude,
         CancellationToken cancellationToken = default)
-        => new ReachabilityWalker(graph, systemException, startBlock, startPosition, targetBlock,
+        => new ReachabilityWalker(graph, semanticModel, startBlock, startPosition, targetBlock,
             targetPosition, barriers, startPolicy, cancellationToken).Search();
 
     private static bool IsUnconditionalTopLevelSequence(

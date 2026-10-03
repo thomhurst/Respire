@@ -194,8 +194,9 @@ public class ScopeExitAnalysisTests
     [Arguments("", "error", true)]
     [Arguments("var local = new ArgumentException(\"x\");", "local", false)]
     [Arguments("Exception local = new ArgumentException(\"x\");", "local", false)]
-    [Arguments("var local = new ArgumentException(\"x\"); if (skip) local = null;", "local", true)]
-    [Arguments("var local = new ArgumentException(\"x\"); var (copy, other) = (local, local); (local, other) = (null, copy);", "local", true)]
+    // Both the declared exception type and the null-throw path are handled by a flush.
+    [Arguments("var local = new ArgumentException(\"x\"); if (skip) local = null;", "local", false)]
+    [Arguments("var local = new ArgumentException(\"x\"); var (copy, other) = (local, local); (local, other) = (null, copy);", "local", false)]
     public async Task ExactNullOrUnreassignedThrownValueSelectsFinallyHandler(string setup, string thrown, bool warning)
     {
         var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";

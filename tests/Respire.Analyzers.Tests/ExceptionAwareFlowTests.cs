@@ -7,6 +7,105 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("choice = !choice;", "", "", false)]
+    [Arguments("", "", "choice = !choice;", false)]
+    [Arguments("", "choice = !choice;", "", true)]
+    public async Task PredicateWritesOnlyInvalidateTheTraversedInterval(
+        string before, string between, string after, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, bool choice)
+                {
+                    {{before}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    {{between}}
+                    if (choice) result.Dispose();
+                    {{after}}
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, bool choice)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    {{before}}
+                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    {{between}}
+                    if (choice) await first.SendAsync(); else await second.SendAsync();
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                    {{after}}
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public async Task AddressOfArrayElementPreservesIndexPredicate() => await Pending.VerifyUnsafeAsync("""
+        using System;
+        using Respire;
+        class Caller
+        {
+            unsafe void Run(RespireClient client, bool choice, byte[] buffer)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                fixed (byte* pointer = &buffer[choice ? 0 : 1]) { *pointer = 1; }
+                if (choice) first.SendAsync().AsTask().GetAwaiter().GetResult();
+                else second.SendAsync().AsTask().GetAwaiter().GetResult();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("choice == false", "!choice")]
+    [Arguments("!choice", "choice == false")]
+    [Arguments("choice != false", "choice")]
+    [Arguments("false == choice", "choice is false")]
+    public async Task ComplementaryBooleanPredicatesShareEvidence(string selection, string cleanup)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, bool choice)
+                {
+                    var result = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    if ({{cleanup}}) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, bool choice)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = {{selection}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    if ({{cleanup}}) await first.SendAsync(); else await second.SendAsync();
+                    Console.WriteLine(pending.Result);
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AddressTakenPredicateCannotProveConditionalFlush(bool local) => await Pending.VerifyUnsafeAsync($$"""

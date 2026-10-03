@@ -47,9 +47,10 @@ internal sealed class FlowConditions
         foreach (var child in operation.ChildOperations) CollectRelevant(child);
     }
 
-    private void Inspect(IOperation operation)
+    private void Inspect(IOperation operation, bool nested = false)
     {
         _cancellationToken.ThrowIfCancellationRequested();
+        nested |= operation is IAnonymousFunctionOperation or ILocalFunctionOperation;
         switch (operation)
         {
             case IFlowCaptureOperation capture:
@@ -64,7 +65,7 @@ internal sealed class FlowConditions
             case IAssignmentOperation assignment:
                 // A declaration initializes the local once per execution. Locals declared in
                 // loops are excluded below as well: the next iteration can choose a new value.
-                if (assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
+                if (nested && assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
                     Invalidate(assignment.Target);
                 if (assignment is ISimpleAssignmentOperation { IsRef: true })
                     Invalidate(assignment.Value);
@@ -72,7 +73,7 @@ internal sealed class FlowConditions
             case IVariableDeclaratorOperation { Symbol.RefKind: not RefKind.None, Initializer: { } initializer }:
                 Invalidate(initializer.Value);
                 break;
-            case IIncrementOrDecrementOperation increment:
+            case IIncrementOrDecrementOperation increment when nested:
                 Invalidate(increment.Target);
                 break;
             case IArgumentOperation { Parameter.RefKind: not RefKind.None } argument:
@@ -84,15 +85,44 @@ internal sealed class FlowConditions
         }
 
         foreach (var child in operation.ChildOperations)
-            Inspect(child);
+            Inspect(child, nested);
+    }
+
+    internal void ForgetWrites(IOperation operation, ref ulong known, ref ulong values)
+    {
+        if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation)
+            return;
+        if (operation is IAssignmentOperation assignment)
+            Forget(assignment.Target, ref known, ref values);
+        else if (operation is IIncrementOrDecrementOperation increment)
+            Forget(increment.Target, ref known, ref values);
+        foreach (var child in operation.ChildOperations)
+            ForgetWrites(child, ref known, ref values);
+    }
+
+    private void Forget(IOperation target, ref ulong known, ref ulong values)
+    {
+        if (Symbol(target) is { } symbol)
+            for (var index = 0; index < _predicates.Count; index++)
+                if (SymbolEqualityComparer.Default.Equals(_predicates[index].Symbol, symbol))
+                {
+                    var mask = ~(1UL << index);
+                    known &= mask;
+                    values &= mask;
+                }
+        foreach (var child in target.ChildOperations)
+            Forget(child, ref known, ref values);
     }
 
     private void Invalidate(IOperation operation)
     {
         if (Symbol(operation) is { } symbol)
             _unstable.Add(symbol);
-        foreach (var child in operation.ChildOperations)
-            Invalidate(child);
+        // Array indexes and member receivers identify storage; taking that storage's
+        // address does not expose the locals used to calculate its location.
+        else if (operation is ITupleOperation or IDeclarationExpressionOperation)
+            foreach (var child in operation.ChildOperations)
+                Invalidate(child);
     }
 
     private IOperation Unwrap(IOperation operation)
@@ -159,6 +189,11 @@ internal sealed class FlowConditions
         else if (condition.Type?.SpecialType != SpecialType.System_Boolean)
             return true;
 
+        if (comparison is false && operand.Type?.SpecialType == SpecialType.System_Boolean)
+        {
+            comparison = true;
+            expected = !expected;
+        }
         var symbol = Symbol(operand);
         if (symbol is null || !_relevant.Contains(symbol) || _unstable.Contains(symbol)
             || symbol is IParameterSymbol { RefKind: not RefKind.None }
