@@ -151,7 +151,7 @@ internal static partial class ScopeWalker
         }
 
         return !PathExistsAvoiding(graph, semanticModel, beforeBlock, before.SpanStart,
-            graph.Blocks[graph.Blocks.Length - 1], int.MaxValue, [after], cancellationToken: cancellationToken);
+            graph.Blocks[graph.Blocks.Length - 1], int.MaxValue, [after], cancellationToken: cancellationToken, origin: before);
     }
 
     /// <summary>True when control can flow from <paramref name="before"/> to <paramref name="after"/>.</summary>
@@ -176,7 +176,7 @@ internal static partial class ScopeWalker
 
         return PathExistsAvoiding(
             graph, semanticModel,
-            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken);
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken, origin: before);
     }
 
     /// <summary>
@@ -208,7 +208,7 @@ internal static partial class ScopeWalker
 
         return PathExistsAvoiding(
             graph, semanticModel,
-            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy, cancellationToken);
+            beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy, cancellationToken, origin: before);
     }
 
     /// <summary>True when every path to <paramref name="after"/> crosses one of <paramref name="barriers"/>.</summary>
@@ -276,7 +276,7 @@ internal static partial class ScopeWalker
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
             int.MaxValue,
-            barrierArray, startPolicy, cancellationToken);
+            barrierArray, startPolicy, cancellationToken, origin: before);
     }
 
     private static bool PathExistsAvoiding(
@@ -288,9 +288,10 @@ internal static partial class ScopeWalker
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SyntaxNode? origin = null)
         => new ReachabilityWalker(graph, semanticModel, startBlock, startPosition, targetBlock,
-            targetPosition, barriers, startPolicy, cancellationToken).Search();
+            targetPosition, barriers, startPolicy, cancellationToken, origin).Search();
 
     private static bool IsUnconditionalTopLevelSequence(
         SyntaxNode scope, SyntaxNode before, SyntaxNode after, bool requireExitCoverage)

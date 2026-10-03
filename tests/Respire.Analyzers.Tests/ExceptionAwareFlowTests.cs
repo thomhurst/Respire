@@ -7,6 +7,84 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = left + right;", false)]
+    [Arguments("_ = -left;", false)]
+    [Arguments("left += right;", false)]
+    [Arguments("left++;", false)]
+    [Arguments("left--;", false)]
+    [Arguments("_ = left + right;", true)]
+    public async Task OverloadedOperatorCanBypassCleanup(string operation, bool cleanupInCatch)
+    {
+        const string operators = """
+            struct Operand
+            {
+                public static Operand operator +(Operand left, Operand right) => throw new System.Exception();
+                public static Operand operator -(Operand value) => throw new System.Exception();
+                public static Operand operator ++(Operand value) => throw new System.Exception();
+                public static Operand operator --(Operand value) => throw new System.Exception();
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{operators}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Operand left, Operand right)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{operators}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Operand left, Operand right)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("GetCommand()", false)]
+    [Arguments("Command", false)]
+    [Arguments("GetCommand()", true)]
+    public async Task AcquisitionArgumentsPrecedeOwnership(string command, bool throwAfterAcquisition)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                string GetCommand() => throw new Exception();
+                string Command => throw new Exception();
+                async Task Run(RespireClient client)
+                {
+                    try
+                    {
+                        var {{(throwAfterAcquisition ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync({{command}});
+                        {{(throwAfterAcquisition ? "GetCommand();" : "")}}
+                        result.Dispose();
+                    }
+                    catch { }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("count > 0", "count > 0", "", false)]
     [Arguments("count >= 0", "count >= 0", "", false)]
     [Arguments("count < 0", "count < 0", "", false)]

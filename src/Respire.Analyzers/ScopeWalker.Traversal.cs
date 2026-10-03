@@ -16,7 +16,8 @@ internal static partial class ScopeWalker
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SyntaxNode? origin)
     {
         private const int MaxQueuedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
@@ -246,6 +247,8 @@ internal static partial class ScopeWalker
                 Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             if (dispatch == 0 && operation.Syntax.SpanStart > entryPosition
+                // Arguments and receivers inside the origin run before acquisition completes.
+                && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
                 && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation)
                 && block.FallThroughSuccessor is { } successor)
                 Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
@@ -445,6 +448,10 @@ internal static partial class ScopeWalker
                 return cached;
             var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation
+                or IBinaryOperation { OperatorMethod: not null }
+                or IUnaryOperation { OperatorMethod: not null }
+                or ICompoundAssignmentOperation { OperatorMethod: not null }
+                or IIncrementOrDecrementOperation { OperatorMethod: not null }
                 || operation is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } receiver }
                     && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
                     // A member binding is evaluated only on the non-null conditional-access path.
