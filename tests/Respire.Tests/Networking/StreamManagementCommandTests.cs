@@ -9,6 +9,34 @@ namespace Respire.Tests.Networking;
 public class StreamManagementCommandTests
 {
     [Test]
+    public async Task PendingReplayGoesDirectlyToTheCachedClusterOwner()
+    {
+        await using var seed = new FakeRespServer(16, "*0\r\n"u8.ToArray());
+        await using var target = new FakeRespServer(16, "*0\r\n"u8.ToArray());
+        var key = Enumerable.Range(0, 100).Select(index => $"stream:{index}")
+            .First(value => Respire.Internal.ClusterHash.GetSlot(value) >= 8192);
+        var slot = Respire.Internal.ClusterHash.GetSlot(key);
+        var topology = System.Text.Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
+            : command.StartsWith("XREADGROUP ") ? System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n") : null;
+        target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)], ClusterTopologyRefreshInterval = null,
+        });
+        for (var index = 0; index < 4; index++)
+        {
+            await foreach (var entry in client.Streams.ReadGroupAsync(key, "group", "consumer", (RespireStreamId)"0"))
+                throw new InvalidOperationException("Empty pending history must not yield an entry.");
+        }
+        await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("XREADGROUP "))).IsFalse();
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("XREADGROUP "))).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task Range_DefaultsToAscendingAndAcceptsTrailingDirection()
     {
         var reply = "*0\r\n"u8.ToArray();
