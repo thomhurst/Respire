@@ -158,7 +158,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     /// <summary>Selects a read endpoint, then rents a separate connection for a blocking read.</summary>
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection, bool IsReplica)> RentDedicatedConnectionAsync(
-        RespireReadFrom readFrom, CancellationToken cancellationToken, string? preferredZone, bool? replicaOnly = null)
+        RespireReadFrom readFrom, CancellationToken cancellationToken, string? preferredZone = null, bool? replicaOnly = null)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -507,7 +507,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         internal void MarkFailed() => _health.MarkFailed();
 
         internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
-            CancellationToken cancellationToken, string? preferredZone)
+            CancellationToken cancellationToken, string? preferredZone = null)
         {
             DedicatedConnectionPool pool;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

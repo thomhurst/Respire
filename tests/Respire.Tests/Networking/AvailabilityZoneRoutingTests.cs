@@ -718,8 +718,6 @@ public class AvailabilityZoneRoutingTests
     [Arguments(true, RespireReadFrom.AzAffinity, "remote", "replica")]
     [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, "remote", "primary")]
     [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, "remote", "primary")]
-    [Arguments(false, RespireReadFrom.Replica, "local", "replica")]
-    [Arguments(false, RespireReadFrom.ReplicaPreferred, "local", "replica")]
     public async Task BlockingStandaloneReadSelectsEndpoint(bool sentinelMode, RespireReadFrom policy, string replicaZone, string expected)
     {
         await using var primary = Node("primary", "local", false);
@@ -797,7 +795,6 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(RespireReadFrom.PrimaryPreferred)]
     [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
     public async Task DedicatedPrimaryHandshakeFailureFallsBackToReplica(RespireReadFrom policy)
     {
@@ -819,120 +816,6 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    // Failures: remote close, independent connect deadline, and caller cancellation.
-    [Arguments(false, true, 0)]
-    [Arguments(true, true, 0)]
-    [Arguments(false, true, 1)]
-    [Arguments(true, true, 1)]
-    [Arguments(false, true, 2)]
-    [Arguments(true, true, 2)]
-    [Arguments(false, false, 0)]
-    [Arguments(true, false, 0)]
-    [Arguments(false, false, 1)]
-    [Arguments(true, false, 1)]
-    [Arguments(false, false, 2)]
-    [Arguments(true, false, 2)]
-    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(bool useSentinel, bool failPrimary, int failure)
-    {
-        await using var primary = Node("primary", "local", false);
-        await using var replica = Node("replica", "local", true);
-        await using var fast = Node("fast", "remote", true);
-        await using var sentinel = Sentinel(primary, () => [replica, fast]);
-        var failedNode = failPrimary ? primary : replica;
-        var failDedicated = true;
-        var failedNodeConnections = 0;
-        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var previous = failedNode.ReplyOverride!;
-        failedNode.ReplyOverride = (id, command) =>
-        {
-            if (failure == 0 && id > 0 && command == "HELLO 3" && Volatile.Read(ref failDedicated)) failedNode.CloseConnection(id);
-            return previous(id, command);
-        };
-        await using var client = await RespireClient.ConnectAsync(
-            Options(useSentinel ? sentinel : primary, useSentinel ? [] : [replica, fast], false, RespireReadFrom.Nearest)
-            with
-            {
-                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
-                TestingStreamFactory = failure == 0 ? null : OpenStreamAsync,
-            });
-        long now = 0;
-        var router = client.Core.ReadRouter;
-        router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
-            ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
-            () => Volatile.Read(ref now));
-        if (useSentinel) await router.RefreshNowAsync(default);
-        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
-        await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
-        using var caller = new CancellationTokenSource();
-        var read = ReadAsync(caller.Token);
-        if (failure == 2)
-        {
-            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            caller.Cancel();
-            var error = await Assert.That(async () => await read).Throws<OperationCanceledException>();
-            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-        }
-        else
-        {
-            using var reply = await read;
-            await Assert.That(reply.AsString()).IsEqualTo("fast");
-            await Assert.That(caller.IsCancellationRequested).IsFalse();
-        }
-        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-        await Assert.That(failedNode.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(failure == 0 ? 2 : 1);
-        if (failure != 0) await Assert.That(failedNodeConnections).IsEqualTo(2);
-        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
-        // A failed Sentinel socket invalidates its generation. A connection attempt canceled
-        // before transport creation leaves the existing shared connection healthy.
-        if (useSentinel && failPrimary && failure == 0) await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsTrue();
-        else await Assert.That(selected.Connection.IsConnected).IsTrue();
-        if (selected.Primary is { } primaryOwner)
-            await Assert.That(router.NearestLatency.CanConnect(primaryOwner)).IsEqualTo(failure == 2);
-        else await Assert.That(selected.Replica!.IsCoolingDown).IsEqualTo(failure != 2);
-
-        Volatile.Write(ref failDedicated, false);
-        Volatile.Write(ref now, ReadLatencySampler<RespireConnection>.IntervalMilliseconds);
-        router.FailedReplicaCooldown = TimeSpan.Zero;
-        using (var reply = await ReadAsync()) await Assert.That(reply.AsString()).IsEqualTo(failPrimary ? "primary" : "replica");
-        await Assert.That(failedNode.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
-        await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
-
-        Task<RespireResult> ReadAsync(CancellationToken token = default) => client.ExecuteAsync(RespireCommands.Stream.XREAD,
-            ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-
-        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
-        {
-            if (port == failedNode.Port && Interlocked.Increment(ref failedNodeConnections) > 1 && Volatile.Read(ref failDedicated))
-            {
-                connecting.TrySetResult();
-                // This token includes the transport's independent ConnectTimeout. The caller
-                // control cancels only after acquisition is blocked at the same boundary.
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            }
-            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
-            try
-            {
-                await socket.ConnectAsync(host, port, token);
-                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
-            }
-            catch { socket.Dispose(); throw; }
-        }
-    }
-
-    [Test]
-    [Arguments(RespireReadFrom.PrimaryPreferred, false, false)]
-    [Arguments(RespireReadFrom.PrimaryPreferred, false, true)]
-    [Arguments(RespireReadFrom.PrimaryPreferred, true, false)]
-    [Arguments(RespireReadFrom.PrimaryPreferred, true, true)]
-    [Arguments(RespireReadFrom.ReplicaPreferred, false, false)]
-    [Arguments(RespireReadFrom.ReplicaPreferred, false, true)]
-    [Arguments(RespireReadFrom.ReplicaPreferred, true, false)]
-    [Arguments(RespireReadFrom.ReplicaPreferred, true, true)]
-    [Arguments(RespireReadFrom.Replica, false, false)]
-    [Arguments(RespireReadFrom.Replica, false, true)]
-    [Arguments(RespireReadFrom.Replica, true, false)]
-    [Arguments(RespireReadFrom.Replica, true, true)]
     [Arguments(RespireReadFrom.AzAffinity, false, false)]
     [Arguments(RespireReadFrom.AzAffinity, false, true)]
     [Arguments(RespireReadFrom.AzAffinity, true, false)]
@@ -1000,7 +883,6 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(RespireReadFrom.PrimaryPreferred)]
     [Arguments(RespireReadFrom.AzAffinity)]
     [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
     public async Task FailedDedicatedPrimaryWithNoSentinelReplicasPreservesConnectionError(RespireReadFrom policy)
@@ -1322,170 +1204,6 @@ public class AvailabilityZoneRoutingTests
         else
             await Assert.That(async () => await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
                 CancellationToken.None, null, "local")).Throws<RespireConnectionException>();
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task BlockingReplicaValidatesDedicatedSocketRole(bool strict)
-    {
-        await using var primary = Node("primary", "remote", false);
-        await using var replica = Node("replica", "local", true);
-        var previous = replica.ReplyOverride!;
-        replica.ReplyOverride = (id, command) => id > 0 && command == "ROLE"
-            ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : previous(id, command);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
-            strict ? RespireReadFrom.Replica : RespireReadFrom.AzAffinity));
-        if (strict)
-            await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
-                ["BLOCK", 1, "STREAMS", "key", "0"])).Throws<RespireConnectionException>();
-        else
-        {
-            using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
-            await Assert.That(reply.AsString()).IsEqualTo("primary");
-        }
-        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-    }
-
-    [Test]
-    public async Task BlockingReplicaKeepsMultiplexedReadsFreeAndHonorsCallerCancellation()
-    {
-        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var primary = Node("primary", "local", false);
-        await using var replica = Node("replica", "local", true);
-        replica.SuppressReply = command =>
-        {
-            if (!command.StartsWith("XREAD ")) return false;
-            arrived.TrySetResult();
-            return true;
-        };
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
-            RespireReadFrom.AzAffinity) with { CommandTimeout = TimeSpan.FromMilliseconds(500) });
-        using var caller = new CancellationTokenSource();
-        var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD,
-            ["BLOCK", 0, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
-        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.Delay(750);
-        await Assert.That(pending.IsCompleted).IsFalse();
-        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("replica");
-        caller.Cancel();
-        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-            .Throws<OperationCanceledException>();
-        await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-        replica.SuppressReply = null;
-        using var next = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
-        await Assert.That(next.AsString()).IsEqualTo("replica");
-        var ids = replica.ReceivedCommands.Select((command, index) => (command, index))
-            .Where(item => item.command.StartsWith("XREAD "))
-            .Select(item => replica.ReceivedConnectionIds[item.index]).ToArray();
-        await Assert.That(ids.Length).IsEqualTo(2);
-        await Assert.That(ids[0] != ids[1]).IsTrue(); // Cancellation discards the blocked socket.
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RemovedReplicaDrainsBlockingLeaseUnlessClientDisposes(bool disposeClient)
-    {
-        await using var primary = Node("primary", "local", false);
-        await using var replica = Node("replica", "local", true);
-        FakeRespServer[] replicas = [replica];
-        await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
-        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false, RespireReadFrom.AzAffinity)
-            with { SentinelPrimaryName = "primary" });
-        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, "local");
-        lease.Pool.Return(lease.Connection);
-        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        replica.SuppressReply = command =>
-        {
-            if (!command.StartsWith("XREAD ")) return false;
-            arrived.TrySetResult();
-            return true;
-        };
-        var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 0, "STREAMS", "key", "0"]).AsTask();
-        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Volatile.Write(ref replicas, []);
-        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!lease.Pool.IsStopping) await Task.Delay(5, limit.Token);
-        await Assert.That(pending.IsCompleted).IsFalse();
-        if (disposeClient)
-        {
-            await client.DisposeAsync();
-            await Assert.That(async () => await pending.WaitAsync(limit.Token)).Throws<RespireConnectionException>();
-        }
-        else
-        {
-            var index = replica.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("XREAD "));
-            await replica.SendRawAsync(Bulk("accepted"), replica.ReceivedConnectionIds[index]);
-            using var reply = await pending.WaitAsync(limit.Token);
-            await Assert.That(reply.AsString()).IsEqualTo("accepted");
-            await lease.Pool.RetireAsync().AsTask().WaitAsync(limit.Token);
-        }
-        await Assert.That(lease.Connection.IsConnected).IsFalse();
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DedicatedReplicaRoleWaitEndsOnCancellationOrDisposal(bool disposeClient)
-    {
-        await using var primary = Node("primary", "local", false);
-        await using var replica = Node("replica", "local", true);
-        var arrived = GateDedicatedRole(replica);
-        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, RespireReadFrom.AzAffinity)
-            with { CommandTimeout = null });
-        using var caller = new CancellationTokenSource();
-        var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD,
-            ["BLOCK", 0, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
-        await arrived.WaitAsync(TimeSpan.FromSeconds(5));
-        if (disposeClient)
-        {
-            await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<ObjectDisposedException>();
-        }
-        else
-        {
-            caller.Cancel();
-            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-                .Throws<OperationCanceledException>();
-            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-        }
-        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-    }
-
-    [Test]
-    public async Task RemovingReplicaDuringDedicatedRoleValidationReselects()
-    {
-        await using var primary = Node("primary", "local", false);
-        await using var replica = Node("replica", "local", true);
-        FakeRespServer[] replicas = [replica];
-        await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
-        var arrived = GateDedicatedRole(replica);
-        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false, RespireReadFrom.AzAffinity)
-            with { SentinelPrimaryName = "primary" });
-        var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask();
-        await arrived.WaitAsync(TimeSpan.FromSeconds(5));
-        Volatile.Write(ref replicas, []);
-        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-        var index = replica.ReceivedCommands.ToList().FindLastIndex(command => command == "ROLE");
-        await replica.SendRawAsync(replica.ReplyOverride!(replica.ReceivedConnectionIds[index], "ROLE")!, replica.ReceivedConnectionIds[index]);
-        using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(reply.AsString()).IsEqualTo("primary");
-        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-    }
-
-    private static Task GateDedicatedRole(FakeRespServer replica)
-    {
-        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var roles = 0;
-        replica.SuppressReply = command =>
-        {
-            if (command != "ROLE" || Interlocked.Increment(ref roles) != 2) return false;
-            arrived.TrySetResult();
-            return true;
-        };
-        return arrived.Task;
     }
 
     [Test, NotInParallel]

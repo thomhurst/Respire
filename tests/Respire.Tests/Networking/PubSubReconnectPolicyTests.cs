@@ -32,6 +32,195 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task DiscoveryTelemetryContainsListenerAndLoggerFailures()
+    {
+        var failure = new InvalidOperationException("Injected metric listener failure.");
+        using var logger = new ThrowingTelemetryLogger(failure);
+        using var listener = ThrowOnReconnectMeasurements(6379, failure);
+        var endpoint = new RespireEndpoint("127.0.0.1", 6379);
+
+        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, TimeSpan.Zero, logger);
+        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, null, logger);
+
+        await Assert.That(logger.Failures).IsEqualTo(2);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ThrowingTelemetryAndLoggerDoNotStrandRecoveryStates(bool scoped)
+    {
+        await using var server = new FakeRespServer(2, Confirmation);
+        var failure = new InvalidOperationException("Injected metric listener failure.");
+        using var logger = new ThrowingTelemetryLogger(failure);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
+        {
+            LoggerFactory = logger,
+            ReconnectTelemetryScope = scoped ? "sentinel-monitor" : null,
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        using var listener = ThrowOnReconnectMeasurements(server.Port, failure);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is not null) attempted.TrySetResult();
+            if (change.ReconnectExhausted) exhausted.TrySetResult();
+        };
+
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        await attempted.Task.WaitAsync(deadline.Token);
+        await WaitForCommandsAsync(server, 2, deadline.Token);
+        await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
+        await exhausted.Task.WaitAsync(deadline.Token);
+
+        await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        var states = changes.ToArray();
+        await Assert.That(states.Length).IsEqualTo(2);
+        await Assert.That(states[0].ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(states[0].ReconnectSource).IsEqualTo(scoped
+            ? RespireReconnectSource.SentinelMonitor : RespireReconnectSource.PubSub);
+        await Assert.That(states[1].ReconnectExhausted).IsTrue();
+        await Assert.That(Volatile.Read(ref logger.Failures)).IsEqualTo(2);
+    }
+
+    private static MeterListener ThrowOnReconnectMeasurements(int port, Exception failure)
+    {
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name is
+                "respire.connection.reconnect.attempt" or "respire.connection.reconnect.exhausted")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.port" && Equals(tag.Value, port)) throw failure;
+        });
+        listener.Start();
+        return listener;
+    }
+
+    private sealed class ThrowingTelemetryLogger(Exception failure) : ILoggerFactory, ILogger
+    {
+        internal int Failures;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!ReferenceEquals(exception, failure)) return;
+            Interlocked.Increment(ref Failures);
+            throw new InvalidOperationException("Injected logger failure.");
+        }
+    }
+
+    [Test]
+    public async Task InitialHandshakeFailureDoesNotStartRecoveryEpisode()
+    {
+        await using var server = new FakeRespServer(4, Confirmation) { CloseConnectionAfterCommand = 1 };
+        var episodes = 0;
+        await using var client = RespireClient.Create(Options(server.Port, Policy(), database: 1) with
+        {
+            ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
+        });
+        await Assert.That(async () => await client.SubscribeAsync("ch")).Throws<RespireConnectionException>();
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CloseDuringSuccessfulPromotionStartsNewEpisode(bool throwingObserver)
+    {
+        await using var server = new FakeRespServer(4, Confirmation);
+        var episodes = 0;
+        var secondEpisode = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 100)) with
+        {
+            ReconnectEpisodeStarted = () =>
+            {
+                if (Interlocked.Increment(ref episodes) == 2) secondEpisode.TrySetResult();
+                if (throwingObserver) throw new InvalidOperationException("Injected episode observer failure.");
+            },
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        await WaitForCommandsAsync(server, 2, deadline.Token);
+
+        var recovery = client.Core.Hub.RecoveryForTesting;
+        Task? cleanup = null;
+        await Task.Run(() =>
+        {
+            lock (recovery.StateGate)
+            {
+                // Hold promotion until resubscription has passed its last IsConnected check
+                // and released the control gate. Deliver the close on this same thread so
+                // its observer can enter the reentrant state gate before promotion.
+                server.SendRawAsync(Confirmation, server.ReceivedConnectionIds[^1]).GetAwaiter().GetResult();
+                if (!SpinWait.SpinUntil(() => recovery.IsControlIdle, Deadline))
+                    throw new TimeoutException("Recovery did not reach the promotion boundary.");
+                cleanup = recovery.CloseCurrentConnection();
+            }
+        }, deadline.Token);
+        await cleanup!.WaitAsync(deadline.Token);
+        await secondEpisode.Task.WaitAsync(deadline.Token);
+        await WaitForCommandsAsync(server, 3, deadline.Token);
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(2);
+        await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ReplacementClosesDoNotRestartTheReconnectEpisode()
+    {
+        await using var server = new FakeRespServer(4, Confirmation);
+        var episodes = 0;
+        var publication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? captured = null;
+        await using var client = RespireClient.Create(Options(server.Port, Policy()) with
+        {
+            ReconnectEpisodeStarted = () =>
+            {
+                Volatile.Write(ref captured, publication.Task);
+                Interlocked.Increment(ref episodes);
+            },
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        server.SuppressReply = _ => true;
+        server.CloseConnection(server.ReceivedConnectionIds[0]);
+        for (var count = 2; count <= 3; count++)
+        {
+            await WaitForCommandsAsync(server, count, deadline.Token);
+            if (count == 2)
+            {
+                // Publication during recovery grants the budget before replacement sockets
+                // fail. Their close callbacks must not capture the next, incomplete epoch.
+                publication.TrySetResult();
+                publication = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            server.CloseConnection(server.ReceivedConnectionIds[^1]);
+        }
+        await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref captured)!.IsCompleted).IsTrue();
+    }
+
+    [Test]
     public async Task FailedResubscriptionsShareOneBudgetAndExhaustionEndsLiveSubscriptions()
     {
         await using var server = new FakeRespServer(3, Confirmation) { CloseConnectionAfterCommand = 2 };
@@ -101,7 +290,11 @@ public class PubSubReconnectPolicyTests
         var reply = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(Confirmation)
             + "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n");
         await using var server = new FakeRespServer(3, reply) { CloseConnectionAfterCommand = 2 };
-        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)));
+        var episodes = 0;
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
+        {
+            ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
+        });
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -126,6 +319,7 @@ public class PubSubReconnectPolicyTests
             await Assert.That(reader.Current.Text).IsEqualTo("hello");
         }
         await Assert.That(attempts.ToArray()).IsEquivalentTo(new[] { 1, 1 });
+        await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(2);
         await Assert.That(server.CommandsSeen).IsEqualTo(5);
         // Dispose the client before the subscription: the scripted server does not send
         // unsubscribe confirmations, and this test concerns recovery rather than unsubscribe.
@@ -482,7 +676,9 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
-    public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery()
+    [Arguments(RespireReconnectSource.PubSub)]
+    [Arguments(RespireReconnectSource.SentinelMonitor)]
+    public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery(RespireReconnectSource source)
     {
         await using var client = RespireClient.Create(Options(6379, Policy()));
         using var releaseObserver = new ManualResetEventSlim();
@@ -498,7 +694,7 @@ public class PubSubReconnectPolicyTests
         var first = new RespireConnectionStateChange(new RespireEndpoint("127.0.0.1", 6379),
             RespireConnectionState.Reconnecting, null)
         {
-            ReconnectSource = RespireReconnectSource.PubSub,
+            ReconnectSource = source,
             SourceState = RespireConnectionState.Reconnecting,
             ReconnectAttempt = 1,
         };

@@ -41,6 +41,39 @@ internal static class NearestReadSelection
 /// This type owns the common enumeration, sampling order, tie-breaking and minimum selection.
 /// Routers retain connection acquisition and publication checks: configured/Sentinel replicas
 /// require ROLE/link validation, while Cluster candidates require current slot membership.
+/// <para>The router-owned selection transitions are:</para>
+/// <list type="table">
+/// <listheader><term>State / observation</term><description>Next action</description></listheader>
+/// <item><term>Collect candidates</term><description>
+/// Rotate eligible candidates and start all available probes before waiting. Reuse fresh samples.
+/// </description></item>
+/// <item><term>Pending samples</term><description>
+/// Wait under the original shared sampling deadline, then recheck connection and role eligibility.
+/// A sampling timeout supplies unknown latency; it does not make a healthy candidate ineligible.
+/// </description></item>
+/// <item><term>Current winner</term><description>
+/// Revalidate its owner/membership and return. A usable candidate need not await background discovery.
+/// </description></item>
+/// <item><term>No current winner, first pass: configured group</term><description>
+/// Reselect once from current entries, preserving the sampling deadline and previous failure.
+/// </description></item>
+/// <item><term>No current winner, first pass: Sentinel</term><description>
+/// Join pending/due replica discovery, then reselect once even when endpoint addresses are unchanged.
+/// </description></item>
+/// <item><term>No current winner, first pass: Cluster</term><description>
+/// If owner or replica membership was replaced, reselect directly. Otherwise join the captured
+/// range's pending/due refresh when available; a throttled range does not start another refresh.
+/// Reselect once from current publication in either case, retaining the original sampling deadline.
+/// </description></item>
+/// <item><term>No current winner, second pass</term><description>
+/// Fail with the retained candidate/discovery error. Do not repeat the failed-selection refresh/retry.
+/// </description></item>
+/// <item><term>Caller cancellation</term><description>
+/// Stop selection and detach its sampling wait; shared physical probes keep their bounded slots.
+/// </description></item>
+/// </list>
+/// <para>The sampling deadline spans both passes. Connection acquisition and topology discovery
+/// retain their own existing cancellation, timeout and refresh-throttle rules.</para>
 /// </remarks>
 internal struct NearestReadSelection<T>
 {

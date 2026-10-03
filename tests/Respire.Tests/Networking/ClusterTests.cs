@@ -510,7 +510,7 @@ public class ClusterTests
                 invalidate = false;
                 // Publish exactly the invalidated marker after discovery observes coverage,
                 // before its caller reloads routes. No timing or background thread is needed.
-                Volatile.Write(ref ReplicaRoutes(client)[slot], unknown);
+                SetReplicaRoutes(client, slot, unknown);
                 coordinator.Invalidate(slot);
             }
             return covered;
@@ -787,7 +787,7 @@ public class ClusterTests
         }];
         router.ApplyTopology(Topology(oldReplica.Port), 0, 1);
         var previous = new ClusterReplicaSet(ReplicaRoutes(client)[0]!.Nodes, TimeSpan.FromMinutes(1), static () => 0);
-        ReplicaRoutes(client)[0] = previous;
+        SetReplicaRoutes(client, 0, previous);
         // Keep the old range throttled after its refresh completes. Selection already holds
         // this range when publication retires its candidate during the READONLY handshake.
         await previous.JoinOrStartRefresh(() => Task.CompletedTask)!;
@@ -877,7 +877,7 @@ public class ClusterTests
         var slot = ClusterHash.GetSlot("key");
         // Freeze the old set's throttle so scheduler delays cannot reopen its refresh budget.
         var oldRoutes = new ClusterReplicaSet(ReplicaRoutes(client)[slot]!.Nodes, TimeSpan.FromMinutes(1), () => 0);
-        ReplicaRoutes(client)[slot] = oldRoutes;
+        SetReplicaRoutes(client, slot, oldRoutes);
         await oldRoutes.JoinOrStartRefresh(() => Task.CompletedTask)!;
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
         var read = reads.Strings.GetStringAsync("key").AsTask();
@@ -2233,10 +2233,24 @@ public class ClusterTests
         await Assert.That(target.ReceivedCommands).Contains("CLUSTER SLOTS");
     }
 
-    private static ClusterReplicaSet?[] ReplicaRoutes(RespireClient client)
-        => (ClusterReplicaSet?[])typeof(ClusterRouter)
-            .GetField("_replicasBySlot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(client.Core.Cluster!)!;
+    private readonly record struct ReplicaRouteView(ClusterRoutingSnapshot Snapshot)
+    {
+        public ClusterReplicaSet? this[int slot] => Snapshot[slot].Replicas;
+    }
+
+    private static ReplicaRouteView ReplicaRoutes(RespireClient client)
+        => new(client.Core.Cluster!.RoutingSnapshot);
+
+    private static void SetReplicaRoutes(RespireClient client, int slot, ClusterReplicaSet routes)
+    {
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        lock (router.NodeStateGate)
+        {
+            typeof(ClusterRouter).GetMethod("SetReplicaRoutesLocked", flags)!.Invoke(router, [slot, routes]);
+            typeof(ClusterRouter).GetMethod("PublishTopologyLocked", flags)!.Invoke(router, null);
+        }
+    }
 
     [Test]
     [Arguments("GET", true)]

@@ -186,9 +186,8 @@ public class SemaphoreWireTests
             await original.EnsureServerClientIdAsync();
             var identity = new RespireClient.TrackedConnectionIdentity(
                 endpoint, original.ServerClientId, Connection: original);
-            var execution = new RespireClient.TrackedScriptExecution(original, identity);
-
-            var outcome = await RespireSemaphore.TryFenceAsync(client, execution);
+            var outcome = await client.Core.Corrections.CreateFence(client, identity)
+                .TryAsync(RespireSemaphore.BestEffortCleanupTimeout);
 
             await Assert.That(outcome).IsEqualTo(CleanupAttemptResult.Succeeded);
             await Assert.That(logger.DisconnectFailureThrown).IsTrue();

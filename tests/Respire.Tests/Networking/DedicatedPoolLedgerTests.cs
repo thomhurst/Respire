@@ -378,7 +378,7 @@ public class DedicatedPoolLedgerTests
         {
             var selection = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, CancellationToken.None);
             var entry = selection.Replica!;
-            var lease = await entry.RentDedicatedConnectionAsync(CancellationToken.None, preferredZone: null);
+            var lease = await entry.RentDedicatedConnectionAsync(CancellationToken.None);
             lease.Pool.Return(lease.Connection);
             logger.ThrowOnDisconnect = true;
             // Pool disposal reports its failure through the warning contract; retirement throws it directly.

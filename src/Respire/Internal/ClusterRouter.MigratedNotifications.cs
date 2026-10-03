@@ -265,7 +265,10 @@ internal sealed partial class ClusterRouter
 
             if (topologyChanged)
             {
-                retiredReplicas = RemoveUnroutedReplicasLocked();
+                var previous = RoutingSnapshot;
+                UpdateReplicaMembershipLocked();
+                PublishTopologyLocked();
+                retiredReplicas = RemovedReplicas(previous, RoutingSnapshot);
                 retirements = RetireInactiveLocked(_redirectVersions.Keys);
                 topologyVersion = _topologyVersion;
                 topologyEndpoints = _masters.Where((master, index) => _masterSlotCounts[index] != 0 && !master.IsRetired)
@@ -289,17 +292,22 @@ internal sealed partial class ClusterRouter
     }
 
     // Caller holds _nodesGate. Shared replica sets can still serve another slot range.
-    private List<RespireConnectionMultiplexer>? RemoveUnroutedReplicasLocked()
+    private void UpdateReplicaMembershipLocked()
     {
-        if (_replicaNodes.Length == 0) return null;
+        if (_replicaNodes.Length == 0) return;
         var active = new HashSet<RespireConnectionMultiplexer>();
         var sets = new HashSet<ClusterReplicaSet>();
         foreach (var routes in _replicasBySlot)
             if (routes is not null && sets.Add(routes)) active.UnionWith(routes.Nodes);
+        if (_replicaNodes.Any(node => !active.Contains(node))) _replicaNodes = active.ToArray();
+    }
+
+    private static List<RespireConnectionMultiplexer>? RemovedReplicas(
+        ClusterRoutingSnapshot previous, ClusterRoutingSnapshot current)
+    {
         List<RespireConnectionMultiplexer>? retired = null;
-        foreach (var node in _replicaNodes)
-            if (!active.Contains(node)) (retired ??= []).Add(node);
-        if (retired is not null) Volatile.Write(ref _replicaNodes, active.ToArray());
+        foreach (var node in previous.ReplicaNodes)
+            if (current.ReplicaNodes.IndexOf(node) < 0) (retired ??= []).Add(node);
         return retired;
     }
 
@@ -382,7 +390,7 @@ internal sealed partial class ClusterRouter
         {
             PublishSlotLocked(slot, target, migrationVersion);
             // The source shard's replicas cannot serve the migrated slot or its pinned cursors.
-            Volatile.Write(ref _replicasBySlot[slot], null);
+            SetReplicaRoutesLocked(slot, null);
             _unknownReplicaDiscovery.Invalidate(slot);
         }
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);

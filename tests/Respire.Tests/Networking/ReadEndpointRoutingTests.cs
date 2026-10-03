@@ -1398,13 +1398,14 @@ public class ReadEndpointRoutingTests
     [Test]
     public async Task RepeatedReplicaRetirementWaitsForStreamDisposalOrCancellation()
     {
-        const int payloadLength = 8 * 1024 * 1024;
-        var frame = new byte[payloadLength + 32];
-        var header = Encoding.ASCII.GetBytes($"${payloadLength}\r\n");
-        header.CopyTo(frame, 0);
-        frame.AsSpan(header.Length, payloadLength).Fill((byte)'x');
-        "\r\n"u8.CopyTo(frame.AsSpan(header.Length + payloadLength));
-        frame = frame[..(header.Length + payloadLength + 2)];
+        const int payloadLength = 4096;
+        // Keep a real bulk reply unfinished while the consumer owns it. Release a bounded
+        // tail after disposal/cancellation so protocol draining can finish without an 8 MB
+        // server send obscuring the peer-close observation under CI backpressure.
+        var frame = Encoding.ASCII.GetBytes($"${payloadLength}\r\nx");
+        var tail = new byte[payloadLength + 1];
+        tail.AsSpan(0, payloadLength - 1).Fill((byte)'x');
+        "\r\n"u8.CopyTo(tail.AsSpan(payloadLength - 1));
         int[] replicaPorts = [];
         await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
         {
@@ -1447,7 +1448,7 @@ public class ReadEndpointRoutingTests
         {
             using var lifetime = new CancellationTokenSource();
             await using var stream = await view.Strings.GetStreamAsync("big", lifetime.Token);
-            await stream!.ReadAtLeastAsync(buffer, 1, throwOnEndOfStream: true);
+            await Assert.That(await stream!.ReadAtLeastAsync(buffer, 1, throwOnEndOfStream: true)).IsEqualTo(1);
             var serving = available.First(server => server.ReceivedCommands.Contains("GET big"));
             available.Remove(serving);
 
@@ -1459,6 +1460,12 @@ public class ReadEndpointRoutingTests
 
             if (generation == 0) await stream.DisposeAsync();
             else lifetime.Cancel();
+            try { await serving.SendRawAsync(tail); }
+            catch (Exception error) when (error is System.Net.Sockets.SocketException or ObjectDisposedException)
+            {
+                // Cancellation may abort before the tail is sent. Require independent
+                // receive-side EOF/reset evidence in the assertion below.
+            }
             await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
         }
     }

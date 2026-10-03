@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Respire.Internal;
 
 namespace Respire.Extensions.Coordination;
 
@@ -564,14 +565,7 @@ public sealed class RespireCoordination
 
             var correction = CorrectHashFieldLeaseAsync(
                 concreteClient, hashKey, field, owner, connectionIdentity);
-            try
-            {
-                await correction.WaitAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                ObserveCorrectionFailure(correction);
-            }
+            await CorrectionCoordinator.WaitAsync(correction, timeout.Token).ConfigureAwait(false);
         }
         catch
         {
@@ -626,7 +620,7 @@ public sealed class RespireCoordination
                     : Task.WhenAny(probe)).ConfigureAwait(false);
                 if (monitoringTimeout.IsCancellationRequested || !HasPendingCorrection()) break;
                 await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
-                probeDelay = TimeSpan.FromMilliseconds(Math.Min(probeDelay.TotalMilliseconds * 2, 1000));
+                probeDelay = CoordinationCleanupRetry.NextDelay(probeDelay, BestEffortCleanupTimeout);
             }
         }
 
@@ -637,7 +631,7 @@ public sealed class RespireCoordination
         }
         else if (originalCorrection is not null)
         {
-            ObserveCorrectionFailure(originalCorrection);
+            CorrectionCoordinator.Observe(originalCorrection);
         }
 
         await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
@@ -647,11 +641,7 @@ public sealed class RespireCoordination
             var settled = Task.WhenAll(routedReleases);
             try
             {
-                await settled.WaitAsync(BestEffortCleanupTimeout).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                ObserveCorrectionFailure(settled);
+                await CorrectionCoordinator.WaitAsync(settled, BestEffortCleanupTimeout).ConfigureAwait(false);
             }
             catch (Exception error)
             {
@@ -691,13 +681,6 @@ public sealed class RespireCoordination
         using var response = await client.Scripts.ExecuteAsync(
             ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None).ConfigureAwait(false);
     }
-
-    private static void ObserveCorrectionFailure(Task correction)
-        => _ = correction.ContinueWith(
-            static completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
 
     /// <summary>A release sent through one promoted Sentinel generation.</summary>
     private sealed record SentinelCorrection(object Generation, Task Release, bool IsNew);

@@ -415,61 +415,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// A correction chasing an abandoned wait requires the wire client for ordering; after an
     /// observed reply, or with a mocked client, one ordinary send is sufficient.
     /// </summary>
-    private async ValueTask RunCorrectionAsync(
+    private ValueTask RunCorrectionAsync(
         RespireScript script,
         string key,
         Func<RespireValue[]> args,
         RespireClient.TrackedConnectionIdentity originalConnection = default)
-    {
-        var previous = TimeSpan.MaxValue;
-        var requiresOrdering = originalConnection.ServerClientId > 0;
-        while (true)
-        {
-            var sent = DateTimeOffset.UtcNow;
-            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering, originalConnection);
-            try
-            {
-                await pass.WaitAsync(CorrectionWaitBound).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                // Reply draining may be abandoned, but the exact original CLIENT KILL barrier
-                // may not: without its server acknowledgement, flushed bytes could still
-                // execute after the original failure is surfaced.
-                if (_wireClient is { } wire && originalConnection.ServerClientId > 0)
-                {
-                    await wire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
-                    originalConnection = originalConnection with { ServerClientId = 0 };
-                    _ = ObservePassAsync(pass);
-                    previous = TimeSpan.MaxValue;
-                    continue;
-                }
-
-                // The pass stays queued and is shrink-only, idempotent, and ownership-guarded,
-                // so it corrects whenever it lands; retrying against the same wedge would only
-                // queue more copies behind it.
-                _ = ObservePassAsync(pass);
-                return;
-            }
-
-            // A completed broadcast proves its copy on the original connection ran after the
-            // abandoned command (or that connection was fenced). Later freshness-only passes
-            // need one ordinary send and must not kill a connection unnecessarily.
-            if (requiresOrdering)
-            {
-                requiresOrdering = false;
-                originalConnection = default;
-            }
-
-            var roundTrip = DateTimeOffset.UtcNow - sent;
-            if (roundTrip < SendDelayTolerance || roundTrip > previous / 2)
-            {
-                return;
-            }
-
-            previous = roundTrip;
-        }
-    }
+        => CorrectionCoordinator.ConvergeAsync(originalConnection,
+            (Cache: this, Script: script, Key: key, Args: args),
+            static (state, identity) => state.Cache._wireClient is { } wire
+                ? wire.Core.Corrections.CreateFence(wire, identity) : null,
+            static (state, ordered, identity) => state.Cache.RunCorrectionPassAsync(
+                state.Script, state.Key, state.Args(), ordered, identity),
+            CorrectionWaitBound, SendDelayTolerance);
 
     private async Task RunCorrectionPassAsync(
         RespireScript script,
@@ -486,19 +443,6 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         {
             var result = await _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None).ConfigureAwait(false);
             result.Dispose();
-        }
-    }
-
-    private static async Task ObservePassAsync(Task pass)
-    {
-        try
-        {
-            await pass.ConfigureAwait(false);
-        }
-        catch
-        {
-            // Detached correction is best-effort; observe any late fault so it cannot become an
-            // unhandled task exception.
         }
     }
 

@@ -480,12 +480,22 @@ configuration keeps its current validation and connection-time fallback behavior
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
 it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
 them read-only, including eligible blocking reads such as `XREAD BLOCK`. For standalone and
-Sentinel clients, caller-defined commands, writes (including blocking commands that modify
-data), subscriptions, batches, and transactions stay on the primary. Eligible blocking reads
-rent a dedicated connection from the endpoint selected by the read policy.
-`Replica` fails when no validated replica is available.
-`PrimaryPreferred` uses a replica only when primary connection selection fails; `ReplicaPreferred`
+Sentinel clients, caller-defined commands, writes, blocking commands that modify data,
+subscriptions, batches, and transactions stay on the primary. `Replica` fails when no validated replica is available.
+`PrimaryPreferred` uses a replica when primary connection acquisition fails; `ReplicaPreferred`
 uses the primary when replica selection fails.
+
+Eligible blocking reads rent a separate, reusable connection from the selected endpoint, so
+waiting for a reply does not occupy the multiplexed connection. Replica leases validate `ROLE`
+before admission. Removing a replica prevents new leases and drains accepted reads; disposing
+the client aborts them. Caller cancellation discards the blocked lease and preserves the caller's
+token. Blocking reads retain their response-timeout exemption.
+
+For blocking reads, a preferred policy can switch server roles once after `LOADING`,
+`MASTERDOWN`, or `CLUSTERDOWN`. Fallback stays in that role and retains the original rejection
+if no fallback connection can be acquired. A private connection deadline can try remaining
+eligible candidates; caller cancellation never triggers fallback. Nearest reselects by latency
+after a dedicated connection fails, retaining the failed endpoint's cooldown.
 
 ### Nearest reads
 

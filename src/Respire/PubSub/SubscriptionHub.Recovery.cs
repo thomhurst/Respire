@@ -13,8 +13,50 @@ internal sealed partial class SubscriptionHub
     private TaskCompletionSource? _configuredRecoveryDrained;
     private RespireReconnectLimitException? _recoveryExhaustion;
     private ConfiguredRecoveryPhase _configuredRecoveryPhase;
+    private bool _configuredEpisodeCaptured;
 
     private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
+
+    // Test access for delivering a close after resubscription but before recovery promotion.
+    // Keep the synchronization in the test; ordinary recovery pays no callback or allocation cost.
+    internal RecoveryTestAccess RecoveryForTesting => new(this);
+
+    internal readonly struct RecoveryTestAccess(SubscriptionHub owner)
+    {
+        internal object StateGate => owner._reconnectStateGate;
+        internal bool IsControlIdle => owner._controlGate.CurrentCount == 1;
+
+        internal Task CloseCurrentConnection()
+        {
+            var connection = owner._connection ?? throw new InvalidOperationException("No recovery connection is present.");
+            owner.OnUnexpectedConnectionClosed(connection);
+            return connection.DisposeAsync().AsTask();
+        }
+    }
+
+    private void OnUnexpectedConnectionClosed(RespireConnection connection)
+    {
+        lock (_reconnectStateGate)
+        {
+            // Only a published, watched connection can start an episode. Initial handshake
+            // failures and unsuccessful replacement sockets have no recovery ownership.
+            if (!_disposed && _configuredRecoveryPhase == ConfiguredRecoveryPhase.Idle
+                && ReferenceEquals(_configuredConnection, connection))
+                CaptureConfiguredEpisodeLocked();
+        }
+    }
+
+    private void CaptureConfiguredEpisodeLocked()
+    {
+        if (_configuredEpisodeCaptured) return;
+        _configuredEpisodeCaptured = true;
+        try { core.Options.ReconnectEpisodeStarted?.Invoke(); }
+        catch (Exception error)
+        {
+            try { core.Logger?.LogWarning(error, "Pub/sub recovery episode observer threw"); }
+            catch { /* Diagnostics must not prevent recovery ownership from advancing. */ }
+        }
+    }
 
     private RespireConnection? GetConnectionForCaller(bool watch)
     {
@@ -42,12 +84,15 @@ internal sealed partial class SubscriptionHub
         {
             if (_disposed || _configuredRecoveryPhase != ConfiguredRecoveryPhase.Idle
                 || !ReferenceEquals(_configuredConnection, connection)) return;
+            // A replacement may close after its final connectivity check but before it is
+            // promoted. Its watcher supplies the capture that the earlier close could not.
+            CaptureConfiguredEpisodeLocked();
+            if (_disposed) return;
             _configuredConnection = null;
             _configuredRecoveryPhase = ConfiguredRecoveryPhase.Recovering;
             _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
-        // Reserve ownership before starting any work. Observers are dispatched separately
-        // so synchronous disposal can await this reservation without waiting on itself.
+        // Reserve ownership before starting any work so synchronous disposal can await recovery.
         _ = RecoverConfiguredAsync(connection, policy, drained);
     }
 
@@ -103,6 +148,7 @@ internal sealed partial class SubscriptionHub
             lock (_reconnectStateGate)
             {
                 _configuredConnection = restored;
+                _configuredEpisodeCaptured = false;
                 if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
                     _configuredRecoveryPhase = ConfiguredRecoveryPhase.Idle;
                 if (restored is not null)

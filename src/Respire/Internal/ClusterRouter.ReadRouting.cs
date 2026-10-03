@@ -204,12 +204,13 @@ internal sealed partial class ClusterRouter
             var refresh = previous.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        if (ReferenceEquals(GetKnownSlotOwner(slot), node))
+        var route = RoutingSnapshot[slot];
+        if (ReferenceEquals(route.Primary, node))
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
             return GetNodeReadConnection(node, slot, readFrom);
         }
-        var routes = GetKnownReplicas(slot);
+        var routes = route.Replicas;
         if (routes is null || !routes.Nodes.Contains(node))
             throw CursorReadTopologyChanged();
         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
@@ -234,22 +235,24 @@ internal sealed partial class ClusterRouter
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
             var budget = _options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout);
             timeout.CancelAfter(budget);
-            var replicas = GetKnownReplicas(slot)?.Nodes ?? [];
-            if (Volatile.Read(ref _masters).Length == 0
+            var (snapshot, version) = CaptureReplicaRefreshTopology();
+            var replicas = snapshot[slot].Replicas?.Nodes ?? [];
+            if (snapshot.Masters.Length == 0
                 && !replicas.Any(static node => node.IsConnected && !node.IsRetired))
             {
                 await EnsureConnectedAsync(timeout.Token, discovery: null).ConfigureAwait(false);
                 if (HasReplicaCoverage(slot)) return;
+                (snapshot, version) = CaptureReplicaRefreshTopology();
+                replicas = snapshot[slot].Replicas?.Nodes ?? [];
             }
-            var masters = Volatile.Read(ref _masters);
+            var masters = snapshot.Masters;
             // A connected seed can survive a failed initial CLUSTER SLOTS query without any
             // known masters. EnsureConnectedAsync deliberately does not query it again.
             if (masters.Length == 0 && Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
                 masters = [seed];
             var candidates = replicas.Where(static node => node.IsConnected && !node.IsRetired)
                 .Concat(masters).Distinct().ToArray();
-            var version = CaptureTopologyVersion();
-            var refreshRound = new ReplicaRefreshRound(slot, GetKnownSlotOwner(slot));
+            var refreshRound = new ReplicaRefreshRound(slot, snapshot[slot].Primary);
             // Each known candidate gets the shared deadline. Parallel probes prevent stalled
             // nodes from consuming healthy nodes' time; one snapshot batch fences late replies.
             var attempts = candidates.Select(node => TryRefreshReplicaCandidateAsync(
@@ -270,6 +273,13 @@ internal sealed partial class ClusterRouter
         {
             if (!_stopDiscovery.IsCancellationRequested) LogReplicaRefreshFailure(slot, error);
         }
+    }
+
+    private (ClusterRoutingSnapshot Snapshot, long Version) CaptureReplicaRefreshTopology()
+    {
+        // The refresh's original owner and redirect fence must describe the same state.
+        // A newer fence paired with an older owner could authorize a stale empty reply.
+        lock (_nodesGate) return (_topology, _topologyVersion);
     }
 
     // Register each probe once instead of rebuilding a WhenAny list after every completion.

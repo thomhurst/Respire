@@ -459,6 +459,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             var options = core.Options.ToConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
             {
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
+                UnexpectedConnectionClosed = core.Options.ReconnectEpisodeStarted is null ? null : OnUnexpectedConnectionClosed,
                 Generation = sentinelGeneration,
             };
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -481,7 +482,11 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             if (watch)
             {
                 if (core.Options.ReconnectPolicy is not null)
-                    lock (_reconnectStateGate) _configuredConnection = connection;
+                    lock (_reconnectStateGate)
+                    {
+                        _configuredConnection = connection;
+                        _configuredEpisodeCaptured = false;
+                    }
                 _ = WatchConnectionAsync(connection);
             }
             if (previous is not null)
@@ -620,7 +625,9 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     {
         _pendingReconnectStates.Enqueue((change with
         {
-            ReconnectSource = RespireReconnectSource.PubSub,
+            ReconnectSource = core.Options.ReconnectTelemetryScope is null
+                ? RespireReconnectSource.PubSub
+                : RespireReconnectSource.SentinelMonitor,
             SourceState = change.State,
         }, clusterSharded));
         if (_publishingReconnectState)
@@ -649,15 +656,28 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             var change = observation.Change;
             try
             {
+                var scope = core.Options.ReconnectTelemetryScope;
                 if (change.NextReconnectDelay is { } delay)
-                    RespireTelemetry.RecordReconnectAttempt(change.Endpoint.Host, change.Endpoint.Port,
-                        change.ReconnectAttempt, delay, RespireReconnectSource.PubSub);
+                {
+                    if (scope is not null)
+                        RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, scope,
+                            change.ReconnectAttempt, delay, core.Logger);
+                    else
+                        RespireTelemetry.RecordReconnectAttempt(change.Endpoint.Host, change.Endpoint.Port,
+                            change.ReconnectAttempt, delay, RespireReconnectSource.PubSub);
+                }
                 if (change.ReconnectExhausted)
-                    RespireTelemetry.RecordReconnectExhaustion(change.Endpoint.Host, change.Endpoint.Port, RespireReconnectSource.PubSub);
+                {
+                    if (scope is not null)
+                        RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, scope,
+                            change.ReconnectAttempt, delay: null, logger: core.Logger);
+                    else
+                        RespireTelemetry.RecordReconnectExhaustion(change.Endpoint.Host, change.Endpoint.Port, RespireReconnectSource.PubSub);
+                }
             }
             catch (Exception error)
             {
-                core.Logger?.LogWarning(error, "Pub/sub recovery metric observer threw");
+                TryLogWarning(error, "Pub/sub recovery metric observer threw");
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.

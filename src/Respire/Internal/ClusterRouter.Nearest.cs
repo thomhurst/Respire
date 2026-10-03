@@ -36,7 +36,17 @@ internal sealed partial class ClusterRouter
                 if (owner is not null) sampler.ConnectionFailed(owner);
             }
         }
-        var routes = GetKnownReplicas(slot);
+        var route = RoutingSnapshot[slot];
+        owner = route.Primary;
+        if (primary is not null && !ReferenceEquals(primary.Multiplexer, owner))
+        {
+            // Retry a replacement owner before unknown replica coverage can block this read.
+            if (retry)
+                return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
+                    samplingDeadline: deadline, previousFailure: lastError).ConfigureAwait(false);
+            primary = null;
+        }
+        var routes = route.Replicas;
         if (routes is null || ReferenceEquals(routes, _unknownReplicaRoutes))
         {
             routes = null;
@@ -95,8 +105,10 @@ internal sealed partial class ClusterRouter
         if (best.TryGet(out var selected))
         {
             var node = selected.Multiplexer;
+            // Sampling may await: revalidate both roles together against the latest publication.
+            var currentRoute = RoutingSnapshot[slot];
             if (selected.IsAcceptingCommands && node is { IsRetired: false }
-                && (ReferenceEquals(GetKnownSlotOwner(slot), node) || GetKnownReplicas(slot)?.Nodes.Contains(node) == true))
+                && (ReferenceEquals(currentRoute.Primary, node) || currentRoute.Replicas?.Nodes.Contains(node) == true))
             {
                 if (routes is { IsDueForRevalidation: true })
                     _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
@@ -108,7 +120,8 @@ internal sealed partial class ClusterRouter
             // A concurrent publication may remove every captured candidate before queueing.
             // Retry that publication directly; otherwise join the range's throttled refresh,
             // which can learn a replacement through another still-healthy master.
-            if (ReferenceEquals(owner, GetKnownSlotOwner(slot)) && ReferenceEquals(routes, GetKnownReplicas(slot))
+            var currentRoute = RoutingSnapshot[slot];
+            if (ReferenceEquals(owner, currentRoute.Primary) && ReferenceEquals(routes, currentRoute.Replicas)
                 && routes?.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot)) is { } refresh)
                 await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
