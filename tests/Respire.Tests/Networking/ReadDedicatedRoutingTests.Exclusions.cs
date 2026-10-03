@@ -11,6 +11,46 @@ namespace Respire.Tests.Networking;
 public partial class ReadDedicatedRoutingTests
 {
     [Test]
+    public async Task NearestCoolsPrimaryWhenDiscoveryFailsBeforePoolAcquisition()
+    {
+        await using var primary = Node("primary", false);
+        await using var replica = Node("replica", true);
+        await using var sentinel = Sentinel(primary, () => [replica]);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
+            with { SentinelPrimaryName = "primary" });
+        var router = client.Core.ReadRouter;
+        await router.RefreshNowAsync(default);
+        var generation = client.Core.Sentinel!.Current!;
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>(
+            (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 1L : 10L), () => 0L);
+        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
+        await Assert.That(selected.Primary).IsSameReferenceAs(generation.Multiplexer);
+        var originalReply = sentinel.ReplyOverride!;
+        var discoveries = 0;
+        sentinel.ReplyOverride = (id, command) =>
+        {
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return originalReply(id, command);
+            Interlocked.Increment(ref discoveries);
+            return "*-1\r\n"u8.ToArray();
+        };
+        // Place retirement exactly between endpoint selection and primary lease acquisition.
+        // The primary helper must rediscover before it can return a pool.
+        generation.TryRetire();
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var first = await router.TryRentPrimaryReadAsync(caller.Token, default, allowFallback: true,
+            preferredZone: null, nearestPrimary: selected.Primary);
+        await Assert.That(first.Pool).IsNull();
+        await Assert.That(first.Failure).IsTypeOf<RespireConnectionException>();
+        await Assert.That(discoveries).IsGreaterThan(0);
+        await Assert.That(router.NearestLatency.CanConnect(generation.Multiplexer)).IsFalse();
+        var previousDiscoveries = discoveries;
+        var second = await router.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token);
+        second.Pool.Return(second.Connection);
+        await Assert.That(second.IsReplica).IsTrue();
+        await Assert.That(discoveries).IsEqualTo(previousDiscoveries);
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.ReplicaPreferred, true)]
     [Arguments(RespireReadFrom.AzAffinity, true)]
     [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true)]

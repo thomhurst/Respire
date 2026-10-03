@@ -21,6 +21,16 @@ public static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args is ["--hedged-read-latency", ..])
+        {
+            if (args.Length > 2)
+            {
+                Console.Error.WriteLine("Usage: --hedged-read-latency [output-directory]");
+                return 2;
+            }
+            return await HedgedReadLatencyProbe.RunAsync(args.Length == 2 ? args[1] : "results").ConfigureAwait(false);
+        }
+
         // A task exception nobody awaited means a background failure escaped every
         // error path — collected here and escalated to a run failure at the end.
         TaskScheduler.UnobservedTaskException += (_, e) =>

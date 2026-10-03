@@ -42,6 +42,35 @@ unknown option prints usage.
 Results land in `./results`: one JSON file per scenario/client pass plus
 `stress-report.md`, a markdown comparison report.
 
+## Hedged-read tail latency
+
+Run a separate, bounded experiment against an owned Redis 7.2 primary/replica deployment:
+
+```powershell
+& ./scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @('run', '--project', 'tools/Respire.StressTests', '-c', 'Release', '-f', 'net10.0', '--', '--hedged-read-latency', 'results')
+```
+
+Run from the repository root. Docker is required. This mode does not use `REDIS_HOST` or
+`REDIS_PORT`; it pauses only its owned replica. It runs baseline, hedged, and baseline passes
+with 20 warmup reads and 1,000 measured sequential GETs per pass. Every twentieth measured
+read follows an acknowledged 50 ms `CLIENT PAUSE ALL` on the replica. The hedged pass uses
+`ReplicaPreferred`, a 5 ms delay, and a 5% extra-load budget.
+
+The probe waits for each pause to expire outside the timed GET before starting the next read.
+This isolates each induced stall; it does not model sustained arrival rates or backlog under
+overload. Redis scheduling can make a 50 ms pause last longer, and host timer resolution can
+make a 5 ms hedge start later. Fresh clients share one fixture across the three passes.
+
+`hedged-read-latency.json` includes all measured samples, nearest-rank p50/p95/p99, runtime,
+OS, configuration, and hedge counters. Counters and the budget include warmup; latency
+percentiles exclude warmup. The process fails on incorrect replies, timeouts, or budget
+violations. It reports latency improvement without imposing a noisy CI performance threshold.
+
+One Windows/.NET 10 run on 2026-10-03 measured p99 93.632 ms before and 93.800 ms after,
+versus 16.572 ms with hedging. All 50 hedges won: 4.90% extra requests across 1,020 reads,
+below the 51-request budget. These are results for this controlled pause experiment,
+not a throughput claim or a prediction for production workloads.
+
 ## Failure policy
 
 The process exits non-zero when any pass records an operation error, stalls (no

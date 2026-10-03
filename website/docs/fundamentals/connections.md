@@ -545,9 +545,70 @@ It does not measure geographic distance, replication lag, or the execution time 
 read. Configured and Sentinel candidates still follow the replication-link preference described
 below, before comparing latency. Zone affinity is separate from this policy.
 
-Fallback happens only while a connection is being selected. Once a command has been written to a
+Unless hedged reads are explicitly enabled, fallback happens only while a connection is being selected. Once a command has been written to a
 replica or the primary, a failure is returned to the caller and the command is not sent again,
 matching the rest of Respire: a command accepted by a failed connection is never replayed.
+
+### Hedged reads
+
+Set `HedgedReads` to duplicate a slow, audited idempotent read onto one other eligible server.
+It is disabled by default. The first successful reply wins; a losing reply is drained and disposed
+without delaying the caller. If both requests fail, the original request's error is returned.
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("primary", 6379)],
+    ReplicaEndpoints = [new("replica", 6379)],
+    ReadFrom = RespireReadFrom.ReplicaPreferred,
+    HedgedReads = new RespireHedgedReadOptions
+    {
+        Delay = TimeSpan.FromMilliseconds(10),
+        MaximumExtraLoadPercent = 5,
+    },
+};
+```
+
+`Delay` is a fixed threshold between 1 ms and one minute, starting after initial connection
+selection. Choose it from your observed latency distribution; Respire does not automatically
+track command p95/p99. `Nearest` continues to use its existing per-connection PING EWMA to select
+the original endpoint. Optional connection discovery or handshake cannot delay an original reply.
+
+`Primary` never hedges. `Replica` can hedge only onto another replica. `PrimaryPreferred`,
+`ReplicaPreferred`, and `Nearest` can hedge onto either role, using a different physical peer.
+`AzAffinity` and `AzAffinityReplicasAndPrimary` keep their zone and role ranking when selecting
+that other peer. Cluster selection excludes the original attempt's current peer after redirects
+or role fallback, and optional retries cannot re-enter that peer while the original remains there.
+Configured and Sentinel replicas must pass the same role validation as ordinary replica reads;
+Cluster candidates must belong to the key's current slot topology. All replica-capable policies
+can return stale data, including a replica hedge that beats a primary read.
+
+The client shares one budget across all its views. Each eligible logical read adds credit after
+initial endpoint selection, including fast reads and reads with no second eligible peer;
+starting a hedge consumes it. Primary-only reads and excluded commands do not add credit.
+At 5%, at least twenty eligible reads fund one hedge. The budget
+starts empty and stores at most one hedge, so fast reads cannot accumulate an unbounded burst.
+Concurrent reads may use less than the configured maximum. This bounds additional hedge starts,
+not bytes, server CPU, topology probes, or redirects. A saved credit can be spent in a later
+reporting interval; the percentage is a bound over the client's lifetime, not every time window.
+
+Only buffered catalog reads with audited idempotent semantics are eligible. Writes, scripts,
+random selections, cursors, blocking commands, batches, transactions, streamed replies, and
+unknown commands are excluded. Cluster reads also require a known slot. Eligible commands include
+`GET`/`MGET`, deterministic hash/list/set/sorted-set reads, geo lookups, and stream range reads.
+Argument bytes are copied when a request can hedge, because a losing request may outlive the caller.
+This opt-in path is not zero-allocation: asynchronous originals can also allocate tasks, timers,
+and linked cancellation sources. A synchronously successful original avoids conversion to a race
+task and timer setup, but still needs its argument snapshot. Deferring that snapshot until the
+timer fires would leave an original request waiting for admission with caller-owned bytes after
+a hedge returns. Reads without credit or without a possible second replica under strict `Replica`
+routing use the ordinary awaited send path.
+Accepted losing requests retain their normal timeout and FIFO response slot; hedging does not
+cancel them when another reply wins.
+
+Monitor `respire.read.hedge.sent`, `respire.read.hedge.won`, and `respire.read.hedge.extra_load`
+through the `Respire` meter. A reproducible real-Redis latency probe is documented in
+[`tools/Respire.StressTests`](https://github.com/thomhurst/Respire/tree/main/tools/Respire.StressTests).
 
 ### Validation and staleness
 

@@ -10,9 +10,24 @@ namespace Respire.Tests.Networking;
 public partial class ReadDedicatedRoutingTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RemovedReplicaCleanupRemainsOwnedUntilCompletion(bool cleanupFails)
+    public async Task RepeatedPrimaryRetirementStopsBeforeCallerCancellation()
+    {
+        await using var primary = Node("primary", false);
+        await using var replica = Node("replica", true);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.PrimaryPreferred));
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        await pool.RetireAsync();
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await Assert.That(async () => await client.Core.ReadRouter.RentDedicatedConnectionAsync(
+            RespireReadFrom.PrimaryPreferred, caller.Token)).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(caller.IsCancellationRequested).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RemovedReplicaCleanupRemainsOwnedUntilCompletion(bool cleanupFails, bool finishBeforeRouterDispose)
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
@@ -46,8 +61,16 @@ public partial class ReadDedicatedRoutingTests
                 .GetField("_lifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(router)!;
             await lifetime.CancelAsync();
             await logger.Started.Task.WaitAsync(limit.Token);
+            if (finishBeforeRouterDispose)
+            {
+                logger.Release.Set();
+                await logger.FailureLogged.Task.WaitAsync(limit.Token);
+                var retiring = typeof(ReadEndpointRouter)
+                    .GetField("_retiring", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(router)!;
+                await Assert.That((int)retiring.GetType().GetProperty("Count")!.GetValue(retiring)!).IsEqualTo(0);
+            }
             var disposal = router.DisposeAsync().AsTask();
-            try { await Assert.That(disposal.IsCompleted).IsFalse(); }
+            try { if (!finishBeforeRouterDispose) await Assert.That(disposal.IsCompleted).IsFalse(); }
             finally { logger.Release.Set(); }
             if (cleanupFails)
             {
@@ -69,9 +92,46 @@ public partial class ReadDedicatedRoutingTests
         }
     }
 
+    [Test]
+    public async Task ConcurrentReplicaDisposalSharesCleanupFailure()
+    {
+        await using var primary = Node("primary", false);
+        await using var replica = Node("replica", true);
+        using var logger = new PausedReplicaCleanupLogger(replica.Port, true);
+        var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.Replica)
+            with { LoggerFactory = logger });
+        try
+        {
+            var router = client.Core.ReadRouter;
+            var selection = await router.SelectAsync(RespireReadFrom.Replica, CancellationToken.None);
+            var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.Replica, CancellationToken.None);
+            lease.Pool.Return(lease.Connection);
+            logger.Arm();
+            var first = Task.Run(async () => await selection.Replica!.DisposeAsync());
+            await logger.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var second = selection.Replica!.DisposeAsync().AsTask();
+            await Assert.That(first.IsCompleted).IsFalse();
+            await Assert.That(second.IsCompleted).IsFalse();
+            logger.Release.Set();
+            foreach (var disposal in new[] { first, second })
+            {
+                var error = await Assert.That(async () => await disposal.WaitAsync(TimeSpan.FromSeconds(5)))
+                    .ThrowsExactly<InvalidOperationException>();
+                await Assert.That(error).IsSameReferenceAs(logger.Failure);
+            }
+        }
+        finally
+        {
+            logger.Release.Set();
+            try { await client.DisposeAsync(); }
+            catch (Exception error) when (ReferenceEquals(error, logger.Failure)) { }
+        }
+    }
+
     private sealed class PausedReplicaCleanupLogger(int port, bool fail) : ILogger, ILoggerFactory
     {
         internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource FailureLogged = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly ManualResetEventSlim Release = new();
         internal readonly InvalidOperationException Failure = new("Injected replica cleanup failure.");
         private int _armed;
@@ -84,6 +144,8 @@ public partial class ReadDedicatedRoutingTests
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
+            if (logLevel == LogLevel.Debug && formatter(state, exception) == "Closing a removed read replica failed")
+                FailureLogged.TrySetResult();
             if (logLevel == LogLevel.Debug && formatter(state, exception) == $"Disconnected from 127.0.0.1:{port}"
                 && Interlocked.Exchange(ref _armed, 0) == 1)
             {

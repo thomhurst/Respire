@@ -12,6 +12,38 @@ namespace Respire.Tests.Networking;
 public class AvailabilityZoneRoutingTests
 {
     [Test]
+    [Arguments(false, RespireReadFrom.AzAffinity, false)]
+    [Arguments(false, RespireReadFrom.AzAffinity, true)]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, false)]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary, true)]
+    [Arguments(true, RespireReadFrom.AzAffinity, false)]
+    [Arguments(true, RespireReadFrom.AzAffinity, true)]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, false)]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary, true)]
+    public async Task HedgeExcludesOriginalPeerAndPreservesZoneRanking(
+        bool cluster, RespireReadFrom policy, bool localAlternative)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var original = Node("original", "local", true);
+        await using var remote = Node("remote", "remote", true);
+        await using var local = Node("local", "local", true);
+        var replicas = localAlternative ? new[] { original, remote, local } : [original, remote];
+        ConfigureTopology(primary, replicas);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, cluster, policy));
+        await using var originalClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", original.Port)], Protocol = RespProtocol.Resp2, Connections = 1,
+        });
+        var originalConnection = originalClient.Core.Multiplexer.GetConnection();
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var selected = cluster
+            ? await client.Core.Cluster!.GetHedgeConnectionAsync(ClusterHash.GetSlot("key"), policy, originalConnection, limit.Token)
+            : await client.Core.ReadRouter.GetHedgeConnectionAsync(policy, originalConnection, limit.Token);
+        var expected = localAlternative ? local : policy == RespireReadFrom.AzAffinity ? remote : primary;
+        await Assert.That(selected?.Port).IsEqualTo(expected.Port);
+    }
+
+    [Test]
     [Arguments(0, false)]
     [Arguments(1, false)]
     [Arguments(2, false)]

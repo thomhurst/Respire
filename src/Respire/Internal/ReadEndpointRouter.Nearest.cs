@@ -9,7 +9,7 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, HashSet<RespireEndpoint>? failedEndpoints = null)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt attempt = default)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -21,11 +21,11 @@ internal sealed partial class ReadEndpointRouter
         Selection? primary = null;
         Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
-        if (failedEndpoints?.Contains(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
+        if (!attempt.IsFailed(primaryCandidate.ActiveConnectionEndpoint) && sampler.CanConnect(primaryCandidate))
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, failedEndpoints).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
@@ -54,7 +54,7 @@ internal sealed partial class ReadEndpointRouter
             }
             else
             {
-                if (failedEndpoints?.Contains(endpoints[index - 1]) == true) continue;
+                if (attempt.IsFailed(endpoints[index - 1])) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
@@ -100,7 +100,7 @@ internal sealed partial class ReadEndpointRouter
         }
         if (retry)
             return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError, failedEndpoints: failedEndpoints).ConfigureAwait(false);
+                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }
