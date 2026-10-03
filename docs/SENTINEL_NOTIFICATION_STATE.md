@@ -106,7 +106,8 @@ the record. DNS evidence remains paired with its endpoint and port.
   before connecting, even with a newer configuration epoch. Mixed answers proceed to
   socket validation; connecting to a demoted source is still rejected. Epochs order Sentinel's announced owner;
   they do not prove that the client's DNS or connected socket reaches that owner. The router
-  checks the actual ROLE-validated peer before accepting the configuration or publishing it.
+  checks every registered ROLE-validated socket peer before accepting the configuration or
+  publishing it. The last validated socket cannot hide another socket reaching a demoted source.
 - A source hostname may already resolve to the promoted peer. Fresh source addresses that
   also identify an unambiguous announced hostname target are not retained as demotion
   evidence, before or after target publication, unless they identify the peer validated when
@@ -136,6 +137,13 @@ the record. DNS evidence remains paired with its endpoint and port.
   A close after successful recovery captures the signal for a new episode.
 
 ## Executable coverage
+
+Unknown or ambiguous advisory DNS does not authorize a different owner or erase a demotion
+fence. Failed notification discovery retries with backoff (unlimited by default); a configured
+retry budget can stop that worker, and commands can still trigger discovery on demand.
+This is rediscovery, not a separate periodic polling loop. Availability requires a Sentinel
+and reachable primary to provide sufficient fresh evidence. Permanently ambiguous or stale
+reports cannot guarantee failover without weakening the split-brain safety contract.
 
 `SentinelFenceTransitionTests` enumerates fifteen idle, active and active+pending
 transitions, including success and failure for switches, gaps and master-down reports.

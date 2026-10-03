@@ -266,10 +266,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     private void ValidateSwitchTargetPeer(Generation candidate, SentinelHint? hint)
     {
         if (hint is not { Target: { } target } evidence || !SameEndpoint(candidate.Endpoint, target)
-            || System.Net.IPAddress.TryParse(target.Host, out _) || candidate.ValidatedPeer is not { } peer) return;
+            || System.Net.IPAddress.TryParse(target.Host, out _)) return;
         // DNS can change between discovery's lookup and connection establishment. The peer
-        // that answered ROLE must also be distinct from a differently named switch source.
-        if (!SentinelResolver.TargetResolvesToSwitchSource(target, [peer.Host], in evidence)) return;
+        // of every validated socket must be distinct from a differently named switch source.
+        if (candidate.FindSwitchSourcePeer(target, in evidence) is not { } peer) return;
         Invalidate(candidate);
         throw new RespireConnectionException($"Sentinel target {target} connected to a demoted switch source at {peer}.");
     }
@@ -572,6 +572,19 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
 
         internal Task RetirePoolsAsync() => _pools.RetireAllAsync();
+
+        internal RespireEndpoint? FindSwitchSourcePeer(RespireEndpoint target, in SentinelHint hint)
+        {
+            lock (_connectionsGate)
+            {
+                foreach (var connection in _connections)
+                {
+                    var peer = new RespireEndpoint(connection.PeerKey.Host, connection.PeerKey.Port);
+                    if (SentinelResolver.TargetPeerMatchesSwitchSource(target, peer, in hint)) return peer;
+                }
+            }
+            return null;
+        }
 
         public bool IsRetired => Volatile.Read(ref _retired) != 0;
         internal bool TryRetire() => Interlocked.Exchange(ref _retired, 1) == 0;

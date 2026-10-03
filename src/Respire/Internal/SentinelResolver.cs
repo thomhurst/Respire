@@ -474,19 +474,19 @@ internal static class SentinelResolver
         if (addresses.Length == 0) return false;
         foreach (var address in addresses)
         {
-            var matches = false;
-            foreach (var source in hint.Sources)
-                if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)
-                    && MatchesSwitchSource(new RespireEndpoint(address, target.Port), source))
-                {
-                    matches = true;
-                    break;
-                }
             // Mixed DNS answers cannot identify which peer the connection will reach.
             // The router validates the actual socket separately after ROLE succeeds.
-            if (!matches) return false;
+            if (!TargetPeerMatchesSwitchSource(target, new(address, target.Port), in hint)) return false;
         }
         return true;
+    }
+
+    internal static bool TargetPeerMatchesSwitchSource(RespireEndpoint target, RespireEndpoint peer, in SentinelHint hint)
+    {
+        foreach (var source in hint.Sources)
+            if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)
+                && MatchesSwitchSource(peer, source)) return true;
+        return false;
     }
 
     internal static bool MatchesSwitchSource(RespireEndpoint candidate, SentinelSwitchSource source,

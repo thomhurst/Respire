@@ -2382,6 +2382,52 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task CandidateChecksEveryValidatedSocketAgainstSwitchSource(bool secondSocket, bool includesSource)
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        var options = Options(sentinel.Port);
+        await using var client = await RespireClient.ConnectAsync(options);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        await using var candidate = new SentinelRouter.Generation(router, client.Core, options with
+        {
+            Endpoints = [new("localhost", primary.Port)],
+            SentinelPrimaryName = null,
+            Connections = 2,
+        });
+        await candidate.Multiplexer.EnsureConnectedAsync(CancellationToken.None);
+        var first = candidate.Multiplexer.GetConnection();
+        var second = candidate.Multiplexer.GetConnection();
+        await Assert.That(ReferenceEquals(first, second)).IsFalse();
+        var changed = secondSocket ? second : first;
+        var last = secondSocket ? first : second;
+        // Model mixed DNS peers after both sockets answer ROLE master. The last validated
+        // socket is the promoted peer, so checking only ValidatedPeer misses the source.
+        typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(changed, includesSource ? "192.0.2.1" : "192.0.2.2");
+        await candidate.ValidateAsync(last, CancellationToken.None);
+        await Assert.That(candidate.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+        var hint = SentinelHint.FromSwitchMaster("switch", new("192.0.2.1", primary.Port),
+            candidate.Endpoint, new("127.0.0.1", sentinel.Port));
+        var validate = typeof(SentinelRouter).GetMethod("ValidateSwitchTargetPeer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Exception? rejection = null;
+        try { validate.Invoke(router, [candidate, hint]); }
+        catch (System.Reflection.TargetInvocationException error) { rejection = error.InnerException; }
+        await Assert.That(rejection is RespireConnectionException).IsEqualTo(includesSource);
+        if (!includesSource) await Assert.That(rejection).IsNull();
+        await Assert.That(candidate.IsRetired).IsEqualTo(includesSource);
+        await Assert.That(router.Current).IsSameReferenceAs(original);
+        await Assert.That(original.IsRetired).IsFalse();
+    }
+
+    [Test]
     public async Task SourceDnsMovingToFutureTargetDoesNotFenceItsPublication()
     {
         await using var primary = Primary();
