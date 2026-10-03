@@ -1373,7 +1373,7 @@ $reviewRequirementCases = @(
     ); Required = $true }
 )
 foreach ($case in $reviewRequirementCases) {
-    $required = Test-ClaudeReviewRequired -Checks $case.Checks
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks -AuthorLogin 'app/dependabot'
     if ($required -ne $case.Required) { throw "Review requirement case '$($case.Name)' failed: $required" }
     $reason = Get-UnansweredClaudeReviewReason -Comments @() -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required
     if ([bool]$reason -ne $case.Required) { throw "Missing comment case '$($case.Name)' failed: $reason" }
@@ -1390,11 +1390,32 @@ $skippedReviewCases = @(
     @{ Name = 'unknown conclusion does not excuse stale review'; Checks = @(@{ name = 'claude-review' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true }
 )
 foreach ($case in $skippedReviewCases) {
-    $required = Test-ClaudeReviewRequired -Checks $case.Checks
-    $skipped = Test-ClaudeReviewSkipped -Checks $case.Checks
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks -AuthorLogin 'app/dependabot'
+    $skipped = Test-ClaudeReviewSkipped -Checks $case.Checks -AuthorLogin 'app/dependabot'
     $comment = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $case.Body $case.ReviewHead
     $reason = Get-UnansweredClaudeReviewReason -Comments @($comment) -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required -ReviewSkipped:$skipped
     if ([bool]$reason -ne $case.Blocks) { throw "Skipped review case '$($case.Name)' failed: $reason" }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, $($skippedReviewCases.Count) skipped review cases, 1 manual review recovery case)."
+$dependencyAuthorCases = @(
+    @{ Login = 'thomhurst'; Skip = $false },
+    @{ Login = ''; Skip = $false },
+    @{ Login = 'renovate'; Skip = $false },
+    @{ Login = 'renovate[bot]'; Skip = $true },
+    @{ Login = 'dependabot[bot]'; Skip = $true },
+    @{ Login = 'app/renovate'; Skip = $true },
+    @{ Login = 'app/dependabot'; Skip = $true }
+)
+foreach ($case in $dependencyAuthorCases) {
+    $checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' })
+    $required = Test-ClaudeReviewRequired -Checks $checks -AuthorLogin $case.Login
+    $skipped = Test-ClaudeReviewSkipped -Checks $checks -AuthorLogin $case.Login
+    if ($skipped -ne $case.Skip -or $required -eq $case.Skip) {
+        throw "Dependency author '$($case.Login)' received an incorrect review exemption"
+    }
+    $comment = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview $staleHead
+    $reason = Get-UnansweredClaudeReviewReason -Comments @($comment) -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required -ReviewSkipped:$skipped
+    if ([bool]$reason -eq $case.Skip) { throw "Dependency author '$($case.Login)' stale findings were handled incorrectly" }
+}
+
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, $($skippedReviewCases.Count) skipped review cases, $($dependencyAuthorCases.Count) dependency author cases, 1 manual review recovery case)."

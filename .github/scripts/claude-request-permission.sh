@@ -4,6 +4,8 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set by the workflow}"
 REQUEST_ACTOR=${REQUEST_ACTOR:-}
 REQUEST_AUTHOR=${REQUEST_AUTHOR:-}
+REQUEST_PR_NUMBER=${REQUEST_PR_NUMBER:-}
+REQUEST_PR_AUTHOR=${REQUEST_PR_AUTHOR:-}
 
 has_write_permission() {
   local login=$1 permission
@@ -22,8 +24,10 @@ has_write_permission() {
 authorized=false
 # Assignment is initiated by the maintainer, but the issue text still belongs
 # to its original author. Neither identity can lend permission to the other.
+# PR code also enters the OAuth workspace, so its author needs write access.
 if has_write_permission "$REQUEST_ACTOR" &&
-    { [[ $REQUEST_AUTHOR == "$REQUEST_ACTOR" ]] || has_write_permission "$REQUEST_AUTHOR"; }; then
+    { [[ $REQUEST_AUTHOR == "$REQUEST_ACTOR" ]] || has_write_permission "$REQUEST_AUTHOR"; } &&
+    { [[ -z $REQUEST_PR_NUMBER ]] || has_write_permission "$REQUEST_PR_AUTHOR"; }; then
   authorized=true
 fi
 printf 'authorized=%s\n' "$authorized" >> "$GITHUB_OUTPUT"

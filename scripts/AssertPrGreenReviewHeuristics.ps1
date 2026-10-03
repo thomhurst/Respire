@@ -1,20 +1,22 @@
 function Test-ClaudeReviewRequired {
     [CmdletBinding()]
-    param([AllowNull()]$Checks)
+    param([AllowNull()]$Checks, [AllowNull()][string]$AuthorLogin)
 
-    # Dependency-update jobs intentionally skip Claude and cannot post a review.
-    # Unknown conclusions still require one; the check gate rejects them earlier.
-    return @($Checks | Where-Object {
-        $_.name -eq 'claude-review' -and $_.conclusion -ne 'SKIPPED'
-    }).Count -gt 0
+    $reviews = @($Checks | Where-Object { $_.name -eq 'claude-review' })
+    if ($reviews.Count -eq 0) { return $false }
+
+    # GitHub CLI represents bot authors as app/name; webhook logins use [bot].
+    # Branch names are author-controlled and must never grant an exemption.
+    $dependencyBot = $AuthorLogin -in @('app/dependabot', 'app/renovate', 'dependabot[bot]', 'renovate[bot]')
+    return -not $dependencyBot -or @($reviews | Where-Object { $_.conclusion -ne 'SKIPPED' }).Count -gt 0
 }
 
 function Test-ClaudeReviewSkipped {
     [CmdletBinding()]
-    param([AllowNull()]$Checks)
+    param([AllowNull()]$Checks, [AllowNull()][string]$AuthorLogin)
 
     return @($Checks | Where-Object { $_.name -eq 'claude-review' }).Count -gt 0 -and
-        -not (Test-ClaudeReviewRequired -Checks $Checks)
+        -not (Test-ClaudeReviewRequired -Checks $Checks -AuthorLogin $AuthorLogin)
 }
 
 function ConvertTo-UtcDateTimeOffset {

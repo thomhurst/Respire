@@ -4,7 +4,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 workflow="$script_dir/../workflows/claude.yml"
 grep -Fq 'ref: ${{ github.event.repository.default_branch }}' "$workflow"
 grep -Fq 'REQUEST_AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.event.issue.user.login }}' "$workflow"
+grep -Fq 'REQUEST_PR_NUMBER: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) ||' "$workflow"
+grep -Fq 'REQUEST_PR_AUTHOR: ${{ github.event.pull_request.user.login || (github.event.issue.pull_request && github.event.issue.user.login) ||' "$workflow"
 grep -Fq 'run: bash .github/scripts/claude-request-permission.sh' "$workflow"
+review_workflow="$script_dir/../workflows/claude-code-review.yml"
+grep -Fq "github.event.pull_request.user.login != 'dependabot[bot]'" "$review_workflow"
+grep -Fq "github.event.pull_request.user.login != 'renovate[bot]'" "$review_workflow"
+! grep -Fq 'startsWith(github.event.pull_request.head.ref' "$review_workflow"
 test_dir=$(mktemp -d)
 trap 'rm -f "$test_dir/gh" "$test_dir/output" "$test_dir/queries"; rmdir "$test_dir"' EXIT
 cat > "$test_dir/gh" <<'EOF'
@@ -18,6 +24,8 @@ if [[ $login == "$REQUEST_ACTOR" ]]; then
   permission=$TEST_ACTOR_PERMISSION
 elif [[ $login == "$REQUEST_AUTHOR" ]]; then
   permission=$TEST_AUTHOR_PERMISSION
+elif [[ $login == "$REQUEST_PR_AUTHOR" ]]; then
+  permission=$TEST_PR_PERMISSION
 else
   exit 98
 fi
@@ -32,6 +40,7 @@ chmod +x "$test_dir/gh"
 export PATH="$test_dir:$PATH" GH_REPO=example/repo
 export GITHUB_OUTPUT="$test_dir/output" TEST_QUERIES="$test_dir/queries"
 export REQUEST_ACTOR=maintainer REQUEST_AUTHOR=author
+export REQUEST_PR_NUMBER='' REQUEST_PR_AUTHOR='' TEST_PR_PERMISSION=''
 export TEST_ACTOR_PERMISSION TEST_AUTHOR_PERMISSION
 cases=0
 check_permission() {
@@ -68,4 +77,22 @@ REQUEST_AUTHOR=author REQUEST_ACTOR=''
 check_permission write write false
 REQUEST_ACTOR='dependabot[bot]'
 check_permission api-error write false
+REQUEST_ACTOR=maintainer REQUEST_AUTHOR=reviewer
+REQUEST_PR_NUMBER=801 REQUEST_PR_AUTHOR=contributor
+TEST_PR_PERMISSION=read
+check_permission write write false
+TEST_PR_PERMISSION=write
+check_permission write write true
+TEST_PR_PERMISSION=triage
+check_permission write write false
+TEST_PR_PERMISSION=api-error
+check_permission write write false
+TEST_PR_PERMISSION=$'write\nadmin'
+check_permission write write false
+REQUEST_PR_AUTHOR=''
+check_permission write write false
+REQUEST_PR_AUTHOR=$REQUEST_ACTOR
+check_permission write write true
+REQUEST_PR_AUTHOR=$REQUEST_AUTHOR
+check_permission write write true
 echo "OK request permission tests passed ($cases cases)"

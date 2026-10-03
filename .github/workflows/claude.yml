@@ -41,6 +41,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           REQUEST_ACTOR: ${{ github.actor }}
           REQUEST_AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.event.issue.user.login }}
+          REQUEST_PR_NUMBER: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
+          REQUEST_PR_AUTHOR: ${{ github.event.pull_request.user.login || (github.event.issue.pull_request && github.event.issue.user.login) || '' }}
         run: bash .github/scripts/claude-request-permission.sh
 
       - name: Select requested revision from trusted event data

@@ -32,6 +32,15 @@ if [[ ${body^^} =~ $head_marker_pattern ]]; then
   echo "the helper owns the reviewed commit marker" >&2
   exit 2
 fi
+# Derive the checkout path from this trusted helper rather than caller input.
+# The stamp must describe the code actually reviewed, even if its environment
+# value is changed to the new remote head after the review started.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+checkout_head=$(git -C "$script_dir/../../pr-head" rev-parse --verify HEAD)
+if [[ $checkout_head != "$REVIEW_HEAD_SHA" ]]; then
+  echo "reviewed commit does not match the checkout" >&2
+  exit 1
+fi
 # This check and the later comment POST are not atomic. A head change after the
 # check can still produce a stale-stamped comment; the merge gate rejects that
 # stamp for the newer head. This check only avoids posting already stale work.

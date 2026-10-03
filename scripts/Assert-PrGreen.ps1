@@ -42,7 +42,7 @@ $repoArgs = @()
 if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 # Re-fetch fresh — survey output goes stale within seconds.
-$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid 2>$null
+$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid,author 2>$null
 if ($LASTEXITCODE -ne 0) { Deny "gh pr view failed (exit $LASTEXITCODE)" }
 try {
     $view = $raw | ConvertFrom-Json
@@ -200,8 +200,8 @@ foreach ($login in $candidateLogins) {
     }
 }
 
-$requiresClaude = Test-ClaudeReviewRequired -Checks $checks
-$skippedClaude = Test-ClaudeReviewSkipped -Checks $checks
+$requiresClaude = Test-ClaudeReviewRequired -Checks $checks -AuthorLogin $view.author.login
+$skippedClaude = Test-ClaudeReviewSkipped -Checks $checks -AuthorLogin $view.author.login
 $claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins `
     -HeadSha $view.headRefOid -RequireReview:$requiresClaude -ReviewSkipped:$skippedClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }
