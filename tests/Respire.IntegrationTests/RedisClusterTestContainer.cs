@@ -1,3 +1,5 @@
+using System.Net;
+using Docker.DotNet;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 
@@ -9,7 +11,23 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
     internal string Host => container.Hostname;
     internal int Port(int node) => container.GetMappedPublicPort(7000 + node);
 
+    // Docker picks the random host ports, but on busy runners its listener can still lose the
+    // port to another socket. Retry that bind race on a fresh container rather than failing the test.
     internal static async Task<RedisClusterTestContainer> StartAsync(string image = "redis:7.0.15", bool loadBloomModule = false)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await StartOnceAsync(image, loadBloomModule); }
+            catch (DockerApiException error) when (attempt < 3 && IsPortConflict(error)) { }
+        }
+    }
+
+    private static bool IsPortConflict(DockerApiException error)
+        => error.StatusCode == HttpStatusCode.InternalServerError
+            && ((error.ResponseBody ?? "").Contains("address already in use", StringComparison.OrdinalIgnoreCase)
+                || (error.ResponseBody ?? "").Contains("port is already allocated", StringComparison.OrdinalIgnoreCase));
+
+    private static async Task<RedisClusterTestContainer> StartOnceAsync(string image, bool loadBloomModule)
     {
         // This fixture starts server binaries directly, bypassing Redis 8's module-loading entrypoint.
         // The optional module path matches the official redis:8-alpine image used by probabilistic tests.

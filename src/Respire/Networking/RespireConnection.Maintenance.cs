@@ -23,6 +23,15 @@ internal sealed partial class RespireConnection
     internal bool HasOtherIncompleteCommandThanMaintenanceBarrier
         => _inflight.HasOtherIncompleteCommand(MaintenanceDrainCommandName);
 
+    private int _outstandingMaintenanceBarriers;
+
+    /// <summary>
+    /// Tests: a retirement barrier PING is waiting, either parked for admission (for example
+    /// behind a streamed upload) or for its reply. Lets a test expire the barrier deadline only
+    /// after the barrier was actually attempted.
+    /// </summary>
+    internal bool HasOutstandingMaintenanceBarrier => Volatile.Read(ref _outstandingMaintenanceBarriers) > 0;
+
     internal bool HasActiveBulkStream => Volatile.Read(ref _activeBulkStreamSource) is not null;
 
     internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
@@ -132,8 +141,19 @@ internal sealed partial class RespireConnection
     {
         if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled) return;
         var barrier = new MaintenanceDrainBarrierCommand();
-        using var reply = await SendAsync(in barrier, cancellationToken,
-            armCommandDeadline: false, commandName: MaintenanceDrainCommandName).ConfigureAwait(false);
+        var send = SendAsync(in barrier, cancellationToken,
+            armCommandDeadline: false, commandName: MaintenanceDrainCommandName);
+        if (send.IsCompleted)
+        {
+            using var completed = await send.ConfigureAwait(false);
+            return;
+        }
+        Interlocked.Increment(ref _outstandingMaintenanceBarriers);
+        try
+        {
+            using var reply = await send.ConfigureAwait(false);
+        }
+        finally { Interlocked.Decrement(ref _outstandingMaintenanceBarriers); }
     }
 
     /// <summary>

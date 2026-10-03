@@ -57,17 +57,22 @@ public class ClusterNodeIdentityTests
                 ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply,
             SuppressReply = static command => command == "PING",
         };
+        // Connection setup uses a normal deadline; the controlled clock expires only the barrier.
+        var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
         };
         await using var node = await RespireConnectionMultiplexer.CreateAsync(
-            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            {
+                MaintenanceDrainTimeProvider = clock,
+            });
         var connection = node.GetConnection();
         await using var payload = new PausedUploadStream();
         var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, SetWhen.Always);
@@ -76,6 +81,15 @@ public class ClusterNodeIdentityTests
         try
         {
             var retirement = node.RetireAsync();
+            var barrierTimer = await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Expire the deadline only after the barrier PING is parked behind the paused upload,
+            // so the timeout path under test is the unanswered barrier, not a pre-canceled send.
+            using (var parked = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (!connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, parked.Token);
+            await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+            barrierTimer.Fire();
+            using (var released = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, released.Token);
             await Task.Delay(300);
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(retirement.IsCompleted).IsFalse();
@@ -272,16 +286,17 @@ public class ClusterNodeIdentityTests
             },
             SuppressReply = static command => command == "PING",
         };
+        server.DelayCommand("HELLO", 250);
         server.DelayCommand("ECHO", 250);
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            // Keep the 250 ms reply beyond the ordinary 100 ms deadline, with scheduling
-            // headroom inside the maintenance deadline on parallel test workers.
-            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
+            // The explicit ECHO deadline below leaves 100 ms, while the maintenance
+            // allowance adds two seconds. Setup keeps its independent five-second budget.
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(7),
             MaintenanceWindowTimeout = TimeSpan.FromSeconds(5),
-            CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
+            CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(5),
             // Connection setup is outside the maintenance deadline under test.
             ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -294,7 +309,9 @@ public class ClusterNodeIdentityTests
         using var pushTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!connection.HasMaintenanceWindow) await Task.Delay(10, pushTimeout.Token);
 
-        var acceptedCommand = connection.SendAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray())).AsTask();
+        var deadline = disableCommandTimeout ? CommandDeadline.None : CommandDeadline.After(100);
+        var acceptedCommand = connection.SendCheckedAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray()),
+            commandDeadline: deadline).AsTask();
         using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.ReceivedCommands.Count(command => command == "ECHO x") == 0)
             await Task.Delay(10, commandTimeout.Token);
