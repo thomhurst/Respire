@@ -10,7 +10,7 @@ internal interface IDedicatedLeaseRoute : IDisposable
     void RecordRetirement(Exception error, int attempt);
     bool TryExcludeFailedCandidate(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken) => false;
     ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken);
-    void SetTerminalError(Exception error);
+    void SetTerminalError(DedicatedConnectionPool pool, Exception error);
 }
 
 internal static class DedicatedLeaseAcquisition
@@ -53,7 +53,7 @@ internal static class DedicatedLeaseAcquisition
                 }
             }
         }
-        catch (Exception error) { route.SetTerminalError(error); throw; }
+        catch (Exception error) { route.SetTerminalError(pool, error); throw; }
         finally { route.Dispose(); }
     }
 }
