@@ -926,11 +926,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var join = JoinReadOnlyRefresh(error, source, slot, discovery);
             var recovered = await AwaitSharedRefreshAsync(join.Flight, cancellationToken, discovery).ConfigureAwait(false);
             var owner = RoutingSnapshot[slot].Primary;
-            if ((owner is null || IsSameEndpoint(owner, source)) && join.NeedsOwnSlotRecovery)
+            if (join.NeedsOwnSlotRecovery && (owner is null || IsSameEndpoint(owner, source) || !owner.IsConnected))
             {
                 // A shared flight repairs its initiating slot, or performs full discovery.
-                // Recheck this rejected route with the slot-specific recovery when it remains stale.
-                owner = await RefreshReadOnlyOwnerCoreAsync(error, source, slot, cancellationToken, discovery)
+                // A stale or disconnected correction needs this slot's bounded recovery too.
+                return await RefreshReadOnlyOwnerCoreAsync(error, source, slot, cancellationToken, discovery)
                     .ConfigureAwait(false);
             }
             if (owner is null || IsSameEndpoint(owner, source))
