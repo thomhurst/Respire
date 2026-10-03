@@ -3336,6 +3336,8 @@ internal sealed record RespireConnectionOptions
     /// <summary>Maximum grace for blocked retirement drains when no command timeout is configured.</summary>
     public TimeSpan RetirementDrainFallbackTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
+    internal TimeProvider MaintenanceDrainTimeProvider { get; init; } = TimeProvider.System;
+
     /// <summary>
     /// Aborts the connection when responses are pending and no bytes arrive within this period.
     /// Null disables the watchdog.
