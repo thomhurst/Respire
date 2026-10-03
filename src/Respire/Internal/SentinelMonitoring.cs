@@ -204,7 +204,7 @@ internal sealed class SentinelMonitoring(
                         monitor = new(_lifetime.Token, membership.Version);
                         var started = monitor;
                         monitor.Task = _background.TryStart(SentinelWorkKind.Monitor,
-                            () => MonitorSentinelAsync(endpoint, started.Lifetime.Token)) ?? Task.CompletedTask;
+                            () => MonitorSentinelAsync(membership, started.Lifetime.Token)) ?? Task.CompletedTask;
                         _notificationMonitors[endpoint] = monitor;
                     }
                 }
@@ -224,8 +224,9 @@ internal sealed class SentinelMonitoring(
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
     }
 
-    private async Task MonitorSentinelAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
+    private async Task MonitorSentinelAsync(SentinelDiscoveryState.Membership membership, CancellationToken cancellationToken)
     {
+        var endpoint = membership.Endpoint;
         var budget = new SentinelRetryBudget(options.ReconnectPolicy);
         var subscribedBefore = false;
         // Captured when a reconnect episode starts, not when the monitor parks: a publication
@@ -247,6 +248,7 @@ internal sealed class SentinelMonitoring(
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
                     }));
                 subscription = await client.SubscribeAsync(cancellationToken).ConfigureAwait(false);
+                _discovery.RecordConnection(membership, succeeded: true);
                 budget.Reset();
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
@@ -258,12 +260,17 @@ internal sealed class SentinelMonitoring(
                 await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
                     await ObserveMessageAsync(endpoint, message, cancellationToken).ConfigureAwait(false);
                 if (!cancellationToken.IsCancellationRequested)
+                {
                     subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
                         == RespireSubscriptionEndReason.ReconnectExhausted;
+                    if (subscriptionReconnectExhausted) _discovery.RecordConnection(membership, succeeded: false);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
+                if (subscription is null && !cancellationToken.IsCancellationRequested)
+                    _discovery.RecordConnection(membership, succeeded: false);
                 SafeLog((error, endpoint), static (logger, state)
                     => logger.LogWarning(state.error, "Sentinel event monitor failed at {Endpoint}", state.endpoint));
             }

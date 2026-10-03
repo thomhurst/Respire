@@ -7,6 +7,84 @@ namespace Respire.Internal;
 internal sealed partial class SentinelDiscoveryState
 {
     internal const int MaximumDiscoveredEndpoints = 64;
+    internal const int MissedDiscoveriesBeforeRemoval = 3;
+    private readonly Dictionary<RespireEndpoint, LearnedEndpoint> _learned = new(SentinelEndpointIdentity.EndpointComparer.Instance);
+
+    private sealed class LearnedEndpoint
+    {
+        internal int MissedDiscoveries;
+        internal long Reports;
+        internal bool ConnectionFailed;
+    }
+
+    // Each resolution counts once, even when several Sentinels answer. A report from
+    // an overlapping resolution protects that endpoint from older omission evidence.
+    internal DiscoveryRound BeginDiscovery(CancellationToken cancellationToken = default)
+    {
+        lock (_gate) return new(this, cancellationToken);
+    }
+
+    internal sealed class DiscoveryRound : IDisposable
+    {
+        private readonly SentinelDiscoveryState _owner;
+        private readonly CancellationToken _cancellationToken;
+        private readonly (RespireEndpoint Endpoint, LearnedEndpoint State, long Reports)[] _initial;
+        private bool _hasReport;
+
+        internal DiscoveryRound(SentinelDiscoveryState owner, CancellationToken cancellationToken)
+        {
+            _owner = owner;
+            _cancellationToken = cancellationToken;
+            _initial = owner._learned.Select(pair => (pair.Key, pair.Value, pair.Value.Reports)).ToArray();
+        }
+
+        internal void Report(RespireEndpoint reporter, IEnumerable<RespireEndpoint> peers, bool complete = true)
+        {
+            lock (_owner._gate)
+            {
+                _hasReport |= complete;
+                // SENTINEL SENTINELS excludes the reporting Sentinel itself.
+                Refresh(reporter);
+                foreach (var peer in peers) Refresh(peer);
+            }
+        }
+
+        private void Refresh(RespireEndpoint endpoint)
+        {
+            if (!_owner._learned.TryGetValue(endpoint, out var learned)) return;
+            learned.Reports++;
+            learned.MissedDiscoveries = 0;
+        }
+
+        public void Dispose()
+        {
+            lock (_owner._gate)
+            {
+                if (!_hasReport || _cancellationToken.IsCancellationRequested) return;
+                _hasReport = false;
+                foreach (var (endpoint, state, reports) in _initial)
+                {
+                    if (!_owner._learned.TryGetValue(endpoint, out var current)
+                        || !ReferenceEquals(state, current) || state.Reports != reports) continue;
+                    state.MissedDiscoveries = Math.Min(MissedDiscoveriesBeforeRemoval, state.MissedDiscoveries + 1);
+                    if (state.ConnectionFailed && state.MissedDiscoveries == MissedDiscoveriesBeforeRemoval)
+                        _owner.TryRemove(endpoint);
+                }
+            }
+        }
+    }
+
+    internal void RecordConnection(Membership membership, bool succeeded)
+    {
+        lock (_gate)
+        {
+            if (!_known.TryGetValue(membership.Endpoint, out var version) || version != membership.Version
+                || !_learned.TryGetValue(membership.Endpoint, out var learned)) return;
+            learned.ConnectionFailed = !succeeded;
+            if (!succeeded && learned.MissedDiscoveries == MissedDiscoveriesBeforeRemoval)
+                TryRemove(membership.Endpoint);
+        }
+    }
     private readonly object _gate = new();
     private readonly List<RespireEndpoint> _endpoints = [];
     private readonly Dictionary<RespireEndpoint, long> _known = new(SentinelEndpointIdentity.EndpointComparer.Instance);
@@ -122,6 +200,7 @@ internal sealed partial class SentinelDiscoveryState
                 || !_known.TryAdd(endpoint, _membershipVersion + 1)) return false;
             _membershipVersion++;
             _endpoints.Add(endpoint);
+            _learned.Add(endpoint, new());
             changed = _changed;
             _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -140,6 +219,7 @@ internal sealed partial class SentinelDiscoveryState
                 candidate => SentinelEndpointIdentity.EndpointComparer.Instance.Equals(candidate, endpoint));
             if (index < 0) return false;
             _known.Remove(_endpoints[index]);
+            _learned.Remove(_endpoints[index]);
             _endpoints.RemoveAt(index);
             changed = _changed;
             _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);

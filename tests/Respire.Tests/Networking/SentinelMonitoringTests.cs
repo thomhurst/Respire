@@ -333,7 +333,9 @@ public class SentinelMonitoringTests
     }
 
     [Test]
-    public async Task DiscoveryRemovalCancelsAndJoinsMonitorAndRejectsItsLateMessages()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DiscoveryRemovalCancelsAndJoinsMonitorAndRejectsItsLateMessages(bool ageOut)
     {
         using var lifetime = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(Limit);
@@ -368,7 +370,21 @@ public class SentinelMonitoringTests
             await observed.Task.WaitAsync(Limit);
             await Assert.That(Volatile.Read(ref received)).IsEqualTo(1);
             await Assert.That(discovery.TryRemove(seed)).IsFalse();
-            await Assert.That(discovery.TryRemove(peer)).IsTrue();
+            if (ageOut)
+            {
+                var membership = discovery.MembershipSnapshot(out _).Single(item => item.Endpoint == peer);
+                discovery.RecordConnection(membership, succeeded: false);
+                for (var i = 0; i < SentinelDiscoveryState.MissedDiscoveriesBeforeRemoval; i++)
+                {
+                    using var round = discovery.BeginDiscovery();
+                    round.Report(seed, []);
+                }
+                await Assert.That(discovery.Snapshot().Contains(peer)).IsFalse();
+            }
+            else
+            {
+                await Assert.That(discovery.TryRemove(peer)).IsTrue();
+            }
             await removed.Cancelled.Task.WaitAsync(Limit);
             await Assert.That(monitor.SubscribedCount).IsEqualTo(1);
             await Assert.That(background.Count(SentinelWorkKind.MonitorRemoval)).IsEqualTo(1);
