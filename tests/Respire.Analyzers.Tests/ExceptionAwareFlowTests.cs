@@ -8,6 +8,7 @@ public class ExceptionAwareFlowTests
 {
     [Test]
     [Arguments("static Holder() { throw new System.Exception(); }", true)]
+    [Arguments("static int Other = Throw(); static int Throw() => throw new System.Exception();", true)]
     [Arguments("", false)]
     public async Task StaticFieldAccessCanTriggerTypeInitializer(string constructor, bool warning)
     {
