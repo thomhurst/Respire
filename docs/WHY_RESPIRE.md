@@ -125,15 +125,7 @@ older API styles force on you.
 The full surface, conventions, and roadmap live in
 [API_DESIGN.md](API_DESIGN.md).
 
-## When *not* to use Respire (yet)
-
-- **You need a stable API.** Respire is pre-release, and its public API may still change.
-- **You target older runtimes.** Respire supports .NET 8 and .NET 10 only. StackExchange.Redis
-  also supports .NET Framework and `netstandard2.0`.
-- **You need synchronous calls.** Respire is asynchronous only.
-- **Maturity matters most.** StackExchange.Redis has a much longer production history and
-  ecosystem. If that outweighs Respire's server-assisted cache, blocking-command pool, and modern
-  API, StackExchange.Redis remains the safer choice.
+## Coming from StackExchange.Redis
 
 See [Coming from StackExchange.Redis](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
 for a feature comparison and an API migration map.

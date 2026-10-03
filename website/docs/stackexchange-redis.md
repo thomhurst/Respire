@@ -13,16 +13,9 @@ This page compares the two and maps common StackExchange.Redis code to Respire.
 Comparisons describe StackExchange.Redis 3.1.13, the version used by Respire's comparison
 benchmarks.
 
-## Choosing between them
+## Why switch
 
-Choose StackExchange.Redis when you need:
-
-- a long production history and a large ecosystem of examples and integrations;
-- a stable API (Respire is pre-release and its API may still change);
-- .NET Framework, `netstandard2.0`, or .NET versions earlier than .NET 8;
-- synchronous command methods.
-
-Choose Respire when you want:
+Respire gives you:
 
 - [server-assisted client-side caching](./fundamentals/client-side-caching) for hot reads;
 - [blocking commands](./guides/blocking-queues) such as `BLPOP`, `BLMOVE`, and `XREADGROUP BLOCK`
