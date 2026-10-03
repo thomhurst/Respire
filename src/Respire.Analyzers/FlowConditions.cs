@@ -212,10 +212,16 @@ internal sealed class FlowConditions
             }
             if (pattern is IDiscardPatternOperation)
                 return expected;
-            if (pattern is not IConstantPatternOperation constantPattern || !constantPattern.Value.ConstantValue.HasValue)
-                return true;
             operand = isPattern.Value;
-            comparison = constantPattern.Value.ConstantValue.Value;
+            if (pattern is IConstantPatternOperation { Value.ConstantValue.HasValue: true } constantPattern)
+                comparison = constantPattern.Value.ConstantValue.Value;
+            else if (pattern is IRelationalPatternOperation { Value.ConstantValue.HasValue: true } relationalPattern)
+            {
+                comparison = relationalPattern.Value.ConstantValue.Value;
+                comparisonOperator = relationalPattern.OperatorKind;
+            }
+            else
+                return true;
         }
         else if (condition.Type?.SpecialType != SpecialType.System_Boolean)
             return true;

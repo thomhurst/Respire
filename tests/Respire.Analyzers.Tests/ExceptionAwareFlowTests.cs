@@ -438,6 +438,8 @@ public class ExceptionAwareFlowTests
     [Arguments("int", "0 >= count", "count > 0", false)]
     [Arguments("double", "!(count > 0)", "!(count <= 0)", true)]
     [Arguments("int?", "!(count > 0)", "!(count <= 0)", true)]
+    [Arguments("double", "count is not > 0", "count is not <= 0", true)]
+    [Arguments("int?", "count is not > 0", "count is not <= 0", true)]
     public async Task RelationalComplementsRequireTotalOrder(string type, string selection, string opposite, bool warning)
     {
         await Disposal.VerifyAsync($$"""
@@ -555,6 +557,12 @@ public class ExceptionAwareFlowTests
     [Arguments("0 < count", "count > 0", "", false)]
     [Arguments("count > 0", "count < 0", "", true)]
     [Arguments("count > 0", "count > 0", "count = -1;", true)]
+    [Arguments("count is > 0", "count is > 0", "", false)]
+    [Arguments("count is >= 0", "count >= 0", "", false)]
+    [Arguments("count < 0", "count is < 0", "", false)]
+    [Arguments("count is not > 0", "count is <= 0", "", false)]
+    [Arguments("count is > 0", "count is > 0", "count = -1;", true)]
+    [Arguments("count is > 0", "count is < 0", "", true)]
     public async Task RepeatedRelationalPredicatesRetainSelection(string selection, string cleanup, string write, bool warning)
     {
         await Disposal.VerifyAsync($$"""
