@@ -104,7 +104,8 @@ internal static class SentinelResolver
         Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null,
         Func<TResult, RespireEndpoint?>? getValidatedPeer = null,
         Func<TResult, ValueTask>? rejectPrimaryAsync = null,
-        Action<RespireEndpoint>? acceptedReporter = null)
+        Action<RespireEndpoint>? acceptedReporter = null,
+        Func<CancellationToken, TimeSpan, CancellationTokenSource>? createConnectTimeout = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -167,10 +168,10 @@ internal static class SentinelResolver
                 var reconciliationPrimary = !discoveryState.IsNewerConfiguration(observation.Epoch)
                     && notificationHint is { } downHint
                     ? await GetReconciliationPrimaryAsync(downHint, endpoint, observation.Endpoint,
-                        hostResolver, options.ConnectTimeout, cancellationToken).ConfigureAwait(false)
+                        hostResolver, options.ConnectTimeout, cancellationToken, createConnectTimeout).ConfigureAwait(false)
                     : null;
                 // Owner resolution is part of primary setup, after the Sentinel query deadline.
-                using var connectTimeoutSource = CommandTimeoutCancellation.Create(
+                using var connectTimeoutSource = (createConnectTimeout ?? CommandTimeoutCancellation.Create)(
                     cancellationToken, options.ConnectTimeout);
                 try
                 {
@@ -506,7 +507,8 @@ internal static class SentinelResolver
     private static async ValueTask<SentinelValidatedPrimary?> GetReconciliationPrimaryAsync(
         SentinelHint hint, RespireEndpoint reporter, RespireEndpoint candidate,
         Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver, TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, TimeSpan, CancellationTokenSource>? createConnectTimeout)
     {
         if (hint.ReconciliationPrimary is { } reconciliation) return reconciliation;
         if (hint.DownReportPrimary is not { } current) return null;
@@ -537,7 +539,7 @@ internal static class SentinelResolver
             }
         }
         if (aliases is null) return current;
-        using var aliasTimeout = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        using var aliasTimeout = (createConnectTimeout ?? CommandTimeoutCancellation.Create)(cancellationToken, timeout);
         // One slow advisory hostname cannot hide another alias that already proves ownership.
         var pending = aliases.Select(MatchesAliasAsync).ToList();
         try
