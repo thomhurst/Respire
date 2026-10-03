@@ -1148,7 +1148,9 @@ foreach ($case in $staleReviewCases) {
     }
 }
 
-function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body) {
+$reviewHead = 'a' * 40
+function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body, [string]$Head = $reviewHead) {
+    if ($Head) { $Body += "`n<!-- REVIEW_HEAD_SHA: $Head -->" }
     [pscustomobject]@{ login = $Login; createdAt = $CreatedAt; body = $Body }
 }
 
@@ -1316,11 +1318,104 @@ $claudeCommentCases = @(
 
 foreach ($case in $claudeCommentCases) {
     $authorized = if ($case.ContainsKey('Authorized')) { $case.Authorized } else { @('thomhurst') }
-    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins $authorized
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins $authorized -HeadSha $reviewHead
     $blocks = [bool]$reason
     if ($blocks -ne $case.Blocks) {
         throw "Case '$($case.Name)' expected Blocks=$($case.Blocks), got Blocks=$blocks (reason: $reason)"
     }
 }
 
-Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases)."
+$staleHead = 'b' * 40
+$headCases = @(
+    @{ Name = 'missing review'; Comments = @(); Blocks = $true },
+    @{ Name = 'unstamped clearance'; Comments = @((New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview '')); Blocks = $true },
+    @{ Name = 'stale clearance'; Comments = @((New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview $staleHead)); Blocks = $true },
+    @{ Name = 'stale review with current disposition'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview $staleHead),
+        (New-TestComment 'thomhurst' '2026-10-01T10:05:00Z' '<!-- REVIEW_DISPOSITION -->')
+    ); Blocks = $true },
+    @{ Name = 'stale disposition'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+        (New-TestComment 'thomhurst' '2026-10-01T10:05:00Z' '<!-- REVIEW_DISPOSITION -->' $staleHead)
+    ); Blocks = $true },
+    @{ Name = 'late stale clearance cannot hide current blocking review'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $clearReview $staleHead)
+    ); Blocks = $true },
+    @{ Name = 'late stale blocking review cannot replace current clearance'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview),
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $blockingReview $staleHead)
+    ); Blocks = $false },
+    @{ Name = 'duplicate head markers'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "$clearReview`n<!-- REVIEW_HEAD_SHA: $staleHead -->")
+    ); Blocks = $true }
+)
+foreach ($case in $headCases) {
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins @('thomhurst') -HeadSha $reviewHead -RequireReview
+    if ([bool]$reason -ne $case.Blocks) { throw "Head case '$($case.Name)' failed: $reason" }
+}
+
+$unstamped = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview ''
+$recoveryReason = Get-UnansweredClaudeReviewReason -Comments @($unstamped) -AuthorizedLogins @() -HeadSha $reviewHead
+if ($recoveryReason -notlike '*workflow_dispatch with pr_number*') {
+    throw "An unstamped review without a required job must explain how to request a fresh review: $recoveryReason"
+}
+
+$reviewRequirementCases = @(
+    @{ Name = 'no Claude job'; Checks = @(@{ name = 'build'; conclusion = 'SUCCESS' }); Required = $false },
+    @{ Name = 'skipped dependency review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Required = $false },
+    @{ Name = 'successful review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SUCCESS' }); Required = $true },
+    @{ Name = 'neutral review'; Checks = @(@{ name = 'claude-review'; conclusion = 'NEUTRAL' }); Required = $true },
+    @{ Name = 'unknown conclusion fails closed'; Checks = @(@{ name = 'claude-review' }); Required = $true },
+    @{ Name = 'successful dispatch after skipped job'; Checks = @(
+        @{ name = 'claude-review'; conclusion = 'SKIPPED' },
+        @{ name = 'claude-review'; conclusion = 'SUCCESS' }
+    ); Required = $true }
+)
+foreach ($case in $reviewRequirementCases) {
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks -AuthorLogin 'app/dependabot'
+    if ($required -ne $case.Required) { throw "Review requirement case '$($case.Name)' failed: $required" }
+    $reason = Get-UnansweredClaudeReviewReason -Comments @() -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required
+    if ([bool]$reason -ne $case.Required) { throw "Missing comment case '$($case.Name)' failed: $reason" }
+}
+
+$skippedReviewCases = @(
+    @{ Name = 'skipped job ignores stale clearance'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $false },
+    @{ Name = 'skipped job ignores stale findings'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $blockingReview; ReviewHead = $staleHead; Blocks = $false },
+    @{ Name = 'skipped job ignores unstamped review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = ''; Blocks = $false },
+    @{ Name = 'skipped job retains current manual findings'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $blockingReview; ReviewHead = $reviewHead; Blocks = $true },
+    @{ Name = 'skipped job accepts current manual clearance'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }); Body = $clearReview; ReviewHead = $reviewHead; Blocks = $false },
+    @{ Name = 'manual successful job still requires current review'; Checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' }, @{ name = 'claude-review'; conclusion = 'SUCCESS' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true },
+    @{ Name = 'absent job does not excuse stale review'; Checks = @(); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true },
+    @{ Name = 'unknown conclusion does not excuse stale review'; Checks = @(@{ name = 'claude-review' }); Body = $clearReview; ReviewHead = $staleHead; Blocks = $true }
+)
+foreach ($case in $skippedReviewCases) {
+    $required = Test-ClaudeReviewRequired -Checks $case.Checks -AuthorLogin 'app/dependabot'
+    $skipped = Test-ClaudeReviewSkipped -Checks $case.Checks -AuthorLogin 'app/dependabot'
+    $comment = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $case.Body $case.ReviewHead
+    $reason = Get-UnansweredClaudeReviewReason -Comments @($comment) -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required -ReviewSkipped:$skipped
+    if ([bool]$reason -ne $case.Blocks) { throw "Skipped review case '$($case.Name)' failed: $reason" }
+}
+
+$dependencyAuthorCases = @(
+    @{ Login = 'thomhurst'; Skip = $false },
+    @{ Login = ''; Skip = $false },
+    @{ Login = 'renovate'; Skip = $false },
+    @{ Login = 'renovate[bot]'; Skip = $true },
+    @{ Login = 'dependabot[bot]'; Skip = $true },
+    @{ Login = 'app/renovate'; Skip = $true },
+    @{ Login = 'app/dependabot'; Skip = $true }
+)
+foreach ($case in $dependencyAuthorCases) {
+    $checks = @(@{ name = 'claude-review'; conclusion = 'SKIPPED' })
+    $required = Test-ClaudeReviewRequired -Checks $checks -AuthorLogin $case.Login
+    $skipped = Test-ClaudeReviewSkipped -Checks $checks -AuthorLogin $case.Login
+    if ($skipped -ne $case.Skip -or $required -eq $case.Skip) {
+        throw "Dependency author '$($case.Login)' received an incorrect review exemption"
+    }
+    $comment = New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview $staleHead
+    $reason = Get-UnansweredClaudeReviewReason -Comments @($comment) -AuthorizedLogins @() -HeadSha $reviewHead -RequireReview:$required -ReviewSkipped:$skipped
+    if ([bool]$reason -eq $case.Skip) { throw "Dependency author '$($case.Login)' stale findings were handled incorrectly" }
+}
+
+Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases, $($headCases.Count) head cases, $($reviewRequirementCases.Count) review requirement cases, $($skippedReviewCases.Count) skipped review cases, $($dependencyAuthorCases.Count) dependency author cases, 1 manual review recovery case)."
