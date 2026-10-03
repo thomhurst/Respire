@@ -7,6 +7,136 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Throws() || true", false)]
+    [Arguments("Property || true", false)]
+    [Arguments("Throws() || true", true)]
+    [Arguments("true", false)]
+    public async Task ThrowingFilterContinuesHandlerSearch(string filter, bool cleanupInFallback)
+    {
+        var warning = filter != "true" && !cleanupInFallback;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                bool Throws() => throw new Exception();
+                bool Property => throw new Exception();
+                async Task Run(RespireClient client)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { throw new Exception(); }
+                    catch (Exception) when ({{filter}}) { result.Dispose(); }
+                    catch (Exception) { {{(cleanupInFallback ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                bool Throws() => throw new Exception();
+                bool Property => throw new Exception();
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw new Exception(); }
+                    catch (Exception) when ({{filter}}) { await batch.SendAsync(); }
+                    catch (Exception) { {{(cleanupInFallback ? "await batch.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("_ = 1 / divisor;", true)]
+    [Arguments("_ = 1 % divisor;", true)]
+    [Arguments("divisor /= divisor;", true)]
+    [Arguments("divisor %= divisor;", true)]
+    [Arguments("_ = checked(divisor + 1);", true)]
+    [Arguments("_ = checked(divisor * 2);", true)]
+    [Arguments("_ = checked(-divisor);", true)]
+    [Arguments("_ = checked(-(int?)divisor);", true)]
+    [Arguments("checked { divisor++; }", true)]
+    [Arguments("checked { divisor += 1; }", true)]
+    [Arguments("_ = amount * amount;", true)]
+    [Arguments("_ = 1.0 / divisor;", false)]
+    [Arguments("_ = unchecked(divisor + 1);", false)]
+    [Arguments("_ = 4 / 2;", false)]
+    public async Task BuiltInArithmeticCanBypassCleanup(string operation, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int divisor, decimal amount)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int divisor, decimal amount)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch { }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("int", "count > 0", "count <= 0", false)]
+    [Arguments("int", "count < 0", "count >= 0", false)]
+    [Arguments("int", "0 >= count", "count > 0", false)]
+    [Arguments("double", "!(count > 0)", "!(count <= 0)", true)]
+    [Arguments("int?", "!(count > 0)", "!(count <= 0)", true)]
+    public async Task RelationalComplementsRequireTotalOrder(string type, string selection, string opposite, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, {{type}} count)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    if ({{opposite}}) { } else result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} count)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = {{selection}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    if ({{opposite}}) await second.SendAsync(); else await first.SendAsync();
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("_ = left + right;", false)]
     [Arguments("_ = -left;", false)]
     [Arguments("left += right;", false)]

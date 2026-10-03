@@ -246,12 +246,17 @@ internal static partial class ScopeWalker
             foreach (var child in operation.ChildOperations)
                 Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
-            if (dispatch == 0 && operation.Syntax.SpanStart > entryPosition
+            if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
-                && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation)
-                && block.FallThroughSuccessor is { } successor)
-                Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+                && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation))
+            {
+                if (dispatch != 0)
+                    // The runtime treats a throwing filter as a rejected filter.
+                    Dispatch(_dispatches[dispatch]!.Next, started, known, values);
+                else if (block.FallThroughSuccessor is { } successor)
+                    Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+            }
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
         }
 
@@ -452,6 +457,15 @@ internal static partial class ScopeWalker
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
                 or IIncrementOrDecrementOperation { OperatorMethod: not null }
+                || !operation.ConstantValue.HasValue && (operation switch
+                {
+                    IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
+                    ICompoundAssignmentOperation assignment => ArithmeticMayThrow(assignment.OperatorKind, assignment.IsChecked, assignment.Type),
+                    IIncrementOrDecrementOperation increment => ArithmeticMayThrow(BinaryOperatorKind.Add, increment.IsChecked, increment.Type),
+                    IUnaryOperation { OperatorKind: UnaryOperatorKind.Minus } unary =>
+                        unary.IsChecked && IsIntegral(unary.Type),
+                    _ => false,
+                })
                 || operation is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } receiver }
                     && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
                     // A member binding is evaluated only on the non-null conditional-access path.
@@ -463,6 +477,29 @@ internal static partial class ScopeWalker
                     && ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
             _throwingOperations.Add(operation, throwing);
             return throwing;
+        }
+
+        private static bool ArithmeticMayThrow(BinaryOperatorKind kind, bool isChecked, ITypeSymbol? type)
+        {
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
+            var integral = IsIntegral(type);
+            var decimalType = type?.SpecialType == SpecialType.System_Decimal;
+            return kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder && (integral || decimalType)
+                || kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply
+                    && (decimalType || isChecked && integral);
+        }
+
+        private static bool IsIntegral(ITypeSymbol? type)
+        {
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
+            return type?.TypeKind == TypeKind.Enum
+                || type?.SpecialType is SpecialType.System_SByte or SpecialType.System_Byte
+                or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Char
+                or SpecialType.System_Int32 or SpecialType.System_UInt32
+                or SpecialType.System_Int64 or SpecialType.System_UInt64
+                or SpecialType.System_IntPtr or SpecialType.System_UIntPtr;
         }
 
         private static IOperation? UnwrapException(IOperation? operation)

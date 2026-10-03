@@ -205,6 +205,26 @@ internal sealed class FlowConditions
         else if (condition.Type?.SpecialType != SpecialType.System_Boolean)
             return true;
 
+        // Only total orders have complementary relational operators. Nullable operands
+        // and floating-point NaN can make both comparisons false.
+        if (operand.Type?.SpecialType is SpecialType.System_SByte or SpecialType.System_Byte
+            or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Char
+            or SpecialType.System_Int32 or SpecialType.System_UInt32
+            or SpecialType.System_Int64 or SpecialType.System_UInt64
+            or SpecialType.System_IntPtr or SpecialType.System_UIntPtr or SpecialType.System_Decimal)
+        {
+            if (comparisonOperator == BinaryOperatorKind.LessThanOrEqual)
+            {
+                comparisonOperator = BinaryOperatorKind.GreaterThan;
+                expected = !expected;
+            }
+            else if (comparisonOperator == BinaryOperatorKind.GreaterThanOrEqual)
+            {
+                comparisonOperator = BinaryOperatorKind.LessThan;
+                expected = !expected;
+            }
+        }
+
         if (comparison is false && operand.Type?.SpecialType == SpecialType.System_Boolean)
         {
             comparison = true;
