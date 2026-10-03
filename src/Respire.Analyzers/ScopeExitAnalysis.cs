@@ -93,8 +93,8 @@ internal static class ScopeExitAnalysis
     }
 
     /// <summary>
-    /// The exact type of a fresh exception whose construction cannot itself raise a different
-    /// exception, or null. Shared by the syntactic exit analysis and the flow-graph walker.
+    /// The exact type of a fresh exception with a simple framework constructor, or null.
+    /// Allocation failure is modeled separately from the successfully constructed instance.
     /// </summary>
     internal static ITypeSymbol? GetKnownExactExceptionType(Compilation compilation, IOperation? operation)
     {

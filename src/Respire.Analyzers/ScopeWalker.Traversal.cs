@@ -28,7 +28,7 @@ internal static partial class ScopeWalker
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
         private readonly List<CatchDispatch?> _dispatches = [null];
-        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool ArrayAllocation), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool AllocationOnly), int> _dispatchIds = new();
         private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
         private readonly Dictionary<IOperation, bool> _throwingOperations = new();
         private readonly Stack<SearchState> _pending = new();
@@ -291,10 +291,12 @@ internal static partial class ScopeWalker
                     Dispatch(_dispatches[dispatch]!.Next, started, known, values);
                 else if (block.FallThroughSuccessor is { } successor)
                 {
-                    // Element expressions have their own exception paths. A fixed array
-                    // literal itself only allocates; spreads can execute arbitrary code.
+                    // Elements and arguments have their own exception paths. Fixed arrays
+                    // and simple framework exception constructors only add allocation failure.
                     Dispatch(GetDispatch(successor, continuation, implicitException: true,
-                        arrayAllocation: arrayAllocation), started, known, values);
+                        allocationOnly: arrayAllocation
+                            || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
+                        started, known, values);
                 }
             }
             // Construction/allocation can fail before any initializer runs.
@@ -419,9 +421,9 @@ internal static partial class ScopeWalker
         }
 
         private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false,
-            bool implicitException = false, bool arrayAllocation = false)
+            bool implicitException = false, bool allocationOnly = false)
         {
-            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, arrayAllocation);
+            var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, allocationOnly);
             if (_dispatchIds.TryGetValue(key, out var existing))
                 return existing;
 
@@ -448,7 +450,7 @@ internal static partial class ScopeWalker
             }
             if (implicitException)
             {
-                exceptionType = arrayAllocation
+                exceptionType = allocationOnly
                     ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException") : null;
                 exactType = exceptionType is not null;
             }
@@ -554,8 +556,7 @@ internal static partial class ScopeWalker
                     && field.ContainingType.StaticConstructors.Length != 0
                 || operation is IConversionOperation conversion
                     && ConversionMayThrow(conversion)
-                || operation is IObjectCreationOperation
-                    && ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
+                || operation is IObjectCreationOperation;
             _throwingOperations.Add(operation, throwing);
             return throwing;
         }

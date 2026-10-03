@@ -7,6 +7,47 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Exception", false)]
+    [Arguments("InvalidOperationException", false)]
+    [Arguments("ArgumentException", false)]
+    [Arguments("Exception", true)]
+    public async Task ExceptionConstructionCanFailBeforeExplicitThrow(string exceptionType, bool cleanupInCatch)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { throw new {{exceptionType}}(); }
+                    catch (OutOfMemoryException) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                    catch (Exception) { result.Dispose(); }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw new {{exceptionType}}(); }
+                    catch (OutOfMemoryException) { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    catch (Exception) { await batch.SendAsync(); }
+                    Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("target.Mutate(ref choice)", true)]
     [Arguments("target.Mutate(out choice)", true)]
     [Arguments("target.Mutate(choice)", false)]
