@@ -225,9 +225,11 @@ internal sealed partial class SentinelRouter
                 return ValueTask.CompletedTask;
             case SentinelEventKind.MasterDown:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
-                // +odown text carries changing quorum counts; key master-down hints by service so
-                // repeated reports of one outage coalesce while discovery is active.
-                QueueNotificationRediscovery(SentinelHint.FromDown(_masterDownKey, sentinel));
+                // Ignore changing quorum counts, but distinguish a later outage of the promoted
+                // primary from another reporter describing the outage already being recovered.
+                var downKey = sentinelEvent.OldPrimary is { } down
+                    ? $"{_masterDownKey}:{SentinelResolver.NormalizeHost(down.Host)}:{down.Port}" : _masterDownKey;
+                QueueNotificationRediscovery(SentinelHint.FromDown(downKey, sentinel));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
                 LogSentinelEvent(LogLevel.Information, message, sentinel);
@@ -384,7 +386,7 @@ internal sealed partial class SentinelRouter
             if (_disposed) return;
             var current = Current;
             var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
-                && IsCurrentPeer(current, target, null);
+                && IsCurrentPeer(current, target, null, allowHostnameIdentity: false);
             var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
             if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
             // Compare the switch source with Current under the gate, immediately before retirement.
@@ -493,7 +495,7 @@ internal sealed partial class SentinelRouter
                     else failures++;
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
-                        && IsCurrentPeer(current, target, null))
+                        && IsCurrentPeer(current, target, null, allowHostnameIdentity: false))
                     {
                         _coalescer.Complete();
                         _notificationRediscovery = null;
@@ -553,20 +555,24 @@ internal sealed partial class SentinelRouter
         if (current is not { IsRetired: false }) return false;
         foreach (var endpoint in hint.Targets)
         {
-            if (IsCurrentPeer(current, endpoint, null)) return true;
+            if (IsCurrentPeer(current, endpoint, null, allowHostnameIdentity: false)) return true;
             // In a cycle the same hostname can be both source and target. Its resolved
             // addresses must protect a target just as they identify a demoted source.
             foreach (var source in hint.Sources)
-                if (SameEndpoint(endpoint, source.Endpoint) && IsCurrentPeer(current, endpoint, source.Addresses)) return true;
+                if (SameEndpoint(endpoint, source.Endpoint)
+                    && IsCurrentPeer(current, endpoint, source.Addresses)) return true;
         }
         return false;
     }
 
-    private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses)
+    private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses,
+        bool allowHostnameIdentity = true)
     {
-        if (SameEndpoint(current.Endpoint, endpoint)) return true;
-        if (IPAddress.TryParse(endpoint.Host, out var literal)
-            && current.Multiplexer.HasCurrentPeer(SentinelResolver.NormalizeAddress(literal), endpoint.Port)) return true;
+        var numeric = IPAddress.TryParse(endpoint.Host, out var literal);
+        // A hostname can move behind an established socket. Source matching and explicit
+        // cycle protection allow textual identity; target shortcuts require peer evidence.
+        if ((allowHostnameIdentity || numeric) && SameEndpoint(current.Endpoint, endpoint)) return true;
+        if (numeric && current.Multiplexer.HasCurrentPeer(SentinelResolver.NormalizeAddress(literal!), endpoint.Port)) return true;
         if (addresses is not null)
             foreach (var address in addresses)
                 if (current.Multiplexer.HasCurrentPeer(address, endpoint.Port)) return true;

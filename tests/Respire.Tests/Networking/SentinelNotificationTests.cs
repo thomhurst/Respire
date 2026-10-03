@@ -192,7 +192,33 @@ public class SentinelNotificationTests
     [Arguments("+sdown", "master mymaster 10.0.0.1 6379")]
     [Arguments("+odown", "master mymaster 10.0.0.1 6379 #quorum 2/2")]
     public async Task ParsesMasterDownPayloads(string channel, string text)
-        => await Assert.That(Parse(channel, text).Kind).IsEqualTo(SentinelEventKind.MasterDown);
+    {
+        var parsed = Parse(channel, text);
+        await Assert.That(parsed.Kind).IsEqualTo(SentinelEventKind.MasterDown);
+        await Assert.That(parsed.OldPrimary).IsEqualTo(OldPrimary);
+    }
+
+    [Test]
+    public async Task DuplicateWakeupsReuseEvidenceAndAddressUpdatesPreserveUnchangedSources()
+    {
+        var hint = SentinelHint.FromDown("down", OldPrimary);
+        var duplicate = SentinelHint.FromDown("down", OldPrimary);
+        var merged = SentinelNotificationCoalescer.Merge(hint, in duplicate);
+        await Assert.That(ReferenceEquals(merged.Reporters, hint.Reporters)).IsTrue();
+        await Assert.That(ReferenceEquals(merged.Targets, hint.Targets)).IsTrue();
+        await Assert.That(ReferenceEquals(merged.Sources, hint.Sources)).IsTrue();
+
+        var source = SentinelHint.FromSwitchMaster("switch", OldPrimary, NewPrimary, OldPrimary);
+        var updated = source.WithSourceAddresses(OldPrimary, ["10.0.0.1"]);
+        await Assert.That(source.Sources[0].Addresses).IsNull();
+        await Assert.That(updated.Sources[0].Addresses).IsEquivalentTo(["10.0.0.1"]);
+        await Assert.That(ReferenceEquals(updated.WithSourceAddresses(OldPrimary, ["10.0.0.1"]).Sources,
+            updated.Sources)).IsTrue();
+        await Assert.That(ReferenceEquals(updated.WithSourceAddresses(NewPrimary, ["10.0.0.2"]).Sources,
+            updated.Sources)).IsTrue();
+        var withWakeup = SentinelNotificationCoalescer.Merge(updated, in hint);
+        await Assert.That(ReferenceEquals(withWakeup.Sources, updated.Sources)).IsTrue();
+    }
 
     [Test]
     [Arguments("+sdown", "slave 10.0.0.3:6379 10.0.0.3 6379 @ mymaster 10.0.0.1 6379")]

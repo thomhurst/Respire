@@ -302,6 +302,35 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task SwitchToTheSameHostnameRevalidatesItsChangedPeer()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        var previous = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+            ? AddressReply("localhost", primary.Port)
+            : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        // Model a hostname changing while its established socket remains on the old peer.
+        typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(original.Multiplexer.GetConnection(), "192.0.2.1");
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        var monitorIndex = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var queued = QueuedNotificationCount(router);
+        await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
+            $"mymaster 192.0.2.1 {primary.Port} localhost {primary.Port}");
+        await WaitForQueuedNotificationsAsync(router, queued + 1);
+        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+        await Assert.That(ReferenceEquals(router.Current, original)).IsFalse();
+        await Assert.That(original.IsRetired).IsTrue();
+        await Assert.That(router.Current!.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+    }
+
+    [Test]
     public async Task StableHostnamePublishesChangedValidatedPeer()
     {
         await using var primary = Primary();

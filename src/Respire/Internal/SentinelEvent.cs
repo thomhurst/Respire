@@ -12,8 +12,8 @@ internal enum SentinelEventKind : byte
 }
 
 /// <summary>
-/// A Sentinel failover event that concerns the configured service. Only switch events
-/// allocate, and only for their endpoints; events for other services return <see cref="SentinelEventKind.None"/>.
+/// A Sentinel failover event that concerns the configured service. Relevant master events
+/// allocate their endpoints; events for other services return <see cref="SentinelEventKind.None"/> without allocation.
 /// </summary>
 /// <remarks>
 /// Sentinel publishes these payloads (sentinel.c, the <c>%@</c> event format):
@@ -41,8 +41,10 @@ internal readonly record struct SentinelEvent(
         if (!channel.SequenceEqual("+sdown"u8) && !channel.SequenceEqual("+odown"u8)) return default;
         if (!NextToken(ref text, out var instanceType)) return default;
         if (instanceType.SequenceEqual("master"u8))
-            return NextToken(ref text, out var master) && master.SequenceEqual(serviceName)
-                ? new(SentinelEventKind.MasterDown) : default;
+        {
+            if (!NextToken(ref text, out var master) || !master.SequenceEqual(serviceName)) return default;
+            return new(SentinelEventKind.MasterDown, NextEndpoint(ref text));
+        }
         if (!instanceType.SequenceEqual("slave"u8)) return default;
         // Skip the replica name, IP and port, then expect "@ <master-name>".
         for (var skipped = 0; skipped < 3; skipped++)

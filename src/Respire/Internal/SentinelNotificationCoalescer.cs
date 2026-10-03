@@ -27,6 +27,9 @@ internal readonly record struct SentinelHint(
     // Reporter-only reconciliation has no demotion evidence. Without a newer epoch it may
     // confirm this owner, but must not let a stale reporter undo the successful recovery.
     internal SentinelValidatedPrimary? ReconciliationPrimary { get; init; }
+    // One reported outage, independent of reporter and changing quorum counts. Null means
+    // mixed or non-down evidence, which cannot be classified as another report of this outage.
+    internal string? DownKey { get; init; }
 
     internal static SentinelHint FromSwitchMaster(string key, RespireEndpoint? source,
         RespireEndpoint? target, RespireEndpoint reporter)
@@ -34,7 +37,7 @@ internal readonly record struct SentinelHint(
             source is { } from ? [new(from, null)] : [], [reporter], target is null);
 
     internal static SentinelHint FromDown(string key, RespireEndpoint reporter)
-        => new(key, [], [], [reporter], true);
+        => new(key, [], [], [reporter], true) { DownKey = key };
 
     internal static SentinelHint FromGap(RespireEndpoint reporter)
         => new("gap", [], [], [reporter], true);
@@ -61,8 +64,18 @@ internal readonly record struct SentinelHint(
     internal RespireEndpoint? ReportingSentinel => Reporters.Length == 0 ? (RespireEndpoint?)null : Reporters[0];
 
     internal SentinelHint WithSourceAddresses(RespireEndpoint endpoint, string[] addresses)
-        => this with { Sources = Sources.Select(source => SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)
-            ? source with { Addresses = addresses } : source).ToArray() };
+    {
+        for (var index = 0; index < Sources.Length; index++)
+        {
+            var source = Sources[index];
+            if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
+            if (source.Addresses is { } known && known.AsSpan().SequenceEqual(addresses)) return this;
+            var sources = (SentinelSwitchSource[])Sources.Clone();
+            sources[index] = source with { Addresses = addresses };
+            return this with { Sources = sources };
+        }
+        return this;
+    }
 }
 
 /// <summary>
@@ -172,28 +185,43 @@ internal sealed class SentinelNotificationCoalescer
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
     {
         if (pending is not { } previous) return hint;
-        var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
         var targets = UnionEndpoints(previous.Targets, hint.Targets);
         var reporters = UnionEndpoints(previous.Reporters, hint.Reporters);
-        var sources = new Dictionary<RespireEndpoint, string[]?>(comparer);
-        foreach (var source in hint.Sources.Concat(previous.Sources))
+        var sources = UnionSources(hint.Sources, previous.Sources);
+        var mustRediscover = previous.MustRediscover || hint.MustRediscover
+            || targets.Length > 1 || HasTargetSourceOverlap(targets, sources);
+        // Keep the switch key when a down/gap event contributes no source. This is only deduplication identity.
+        var key = hint.Sources.Length > 0 || previous.Sources.Length == 0 ? hint.Key : previous.Key;
+        return new(key, targets, sources, reporters, mustRediscover)
+        {
+            // An independent wake-up remains independent even when its key duplicates an
+            // active reconciliation pass. Only two reconciliation-only hints retain a bound.
+            DownKey = previous.DownKey == hint.DownKey ? hint.DownKey : null,
+            ReconciliationPrimary = sources.Length == 0 && previous.ReconciliationPrimary is not null
+                ? hint.ReconciliationPrimary : null,
+        };
+    }
+
+    private static bool HasTargetSourceOverlap(RespireEndpoint[] targets, SentinelSwitchSource[] sources)
+    {
+        foreach (var target in targets)
+            foreach (var source in sources)
+                if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, source.Endpoint)) return true;
+        return false;
+    }
+
+    private static SentinelSwitchSource[] UnionSources(SentinelSwitchSource[] first, SentinelSwitchSource[] second)
+    {
+        if (first.Length == 0) return second;
+        if (second.Length == 0 || ReferenceEquals(first, second)) return first;
+        var sources = new Dictionary<RespireEndpoint, string[]?>(SentinelDiscoveryState.EndpointComparer.Instance);
+        foreach (var source in first.Concat(second))
         {
             if (!sources.TryGetValue(source.Endpoint, out var known)) sources.Add(source.Endpoint, source.Addresses);
             else if (source.Addresses is { } addresses)
                 sources[source.Endpoint] = (known ?? []).Union(addresses, StringComparer.OrdinalIgnoreCase).ToArray();
         }
-        var mustRediscover = previous.MustRediscover || hint.MustRediscover
-            || targets.Length > 1 || targets.Any(sources.ContainsKey);
-        // Keep the switch key when a down/gap event contributes no source. This is only deduplication identity.
-        var key = hint.Sources.Length > 0 || previous.Sources.Length == 0 ? hint.Key : previous.Key;
-        return new(key, targets, sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray(),
-            reporters, mustRediscover)
-        {
-            // An independent wake-up remains independent even when its key duplicates an
-            // active reconciliation pass. Only two reconciliation-only hints retain a bound.
-            ReconciliationPrimary = sources.Count == 0 && previous.ReconciliationPrimary is not null
-                ? hint.ReconciliationPrimary : null,
-        };
+        return sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray();
     }
 
     /// <summary>Retains a completed DNS lookup for its source in active and pending hints.</summary>
@@ -205,8 +233,13 @@ internal sealed class SentinelNotificationCoalescer
 
     // Set union preserves first-seen reporter order without assigning event chronology.
     private static RespireEndpoint[] UnionEndpoints(
-        IEnumerable<RespireEndpoint> first, IEnumerable<RespireEndpoint> second, RespireEndpoint? excluded = null)
+        RespireEndpoint[] first, RespireEndpoint[] second, RespireEndpoint? excluded = null)
     {
+        if (excluded is null)
+        {
+            if (first.Length == 0) return second;
+            if (second.Length == 0 || ContainsAll(first, second)) return first;
+        }
         var seen = new HashSet<RespireEndpoint>(SentinelDiscoveryState.EndpointComparer.Instance);
         if (excluded is { } endpoint) seen.Add(endpoint);
         var result = new List<RespireEndpoint>();
@@ -219,6 +252,18 @@ internal sealed class SentinelNotificationCoalescer
             foreach (var value in endpoints)
                 if (seen.Add(value)) result.Add(value);
         }
+    }
+
+    private static bool ContainsAll(RespireEndpoint[] first, RespireEndpoint[] second)
+    {
+        foreach (var candidate in second)
+        {
+            var found = false;
+            foreach (var endpoint in first)
+                if (SentinelDiscoveryState.EndpointComparer.Instance.Equals(endpoint, candidate)) { found = true; break; }
+            if (!found) return false;
+        }
+        return true;
     }
 
     /// <summary>Takes the pending hint and makes it active. Returns null when nothing is pending.</summary>
@@ -246,10 +291,11 @@ internal sealed class SentinelNotificationCoalescer
         {
             // A newly delivered down/gap hint can describe a later promotion. It is not
             // merely another reporter for the attempt that just completed.
-            var freshWakeup = next.Sources.Length == 0 && next.ReconciliationPrimary is null;
+            var sameOutage = next.DownKey is { } downKey && downKey == activeHint.DownKey;
+            var freshWakeup = next.Sources.Length == 0 && next.ReconciliationPrimary is null && !sameOutage;
             // Reconciliation preserves demoted sources and consumes only the validated primary's
             // source evidence, so an alternate reporter cannot retire that generation again.
-            if (!activeFailed && !freshWakeup && (next.Key == activeHint.Key
+            if (!activeFailed && !freshWakeup && (sameOutage || next.Key == activeHint.Key
                 || activeHint.Sources.Length == 0
                     && next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
                 next = ForReporterReconciliation(next, validatedPrimary, validatedPeer);

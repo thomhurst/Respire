@@ -27,7 +27,7 @@ public class SentinelFenceTransitionTests
         ("pending-failure", [A, B], [], false),
         ("gap-success", [], [A, B], false),
         ("gap-failure", [], [A, B], false),
-        ("down-success", [], [A, B], false),
+        ("down-success", [], [B], true),
         ("down-failure", [], [A, B], false),
         ("switch-gap-success", [], [A, B], false),
         ("switch-gap-failure", [A], [B], false),
@@ -141,6 +141,16 @@ public class SentinelFenceTransitionTests
             return ValueTask.FromResult(primary.PrimaryEndpoint);
         }, CancellationToken.None, notificationHint: next);
         await Assert.That(validations).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DifferentDownOutagesRemainIndependent()
+    {
+        var coalescer = new SentinelNotificationCoalescer();
+        coalescer.Offer(SentinelHint.FromDown("down-a", First), false);
+        coalescer.Offer(SentinelHint.FromDown("down-b", Second), false);
+        var next = coalescer.TakePending(validatedPrimary: B, validatedPeer: B)!.Value;
+        await Assert.That(next.ReconciliationPrimary).IsNull();
     }
 
     [Test]

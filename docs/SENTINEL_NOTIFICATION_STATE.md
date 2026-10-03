@@ -13,7 +13,8 @@ router gate. Network queries and DNS resolution happen outside that gate.
 | Active+pending, duplicate of active switch | Retain the duplicate's reporter without adding the active switch's source to the independent pending switch. |
 | Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer only in reconciliation of that completed evidence; independent pending switches keep their fences. Source DNS aliases must be unambiguous. |
 | Discovery succeeds without remaining source evidence | Bind reporter-only reconciliation to the validated owner and socket peer. A different owner requires a strictly newer configuration epoch. |
-| Discovery succeeds with a newly delivered down/gap hint pending | Discover again without binding that hint to the completed primary. It may describe a subsequent promotion, including on deployments without epoch metadata. |
+| Discovery succeeds with another report of the same master-down outage pending | Bind reconciliation to the validated owner; the affected endpoint identifies the outage independently of reporter, channel and quorum count. |
+| Discovery succeeds with an independent down/gap hint pending | Discover again without binding that hint to the completed primary. A down report for a different endpoint or a delivery gap may describe a subsequent promotion, including on deployments without epoch metadata. |
 | Discovery fails | Retain source evidence and prioritize unqueried reporters before retrying with bounded backoff. |
 | Another discovery publishes a different generation | Discard superseded active evidence, preserve pending notifications, and continue from the published generation. |
 | No pending evidence or reporter | Complete the worker; a later relevant event starts another. |
@@ -40,14 +41,17 @@ the record. DNS evidence remains paired with its endpoint and port.
 - A gap or master-down report contains no demotion evidence. After it successfully
   recovers a primary, unqueried reporters can confirm that primary or its unambiguous
   validated peer alias. They cannot replace it without a newer epoch. This restriction
-  belongs to that reconciliation pass; a newly delivered down/gap hint can discover a later
-  primary, and an independent switch retains its own evidence.
+  belongs to that reconciliation pass and duplicate reports of the same outage; an independent
+  down/gap hint can discover a later primary, and an independent switch retains its own evidence.
 - DNS answer sets do not prove which peer answered `ROLE`. Reconciliation keeps the actual
   validated socket peer, including its port. Ambiguous DNS overlaps cannot consume another
   primary's source fence. Demotion matching may conservatively match any source address;
   consuming that fence requires the stronger identity proof.
   Fresh DNS evidence must match the validated peer even when the hostname text is unchanged.
   Textual hostname identity is a fallback only when DNS evidence is unavailable.
+- An unchanged target hostname cannot suppress a switch notification: DNS may now resolve
+  to a different server. The target-is-current shortcut requires numeric peer identity.
+  Conflicting-cycle source evidence still protects an explicitly announced failback target.
 - When a switch names the current primary's hostname, its actual validated peer is captured
   before queuing discovery. A metadata-denied numeric alias cannot republish the demoted
   server while DNS resolution is unavailable. In a conflicting cycle, source address
@@ -90,3 +94,7 @@ The monitor/coalescer extraction remains tracked by [#727](https://github.com/th
 That refactor must preserve these contracts and the deterministic tests while reducing
 shared mutable state. Endpoint identity consolidation must keep epoch-owner equivalence
 separate from conservative switch-source matching.
+
+Evidence arrays are immutable after publication. Duplicate reporter unions reuse existing
+arrays, empty source unions reuse their populated operand, and unchanged DNS evidence does
+not clone source arrays. Larger collection and reducer changes belong to that extraction.
