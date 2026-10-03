@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -116,10 +114,10 @@ internal sealed record GitVersionDetails(
         CancellationToken cancellationToken,
         ILogger? logger = null)
     {
-        var repositoryRoot = await RunGitAsync(Directory.GetCurrentDirectory(), cancellationToken, "rev-parse", "--show-toplevel");
+        var repositoryRoot = await GitCommand.RunAsync(Directory.GetCurrentDirectory(), cancellationToken, "rev-parse", "--show-toplevel");
         var branchName = await GetBranchNameAsync(repositoryRoot, cancellationToken);
-        var commitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
-        var shortCommitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
+        var commitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
+        var shortCommitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
         var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken, logger);
 
         var baseVersion = ParseVersion(latestVersionTag) ?? ParseVersion(settings.BaseVersion);
@@ -152,7 +150,7 @@ internal sealed record GitVersionDetails(
         string commitRange,
         CancellationToken cancellationToken)
     {
-        var heightText = await RunGitAsync(repositoryRoot, cancellationToken, "rev-list", "--count", commitRange);
+        var heightText = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-list", "--count", commitRange);
         return int.Parse(heightText, NumberStyles.None, CultureInfo.InvariantCulture);
     }
 
@@ -162,7 +160,7 @@ internal sealed record GitVersionDetails(
         int commitHeight,
         CancellationToken cancellationToken)
     {
-        var commitMessages = await RunGitAsync(repositoryRoot, cancellationToken, "log", "--reverse", "--format=%B%x1e", commitRange);
+        var commitMessages = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "log", "--reverse", "--format=%B%x1e", commitRange);
         return VersionIncrementResult.FromCommitMessages(commitMessages, commitHeight);
     }
 
@@ -181,76 +179,15 @@ internal sealed record GitVersionDetails(
             }
         }
 
-        var branch = await RunGitAsync(repositoryRoot, cancellationToken, "branch", "--show-current");
+        var branch = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "branch", "--show-current");
         return string.IsNullOrWhiteSpace(branch) ? "detached" : NormalizeBranchName(branch);
     }
 
-    internal static async Task<string?> GetLatestStableVersionTagAsync(
+    internal static Task<string?> GetLatestStableVersionTagAsync(
         string repositoryRoot, CancellationToken cancellationToken, ILogger? logger = null)
-    {
-        // Read local refs directly: clone/fetch advertisements can hide release tags.
-        // Capture the calling worktree's HEAD and shared object/shallow paths together.
-        var metadata = (await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse",
-            "--show-object-format", "--path-format=absolute", "--git-path", "objects", "--git-path", "shallow",
-            "--git-path", "info/grafts", "HEAD"))
-            .Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
-        if (metadata.Length != 5) throw new InvalidOperationException("Git returned unexpected repository metadata.");
-        var (objectFormat, objects, shallow, grafts, head) = (metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]);
-        var localRefs = await RunGitAsync(repositoryRoot, cancellationToken,
-            "for-each-ref", "--format=%(objectname) %(refname)", "refs/tags", "refs/replace");
-        var packedRefs = new StringBuilder();
-        foreach (var line in localRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var separator = line.IndexOf(' ');
-            var name = line[(separator + 1)..];
-            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && ParseVersion(name[10..]) is null) continue;
-            packedRefs.Append(line).Append('\n');
-        }
+        => IsolatedTagDescriber.DescribeAsync(repositoryRoot, cancellationToken, IsStableTag, logger);
 
-        // Isolate filtered refs while borrowing objects. Include replacements and the
-        // shallow/graft boundaries so Git walks the same local history without touching source refs.
-        // Packed refs preserve case-distinct names on Windows and keep argv constant-size.
-        var temporary = Directory.CreateTempSubdirectory("respire-stable-version-");
-        try
-        {
-            await RunGitAsync(temporary.FullName, cancellationToken,
-                "-c", "init.defaultRefFormat=files", "init", "--bare", "--quiet", "--template=", $"--object-format={objectFormat}");
-            await File.WriteAllTextAsync(Path.Combine(temporary.FullName, "objects", "info", "alternates"),
-                objects + "\n", cancellationToken);
-            if (File.Exists(shallow)) File.Copy(shallow, Path.Combine(temporary.FullName, "shallow"));
-            if (File.Exists(grafts))
-            {
-                Directory.CreateDirectory(Path.Combine(temporary.FullName, "info"));
-                File.Copy(grafts, Path.Combine(temporary.FullName, "info", "grafts"));
-            }
-            await File.WriteAllTextAsync(Path.Combine(temporary.FullName, "packed-refs"), packedRefs.ToString(), cancellationToken);
-
-            // Git retains native distance, merge-history and annotated-tag precedence.
-            // --always reports a commit hash only when no retained tag is reachable;
-            // unlike catching Git failures, this leaves repository errors observable.
-            var selected = await RunGitAsync(temporary.FullName, cancellationToken,
-                "describe", "--tags", "--abbrev=0", "--always", head);
-            return ParseVersion(selected) is null ? null : selected;
-        }
-        finally
-        {
-            // Temporary metadata cleanup is best-effort: a locked file must not replace
-            // the Git failure/cancellation, or prevent returning an already computed version.
-            try
-            {
-                foreach (var file in temporary.EnumerateFiles("*", SearchOption.AllDirectories))
-                    file.Attributes &= ~FileAttributes.ReadOnly;
-                temporary.Delete(recursive: true);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                if (logger is not null)
-                    logger.LogWarning(exception, "Could not remove temporary Git metadata at {Path}", temporary.FullName);
-                else
-                    Trace.TraceWarning("Could not remove temporary Git metadata at {0}: {1}", temporary.FullName, exception.Message);
-            }
-        }
-    }
+    private static bool IsStableTag(string? value) => ParseVersion(value) is not null;
 
     private static SemanticVersion? ParseVersion(string? value)
     {
@@ -288,63 +225,6 @@ internal sealed record GitVersionDetails(
         var sanitized = Regex.Replace(value.ToLowerInvariant(), "[^0-9a-z-]+", "-").Trim('-');
         if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit)) return $"branch-{sanitized}";
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
-    }
-
-    private static async Task<string> RunGitAsync(
-        string repositoryRoot,
-        CancellationToken cancellationToken,
-        params string[] arguments)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = repositoryRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            }
-        };
-
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start git.");
-        }
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Join this owned process before the caller removes its temporary repository.
-            try { process.Kill(entireProcessTree: true); }
-            catch (InvalidOperationException) { /* The process already exited. */ }
-            await process.WaitForExitAsync(CancellationToken.None);
-            try { await Task.WhenAll(stdoutTask, stderrTask); }
-            catch (OperationCanceledException) { }
-            throw;
-        }
-
-        var stdout = (await stdoutTask).Trim();
-        var stderr = (await stderrTask).Trim();
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', arguments)} failed with exit code {process.ExitCode}: {stderr}");
-        }
-
-        return stdout;
     }
 
     private sealed record SemanticVersion(int Major, int Minor, int Patch)

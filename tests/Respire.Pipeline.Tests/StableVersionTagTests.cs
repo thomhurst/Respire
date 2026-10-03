@@ -9,6 +9,74 @@ namespace Respire.Pipeline.Tests;
 public class StableVersionTagTests
 {
     [Test]
+    [NotInParallel]
+    public async Task EnvironmentAlternateObjectsKeepTheirSourceRelativePaths()
+    {
+        using var repository = new TestRepository();
+        using var donor = new TestRepository();
+        await repository.InitializeAsync();
+        await donor.InitializeAsync();
+        await donor.CommitAsync("objects held only in the alternate store");
+        var head = await donor.Git("rev-parse", "HEAD");
+        var objects = await donor.Git("rev-parse", "--path-format=absolute", "--git-path", "objects");
+        var previous = Environment.GetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+        try
+        {
+            Environment.SetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                System.IO.Path.GetRelativePath(repository.Path, objects));
+            await repository.Git("update-ref", "HEAD", head);
+            await repository.Git("tag", "v1.2.3");
+            await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+        }
+        finally { Environment.SetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES", previous); }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("GIT_DIR")]
+    [Arguments("GIT_WORK_TREE")]
+    [Arguments("GIT_COMMON_DIR")]
+    [Arguments("GIT_INDEX_FILE")]
+    [Arguments("GIT_OBJECT_DIRECTORY")]
+    [Arguments("GIT_ALTERNATE_OBJECT_DIRECTORIES")]
+    [Arguments("all")]
+    public async Task InheritedRepositoryEnvironmentCannotRedirectTemporaryCommands(string setting)
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("prerelease");
+        await repository.Git("tag", "v2.0.0-preview");
+        var gitDirectory = await repository.Git("rev-parse", "--absolute-git-dir");
+        var values = new Dictionary<string, string>
+        {
+            ["GIT_DIR"] = gitDirectory,
+            ["GIT_WORK_TREE"] = repository.Path,
+            ["GIT_COMMON_DIR"] = gitDirectory,
+            ["GIT_INDEX_FILE"] = System.IO.Path.Combine(gitDirectory, "index"),
+            ["GIT_OBJECT_DIRECTORY"] = System.IO.Path.Combine(gitDirectory, "objects"),
+            ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = System.IO.Path.Combine(gitDirectory, "objects"),
+        };
+        var previous = values.Keys.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var configuration = await File.ReadAllTextAsync(System.IO.Path.Combine(gitDirectory, "config"));
+        var refs = await repository.Git("show-ref");
+        try
+        {
+            foreach (var (name, value) in values)
+                Environment.SetEnvironmentVariable(name, setting == "all" || name == setting ? value : null);
+            await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+            await Assert.That(await File.ReadAllTextAsync(System.IO.Path.Combine(gitDirectory, "config"))).IsEqualTo(configuration);
+            await Assert.That(await repository.Git("show-ref")).IsEqualTo(refs);
+            foreach (var (name, value) in values)
+                await Assert.That(Environment.GetEnvironmentVariable(name)).IsEqualTo(setting == "all" || name == setting ? value : null);
+        }
+        finally
+        {
+            foreach (var (name, value) in previous) Environment.SetEnvironmentVariable(name, value);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task CaseDistinctPackedTagsRetainNativeSelection(bool annotated)
