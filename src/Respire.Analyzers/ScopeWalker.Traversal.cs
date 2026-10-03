@@ -238,6 +238,7 @@ internal static partial class ScopeWalker
         private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
                 || operation.Syntax.SpanStart >= firstBarrier)
                 return;
@@ -463,6 +464,7 @@ internal static partial class ScopeWalker
                     foreach (var entry in region.EnclosingRegion.NestedRegions.Where(static nested =>
                                  nested.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var handler = entry.Kind == ControlFlowRegionKind.Catch ? entry
                             : entry.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Catch);
                         var filter = entry.Kind == ControlFlowRegionKind.FilterAndHandler
@@ -650,6 +652,7 @@ internal static partial class ScopeWalker
             // certain match reaches later handlers only when its filter rejects the exception.
             while (id != 0)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var candidate = _dispatches[id]!;
                 if (candidate.Filter is { } filter)
                     Enqueue(graph.Blocks[filter.FirstBlockOrdinal], [], candidate.Continuation,
