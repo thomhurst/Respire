@@ -145,6 +145,15 @@ This is rediscovery, not a separate periodic polling loop. Availability requires
 and reachable primary to provide sufficient fresh evidence. Permanently ambiguous or stale
 reports cannot guarantee failover without weakening the split-brain safety contract.
 
+Switch payloads contain endpoints, not a configuration epoch or event sequence. After a
+completed A-to-B, B-to-A cycle, a delayed A-to-B report can be indistinguishable from a genuine
+third transition when epoch metadata is unavailable and both servers answer ROLE master.
+Completed edge history cannot establish that report's age. The metadata-free fallback permits
+genuine recurrence and therefore cannot guarantee rejection of every delayed cyclic report.
+Grant `SENTINEL MASTER` permission for configuration-epoch ordering; ROLE alone does not prove
+global ownership. `CompletedSwitchCycleAllowsGenuineRecurrenceWithoutEpochs` pins the recurrence
+contract that a permanent completed-edge fence would break.
+
 `SentinelFenceTransitionTests` enumerates fifteen idle, active and active+pending
 transitions, including success and failure for switches, gaps and master-down reports.
 Every row checks retained source fences and candidate acceptance with no metadata,

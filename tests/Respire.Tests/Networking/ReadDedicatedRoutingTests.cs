@@ -115,7 +115,7 @@ public partial class ReadDedicatedRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${currentPrimary.Port.ToString().Length}\r\n{currentPrimary.Port}\r\n")
             : originalReply(id, command);
-        var oldConnections = 0;
+        var blockOldRental = false;
         var newConnections = 0;
         var oldRental = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var oldDeadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -129,9 +129,10 @@ public partial class ReadDedicatedRoutingTests
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 100L : 1L), () => 0L);
-        await router.RefreshNowAsync(default);
+        await SentinelTestSetup.CompleteReadSetupAsync(client);
         var previous = client.Core.Sentinel!.Current!;
         var previousPool = previous.Pool;
+        Volatile.Write(ref blockOldRental, true);
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask();
         try
@@ -140,7 +141,8 @@ public partial class ReadDedicatedRoutingTests
             if (expireSelectedPoolDeadline) await oldDeadline.Task.WaitAsync(TimeSpan.FromSeconds(5));
             currentPrimary = newPrimary;
             previous.TryRetire();
-            var current = await client.Core.Sentinel.GetGenerationAsync(default).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            using var handoff = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var current = await client.Core.Sentinel.GetGenerationAsync(handoff.Token);
             var retirement = previousPool.RetireAsync().AsTask();
             releaseOld.TrySetResult();
             using var reply = await read.WaitAsync(TimeSpan.FromSeconds(10));
@@ -154,7 +156,7 @@ public partial class ReadDedicatedRoutingTests
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
-            if (port == oldPrimary.Port && Interlocked.Increment(ref oldConnections) > 1)
+            if (port == oldPrimary.Port && Volatile.Read(ref blockOldRental))
             {
                 using var deadlineRegistration = token.Register(() => oldDeadline.TrySetResult());
                 oldRental.TrySetResult();
@@ -292,26 +294,34 @@ public partial class ReadDedicatedRoutingTests
 
     [Test]
     // Failures: remote close, independent connect deadline, and caller cancellation.
-    [Arguments(false, true, 0)]
-    [Arguments(true, true, 0)]
-    [Arguments(false, true, 1)]
-    [Arguments(true, true, 1)]
-    [Arguments(false, true, 2)]
-    [Arguments(true, true, 2)]
-    [Arguments(false, false, 0)]
-    [Arguments(true, false, 0)]
-    [Arguments(false, false, 1)]
-    [Arguments(true, false, 1)]
-    [Arguments(false, false, 2)]
-    [Arguments(true, false, 2)]
-    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(bool useSentinel, bool failPrimary, int failure)
+    [Arguments(false, true, 0, false)]
+    [Arguments(true, true, 0, false)]
+    [Arguments(false, true, 1, false)]
+    [Arguments(true, true, 1, false)]
+    [Arguments(false, true, 2, false)]
+    [Arguments(true, true, 2, false)]
+    [Arguments(false, false, 0, false)]
+    [Arguments(true, false, 0, false)]
+    [Arguments(false, false, 1, false)]
+    [Arguments(true, false, 1, false)]
+    [Arguments(false, false, 2, false)]
+    [Arguments(true, false, 2, false)]
+    [Arguments(true, true, 0, true)]
+    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(bool useSentinel, bool failPrimary, int failure, bool delayedMonitor)
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         await using var fast = Node("fast", true);
         await using var sentinel = Sentinel(primary, () => [replica, fast]);
+        if (delayedMonitor)
+        {
+            // Without the setup fence, a delayed first subscription can rediscover the
+            // failed primary while its read awaits the healthy fallback.
+            sentinel.DelayCommand("SUBSCRIBE ", 200);
+            fast.DelayCommand("XREAD ", 1_000);
+        }
         var failedNode = failPrimary ? primary : replica;
-        var failDedicated = true;
+        var failDedicated = false;
         var failedNodeConnections = 0;
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var previous = failedNode.ReplyOverride!;
@@ -333,9 +343,12 @@ public partial class ReadDedicatedRoutingTests
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
             () => Volatile.Read(ref now));
-        if (useSentinel) await router.RefreshNowAsync(default);
+        if (useSentinel) await SentinelTestSetup.CompleteReadSetupAsync(client);
         var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
         await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
+        var handshakesBefore = failedNode.ReceivedCommands.Count(command => command == "HELLO 3");
+        var connectionsBefore = Volatile.Read(ref failedNodeConnections);
+        Volatile.Write(ref failDedicated, true);
         using var caller = new CancellationTokenSource();
         var read = ReadAsync(caller.Token);
         if (failure == 2)
@@ -352,8 +365,8 @@ public partial class ReadDedicatedRoutingTests
             await Assert.That(caller.IsCancellationRequested).IsFalse();
         }
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
-        await Assert.That(failedNode.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(failure == 0 ? 2 : 1);
-        if (failure != 0) await Assert.That(failedNodeConnections).IsEqualTo(2);
+        await Assert.That(failedNode.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(handshakesBefore + (failure == 0 ? 1 : 0));
+        if (failure != 0) await Assert.That(failedNodeConnections).IsEqualTo(connectionsBefore + 1);
         await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
         await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
         // A failed Sentinel socket invalidates its generation. A connection attempt canceled

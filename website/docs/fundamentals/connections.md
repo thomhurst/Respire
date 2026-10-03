@@ -499,6 +499,13 @@ so an unavailable hostname transport does not fence out the same owner reported 
 Reporter reconciliation retains evidence naming demoted primaries when configuration metadata
 is unavailable; a stale reporter cannot restore one merely because it still answers `ROLE master`.
 
+Epoch metadata is needed to order completed failover cycles reliably. A `+switch-master`
+payload has no epoch or sequence number. After A-to-B and B-to-A, a delayed A-to-B report can
+look identical to a genuine third transition when both servers still answer `ROLE master`.
+The metadata-free fallback permits genuine recurrence, so it cannot reject every delayed cyclic
+report. Grant `SENTINEL MASTER` permission when this ordering guarantee is required; ROLE alone
+does not prove global primary ownership.
+
 Discovery uses Sentinel-specific credentials and TLS settings. Monitor subscriptions reconnect
 independently under the client's `ReconnectPolicy`, reported with
 `respire.reconnect.scope = sentinel-monitor`. A monitor that exhausts the policy resumes with a

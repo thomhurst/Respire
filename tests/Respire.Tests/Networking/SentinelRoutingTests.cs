@@ -700,7 +700,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +switch-master");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -743,7 +743,7 @@ public class SentinelRoutingTests
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
         var router = client.Core.Sentinel!;
         using (var monitorTimeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < 2) await Task.Delay(5, monitorTimeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
         while (router.NotificationRediscovery is { } initialRediscovery)
             await initialRediscovery.WaitAsync(Limit);
 
@@ -1016,6 +1016,47 @@ public class SentinelRoutingTests
         await worker.WaitAsync(Limit);
         await Assert.That(client.Endpoint.Port).IsEqualTo(original.Port);
         await Assert.That(router.Current!.IsRetired).IsFalse();
+    }
+
+    [Test]
+    public async Task CompletedSwitchCycleAllowsGenuineRecurrenceWithoutEpochs()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var firstPort = original.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => original.Port);
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
+        var router = client.Core.Sentinel!;
+        var outbound = SentinelHint.FromSwitchMaster("a-to-b", new("127.0.0.1", original.Port),
+            new("127.0.0.1", promoted.Port), new("127.0.0.1", first.Port));
+        Volatile.Write(ref firstPort, promoted.Port);
+        await CompleteAsync(outbound, promoted.Port);
+        await CompleteAsync(SentinelHint.FromSwitchMaster("b-to-a", outbound.Target,
+            outbound.OldPrimary, new("127.0.0.1", second.Port)), original.Port);
+        // A real third transition has exactly the same switch payload, reporter, GET-MASTER
+        // reply, and ROLE result as a delayed first transition. Completed edge history alone
+        // cannot reject the delayed event without also rejecting this genuine recurrence.
+        await CompleteAsync(outbound, promoted.Port);
+
+        async Task CompleteAsync(SentinelHint hint, int expectedPort)
+        {
+            router.QueueNotificationRediscovery(in hint);
+            await WaitForEndpointAsync(client, expectedPort);
+            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+            await Assert.That(router.Current!.IsRetired).IsFalse();
+        }
     }
 
     [Test]
@@ -4614,7 +4655,7 @@ public class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         using (var timeout = new CancellationTokenSource(Limit))
-            while (router.SubscribedSentinelCount < expectedSubscriptions) await Task.Delay(5, timeout.Token);
+            await SentinelTestSetup.WaitForSubscriptionsAsync(router, expectedSubscriptions, timeout.Token);
         var rediscovery = router.NotificationRediscovery;
         if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
     }
