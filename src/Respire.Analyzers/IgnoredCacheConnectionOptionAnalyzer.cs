@@ -18,7 +18,7 @@ public sealed class IgnoredCacheConnectionOptionAnalyzer : DiagnosticAnalyzer
         isEnabledByDefault: true,
         description: "AsDistributedCache adapts an existing client. ConnectionString and ClientOptions "
             + "cannot create or replace that client's connection; configure the client before adapting it.",
-        helpLinkUri: "https://thomhurst.github.io/Respire/integrations/caching#ignored-connection-options-resp004");
+        helpLinkUri: "https://thomhurst.github.io/Respire/docs/integrations/caching#ignored-connection-options-resp004");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 

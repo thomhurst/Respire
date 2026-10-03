@@ -85,6 +85,7 @@ internal static class RespireApiStub
             }
 
             public interface IRespireClient { }
+            public sealed class RespireOptions { }
 
             public sealed class RespireClient : IRespireClient
             {
@@ -96,20 +97,28 @@ internal static class RespireApiStub
             }
         }
 
+        namespace Respire.Compression
+        {
+            public interface IRespireValueCodec { }
+        }
+
+        #nullable enable annotations
         namespace Respire.Extensions.Caching
         {
             public sealed class RespireCacheOptions
             {
-                public string ConnectionString { get; set; }
-                public Func<IServiceProvider, object> ClientOptions { get; set; }
-                public string InstanceName { get; set; }
-                public object ValueCodec { get; set; }
+                public string? ConnectionString { get; set; }
+                public Func<IServiceProvider, Respire.RespireOptions>? ClientOptions { get; set; }
+                public string? InstanceName { get; set; }
+                public Respire.Compression.IRespireValueCodec? ValueCodec { get; set; }
             }
+
+            public sealed class RespireDistributedCache { }
 
             public static class RespireDistributedCacheClientExtensions
             {
-                public static object AsDistributedCache(this Respire.IRespireClient client, RespireCacheOptions options = null)
-                    => new object();
+                public static RespireDistributedCache AsDistributedCache(this Respire.IRespireClient client, RespireCacheOptions? options = null)
+                    => new RespireDistributedCache();
             }
         }
         """;
