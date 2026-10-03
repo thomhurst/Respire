@@ -10,7 +10,7 @@ internal static class ContainerPortCollision
     internal static bool IsMatch(Exception error, int[] selectedPorts)
     {
         // Docker has no typed port-conflict subtype. Require its structured API response,
-        // the exact selected loopback port, and a known address-in-use bind failure.
+        // and a known address-in-use bind failure. Most formats also name the selected port.
         if (error is not DockerApiException { StatusCode: HttpStatusCode.InternalServerError, ResponseBody: { } body })
             return false;
         string? message;
@@ -24,6 +24,13 @@ internal static class ContainerPortCollision
         }
         catch (JsonException) { return false; }
         if (message is null) return false;
+        // Recent Linux engines omit the host address in this libnetwork TCP bind error.
+        // The fixture calls this only for StartAsync failures with explicit port mappings;
+        // retain the complete networking prefix and TCP bind suffix, not a generic match.
+        if (selectedPorts.Length != 0
+            && message.StartsWith("failed to set up container networking: driver failed programming external connectivity on endpoint ", StringComparison.Ordinal)
+            && message.EndsWith("): failed to listen on TCP socket: address already in use", StringComparison.Ordinal))
+            return true;
         foreach (var port in selectedPorts)
         {
             var address = "127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);

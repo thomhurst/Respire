@@ -15,51 +15,32 @@ internal sealed partial class SentinelDiscoveryState
     // Observe raises the epoch floor before transport/ROLE validation. Commit advances the
     // accepted epoch only after validation. Failed validation never lowers either floor;
     // equal/missing epochs may only reuse the observed owner or one unambiguous address alias.
-    private long? _acceptedEpoch;
-    private RespireEndpoint? _observedPrimary;
-    private long? _observedEpoch;
-    private SentinelAddressEvidence _observedEvidence;
-    private RespireEndpoint? _observedValidatedPeer;
+    private SentinelEpochEvidence _epochEvidence;
     private int _missingEpochWarning;
+
+    internal SentinelEpochEvidence EpochEvidence
+    {
+        get { lock (_gate) return _epochEvidence; }
+    }
 
     internal bool IsNewerConfiguration(long? epoch)
     {
-        lock (_gate) return epoch is { } candidate && _acceptedEpoch is { } accepted && candidate > accepted;
+        lock (_gate) return _epochEvidence.IsNewer(epoch);
     }
 
     internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch)
     {
-        lock (_gate) return IsCurrentConfigurationLocked(primary, epoch);
-    }
-
-    private bool IsCurrentConfigurationLocked(RespireEndpoint primary, long? epoch, string[]? addresses = null)
-    {
-        // Servers that never expose epochs retain ROLE/switch-evidence discovery. Once an
-        // epoch is observed, a missing epoch cannot erase that ordering evidence.
-        if (_observedEpoch is not { } observed) return true;
-        if (epoch is { } candidate && candidate > observed) return true;
-        return (epoch is null || epoch == observed) && _observedPrimary is { } current
-            && (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, current)
-                || new SentinelAddressEvidence(primary, addresses).ConfirmsSameAddress(
-                    _observedValidatedPeer is { } peer ? new(peer, null) : _observedEvidence));
+        lock (_gate) return _epochEvidence.IsCurrent(primary, epoch);
     }
 
     internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
     {
-        lock (_gate) return TryObserveConfigurationLocked(primary, epoch, addresses);
-    }
-
-    private bool TryObserveConfigurationLocked(RespireEndpoint primary, long? epoch, string[]? addresses)
-    {
-        if (!IsCurrentConfigurationLocked(primary, epoch, addresses)) return false;
-        if (epoch is { } candidate && (_observedEpoch is null || candidate > _observedEpoch))
+        lock (_gate)
         {
-            _observedEpoch = candidate;
-            _observedPrimary = primary;
-            _observedEvidence = new(primary, addresses);
-            _observedValidatedPeer = null;
+            var accepted = _epochEvidence.TryObserve(primary, epoch, addresses, out var next);
+            _epochEvidence = next;
+            return accepted;
         }
-        return true;
     }
 
     internal void WarnMissingEpoch(ILogger? logger, RespireEndpoint sentinel)
@@ -81,17 +62,12 @@ internal sealed partial class SentinelDiscoveryState
     {
         lock (_gate)
         {
-            if (!TryObserveConfigurationLocked(primary, epoch, addresses))
+            var rejection = _epochEvidence.Accept(primary, epoch, addresses, validatedPeer, out var next);
+            _epochEvidence = next;
+            if (rejection == SentinelConfigurationRejection.Superseded)
                 throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
-            if (_observedEpoch is not null && validatedPeer is { } peer)
-            {
-                if (_observedValidatedPeer is { } acceptedPeer && !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(peer, acceptedPeer))
-                    throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.");
-                // DNS only proposed candidates. ROLE established this physical owner, which
-                // a numeric fallback can confirm even when the original DNS set was ambiguous.
-                _observedValidatedPeer ??= peer;
-            }
-            _acceptedEpoch = epoch ?? _observedEpoch;
+            if (rejection == SentinelConfigurationRejection.DifferentPeer)
+                throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.");
         }
     }
 

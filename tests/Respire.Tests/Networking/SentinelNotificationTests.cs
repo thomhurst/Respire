@@ -213,7 +213,7 @@ public class SentinelNotificationTests
         static string Evidence(SentinelHint hint) => string.Join("|",
             hint.MustRediscover,
             string.Join(",", hint.Targets.Select(endpoint => endpoint.ToString()).Order()),
-            string.Join(",", hint.Sources.Select(source => $"{source.Endpoint}={string.Join(";", (source.Addresses ?? []).Order())}").Order()),
+            string.Join(",", hint.Sources.Select(source => $"{source.Endpoint}={string.Join(";", (source.Addresses.IsDefault ? [] : source.Addresses).Order())}").Order()),
             string.Join(",", hint.Reporters.Select(endpoint => endpoint.ToString()).Order()));
     }
 
@@ -321,7 +321,7 @@ public class SentinelNotificationTests
         await Assert.That(withGap.BindDownReportsToCurrentPrimary(current).DownReportPrimary).IsNull();
 
         var duplicate = SentinelNotificationCoalescer.Merge(first, in first);
-        await Assert.That(ReferenceEquals(duplicate.DownReports, first.DownReports)).IsTrue();
+        await Assert.That(duplicate.DownReports == first.DownReports).IsTrue();
         var otherReporter = SentinelHint.FromDown("old-down", NewPrimary, OldPrimary);
         var bothReporters = SentinelNotificationCoalescer.Merge(first, in otherReporter);
         await Assert.That(bothReporters.DownReports).IsEquivalentTo(
@@ -334,20 +334,20 @@ public class SentinelNotificationTests
         var hint = SentinelHint.FromDown("down", OldPrimary);
         var duplicate = SentinelHint.FromDown("down", OldPrimary);
         var merged = SentinelNotificationCoalescer.Merge(hint, in duplicate);
-        await Assert.That(ReferenceEquals(merged.Reporters, hint.Reporters)).IsTrue();
-        await Assert.That(ReferenceEquals(merged.Targets, hint.Targets)).IsTrue();
-        await Assert.That(ReferenceEquals(merged.Sources, hint.Sources)).IsTrue();
+        await Assert.That(merged.Reporters == hint.Reporters).IsTrue();
+        await Assert.That(merged.Targets == hint.Targets).IsTrue();
+        await Assert.That(merged.Sources == hint.Sources).IsTrue();
 
         var source = SentinelHint.FromSwitchMaster("switch", OldPrimary, NewPrimary, OldPrimary);
         var updated = source.WithSourceAddresses(OldPrimary, ["10.0.0.1"]);
-        await Assert.That(source.Sources[0].Addresses).IsNull();
+        await Assert.That(source.Sources[0].Addresses.IsDefault).IsTrue();
         await Assert.That(updated.Sources[0].Addresses).IsEquivalentTo(["10.0.0.1"]);
-        await Assert.That(ReferenceEquals(updated.WithSourceAddresses(OldPrimary, ["10.0.0.1"]).Sources,
-            updated.Sources)).IsTrue();
-        await Assert.That(ReferenceEquals(updated.WithSourceAddresses(NewPrimary, ["10.0.0.2"]).Sources,
-            updated.Sources)).IsTrue();
+        await Assert.That(updated.WithSourceAddresses(OldPrimary, ["10.0.0.1"]).Sources ==
+            updated.Sources).IsTrue();
+        await Assert.That(updated.WithSourceAddresses(NewPrimary, ["10.0.0.2"]).Sources ==
+            updated.Sources).IsTrue();
         var withWakeup = SentinelNotificationCoalescer.Merge(updated, in hint);
-        await Assert.That(ReferenceEquals(withWakeup.Sources, updated.Sources)).IsTrue();
+        await Assert.That(withWakeup.Sources == updated.Sources).IsTrue();
     }
 
     [Test]
