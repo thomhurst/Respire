@@ -168,6 +168,7 @@ internal static partial class ScopeWalker
             }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
+            var returnTransfer = wrapped && expression?.Parent is ReturnStatementSyntax;
             var assignmentTransfer = false;
             if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
@@ -176,14 +177,16 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
-                        if (ContainsCall(operation, call))
+                        if (returnTransfer ? operation == block.BranchValue && operation.Syntax == call : ContainsCall(operation, call))
                         {
-                            var position = TransferPosition(call);
+                            // Returning a value transfers ownership only after its complete
+                            // expression, including a final conversion, has succeeded.
+                            var position = returnTransfer ? call.Span.End : TransferPosition(call);
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;

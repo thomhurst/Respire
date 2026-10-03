@@ -7,6 +7,51 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("OutOfMemoryException", true)]
+    [Arguments("InvalidOperationException", false)]
+    public async Task ReturnConversionPrecedesOwnershipTransfer(string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task<object> Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { return (object)result; }
+                catch ({{catchType}}) { return null; }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("(result, Throw())", false, true)]
+    [Arguments("(result, Throw())", true, false)]
+    [Arguments("(result, 0)", false, false)]
+    [Arguments("(choice ? result : existing, 0)", false, true)]
+    [Arguments("choice ? (result, 0) : (result, 1)", false, false)]
+    [Arguments("((RespireResult)result, Throw())", false, true)]
+    public async Task TupleReturnWaitsForAllElements(string returned, bool cleanupInCatch, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throw() => throw new InvalidOperationException();
+            async Task<(RespireResult, int)> Run(RespireClient client, RespireResult existing, bool choice)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { return {{returned}}; }
+                catch (InvalidOperationException)
+                {
+                    {{(cleanupInCatch ? "result.Dispose();" : "")}}
+                    return default;
+                }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("holder.Value = (RespireResult)result;", "NullReferenceException", true)]
     [Arguments("holder.Field = choice ? result : existing;", "NullReferenceException", true)]
     [Arguments("holder.Field = choice ? result : existing;", "InvalidOperationException", true)]
