@@ -255,7 +255,8 @@ await foreach (var message in subscription.WithCancellation(token))
 ```
 
 A `Gap` item means messages may have been lost during a reconnect or buffer overflow; it has no
-channel or payload. Disposing the subscription unsubscribes. See
+channel or payload. `message.Text` decodes the payload as UTF-8. Use `message.Payload` or
+`message.As<byte[]>()` for binary payloads. Disposing the subscription unsubscribes. See
 [pub/sub](./guides/pub-sub#detecting-delivery-gaps).
 
 ## Locks, scripts, and key prefixes

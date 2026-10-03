@@ -117,13 +117,18 @@ Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate
 
 ```csharp
 await using var shard = await redis.SubscribeShardedAsync("orders:europe", token);
-await using var shardMessages = shard.GetAsyncEnumerator(token);
 
 await redis.PublishShardedAsync("orders:europe", "ready", token);
 
-if (await shardMessages.MoveNextAsync())
+await foreach (var message in shard.WithCancellation(token))
 {
-    Console.WriteLine(shardMessages.Current.Text);
+    if (message.Kind == RespireMessageKind.Gap)
+    {
+        continue; // Messages may have been lost. Reload authoritative state here.
+    }
+
+    Console.WriteLine(message.Text);
+    break;
 }
 ```
 
