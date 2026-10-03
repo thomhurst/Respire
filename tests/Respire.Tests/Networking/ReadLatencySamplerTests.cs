@@ -175,13 +175,14 @@ public class ReadLatencySamplerTests
         _ = sampler.GetLatencyAsync(outstanding, default);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
 
-        // Acquisition consumed the shared budget before these samples were taken.
+        // Acquisition consumed the shared budget before these samples were taken; the sampler
+        // rechecks the absolute deadline under its probe-publication gate.
         var deadline = Environment.TickCount64 - 1;
         await Assert.That(NearestReadSelection.CanStartProbe(deadline)).IsFalse();
         await Assert.That(NearestReadSelection.CreateWaitCancellation(deadline, default)).IsNull();
         var selection = new NearestReadSelection<object>();
-        selection.QueueSample(outstanding, sampler.GetLatencyAsync(outstanding, default, startProbe: false));
-        selection.QueueSample(discovered, sampler.GetLatencyAsync(discovered, default, startProbe: false));
+        selection.QueueSample(outstanding, sampler.GetLatencyAsync(outstanding, default, probeDeadline: deadline));
+        selection.QueueSample(discovered, sampler.GetLatencyAsync(discovered, default, probeDeadline: deadline));
         // No PING is queued ahead of a read on the late-discovered connection.
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         await Assert.That(sampler.HasPendingProbe(discovered)).IsFalse();

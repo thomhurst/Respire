@@ -81,10 +81,11 @@ internal sealed class ReadLatencySampler<TConnection>(
         if (_connectionFailures.TryGetValue(candidate, out _)) _connectionFailures.Remove(candidate);
     }
 
-    // startProbe: false once selection's shared budget has expired. The call then reports only
-    // existing evidence; an outstanding probe is still returned so its connection stays excluded.
+    // probeDeadline: selection's shared sampling deadline. It is checked under the probe-publication
+    // gate, so a caller delayed past the budget reports only existing evidence instead of starting a
+    // probe that could not answer in time. An outstanding probe is still returned so its connection stays excluded.
     internal ValueTask<ReadLatencyResult> GetLatencyAsync(TConnection connection, CancellationToken cancellationToken,
-        bool startProbe = true)
+        long? probeDeadline = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -117,7 +118,8 @@ internal sealed class ReadLatencySampler<TConnection>(
             pending = sample.Pending;
             // No queue of health checks: callers without a sample can still select a
             // healthy connection without latency evidence when all four slots are busy.
-            if (startProbe && pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
+            if (pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes
+                && (probeDeadline is not { } deadline || NearestReadSelection.CanStartProbe(deadline)))
             {
                 start = new();
                 _running.Add(start.Finished.Task);
@@ -248,7 +250,7 @@ internal static class ReadLatencySampler
 
     internal static ReadLatencySampler<RespireConnection> Create(Func<long>? clock = null) => new(MeasureAsync, clock);
 
-    private static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
+    internal static async ValueTask<long> MeasureAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
         // Keep observing the physical reply after selection's budget expires. Per-command

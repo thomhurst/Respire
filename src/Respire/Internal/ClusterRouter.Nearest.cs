@@ -98,7 +98,7 @@ internal sealed partial class ClusterRouter
                 }
             }
             if (!connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(connection, default, NearestReadSelection.CanStartProbe(deadline));
+            var latency = sampler.GetLatencyAsync(connection, default, probeDeadline: deadline);
             if (connection.IsAcceptingCommands) best.QueueSample(connection, latency);
         }
         using var samplingWait = best.HasPendingSamples

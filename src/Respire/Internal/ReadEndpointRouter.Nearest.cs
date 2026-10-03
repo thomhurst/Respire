@@ -75,7 +75,7 @@ internal sealed partial class ReadEndpointRouter
                 }
             }
             if (!selection.Connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(selection.Connection, default, NearestReadSelection.CanStartProbe(deadline));
+            var latency = sampler.GetLatencyAsync(selection.Connection, default, probeDeadline: deadline);
             if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
                 best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
         }
