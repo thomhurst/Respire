@@ -159,8 +159,9 @@ measurements remain queued even when disposal suppresses lifecycle callbacks. Li
 outside discovery and transport work; queued events are suppressed after client disposal.
 The process-wide `respire.sentinel.logging.failures` counter records non-fatal logger
 callback failures caught by the notification router's `SafeLog` and `LogSentinelEvent`
-wrappers, without endpoint or exception tags. Those wrappers also isolate non-fatal
-metric-listener exceptions. Resolver and other Sentinel logs are outside the counter's
+wrappers and the resolver's `LogOptionalDiscoveryFailure` wrapper for peer/configuration
+failures, without endpoint or exception tags. Those wrappers also isolate non-fatal
+metric-listener exceptions. Other Sentinel logs are outside the counter's
 coverage; throwing loggers can still interrupt those paths. Inspect the logging provider
 when this counter increases.
 The process-wide `respire.sentinel.generations.retired` gauge reports retired generations

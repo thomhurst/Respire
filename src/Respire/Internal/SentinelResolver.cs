@@ -361,7 +361,7 @@ internal static class SentinelResolver
                     callerCancellationToken.ThrowIfCancellationRequested();
                     // Keep the completed primary reply even if optional peer discovery times
                     // out, drops the socket, or returns malformed RESP. Caller cancellation wins.
-                    logger?.LogDebug(error, "Optional Sentinel peer discovery failed at {Host}:{Port}", sentinel.Host, sentinel.Port);
+                    LogOptionalDiscoveryFailure(logger, error, "peer", sentinel);
                 }
             }
             var primary = ParsePrimaryAddress(in reply, sentinel, serviceName);
@@ -384,7 +384,7 @@ internal static class SentinelResolver
             catch (Exception error)
             {
                 callerCancellationToken.ThrowIfCancellationRequested();
-                logger?.LogDebug(error, "Optional Sentinel configuration discovery failed at {Sentinel}", sentinel);
+                LogOptionalDiscoveryFailure(logger, error, "configuration", sentinel);
             }
             // Sentinel advances config-epoch before replacing its old primary address.
             // Even matching address reads must not bind that address to the new epoch.
@@ -481,6 +481,16 @@ internal static class SentinelResolver
             foreach (var address in candidateAddresses)
                 if (MatchesSwitchSource(new RespireEndpoint(address, candidate.Port), source)) return true;
         return false;
+    }
+
+    private static void LogOptionalDiscoveryFailure(ILogger? logger, Exception error, string stage, RespireEndpoint sentinel)
+    {
+        try { logger?.LogDebug(error, "Optional Sentinel {Stage} discovery failed at {Sentinel}", stage, sentinel); }
+        catch (Exception logError) when (logError is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        {
+            // Diagnostic callbacks must not discard the already completed primary reply.
+            RespireTelemetry.RecordSentinelLoggingFailure();
+        }
     }
 
     internal static string NormalizeHost(string host)

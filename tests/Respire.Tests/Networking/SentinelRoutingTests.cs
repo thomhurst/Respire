@@ -1040,6 +1040,34 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task OptionalMetadataLoggerFailureCannotStopNotificationPromotion()
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) =>
+        {
+            if (command != "SENTINEL MASTER mymaster") return reply(id, command);
+            return Volatile.Read(ref port) == original.Port
+                ? "-NOPERM metadata unavailable\r\n"u8.ToArray()
+                : "?invalid RESP\r\n"u8.ToArray();
+        };
+        var logger = new SentinelTests.OptionalDiscoveryLogger();
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { LoggerFactory = logger });
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var monitor = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitor], "+sdown",
+            $"master mymaster 127.0.0.1 {original.Port}");
+        await WaitForEndpointAsync(client, promoted.Port);
+        await Assert.That(logger.Failures).IsGreaterThan(0);
+        await Assert.That(promoted.ReceivedCommands).Contains("ROLE");
+    }
+
+    [Test]
     public async Task RepeatedMasterDownDuringRediscoveryTriggersAnotherDiscovery()
     {
         await using var original = Primary();

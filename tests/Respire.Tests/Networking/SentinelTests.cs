@@ -200,11 +200,15 @@ public class SentinelTests
     }
 
     [Test]
-    [Arguments("timeout")]
-    [Arguments("disconnect")]
-    [Arguments("protocol")]
-    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure)
+    [Arguments("timeout", false)]
+    [Arguments("disconnect", false)]
+    [Arguments("protocol", false)]
+    [Arguments("timeout", true)]
+    [Arguments("disconnect", true)]
+    [Arguments("protocol", true)]
+    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure, bool throwingLogger)
     {
+        var logger = new OptionalDiscoveryLogger();
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "?invalid RESP\r\n"u8.ToArray())
         {
@@ -216,9 +220,53 @@ public class SentinelTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            LoggerFactory = throwingLogger ? logger : null,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(logger.Failures > 0).IsEqualTo(throwingLogger);
+    }
+
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("disconnect")]
+    [Arguments("protocol")]
+    public async Task ConnectAsync_OptionalMetadataLoggerFailurePreservesTheCompletedPrimaryReply(string failure)
+    {
+        var logger = new OptionalDiscoveryLogger();
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray(), "?invalid RESP\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = failure == "disconnect" ? 3 : null,
+            SuppressReply = command => failure == "timeout" && command == "SENTINEL MASTER mymaster",
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2), LoggerFactory = logger,
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await client.PingAsync();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(logger.Failures).IsGreaterThan(0);
+    }
+
+    internal sealed class OptionalDiscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
+    {
+        private int _failures;
+        internal int Failures => Volatile.Read(ref _failures);
+        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!formatter(state, exception).StartsWith("Optional Sentinel ", StringComparison.Ordinal)) return;
+            Interlocked.Increment(ref _failures);
+            throw new InvalidOperationException("Optional discovery logger failed");
+        }
     }
 
     [Test]
