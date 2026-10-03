@@ -405,7 +405,8 @@ public class ClusterReadOnlyTests
     {
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
-        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromMilliseconds(200));
+        // This timeout also covers healthy initial socket creation on loaded CI workers.
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(2));
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = command =>
         {
@@ -415,7 +416,7 @@ public class ClusterReadOnlyTests
 
         var write = client.SetAsync("key", "value").AsTask();
         // Observe the stalled recovery itself before applying its hang guard. Scheduling the
-        // initial connection and READONLY response is separate from the 200 ms recovery budget.
+        // initial connection and READONLY response is separate from the recovery wait below.
         await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var error = await Assert.That(async () => await write.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireServerException>();

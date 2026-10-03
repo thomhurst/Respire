@@ -39,7 +39,7 @@ public class FailoverGroupTests
             ReplyOverride = (_, command) => command == "ROLE" ? RoleReply("master") : null,
         };
         Volatile.Write(ref primaryPort, oldPrimary.Port);
-        await using var staleSentinel = new FakeRespServer(FakeRespServer.PongReply)
+        await using var staleSentinel = new FakeRespServer(8, FakeRespServer.PongReply)
         {
             ReplyOverride = (_, command) => command switch
             {
@@ -48,7 +48,7 @@ public class FailoverGroupTests
                 _ => null,
             },
         };
-        await using var sentinel = new FakeRespServer(FakeRespServer.PongReply)
+        await using var sentinel = new FakeRespServer(8, FakeRespServer.PongReply)
         {
             ReplyOverride = (_, command) => command switch
             {

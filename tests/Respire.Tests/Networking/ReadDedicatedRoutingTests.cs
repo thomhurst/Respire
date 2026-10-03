@@ -102,7 +102,9 @@ public partial class ReadDedicatedRoutingTests
     }
 
     [Test]
-    public async Task NearestCoolsThePrimaryWhoseReplacementPoolFailed()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NearestCoolsThePrimaryWhoseReplacementPoolFailed(bool expireSelectedPoolDeadline)
     {
         await using var oldPrimary = Node("old", false);
         await using var newPrimary = Node("new", false);
@@ -116,6 +118,7 @@ public partial class ReadDedicatedRoutingTests
         var oldConnections = 0;
         var newConnections = 0;
         var oldRental = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldDeadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest) with
         {
@@ -130,25 +133,34 @@ public partial class ReadDedicatedRoutingTests
         var previousPool = previous.Pool;
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask();
-        await oldRental.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        currentPrimary = newPrimary;
-        previous.TryRetire();
-        var current = await client.Core.Sentinel.GetGenerationAsync(default);
-        var retirement = previousPool.RetireAsync().AsTask();
-        releaseOld.TrySetResult();
-        using var reply = await read.WaitAsync(TimeSpan.FromSeconds(10));
-        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(reply.AsString()).IsEqualTo("replica");
-        await Assert.That(newConnections).IsEqualTo(2); // One shared connection and one failed dedicated attempt.
-        await Assert.That(router.NearestLatency.CanConnect(current.Multiplexer)).IsFalse();
-        await Assert.That(router.NearestLatency.CanConnect(previous.Multiplexer)).IsTrue();
+        try
+        {
+            await oldRental.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (expireSelectedPoolDeadline) await oldDeadline.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            currentPrimary = newPrimary;
+            previous.TryRetire();
+            var current = await client.Core.Sentinel.GetGenerationAsync(default);
+            var retirement = previousPool.RetireAsync().AsTask();
+            releaseOld.TrySetResult();
+            using var reply = await read.WaitAsync(TimeSpan.FromSeconds(10));
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(reply.AsString()).IsEqualTo("replica");
+            await Assert.That(newConnections).IsEqualTo(2); // One shared connection and one failed dedicated attempt.
+            await Assert.That(router.NearestLatency.CanConnect(current.Multiplexer)).IsFalse();
+            await Assert.That(router.NearestLatency.CanConnect(previous.Multiplexer)).IsTrue();
+        }
+        finally { releaseOld.TrySetResult(); }
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
             if (port == oldPrimary.Port && Interlocked.Increment(ref oldConnections) > 1)
             {
+                using var deadlineRegistration = token.Register(() => oldDeadline.TrySetResult());
                 oldRental.TrySetResult();
-                await releaseOld.Task.WaitAsync(token);
+                // This leg models retirement, so hold its injected failure until the test
+                // publishes that retirement. A slow handoff must not become an earlier
+                // availability failure and bypass the replacement pool under test.
+                await releaseOld.Task;
                 throw new OperationCanceledException("The selected pool retired before admission.");
             }
             if (port == newPrimary.Port && Interlocked.Increment(ref newConnections) > 1)

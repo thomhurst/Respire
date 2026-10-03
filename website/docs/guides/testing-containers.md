@@ -63,6 +63,9 @@ connections. In Sentinel mode, the first data endpoint identifies the **initial*
 it is not updated after failover. Native Sentinel discovery selects the current primary at
 connection time. This fixture does not add automatic Sentinel failover to the client.
 
+The Sentinel fixture uses a 5-second down detection interval and a 10-second failover timeout
+so a failed election can retry within bounded test deadlines instead of waiting six minutes.
+
 ## Docker networking and limits
 
 All fixtures require a **local Docker engine** and publish every data and Sentinel port only

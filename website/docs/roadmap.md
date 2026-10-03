@@ -35,7 +35,6 @@ Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, 
 | Capability | Current behavior |
 | --- | --- |
 | Redis Cluster gaps | Cluster routing, same-slot `WATCH` transactions, and sharded pub/sub are supported; typed notification fan-out remains unavailable in cluster mode |
-| Sentinel event monitoring | Lazy discovery and reactive re-discovery are supported; Sentinel event subscriptions and the real-server failover matrix remain planned |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.
 
