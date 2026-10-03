@@ -120,8 +120,8 @@ public class CorrectionCoordinatorTests
             1 or 2 => new OperationCanceledException(),
             _ => new RespireServerException("NOPERM release rejected"),
         };
-        var result = await CorrectionCoordinator.AttemptAsync(_ => ValueTask.FromException(error), Limit, stop.Token,
-            owner: failure == 5 ? null : client.Core);
+        var result = await CorrectionCoordinator.AttemptAsync(failure == 5 ? null : client.Core,
+            _ => ValueTask.FromException(error), Limit, stop.Token);
         await Assert.That(result).IsEqualTo(failure < 2 ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed);
     }
 

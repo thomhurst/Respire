@@ -217,9 +217,19 @@ The policies preserve different completion contracts:
   a dependent retry; cancellation retires the control connection. The cache supplies fresh
   TTL arguments for each pass; the coordinator stops when latency no longer halves or
   falls below the tolerance. A detached shrink-only pass remains observed and safe if it lands.
+  Every cache convergence call is awaited: set corrections pass through the awaited
+  `ExecuteWithCorrectionAsync` callback or `CapDelayedTtlAsync`, and sliding-read corrections
+  await `CapRefreshedTtlAsync`. Fence failures therefore propagate through those callers.
 - Hash-field lease cleanup retains its owner-checked scripts and current Sentinel/Cluster
   route targeting. Shared foreground observation and capped probe delays bound the caller's
   wait without cancelling already owed FIFO corrections. Later failures are observed.
+  `BestEffortReleaseHashFieldLeaseAsync` catches completed correction failures; after a
+  foreground deadline, `CorrectionCoordinator.WaitAsync` attaches a fault observer.
+  `CorrectHashFieldLeaseAsync` also observes unfinished original and routed release tasks.
+
+Fence owners serialize attempts; Debug builds assert that sends do not overlap. Every
+bounded-attempt call must explicitly supply its core (or `null` for an untracked client),
+so disposal classification cannot be omitted by relying on a default argument.
 
 Untracked `IRespireClient` implementations retain best-effort cleanup because they cannot
 provide a physical connection identity. They use the same retry mechanics where applicable,

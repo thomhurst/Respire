@@ -229,9 +229,9 @@ public sealed class RespireSemaphore
     internal static ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner,
         CancellationToken cancellationToken = default)
-        => CorrectionCoordinator.AttemptAsync((Client: client, Key: key, Owner: owner),
+        => CorrectionCoordinator.AttemptAsync((client as RespireClient)?.Core, (Client: client, Key: key, Owner: owner),
             static (state, token) => ReleaseOnceAsync(state.Client, state.Key, state.Owner, token),
-            BestEffortCleanupTimeout, cancellationToken, owner: (client as RespireClient)?.Core);
+            BestEffortCleanupTimeout, cancellationToken);
 
     private static async ValueTask ReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner, CancellationToken cancellationToken)

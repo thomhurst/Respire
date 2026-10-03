@@ -28,18 +28,18 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         {
             var ordered = await fence.TryAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
             if (ordered != CleanupAttemptResult.Succeeded) return ordered;
-            return await AttemptAsync(correct, attemptTimeout, cancellationToken, owner: core).ConfigureAwait(false);
+            return await AttemptAsync(core, correct, attemptTimeout, cancellationToken).ConfigureAwait(false);
         }, null, retry, reason => onAbandoned(fence.IsAcknowledged ? "release" : "fence", reason));
 
     /// <summary>Classifies one bounded attempt. Only acknowledged ordering survives a later local failure.</summary>
     internal static ValueTask<CleanupAttemptResult> AttemptAsync(
-        Func<CancellationToken, ValueTask> attempt, TimeSpan timeout, CancellationToken stopping = default,
-        Func<bool>? acknowledged = null, ClientCore? owner = null)
-        => AttemptAsync(attempt, static (send, token) => send(token), timeout, stopping, acknowledged, owner);
+        ClientCore? owner, Func<CancellationToken, ValueTask> attempt, TimeSpan timeout,
+        CancellationToken stopping = default, Func<bool>? acknowledged = null)
+        => AttemptAsync(owner, attempt, static (send, token) => send(token), timeout, stopping, acknowledged);
 
     internal static async ValueTask<CleanupAttemptResult> AttemptAsync<TState>(
-        TState state, Func<TState, CancellationToken, ValueTask> attempt,
-        TimeSpan timeout, CancellationToken stopping = default, Func<bool>? acknowledged = null, ClientCore? owner = null)
+        ClientCore? owner, TState state, Func<TState, CancellationToken, ValueTask> attempt,
+        TimeSpan timeout, CancellationToken stopping = default, Func<bool>? acknowledged = null)
     {
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         bound.CancelAfter(timeout);
@@ -145,6 +145,8 @@ internal sealed class CorrectionFence(
     ClientCore? owner = null)
 {
     private bool _acknowledged;
+    // The only accesses are arguments to Debug.Assert, so Release sends do no extra atomic work.
+    private int _activeAttempts;
     internal bool IsAcknowledged => Volatile.Read(ref _acknowledged);
 
     internal async ValueTask EnsureBoundedAsync()
@@ -160,14 +162,22 @@ internal sealed class CorrectionFence(
     {
         if (IsAcknowledged) return;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
-        await send(identity, cancellationToken, () => Volatile.Write(ref _acknowledged, true)).ConfigureAwait(false);
-        // Successful transport drain also proves ordering without sending CLIENT KILL.
-        Volatile.Write(ref _acknowledged, true);
+        Debug.Assert(Interlocked.Increment(ref _activeAttempts) == 1, "The correction owner must serialize fence attempts.");
+        try
+        {
+            await send(identity, cancellationToken, () => Volatile.Write(ref _acknowledged, true)).ConfigureAwait(false);
+            // Successful transport drain also proves ordering without sending CLIENT KILL.
+            Volatile.Write(ref _acknowledged, true);
+        }
+        finally
+        {
+            Debug.Assert(Interlocked.Decrement(ref _activeAttempts) == 0, "Fence attempts overlapped.");
+        }
     }
 
     internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default)
         => IsAcknowledged ? new(CleanupAttemptResult.Succeeded)
-            : CorrectionCoordinator.AttemptAsync(EnsureAsync, timeout, stopping, () => IsAcknowledged, owner);
+            : CorrectionCoordinator.AttemptAsync(owner, EnsureAsync, timeout, stopping, () => IsAcknowledged);
 }
 
 internal readonly record struct CleanupRetryPolicy(TimeSpan Limit, TimeSpan InitialDelay, TimeSpan MaximumDelay);
