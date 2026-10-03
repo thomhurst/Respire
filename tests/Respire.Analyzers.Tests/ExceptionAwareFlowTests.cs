@@ -7,6 +7,137 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("count > 0", "count > 0", "", false)]
+    [Arguments("count >= 0", "count >= 0", "", false)]
+    [Arguments("count < 0", "count < 0", "", false)]
+    [Arguments("count <= 0", "count <= 0", "", false)]
+    [Arguments("0 < count", "count > 0", "", false)]
+    [Arguments("count > 0", "count < 0", "", true)]
+    [Arguments("count > 0", "count > 0", "count = -1;", true)]
+    public async Task RepeatedRelationalPredicatesRetainSelection(string selection, string cleanup, string write, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, int count)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    {{write}}
+                    if ({{cleanup}}) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int count)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = {{selection}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    {{write}}
+                    if ({{cleanup}}) await first.SendAsync(); else await second.SendAsync();
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("holder?.Field", false)]
+    [Arguments("holder?.Next?.Field", false)]
+    [Arguments("holder?.Next.Field", true)]
+    [Arguments("holder.Field", true)]
+    public async Task ConditionalFieldAccessDoesNotInventNullDereference(string access, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field = 1; public Holder Next = null; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{access}}; result.Dispose(); }
+                    catch (NullReferenceException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field = 1; public Holder Next = null; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{access}}; await batch.SendAsync(); }
+                    catch (NullReferenceException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(10, false)]
+    [Arguments(14, true)]
+    public async Task QueuedStateLimitRetainsWarning(int predicates, bool warning)
+    {
+        var parameters = string.Join(", ", Enumerable.Range(0, predicates).Select(index => $"bool flag{index}"));
+        var branches = string.Join(Environment.NewLine, Enumerable.Range(0, predicates)
+            .Select(index => $"if (flag{index}) System.Console.WriteLine({index});"));
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{parameters}})
+                {
+                    {{branches}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    result.Dispose();
+                    {{branches}}
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(64, false)]
+    [Arguments(65, true)]
+    public async Task PredicateLimitRetainsWarning(int predicates, bool warning)
+    {
+        var parameters = string.Join(", ", Enumerable.Range(0, predicates).Select(index => $"bool flag{index}"));
+        var branches = string.Join(Environment.NewLine, Enumerable.Range(0, predicates)
+            .Select(index => $"if (flag{index}) return;"));
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{parameters}})
+                {
+                    {{branches}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    {{branches}}
+                    result.Dispose();
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task InstanceFieldExceptionCanBypassCleanup(bool cleanupInCatch)

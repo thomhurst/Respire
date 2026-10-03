@@ -12,13 +12,15 @@ namespace Respire.Analyzers;
 /// </summary>
 internal sealed class FlowConditions
 {
+    // Each predicate occupies one bit in the ulong known/value masks.
+    private const int MaxPredicates = 64;
     private readonly CancellationToken _cancellationToken;
     private readonly SyntaxNode _scope;
     private readonly Dictionary<CaptureId, IOperation> _captures = new();
     private readonly HashSet<CaptureId> _ambiguousCaptures = [];
     private readonly HashSet<ISymbol> _unstable = new(SymbolEqualityComparer.Default);
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
-    private readonly List<(ISymbol Symbol, object? Constant)> _predicates = [];
+    private readonly List<(ISymbol Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
 
     internal FlowConditions(ControlFlowGraph graph, int originPosition, CancellationToken cancellationToken)
     {
@@ -158,23 +160,41 @@ internal sealed class FlowConditions
 
         IOperation operand = condition;
         object? comparison = true;
+        var comparisonOperator = BinaryOperatorKind.Equals;
         if (condition is IIsNullOperation isNull)
         {
             operand = isNull.Operand;
             comparison = null;
         }
         else if (condition is IBinaryOperation { OperatorMethod: null } binary
-            && binary.OperatorKind is BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals)
+            && binary.OperatorKind is BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals
+                or BinaryOperatorKind.LessThan or BinaryOperatorKind.LessThanOrEqual
+                or BinaryOperatorKind.GreaterThan or BinaryOperatorKind.GreaterThanOrEqual)
         {
+            comparisonOperator = binary.OperatorKind;
             var left = Unwrap(binary.LeftOperand);
             var right = Unwrap(binary.RightOperand);
             if (right.ConstantValue.HasValue)
                 (operand, comparison) = (left, right.ConstantValue.Value);
             else if (left.ConstantValue.HasValue)
+            {
                 (operand, comparison) = (right, left.ConstantValue.Value);
+                comparisonOperator = comparisonOperator switch
+                {
+                    BinaryOperatorKind.LessThan => BinaryOperatorKind.GreaterThan,
+                    BinaryOperatorKind.LessThanOrEqual => BinaryOperatorKind.GreaterThanOrEqual,
+                    BinaryOperatorKind.GreaterThan => BinaryOperatorKind.LessThan,
+                    BinaryOperatorKind.GreaterThanOrEqual => BinaryOperatorKind.LessThanOrEqual,
+                    _ => comparisonOperator,
+                };
+            }
             else
                 return true;
-            expected ^= binary.OperatorKind == BinaryOperatorKind.NotEquals;
+            if (comparisonOperator == BinaryOperatorKind.NotEquals)
+            {
+                comparisonOperator = BinaryOperatorKind.Equals;
+                expected = !expected;
+            }
         }
         else if (condition is IIsPatternOperation { Pattern: IConstantPatternOperation pattern } isPattern
                  && pattern.Value.ConstantValue.HasValue)
@@ -210,13 +230,13 @@ internal sealed class FlowConditions
 
         var index = _predicates.FindIndex(predicate =>
             SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
-            && Equals(predicate.Constant, comparison));
+            && Equals(predicate.Constant, comparison) && predicate.Operator == comparisonOperator);
         if (index < 0)
         {
-            if (_predicates.Count == 64)
+            if (_predicates.Count == MaxPredicates)
                 return true;
             index = _predicates.Count;
-            _predicates.Add((symbol, comparison));
+            _predicates.Add((symbol, comparison, comparisonOperator));
         }
         var mask = 1UL << index;
         if ((known & mask) != 0)

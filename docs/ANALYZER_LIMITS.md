@@ -12,8 +12,9 @@ parameter. Writes before selection or after the proof interval do not invalidate
 that interval. Captured writes, by-reference escapes, and address-taken locals remain
 conservative; array-index calculations do not expose their locals' storage.
 
-Each query examines fewer than 16,384 queued states and tracks at most 64 branch
-predicates. If the state budget is exhausted, the search conservatively treats the
+Each query examines fewer than 16,384 queued states (`ReachabilityWalker.MaxQueuedStates`)
+and tracks at most 64 branch predicates (`FlowConditions.MaxPredicates`, the width
+of the `ulong` masks). If the state budget is exhausted, the search conservatively treats the
 unproven path as reachable. A warning in a very large or branch-heavy method can
 therefore reflect an analysis limit rather than a confirmed unsafe execution. The
 diagnostic retains its usual message; reaching the limit never suppresses a warning

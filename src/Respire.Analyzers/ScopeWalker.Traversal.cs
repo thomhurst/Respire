@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
@@ -17,6 +18,7 @@ internal static partial class ScopeWalker
         BarrierStartPolicy startPolicy,
         CancellationToken cancellationToken)
     {
+        private const int MaxQueuedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startPosition, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
@@ -83,7 +85,7 @@ internal static partial class ScopeWalker
             var catchOrigins = FindCatchOrigins();
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
-            var remaining = 16384;
+            var remaining = MaxQueuedStates;
             while (_pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -445,6 +447,8 @@ internal static partial class ScopeWalker
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation
                 || operation is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } receiver }
                     && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
+                    // A member binding is evaluated only on the non-null conditional-access path.
+                    && operation.Syntax is not MemberBindingExpressionSyntax
                 || operation is IConversionOperation conversion
                     && (conversion.OperatorMethod is not null || !conversion.IsImplicit
                         && !conversion.Conversion.IsIdentity && !conversion.ConstantValue.HasValue)
