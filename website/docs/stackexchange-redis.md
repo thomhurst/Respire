@@ -177,11 +177,13 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `ExecuteAsync("CMD", args)` | `ExecuteAsync("CMD", args)` or the generated `RespireCommands` catalog |
 | `CommandFlags.FireAndForget` | `ExecuteFireAndForgetAsync` |
 
-`RedisValue` results can hold arbitrary bytes. Respire's string methods, such as
-`GetStringAsync` and the non-generic `Hashes.GetAllAsync`, decode UTF-8 and replace invalid byte
-sequences. Use `GetBytesAsync`, `GetAsync<byte[]>`, or `Hashes.GetAllAsync<byte[]>` for binary
-values. `Hashes.GetAllAsync` returns string field names, so read hashes with binary field names
-through a raw `HGETALL`.
+`RedisValue` results can hold arbitrary bytes. Respire's non-generic read methods return strings,
+which decode UTF-8 and replace invalid byte sequences. This applies to strings, hashes, lists,
+sets, sorted sets, and `Keys.ScanAsync`. For binary data, use `GetBytesAsync` or the generic
+`<byte[]>` overloads, such as `GetAsync<byte[]>`, `Hashes.GetAllAsync<byte[]>`,
+`Lists.RangeAsync<byte[]>`, `Sets.MembersAsync<byte[]>`, and `SortedSets.RangeAsync<byte[]>`.
+Hash field names and scanned keys are always strings, so use raw `HGETALL` or `SCAN` commands when
+field names or keys are binary.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
