@@ -204,13 +204,16 @@ The policies preserve different completion contracts:
   release logs a fence failure while preserving its original error and ownership-loss notice.
 - Semaphore cleanup uses one-second attempts and foreground waits, with a one-minute retry
   window and jittered exponential delays from 100 ms to five seconds. Confirmed core disposal
-  or cleanup shutdown is terminal; an unrelated resource's disposal remains retryable.
+  or cleanup shutdown is terminal; an unrelated resource's disposal remains retryable when
+  the owning core is still live. Without a core, `ObjectDisposedException` remains terminal
+  to preserve the cleanup contract for untracked `IRespireClient` implementations.
   Server errors and attempt timeouts remain retryable. Fence acknowledgement survives release
   retries and local retirement failures. The existing core queue retains four workers, 256
   queued items, and at most 256 admission waiters; overload and abandonment diagnostics remain.
 - Cache corrections first use owner-checked FIFO broadcasts. A completed broadcast proves
-  ordering without a kill. An overdue pass fences the captured connection before retrying,
-  retaining its original peer and ASK state until the broadcast completes. The fence's control
+  ordering without a kill or allocating a fence. Only an overdue pass creates a fence for
+  the captured connection before retrying, retaining its original peer and ASK state until
+  the broadcast completes. The fence's control
   connection uses the independent `ConnectTimeout` budget (ten seconds by default), because
   a cold fencing handshake can outlast the foreground broadcast wait and fence sends disable
   ordinary command deadlines. Timeout propagates without granting ordering proof or starting
