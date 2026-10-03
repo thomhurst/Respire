@@ -64,9 +64,14 @@ ClientSideCache = new()
 ## Choose what gets cached
 
 By default every eligible read is cached. Set `KeyPrefixes` to cache only the keys that benefit:
-hot, read-mostly data such as catalogs or configuration. Reads of other keys go straight to Redis,
-are never registered for tracking, and never compete for cache capacity. This works in both
-tracking modes; in `Broadcast` mode the same prefixes are also sent to Redis.
+hot, read-mostly data such as catalogs or configuration. Reads of other keys go straight to Redis
+and never compete for cache capacity. In `OptIn` mode they are also sent without
+`CLIENT CACHING YES`, so Redis does not track them, with one exception: an `MGET` that misses
+both covered and uncovered keys is one tracked command, so Redis tracks every key it reads.
+Those uncovered keys can generate invalidation pushes but never enter the local cache.
+Respire does not split the command, which keeps `MGET` atomic. Read uncovered keys in a separate
+`MGET` to avoid their tracking. This works in both tracking modes; in `Broadcast` mode the same
+prefixes are also sent to Redis.
 
 Prefixes are literal bytes, not Redis glob patterns; `*`, `?`, NUL, and non-UTF-8 bytes retain
 their literal meaning. Pass binary prefixes as `RespireKey` values. Options snapshot both the list
@@ -76,7 +81,8 @@ that view, but not an unprefixed `products:42` call. Duplicates and overlapping 
 rejected before connecting; one empty prefix covers everything and therefore cannot accompany
 another prefix.
 
-Mixed `MGET` calls retain covered hits and fetch misses together, caching only covered keys.
+Mixed `MGET` calls retain covered hits and fetch misses together, caching only covered keys
+(in `OptIn` mode that fetch is tracked as described above).
 A cached multi-key projection requires **every** dependency to be covered. Hash fields inherit
 their physical hash key's coverage. Invalidation subscriptions require a covered key.
 

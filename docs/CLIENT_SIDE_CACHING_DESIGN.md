@@ -150,7 +150,9 @@ redirected invalidation connection.
 `CLIENT TRACKING ON BCAST [PREFIX ...]` on every cache-bearing connection. Its reads have no
 `CLIENT CACHING YES` prelude. The options snapshot owns nonoverlapping literal physical
 `KeyPrefixes`; an empty list covers all keys. In `OptIn` mode the same prefixes are a local
-filter: uncovered reads are sent without `CLIENT CACHING YES`, so Redis never tracks them.
+filter: uncovered reads are sent without `CLIENT CACHING YES`, so Redis does not track them.
+A mixed covered/uncovered MGET miss stays one atomic tracked command, so Redis also tracks its
+uncovered keys; their invalidations are harmless because those keys are never inserted.
 Prefixes are not transformed by client key-prefix views. Per-key insertion requires that key to be covered, while a command projection
 requires every dependency to be covered. Uncovered reads still execute but cannot create cache
 entries. These insertion guards also cover mixed covered/uncovered MGET misses.

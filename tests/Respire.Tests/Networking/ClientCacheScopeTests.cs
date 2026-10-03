@@ -52,6 +52,24 @@ public class ClientCacheScopeTests
     }
 
     [Test]
+    public async Task OptInMixedMgetStaysOneTrackedCommandAndCachesOnlyCoveredKeys()
+    {
+        await using var server = new FakeRespServer(
+            Hello, FakeRespServer.OkReply, FakeRespServer.OkReply,
+            "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+
+        await Assert.That(await client.Strings.GetManyAsync("hot:a", "cold:b"))
+            .IsEquivalentTo((string?[])["a", "b"]);
+
+        await Assert.That(server.ReceivedCommands.Skip(2)).IsEquivalentTo([
+            "CLIENT CACHING YES",
+            "MGET hot:a cold:b",
+        ]);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task InvalidationSubscriptionRequiresCoveredKeyInOptInMode()
     {
         await using var client = RespireClient.Create(new RespireOptions
