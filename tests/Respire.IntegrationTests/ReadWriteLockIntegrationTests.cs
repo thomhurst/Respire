@@ -1,4 +1,4 @@
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 using TUnit.Assertions;
 using TUnit.Core;
 

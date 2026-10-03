@@ -609,7 +609,7 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   reliably sanitized. Pipelines and transactions emit one span with `db.operation.batch.size`.
 - `Meter("Respire")` — stable `db.client.operation.duration` histogram in seconds.
 - Register the built-in source and meter with OpenTelemetry's standard extensions. There is
-  no `Respire.Extensions.OpenTelemetry` package or `AddRespireInstrumentation()` API.
+  no `Respire.OpenTelemetry` package or `AddRespireInstrumentation()` API.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -632,7 +632,7 @@ Top-level server errors throw `RespireServerException` from both the friendly AP
 `ExecuteAsync`. A raw aggregate reply can contain nested error elements; inspect those with
 `RespireResult.IsError`. `RespireResult` has no public `Kind` property.
 
-## 16. Dependency injection (`Respire.Extensions.DependencyInjection`)
+## 16. Dependency injection (`Respire.DependencyInjection`)
 
 <!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
@@ -698,7 +698,7 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
    `[RespireCommand("JSON.GET")]` methods. Construct the generated
    `<InterfaceName>Implementation` with an `IRespireClient`; no reflection-based `redis.As<T>()`
    factory is needed. See the generated commands guide for supported shapes and raw execution
-   limitations. First-party module packages remain tracked by
+   limitations. Redis feature packages are documented in the package guide and tracked by
    [#417](https://github.com/thomhurst/Respire/issues/417).
 5. **Interactive WATCH transactions** are already delivered on dedicated connections (§6).
 

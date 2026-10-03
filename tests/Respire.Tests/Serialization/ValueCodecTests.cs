@@ -4,6 +4,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Compression;
+using Respire.Compression.Lz4;
+using Respire.Compression.Zstd;
 using Respire.Serialization;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

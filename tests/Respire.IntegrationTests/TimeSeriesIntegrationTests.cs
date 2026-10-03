@@ -1,4 +1,4 @@
-using Respire.Extensions.TimeSeries;
+using Respire.TimeSeries;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

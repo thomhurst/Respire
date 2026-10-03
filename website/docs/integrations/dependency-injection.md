@@ -5,14 +5,14 @@ description: Register lazy Respire clients in ASP.NET Core and worker services.
 
 # Dependency injection
 
-`Respire.Extensions.DependencyInjection` registers `IRespireClient` with lazy connection behavior. Application startup does not wait for Redis availability.
+`Respire.DependencyInjection` registers `IRespireClient` with lazy connection behavior. Application startup does not wait for Redis availability.
 
 ## Register a default client
 
-Install [Respire.Extensions.DependencyInjection from NuGet](https://www.nuget.org/packages/Respire.Extensions.DependencyInjection), including prerelease versions. The package also brings in `Respire` as a dependency:
+Install [Respire.DependencyInjection from NuGet](https://www.nuget.org/packages/Respire.DependencyInjection), including prerelease versions. The package also brings in `Respire` as a dependency:
 
 ```bash
-dotnet add package Respire.Extensions.DependencyInjection --prerelease
+dotnet add package Respire.DependencyInjection --prerelease
 ```
 
 Register a connection string:

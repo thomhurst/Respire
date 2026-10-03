@@ -36,6 +36,19 @@ public class SentinelMonitoringTests
     }
 
     [Test]
+    public async Task ProbeDoesNotReportCancellationForNormalCompletion()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var probe = new SentinelMonitorProbe();
+        await using var client = probe.Client;
+        await using var subscription = await client.SubscribeAsync(lifetime.Token);
+        await using var messages = subscription.GetAsyncEnumerator(lifetime.Token);
+        probe.Messages.Writer.TryComplete();
+        await Assert.That(await messages.MoveNextAsync()).IsFalse();
+        await Assert.That(probe.Cancelled.Task.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task StopRejectsLateDnsEvidenceBeforeCancellationCallbacksRun()
     {
         using var lifetime = new CancellationTokenSource();
@@ -51,6 +64,31 @@ public class SentinelMonitoringTests
         await Assert.That(await resolution.WaitAsync(Limit)).IsNull();
         await Assert.That(await monitor.ResolveAddressesAsync("new.alias", default)).IsNull();
         await Assert.That(queries).IsEquivalentTo(new[] { "old.alias" });
+    }
+
+    [Test]
+    public async Task ProbeReportsObservedCancellationWhenCleanupRemovesItsCallback()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var probe = new SentinelMonitorProbe();
+        await using var client = probe.Client;
+        await using var subscription = await client.SubscribeAsync(lifetime.Token);
+        await using var messages = subscription.GetAsyncEnumerator(lifetime.Token);
+        var read = messages.MoveNextAsync().AsTask();
+        // Token callbacks run in reverse registration order. Force cleanup to remove
+        // the probe's earlier callback before it can signal Cancelled, as a completed
+        // cancellation-aware read can do during real monitor teardown.
+        using var cleanup = lifetime.Token.Register(() =>
+        {
+            var disposal = subscription.DisposeAsync();
+            if (!disposal.IsCompleted)
+                throw new InvalidOperationException("Probe cleanup must complete synchronously for this ordering test.");
+            disposal.GetAwaiter().GetResult();
+        });
+        await lifetime.CancelAsync();
+        await Assert.That(() => read).Throws<OperationCanceledException>();
+        await Assert.That(probe.SubscriptionCleanup.Task.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(probe.Cancelled.Task.IsCompletedSuccessfully).IsTrue();
     }
 
     [Test]

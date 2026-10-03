@@ -38,13 +38,13 @@ $requiredPackages = @(
     'Respire.Compression.Zstd'
     'Respire'
     'Respire.Testing'
-    'Respire.Extensions.Caching'
-    'Respire.Extensions.Coordination'
-    'Respire.Extensions.Aws'
-    'Respire.Extensions.Caching.Hybrid'
+    'Respire.Caching'
+    'Respire.Coordination'
+    'Respire.Aws'
+    'Respire.Caching.Hybrid'
     'Respire.Probabilistic'
-    'Respire.Extensions.DependencyInjection'
-    'Respire.Extensions.Azure'
+    'Respire.DependencyInjection'
+    'Respire.Azure'
     'Respire.Json'
     'Respire.Search'
     'Respire.TimeSeries'
@@ -241,18 +241,18 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using OpenTelemetry.Metrics;')
 [void]$builder.AppendLine('using OpenTelemetry.Trace;')
 [void]$builder.AppendLine('using Respire;')
-[void]$builder.AppendLine('using Respire.Extensions.Caching;')
-[void]$builder.AppendLine('using Respire.Extensions.Caching.Hybrid;')
-[void]$builder.AppendLine('using Respire.Extensions.DependencyInjection;')
-[void]$builder.AppendLine('using Redis.Search;')
-[void]$builder.AppendLine('using Respire.Extensions.Aws;')
-[void]$builder.AppendLine('using Respire.Extensions.Json;')
-[void]$builder.AppendLine('using Respire.Extensions.TimeSeries;')
-[void]$builder.AppendLine('using Respire.Extensions.Probabilistic;')
+[void]$builder.AppendLine('using Respire.Caching;')
+[void]$builder.AppendLine('using Respire.Caching.Hybrid;')
+[void]$builder.AppendLine('using Respire.DependencyInjection;')
+[void]$builder.AppendLine('using Respire.Search;')
+[void]$builder.AppendLine('using Respire.Aws;')
+[void]$builder.AppendLine('using Respire.Json;')
+[void]$builder.AppendLine('using Respire.TimeSeries;')
+[void]$builder.AppendLine('using Respire.Probabilistic;')
 [void]$builder.AppendLine('using Respire.Serialization;')
 [void]$builder.AppendLine('#pragma warning disable')
 
-$usingPattern = '(?m)^\s*(?:global\s+)?using\s+(?:(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:global::)?[A-Za-z_][A-Za-z0-9_.]*)\s*;\s*(?://.*)?$'
+$usingPattern = '(?m)^\s*(?:global\s+)?using\s+(?:(?:static\s+)?(?:global::)?[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:global::)?[A-Za-z_][A-Za-z0-9_.]*)\s*;\s*(?://.*)?$'
 for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
 {
     $snippet = $snippets[$snippetIndex]

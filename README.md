@@ -5,6 +5,12 @@ RESP-compatible servers while keeping the API familiar to C# developers.
 
 [Read the documentation](https://thomhurst.github.io/Respire/)
 
+Packages, assemblies, and root namespaces share the `Respire.*` naming convention.
+Use `Respire.Json`, `Respire.Search`, `Respire.TimeSeries`, and `Respire.Probabilistic`
+for Redis features; `Extensions` is reserved for custom Redis modules.
+See [Packages and namespaces](https://thomhurst.github.io/Respire/docs/packages)
+for all packages and how to update existing references.
+
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
@@ -380,8 +386,8 @@ Use a source-generated serializer, as shown above, when the application requires
 
 ### IDistributedCache and HybridCache
 
-`Respire.Extensions.Caching` provides `IDistributedCache` and `IBufferDistributedCache`.
-`Respire.Extensions.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`.
+`Respire.Caching` provides `IDistributedCache` and `IBufferDistributedCache`.
+`Respire.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`.
 
 ```csharp
 builder.Services.AddRespireDistributedCache(

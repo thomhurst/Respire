@@ -58,19 +58,19 @@ Unknown module commands are treated as non-blocking and run on the shared multip
 
 Key-prefixed views reject generated commands whose layouts are not registered as prefixable, because arbitrary module key layouts are unknown. Commands with prefixable layouts, such as `TS.GET` and `BF.ADD`, have their keys prefixed. TimeSeries label-filter commands `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, and `TS.QUERYINDEX` have registered layouts but no explicit keys to prefix, so key-prefixed views reject them. A `RespireKey` parameter alone does not declare routing metadata. Known cluster layouts retain slot validation; unknown layouts use existing raw routing heuristics and server validation. Use unprefixed clients and explicitly formed keys for unknown layouts, and verify your module's routing requirements.
 
-## First-party module packages
+## Built-in Redis feature packages
 
-The same generator backs the typed module packages. Use their APIs when you want module-specific options and reply models:
+The same generator backs the typed Redis feature packages. Use their APIs when you want feature-specific options and reply models:
 
 - [Respire.Json](json.md): typed RedisJSON commands and source-generated JSON serialization support.
 - [Respire.Search](search.md): query builders, aggregation and cursors, vector queries, and hybrid search.
 - [Respire.TimeSeries](timeseries.md): samples, ranges, aggregation, and retention rules.
 - [Respire.Probabilistic](probabilistic.md): Bloom, Cuckoo, Count-Min, Top-K, and t-digest commands.
 
-Each package has real Redis integration coverage for RESP2 and RESP3. The server must provide the relevant module commands; hybrid search requires Redis 8.4 or a compatible server.
+Each package has real Redis integration coverage for RESP2 and RESP3. The server must provide the relevant commands; hybrid search requires Redis 8.4 or a compatible server.
 
 For direct repeated raw execution, retain a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor. Its `Sources` remains `None`; pre-encoding does not claim an official command reference. String-to-command conversion retains its existing parsing behavior.
 
 ## Native AOT
 
-Generated code calls concrete APIs and does not use reflection, `RespireResult.As<T>()`, or runtime code generation. CI packs `Respire` and all four module packages, consumes them in `tests/Respire.GeneratedCommands.Smoke`, publishes that consumer with Native AOT warnings treated as errors, and executes both RESP2 and RESP3 command paths against Redis 8.4. The smoke application covers an externally declared command interface alongside the typed module APIs. Project-reference consumers inside a repository must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`; NuGet consumers receive the generator automatically.
+Generated code calls concrete APIs and does not use reflection, `RespireResult.As<T>()`, or runtime code generation. CI packs `Respire` and all four feature packages, consumes them in `tests/Respire.GeneratedCommands.Smoke`, publishes that consumer with Native AOT warnings treated as errors, and executes both RESP2 and RESP3 command paths against Redis 8.4. The smoke application covers an externally declared command interface alongside the typed feature APIs. Project-reference consumers inside a repository must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`; NuGet consumers receive the generator automatically.

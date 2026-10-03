@@ -1,8 +1,8 @@
 using System.Runtime.CompilerServices;
-using Redis.Search;
-using Respire.Extensions.Json;
-using Respire.Extensions.Probabilistic;
-using Respire.Extensions.TimeSeries;
+using Respire.Search;
+using Respire.Json;
+using Respire.Probabilistic;
+using Respire.TimeSeries;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

@@ -23,6 +23,8 @@ dotnet add package Respire --prerelease
 
 ## Start a server
 
+See [Packages and namespaces](./packages) for optional Redis features, .NET integrations, and the naming convention.
+
 If you do not have a server running locally, Docker is the quickest option:
 
 ```bash
