@@ -181,15 +181,22 @@ internal static class SentinelResolver
                     var matchesSwitchSource = notificationHint is { } hint
                         ? MatchesSwitchSource(primary, in hint, primaryAddresses)
                         : previouslyValidatedPrimary is { } previous && SentinelDiscoveryState.EndpointComparer.Instance.Equals(primary, previous);
+                    var matchesPreferredTarget = preferredTarget is { } target
+                        && SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary);
+                    // A newer epoch orders the announced endpoint, not the client's DNS cache.
+                    // A target hostname that still reaches a different demoted source is not
+                    // confirmation of that target, even if the source still answers ROLE master.
+                    var targetResolvesToSource = matchesPreferredTarget && primaryAddresses is not null
+                        && notificationHint is { } targetHint && TargetResolvesToSwitchSource(primary, primaryAddresses, in targetHint);
                     var contradictsSwitch = matchesSwitchSource
                         && (preferredTarget is not null || notificationHint is { Sources.Length: > 0 })
-                        && (preferredTarget is not { } target || !SentinelDiscoveryState.EndpointComparer.Instance.Equals(target, primary))
+                        && !matchesPreferredTarget
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
                     var contradictsRecovery = notificationHint?.ReconciliationPrimary is { } recovered
                         && !recovered.Matches(primary, primaryAddresses)
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
                     if (observation.Epoch is null) discoveryState.WarnMissingEpoch(logger, endpoint);
-                    if (contradictsSwitch || contradictsRecovery
+                    if (targetResolvesToSource || contradictsSwitch || contradictsRecovery
                         || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
                     {
                         // A rejected view consumes the same fallback budget as a failed ROLE check.
@@ -440,6 +447,14 @@ internal static class SentinelResolver
         {
             if (MatchesSwitchSource(candidate, source, candidateAddresses)) return true;
         }
+        return false;
+    }
+
+    internal static bool TargetResolvesToSwitchSource(RespireEndpoint target, string[] addresses, in SentinelHint hint)
+    {
+        foreach (var source in hint.Sources)
+            if (!SentinelDiscoveryState.EndpointComparer.Instance.Equals(source.Endpoint, target)
+                && MatchesSwitchSource(target, source, addresses)) return true;
         return false;
     }
 

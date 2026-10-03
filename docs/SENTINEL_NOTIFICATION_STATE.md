@@ -4,6 +4,27 @@
 discovery worker. `SentinelNotificationCoalescer` is synchronous state owned by the
 router gate. Network queries and DNS resolution happen outside that gate.
 
+## Review boundaries
+
+Review the implementation in these dependency groups, keeping each group's regression
+tests beside its runtime changes:
+
+1. **Wire and subscription lifecycle:** `SentinelEvent`, the connection close observer,
+   `SubscriptionHub` recovery, and the monitor methods in `SentinelRouter.Notifications`.
+   Check channel/service filtering, separate Sentinel credentials, reconnect episode capture,
+   subscription gaps, and disposal. The parsing and Pub/Sub reconnect tests cover this boundary.
+2. **Discovery and publication:** `SentinelNotificationCoalescer`, `SentinelDiscoveryState`,
+   `SentinelResolver`, and the router's notification worker and generation publication.
+   Check the state table and safety boundaries below against `SentinelNotificationTests`,
+   `SentinelFenceTransitionTests`, `SentinelConfigurationTests`, and `SentinelRoutingTests`.
+3. **Public contract and integration:** the Sentinel container fixture, real failover tests,
+   connection/reconnect documentation, and observability documentation. Real Redis and Valkey
+   failover must exercise the same publication path as the deterministic wire regressions.
+
+The monitor and reducer extraction in #727 separates the first two runtime boundaries.
+Fixtures and documentation accompany the behavior they verify and describe, so intermediate
+changes retain executable coverage and an accurate public contract.
+
 ## State transitions
 
 | State/event | Transition |
@@ -52,6 +73,14 @@ the record. DNS evidence remains paired with its endpoint and port.
 - An unchanged target hostname cannot suppress a switch notification: DNS may now resolve
   to a different server. The target-is-current shortcut requires numeric peer identity.
   Conflicting-cycle source evidence still protects an explicitly announced failback target.
+- A target hostname that resolves or connects to a differently named demoted source is
+  rejected, even with a newer configuration epoch. Epochs order Sentinel's announced owner;
+  they do not prove that the client's DNS or connected socket reaches that owner. The router
+  checks the actual ROLE-validated peer before accepting the configuration or publishing it.
+- A source hostname may already resolve to the promoted peer. Fresh source addresses that
+  also identify an unambiguous announced hostname target are not retained as demotion
+  evidence, before or after target publication. A literal source or the connected source
+  hostname still retires its generation; target DNS cannot override that direct source identity.
 - When a switch names the current primary's hostname, its actual validated peer is captured
   before queuing discovery. A metadata-denied numeric alias cannot republish the demoted
   server while DNS resolution is unavailable. In a conflicting cycle, source address
@@ -90,10 +119,20 @@ confirmation, reporter ordering, metadata denial, and hostname/numeric failback 
 The wire failback alias regression passes for numeric endpoints and fails for hostname
 aliases before validated address evidence is carried into reporter reconciliation.
 
+`RandomNotificationSequencesRequireRoleAndMonotonicEpochs` replays 96 discovery attempts
+for each of three fixed seeds through the real router and fake RESP sockets. It interleaves
+switch/down/gap hints, active/pending coalescing, configuration epochs, successful ROLE
+replies, and replica ROLE replies. Every successful selection requires a fresh successful
+ROLE response and a nondecreasing epoch. Failed attempts preserve the published generation.
+Positive coverage checks require successful selections, stale-report rejection, and actual
+replica ROLE replies, so an implementation that rejects everything cannot pass.
+
 The monitor/coalescer extraction remains tracked by [#727](https://github.com/thomhurst/Respire/issues/727).
 That refactor must preserve these contracts and the deterministic tests while reducing
 shared mutable state. Endpoint identity consolidation must keep epoch-owner equivalence
 separate from conservative switch-source matching.
+Complete the explicit Idle/Active/ActivePending reducer in that issue before adding further
+notification behavior. The randomized publication tests are a regression gate for extraction.
 
 Evidence arrays are immutable after publication. Duplicate reporter unions reuse existing
 arrays, empty source unions reuse their populated operand, and unchanged DNS evidence does

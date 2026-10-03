@@ -267,12 +267,32 @@ internal sealed partial class SentinelRouter
             var addresses = await ResolveAddressesAsync(oldPrimary.Host, cancellationToken).ConfigureAwait(false);
             if (addresses is null) return;
 
+            // Resolve hostname targets before treating a source's fresh DNS as demotion
+            // evidence. Both names may now point to the promoted peer, before or after
+            // its publication. Their overlap cannot identify that peer as the old owner.
+            if (!IPAddress.TryParse(oldPrimary.Host, out _))
+            {
+                HashSet<string> resolvedTargets = new(StringComparer.OrdinalIgnoreCase);
+                foreach (var target in hint.Targets)
+                {
+                    if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _)) continue;
+                    var targetAddresses = await ResolveAddressesAsync(target.Host, cancellationToken).ConfigureAwait(false);
+                    if (SentinelDiscoveryState.SingleAddress(target, targetAddresses) is { } targetAddress)
+                        resolvedTargets.Add(targetAddress);
+                }
+                if (resolvedTargets.Count > 0)
+                {
+                    addresses = Array.FindAll(addresses, address => !resolvedTargets.Contains(address));
+                    if (addresses.Length == 0) return;
+                }
+            }
+
             lock (_gate)
             {
                 if (_disposed) return;
+                var current = Current;
                 _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses);
                 var retained = resolution.Hint.WithSourceAddresses(oldPrimary, addresses);
-                var current = Current;
                 // Do not apply an old resolution to a later generation for the same endpoint:
                 // a failback can legitimately publish that address again. A changed endpoint
                 // is checked so a hostname alias is not lost across an in-flight handoff.

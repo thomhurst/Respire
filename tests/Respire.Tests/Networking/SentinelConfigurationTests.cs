@@ -9,6 +9,51 @@ namespace Respire.Tests.Networking;
 public class SentinelConfigurationTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task AnnouncedHostnameCannotResolveBackToDemotedSource(bool newerEpoch, bool capturedHostnameSource)
+    {
+        var source = new RespireEndpoint("127.0.0.1", 6379);
+        var target = new RespireEndpoint("primary.example", 6379);
+        await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                ? "*2\r\n+primary.example\r\n+6379\r\n"u8.ToArray()
+                : command == "SENTINEL MASTER mymaster" && newerEpoch
+                    ? "*8\r\n+ip\r\n+primary.example\r\n+port\r\n+6379\r\n+config-epoch\r\n+2\r\n+flags\r\n+master\r\n"u8.ToArray()
+                    : "*0\r\n"u8.ToArray(),
+        };
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", reporter.Port)],
+        };
+        var state = new SentinelDiscoveryState(options.Endpoints);
+        if (newerEpoch) state.AcceptConfiguration(source, 1);
+        var announcedSource = capturedHostnameSource ? new RespireEndpoint("former.internal", source.Port) : source;
+        var hint = SentinelHint.FromSwitchMaster("switch", announcedSource, target, options.Endpoints[0]);
+        if (capturedHostnameSource) hint = hint.WithSourceAddresses(announcedSource, [source.Host]);
+        var validations = 0;
+        var accepted = false;
+        try
+        {
+            await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _, _) =>
+            {
+                validations++;
+                return ValueTask.FromResult(candidate.PrimaryEndpoint);
+            }, CancellationToken.None, state, previouslyValidatedPrimary: source, preferredTarget: target,
+                notificationHint: hint,
+                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>([System.Net.IPAddress.Loopback]));
+            accepted = true;
+        }
+        catch (RespireConnectionException) { }
+        await Assert.That(accepted).IsFalse();
+        await Assert.That(validations).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task SwitchConfirmationUsesCanonicalTargetIdentity()
     {
         await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())

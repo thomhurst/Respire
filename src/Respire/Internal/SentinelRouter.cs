@@ -136,8 +136,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             // A forced discovery that resolves to the healthy current primary confirms it with ROLE
             // on the existing connection instead of opening and discarding a candidate generation.
             Func<RespireOptions, string[]?, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
-                ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, token)
-                : (options, _, token) => ConnectGenerationAsync(options, token);
+                ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, notificationHint, token)
+                : (options, _, token) => ConnectGenerationAsync(options, notificationHint, token);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
@@ -238,7 +238,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,
-        string[]? addresses, CancellationToken cancellationToken)
+        string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken)
     {
         var endpoint = options.PrimaryEndpoint;
         var samePeer = SentinelDiscoveryState.SingleAddress(endpoint, addresses) is { } address
@@ -248,14 +248,26 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         var sameEndpointWithoutAddresses = addresses is null && SameEndpoint(current.Endpoint, endpoint);
         if (current.IsRetired || !current.Multiplexer.IsConnected
             || !sameEndpointWithoutAddresses && !samePeer)
-            return await ConnectGenerationAsync(options, cancellationToken).ConfigureAwait(false);
+            return await ConnectGenerationAsync(options, hint, cancellationToken).ConfigureAwait(false);
         await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
+        ValidateSwitchTargetPeer(current, hint);
         return current;
+    }
+
+    private void ValidateSwitchTargetPeer(Generation candidate, SentinelHint? hint)
+    {
+        if (hint is not { Target: { } target } evidence || !SameEndpoint(candidate.Endpoint, target)
+            || System.Net.IPAddress.TryParse(target.Host, out _) || candidate.ValidatedPeer is not { } peer) return;
+        // DNS can change between discovery's lookup and connection establishment. The peer
+        // that answered ROLE must also be distinct from a differently named switch source.
+        if (!SentinelResolver.TargetResolvesToSwitchSource(target, [peer.Host], in evidence)) return;
+        Invalidate(candidate);
+        throw new RespireConnectionException($"Sentinel target {target} connected to a demoted switch source at {peer}.");
     }
 
     // The supervisor wakes when discovery learns a Sentinel. Monitors complete only when the
     // client is disposed, so this fallback interval only restarts one that faulted unexpectedly.
-    private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, CancellationToken cancellationToken)
+    private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, SentinelHint? hint, CancellationToken cancellationToken)
     {
         var generation = new Generation(this, core, options);
         lock (_gate)
@@ -266,6 +278,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         try
         {
             await generation.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            ValidateSwitchTargetPeer(generation, hint);
             return generation;
         }
         catch

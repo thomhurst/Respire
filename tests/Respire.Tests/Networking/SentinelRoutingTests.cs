@@ -15,6 +15,93 @@ namespace Respire.Tests.Networking;
 public class SentinelRoutingTests
 {
     [Test]
+    [Arguments(549)]
+    [Arguments(678)]
+    [Arguments(727)]
+    public async Task RandomNotificationSequencesRequireRoleAndMonotonicEpochs(int seed)
+    {
+        var roleAccepted = true;
+        var successfulRoles = 0;
+        var rejectedRoleReplies = 0;
+        byte[]? RoleReply(int _, string command)
+        {
+            if (command != "ROLE") return null;
+            if (!Volatile.Read(ref roleAccepted))
+            {
+                Interlocked.Increment(ref rejectedRoleReplies);
+                return "*3\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n"u8.ToArray();
+            }
+            Interlocked.Increment(ref successfulRoles);
+            return PrimaryRole;
+        }
+        await using var first = Primary(RoleReply, maxConnections: 128);
+        await using var second = Primary(RoleReply, maxConnections: 128);
+        var port = first.Port;
+        long epoch = 0;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port), () => Volatile.Read(ref epoch), maxConnections: 256);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
+        var reporter = new RespireEndpoint("127.0.0.1", sentinel.Port);
+        var coalescer = new SentinelNotificationCoalescer();
+        var random = new Random(seed);
+        long publishedEpoch = 0;
+        var successes = 0;
+        var failedRoles = 0;
+        var staleReports = 0;
+        for (var step = 0; step < 96; step++)
+        {
+            for (var offered = random.Next(1, 5); offered > 0; offered--)
+            {
+                var source = random.Next(2);
+                var hint = random.Next(3) switch
+                {
+                    0 => SentinelHint.FromSwitchMaster($"switch-{source}", endpoints[source], endpoints[1 - source], reporter),
+                    1 => SentinelHint.FromDown($"down-{source}", reporter),
+                    _ => SentinelHint.FromGap(reporter),
+                };
+                coalescer.Offer(hint, targetIsCurrent: false);
+            }
+            // Fresh master/replica pairs guarantee progress and failed ROLE coverage;
+            // other passes include stale reporters,
+            // failed ROLE results, duplicate hints, and pending hints retained after failure.
+            epoch = step % 4 < 2 ? step + 1 : random.Next(0, step + 2);
+            port = endpoints[random.Next(2)].Port;
+            roleAccepted = step % 4 == 0 || step % 4 != 1 && random.Next(2) == 0;
+            var before = router.Current!;
+            var validationsBefore = Volatile.Read(ref successfulRoles);
+            var failed = false;
+            try
+            {
+                var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+                    notificationHint: coalescer.Active).AsTask().WaitAsync(Limit);
+                await Assert.That((seed, step, roleAccepted)).IsEqualTo((seed, step, true));
+                await Assert.That(Volatile.Read(ref successfulRoles) > validationsBefore).IsTrue();
+                await Assert.That(epoch >= publishedEpoch).IsTrue();
+                await Assert.That(selected.ValidatedPeer!.Value.Port).IsEqualTo(port);
+                await Assert.That(router.Current).IsSameReferenceAs(selected);
+                publishedEpoch = epoch;
+                successes++;
+            }
+            catch (RespireConnectionException)
+            {
+                failed = true;
+                await Assert.That(router.Current).IsSameReferenceAs(before);
+                if (!roleAccepted) failedRoles++;
+                if (epoch < publishedEpoch) staleReports++;
+            }
+            var validated = failed ? null : router.Current;
+            if (coalescer.TakePending(failed, validated?.Endpoint, validated?.ValidatedPeer) is null)
+                coalescer.Complete();
+        }
+        await Assert.That(successes > 10).IsTrue();
+        await Assert.That(failedRoles > 0).IsTrue();
+        await Assert.That(Volatile.Read(ref rejectedRoleReplies) > 0).IsTrue();
+        await Assert.That(staleReports > 0).IsTrue();
+    }
+
+    [Test]
     [Arguments("127.0.0.1")]
     [Arguments("::ffff:127.0.0.1")]
     public async Task SameEpochFallbackRecognizesResolvedOwnerAlias(string numericHost)
@@ -1665,6 +1752,109 @@ public class SentinelRoutingTests
         await Assert.That(generation.IsRetired).IsFalse();
         await Assert.That(router.Current).IsSameReferenceAs(generation);
         await client.PingAsync().AsTask().WaitAsync(Limit);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task ResolvedSwitchSourceDistinguishesTargetPeerEvidence(bool literalSource, bool targetIsCurrent)
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var current = router.Current!;
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? "-ERR discovery unavailable\r\n"u8.ToArray() : reply(id, command);
+        router.HostResolver = (host, _) => Task.FromResult<IPAddress[]>(
+            [host == "promoted.internal" && !targetIsCurrent ? IPAddress.Parse("192.0.2.2") : IPAddress.Loopback]);
+        var hint = SentinelHint.FromSwitchMaster("switch", new(literalSource ? "127.0.0.1" : "former.internal", primary.Port),
+            new("promoted.internal", primary.Port), new("127.0.0.1", sentinel.Port));
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await ((Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!).WaitAsync(Limit);
+        var shouldRetire = literalSource || !targetIsCurrent;
+        await Assert.That(current.IsRetired).IsEqualTo(shouldRetire);
+        await Assert.That(router.Current).IsSameReferenceAs(current);
+        if (!shouldRetire) await client.PingAsync().AsTask().WaitAsync(Limit);
+    }
+
+    [Test]
+    public async Task TargetConnectionCannotPublishDemotedPeerAfterDnsChanges()
+    {
+        await using var primary = Primary();
+        var announceHostname = false;
+        await using var sentinel = Sentinel(() => primary.Port, () => announceHostname ? 2 : 1);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) =>
+        {
+            var response = reply(id, command);
+            return announceHostname && (command.StartsWith("SENTINEL GET-MASTER") || command == "SENTINEL MASTER mymaster")
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(response!).Replace("127.0.0.1", "localhost"))
+                : response;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        announceHostname = true;
+        // Discovery sees the promoted address; the actual localhost connection still reaches
+        // the former primary, which continues to answer ROLE master during split brain.
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Parse("192.0.2.2")]);
+        var hint = SentinelHint.FromSwitchMaster("switch", original.Endpoint, new("localhost", primary.Port),
+            new("127.0.0.1", sentinel.Port));
+        var accepted = false;
+        try
+        {
+            await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true, notificationHint: hint);
+            accepted = true;
+        }
+        catch (RespireConnectionException) { }
+        await Assert.That(accepted).IsFalse();
+        await Assert.That(router.Current).IsSameReferenceAs(original);
+    }
+
+    [Test]
+    public async Task SourceDnsMovingToFutureTargetDoesNotFenceItsPublication()
+    {
+        await using var primary = Primary();
+        var promoted = false;
+        await using var sentinel = Sentinel(() => primary.Port, () => promoted ? 2 : 1);
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) =>
+        {
+            var response = reply(id, command);
+            return command.StartsWith("SENTINEL GET-MASTER") || command == "SENTINEL MASTER mymaster"
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(response!).Replace("127.0.0.1", "localhost"))
+                : response;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        // The established socket is the former peer. Both hostnames now resolve to the
+        // promoted peer, so their DNS overlap cannot identify that peer as the old owner.
+        typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic)!.SetValue(original.Multiplexer.GetConnection(), "192.0.2.1");
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
+        promoted = true;
+        var hint = SentinelHint.FromSwitchMaster("switch", new("former.internal", primary.Port),
+            new("localhost", primary.Port), new("127.0.0.1", sentinel.Port));
+        var coalescer = (SentinelNotificationCoalescer)typeof(SentinelRouter).GetField("_coalescer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+        coalescer.Offer(hint, false);
+        var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await ((Task)resolve.Invoke(router, [hint, original, CancellationToken.None, null])!).WaitAsync(Limit);
+        var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+            notificationHint: coalescer.Active);
+        await Assert.That(selected.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+        await Assert.That(ReferenceEquals(selected, original)).IsFalse();
+        await Assert.That(router.Current).IsSameReferenceAs(selected);
     }
 
     [Test]
@@ -3882,14 +4072,14 @@ public class SentinelRoutingTests
         Connections = 1, ConnectTimeout = Limit, CommandTimeout = Limit, Protocol = RespProtocol.Resp2,
     };
 
-    private static FakeRespServer Primary(Func<int, string, byte[]?>? reply = null)
-        => new(8, FakeRespServer.OkReply)
+    private static FakeRespServer Primary(Func<int, string, byte[]?>? reply = null, int maxConnections = 8)
+        => new(maxConnections, FakeRespServer.OkReply)
         {
             ReplyOverride = (connection, command) => reply?.Invoke(connection, command)
                 ?? (command == "ROLE" ? PrimaryRole : FakeRespServer.OkReply),
         };
 
-    private static FakeRespServer Sentinel(Func<int> primaryPort, Func<long>? configurationEpoch = null)
+    private static FakeRespServer Sentinel(Func<int> primaryPort, Func<long>? configurationEpoch = null, int maxConnections = 64)
     {
         var epochs = new Dictionary<int, long>();
         byte[] Configuration()
@@ -3902,7 +4092,7 @@ public class SentinelRoutingTests
             }
             return ConfigurationReply(port, configurationEpoch?.Invoke() ?? epoch);
         }
-        return new(64, "*0\r\n"u8.ToArray())
+        return new(maxConnections, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
                 ? AddressReply(primaryPort())
