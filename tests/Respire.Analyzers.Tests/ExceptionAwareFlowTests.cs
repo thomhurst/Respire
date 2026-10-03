@@ -7,6 +7,50 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Property = (flag = false);", true)]
+    [Arguments("this[0] = (flag = false);", true)]
+    [Arguments("Property = Throws(); flag = false;", false)]
+    [Arguments("Property &= (flag = false);", true)]
+    public async Task SetterExceptionsFollowRhsWrites(string assignment, bool warning)
+    {
+        const string members = """
+            bool Property { get => true; set => throw new System.Exception(); }
+            bool this[int index] { get => true; set => throw new System.Exception(); }
+            bool Throws() => throw new System.Exception();
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                {{members}}
+                async Task Run(RespireClient client, RespireResult existing, bool flag)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    try { {{assignment}} result.Dispose(); }
+                    catch { if (flag) result.Dispose(); }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                {{members}}
+                async Task Run(RespireClient client, RespirePending<string> existing, bool flag)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = flag ? batch.GetStringAsync("key") : existing;
+                    try { {{assignment}} await batch.SendAsync(); }
+                    catch { if (flag) await batch.SendAsync(); }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("publisher.Changed += handler;", false, true)]
     [Arguments("publisher.Changed -= handler;", false, true)]
     [Arguments("publisher.Changed += handler;", true, false)]
@@ -21,6 +65,12 @@ public class ExceptionAwareFlowTests
     [Arguments("_ = (string)boxed;", false, true)]
     [Arguments("_ = (int)boxed;", false, true)]
     [Arguments("_ = checked((byte)number);", false, true)]
+    [Arguments("_ = checked((byte?)number);", false, true)]
+    [Arguments("checked { _ = (byte?)number; }", false, true)]
+    [Arguments("_ = checked((byte?)nullable);", false, true)]
+    [Arguments("_ = unchecked((byte?)number);", false, false)]
+    [Arguments("checked { _ = unchecked((byte?)number); }", false, false)]
+    [Arguments("unchecked { _ = checked((byte?)number); }", false, true)]
     [Arguments("_ = (int)nullable;", false, true)]
     [Arguments("_ = (long?)nullable;", false, false)]
     [Arguments("_ = (int)amount;", false, true)]

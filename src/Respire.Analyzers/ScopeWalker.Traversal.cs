@@ -244,13 +244,28 @@ internal static partial class ScopeWalker
 
             // Evaluate children before their parent's write. Each exception sees only writes
             // that have already executed, including writes in earlier call arguments.
-            foreach (var child in operation.ChildOperations)
-                Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            var exceptionSource = operation;
+            if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
+                && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
+                    or IFieldReferenceOperation or IArrayElementReferenceOperation)
+            {
+                // Evaluate the receiver and indexes, then the RHS, then perform the store.
+                // A property target is not a getter call in a simple assignment.
+                foreach (var child in assignment.Target.ChildOperations)
+                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                Visit(assignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                exceptionSource = assignment.Target;
+            }
+            else
+            {
+                foreach (var child in operation.ChildOperations)
+                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
-                && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation))
+                && operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource))
             {
                 if (dispatch != 0)
                     // The runtime treats a throwing filter as a rejected filter.
@@ -459,6 +474,8 @@ internal static partial class ScopeWalker
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
                 or IIncrementOrDecrementOperation { OperatorMethod: not null }
+                or ICompoundAssignmentOperation { Target: IPropertyReferenceOperation }
+                or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
                 || !operation.ConstantValue.HasValue && (operation switch
                 {
                     IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
@@ -514,9 +531,23 @@ internal static partial class ScopeWalker
             }
             if (destination is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableDestination)
                 destination = nullableDestination.TypeArguments[0];
-            return operation.IsChecked && IsIntegral(destination)
+            return (operation.IsChecked || IsCheckedContext(operation.Syntax)) && IsIntegral(destination)
                 || source.SpecialType == SpecialType.System_Decimal
                 || destination.SpecialType == SpecialType.System_Decimal;
+        }
+
+        private bool IsCheckedContext(SyntaxNode syntax)
+        {
+            // Roslyn can omit IsChecked on lifted nullable conversions. The nearest
+            // checked/unchecked syntax overrides the compilation's overflow setting.
+            foreach (var ancestor in syntax.AncestorsAndSelf())
+            {
+                if (ancestor is CheckedExpressionSyntax expression)
+                    return expression.Keyword.IsKind(SyntaxKind.CheckedKeyword);
+                if (ancestor is CheckedStatementSyntax statement)
+                    return statement.Keyword.IsKind(SyntaxKind.CheckedKeyword);
+            }
+            return ((CSharpCompilation)semanticModel.Compilation).Options.CheckOverflow;
         }
 
         private static bool IsIntegral(ITypeSymbol? type)
