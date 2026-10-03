@@ -146,10 +146,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                     {
                         var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(fixture._container, ports).ConfigureAwait(false);
                         startupError.Data["RespireFixture.DaemonLogs"] = diagnostics;
-                        // Test runners capture stderr with the failed test. Console failures must
-                        // not replace the original startup error or prevent container removal.
-                        try { Console.Error.WriteLine($"Fixture container {containerId ?? "unavailable"} daemon diagnostics:\n{diagnostics}"); }
-                        catch (Exception) { }
+                        // Retain diagnostics on the failure. Writing to redirected process output
+                        // here could block indefinitely before the owned container is removed.
                     }
                     try { await fixture.DisposeAsync().ConfigureAwait(false); }
                     catch (Exception cleanupError)

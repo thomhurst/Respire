@@ -13,11 +13,14 @@ internal static class ContainerStartupDiagnostics
         // Startup's token is commonly already cancelled. Diagnostics get a separate, short
         // deadline; even a transport that ignores cancellation must not delay fixture cleanup.
         using var deadline = new CancellationTokenSource(s_timeout);
-        var logs = await Task.WhenAll(ports.Select(port => CapturePortAsync(container, port, deadline.Token))).ConfigureAwait(false);
-        return Bound(string.Join("\n", logs));
+        // Reserve separators before splitting the budget so a noisy port cannot displace
+        // every earlier daemon's tail. Keep the final bound for unusually large port arrays.
+        var perPortBudget = Math.Max(1, (MaximumCharacters - ports.Length + 1) / ports.Length);
+        var logs = await Task.WhenAll(ports.Select(port => CapturePortAsync(container, port, perPortBudget, deadline.Token))).ConfigureAwait(false);
+        return Bound(string.Join("\n", logs), MaximumCharacters);
     }
 
-    private static async Task<string> CapturePortAsync(IContainer container, int port, CancellationToken cancellationToken)
+    private static async Task<string> CapturePortAsync(IContainer container, int port, int budget, CancellationToken cancellationToken)
     {
         var path = RespireContainerFixture.DaemonLogPath(port);
         try
@@ -28,15 +31,17 @@ internal static class ContainerStartupDiagnostics
             // WaitAsync can detach on timeout. Observe any later transport failure too.
             _ = ObserveFaultAsync(pending);
             var result = await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
-            return Bound($"{path} (exit code: {result.ExitCode})\n{result.Stdout}\n{result.Stderr}");
+            var label = $"{path} (exit code: {result.ExitCode})\n";
+            return Bound($"{label}{result.Stdout}\n{result.Stderr}", budget, label);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return $"{path}: daemon logs unavailable; collection exceeded {s_timeout}.";
+            return Bound($"{path}: daemon logs unavailable; collection exceeded {s_timeout}.", budget);
         }
         catch (Exception error)
         {
-            return Bound($"{path}: daemon logs unavailable ({error.GetType().Name}): {error.Message}");
+            var label = $"{path}: daemon logs unavailable ({error.GetType().Name}): ";
+            return Bound(label + error.Message, budget, label);
         }
     }
 
@@ -46,10 +51,11 @@ internal static class ContainerStartupDiagnostics
         catch (Exception) { }
     }
 
-    private static string Bound(string text)
+    private static string Bound(string text, int maximumCharacters, string label = "")
     {
-        const string marker = "[truncated]\n";
-        return text.Length <= MaximumCharacters ? text
-            : marker + text[^(MaximumCharacters - marker.Length)..];
+        if (text.Length <= maximumCharacters) return text;
+        var prefix = "[truncated]\n" + label;
+        return prefix.Length >= maximumCharacters ? prefix[..maximumCharacters]
+            : prefix + text[^(maximumCharacters - prefix.Length)..];
     }
 }

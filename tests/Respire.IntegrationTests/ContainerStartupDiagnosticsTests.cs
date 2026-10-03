@@ -60,6 +60,45 @@ public class ContainerStartupDiagnosticsTests
         probe.DisposeCount.Should().Be(1);
     }
 
+    // This serialized regression deliberately replaces stderr and restores it in finally.
+#pragma warning disable TUnit0055
+    [Test]
+    [NotInParallel]
+    public async Task StartupFailureDoesNotDependOnStandardError()
+    {
+        var original = new IOException("Controlled startup failure.");
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        var probe = (ContainerProbe)container;
+        probe.HostnameError = original;
+        probe.Execute = (_, _) => Task.FromResult(new ExecResult("preserved daemon tail", "", 0));
+        var previous = Console.Error;
+        using var writer = new RejectingErrorWriter();
+        Console.SetError(writer);
+        try
+        {
+            Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
+                (_, _) => Task.FromResult(container));
+            (await start.Should().ThrowAsync<IOException>()).Which.Should().BeSameAs(original);
+            original.Data["RespireFixture.DaemonLogs"].Should().BeOfType<string>().Which
+                .Should().Contain("preserved daemon tail");
+            probe.DisposeCount.Should().Be(1);
+            writer.Writes.Should().Be(0);
+        }
+        finally { Console.SetError(previous); }
+    }
+#pragma warning restore TUnit0055
+
+    private sealed class RejectingErrorWriter : TextWriter
+    {
+        internal int Writes;
+        public override Encoding Encoding => Encoding.UTF8;
+        public override void Write(char value)
+        {
+            Writes++;
+            throw new IOException("Standard error is unavailable.");
+        }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -161,6 +200,28 @@ public class ContainerStartupDiagnosticsTests
         diagnostics.Length.Should().BeLessThanOrEqualTo(ContainerStartupDiagnostics.MaximumCharacters);
         diagnostics.Should().StartWith("[truncated]").And.Contain("last diagnostic line");
         if (!fails) diagnostics.Should().EndWith("stderr tail");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OversizedPortsEachRetainTheirLabelAndTail(bool fails)
+    {
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        ((ContainerProbe)container).Execute = (command, _) =>
+        {
+            var tail = $"last line from {command[^1]}";
+            var text = new string('x', ContainerStartupDiagnostics.MaximumCharacters * 2) + tail;
+            return fails ? Task.FromException<ExecResult>(new IOException(text))
+                : Task.FromResult(new ExecResult(text, "", 0));
+        };
+        var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(container, [6381, 6382, 6383]);
+        diagnostics.Length.Should().BeLessThanOrEqualTo(ContainerStartupDiagnostics.MaximumCharacters);
+        foreach (var port in new[] { 6381, 6382, 6383 })
+        {
+            diagnostics.Should().Contain($"[truncated]\n/tmp/respire-fixture/{port}.log");
+            diagnostics.Should().Contain($"last line from /tmp/respire-fixture/{port}.log");
+        }
     }
 
     [Test]
