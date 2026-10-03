@@ -9,6 +9,62 @@ namespace Respire.Pipeline.Tests;
 public class StableVersionTagTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CaseDistinctPackedTagsRetainNativeSelection(bool annotated)
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.TagAsync("v1.2.3", annotated);
+        var older = await repository.Git("rev-parse", "refs/tags/v1.2.3");
+        await repository.CommitAsync("newer release");
+        var newer = await repository.Git("rev-parse", "HEAD");
+        if (annotated)
+            newer = await repository.GitWithInput(
+                $"object {newer}\ntype commit\ntag V1.2.3\ntagger Test <test@example.com> 1234567890 +0000\n\nrelease\n", "mktag");
+        // Build the packed representation directly so fixture setup also works on
+        // case-insensitive filesystems, where loose ref names cannot coexist.
+        await repository.Git("tag", "-d", "v1.2.3");
+        var packed = await repository.Git("rev-parse", "--git-path", "packed-refs");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(repository.Path, packed),
+            $"{newer} refs/tags/V1.2.3\n{older} refs/tags/v1.2.3\n");
+        var expected = await repository.Git("describe", "--tags", "--abbrev=0");
+        await Assert.That(expected).IsEqualTo("V1.2.3");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task GraftedHistoryDoesNotReachPhysicalAncestors()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("grafted root");
+        var head = await repository.Git("rev-parse", "HEAD");
+        var grafts = System.IO.Path.Combine(repository.Path,
+            await repository.Git("rev-parse", "--git-path", "info/grafts"));
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(grafts)!);
+        await File.WriteAllTextAsync(grafts, head + "\n");
+        await Assert.That(await repository.Git("describe", "--tags", "--abbrev=0", "--always"))
+            .IsEqualTo(head);
+        await Assert.That(await repository.SelectAsync()).IsNull();
+        File.Delete(grafts);
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+    }
+
+    [Test]
+    [Arguments("1.2.3")]
+    [Arguments("v1.2.3")]
+    [Arguments("V1.2.3")]
+    public async Task AcceptsAllStableTagPrefixes(string tag)
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", tag);
+        await Assert.That(await repository.SelectAsync()).IsEqualTo(tag);
+    }
+
+    [Test]
     public async Task UsesSourceRepositoryObjectFormat()
     {
         using var repository = new TestRepository();
@@ -278,15 +334,21 @@ public class StableVersionTagTests
         process.Start();
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
+        IOException? inputError = null;
         if (input is not null)
         {
-            await process.StandardInput.WriteAsync(input);
-            process.StandardInput.Close();
+            try
+            {
+                await process.StandardInput.WriteAsync(input);
+                process.StandardInput.Close();
+            }
+            catch (IOException exception) { inputError = exception; }
         }
         await process.WaitForExitAsync();
         var outputText = await output;
         var errorText = await error;
         if (process.ExitCode != 0) throw new InvalidOperationException(errorText);
+        if (inputError is not null) throw inputError;
         return outputText.Trim();
     }
 }
