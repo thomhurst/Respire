@@ -42,6 +42,15 @@ public class CredentialProviderIntegrationTests
                 ClientSideCache = new RespireClientSideCacheOptions(),
             };
             await using var client = await RespireClient.ConnectAsync(options);
+            if (client.Core.Sentinel is { } sentinel)
+            {
+                // Startup validation sends ROLE on data connections. Finish it before using
+                // CLIENT LIST's last command to observe in-place credential renewal.
+                using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await sentinel.Monitoring.WaitForSubscriptionsAsync(fixture.SentinelEndpoints.Count, startup.Token);
+                if (sentinel.NotificationRediscovery is { } discoveryTask)
+                    await discoveryTask.WaitAsync(startup.Token);
+            }
             // These hash tags exercise all three Cluster primaries.
             foreach (var key in new[] { "{a}:credential", "{b}:credential", "{c}:credential" })
             {
