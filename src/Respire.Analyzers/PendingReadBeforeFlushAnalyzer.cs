@@ -438,6 +438,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
     private static bool IsDefinitelyNonNullArgument(SyntaxNodeAnalysisContext context, IArgumentOperation argument)
     {
+        if (argument.ArgumentKind == ArgumentKind.DefaultValue)
+        {
+            // An omitted optional argument is the parameter's default constant. Its syntax is
+            // the invocation itself, so only the constant or a non-nullable value type proves it.
+            return argument.Value.ConstantValue is { HasValue: true, Value: not null }
+                   || argument.Value.Type is { IsValueType: true, OriginalDefinition.SpecialType: not SpecialType.System_Nullable_T };
+        }
+
         if (argument.ArgumentKind != ArgumentKind.Explicit)
         {
             return false;

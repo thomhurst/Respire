@@ -926,6 +926,33 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    [Arguments("string? value = \"fallback\"", false)]
+    [Arguments("int value = 0", false)]
+    [Arguments("string? value = null", true)]
+    [Arguments("int? value = null", true)]
+    public async Task NotNullIfNotNullProducerUsesOmittedOptionalDefault(string parameter, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            #nullable enable
+            using System;
+            using System.Diagnostics.CodeAnalysis;
+            using Respire;
+            public class Caller
+            {
+                [return: NotNullIfNotNull(nameof(value))]
+                private static RespirePending<string>? Produce({{parameter}}) => throw new Exception();
+                public void Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = Produce() ?? batch.GetStringAsync("key");
+                    Console.WriteLine({{read}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     public async Task NullableProducerWithUnsatisfiedNotNullIfNotNullStillRequiresCoalescedBatchFlush() => await Verify.VerifyAsync(
         """
         #nullable enable
