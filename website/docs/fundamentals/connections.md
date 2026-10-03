@@ -580,7 +580,8 @@ Configured and Sentinel replicas must pass the same role validation as ordinary 
 Cluster candidates must belong to the key's current slot topology. All replica-capable policies
 can return stale data, including a replica hedge that beats a primary read.
 
-The client shares one budget across all its views. Each eligible logical read adds credit;
+The client shares one budget across all its views. Each eligible logical read adds credit after
+initial endpoint selection, including fast reads and reads with no second eligible peer;
 starting a hedge consumes it. At 5%, at least twenty eligible reads fund one hedge. The budget
 starts empty and stores at most one hedge, so fast reads cannot accumulate an unbounded burst.
 Concurrent reads may use less than the configured maximum. This bounds additional hedge starts,
@@ -592,6 +593,12 @@ random selections, cursors, blocking commands, batches, transactions, streamed r
 unknown commands are excluded. Cluster reads also require a known slot. Eligible commands include
 `GET`/`MGET`, deterministic hash/list/set/sorted-set reads, geo lookups, and stream range reads.
 Argument bytes are copied when a request can hedge, because a losing request may outlive the caller.
+This opt-in path is not zero-allocation: asynchronous originals can also allocate tasks, timers,
+and linked cancellation sources. A synchronously successful original avoids conversion to a race
+task and timer setup, but still needs its argument snapshot. Deferring that snapshot until the
+timer fires would leave an original request waiting for admission with caller-owned bytes after
+a hedge returns. Reads without credit or without a possible second replica under strict `Replica`
+routing use the ordinary awaited send path.
 Accepted losing requests retain their normal timeout and FIFO response slot; hedging does not
 cancel them when another reply wins.
 

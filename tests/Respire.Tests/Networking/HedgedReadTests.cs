@@ -124,6 +124,43 @@ public class HedgedReadTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task HedgeRetirementBetweenSelectionAndDispatchDoesNotReplaceOriginalSuccess()
+    {
+        await using var primary = new FakeRespServer(Bulk("primary"));
+        await using var replica = Replica(holdReads: true);
+        await using var client = RespireClient.Create(Options(primary, replica));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var selected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.read.hedge.sent")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key != "server.port" || !Equals(tag.Value, primary.Port)) continue;
+                // This callback runs after selection, immediately before the optional send.
+                client.Core.Multiplexer.GetConnection().StopAcceptingCommands();
+                selected.TrySetResult();
+            }
+        });
+        listener.Start();
+        // Also run this regression with TUNIT_DISABLE_HTML_REPORTER=true: TUnit's automatic
+        // ActivityListener otherwise wraps synchronous send errors in an instrumented ValueTask.
+        if (string.Equals(Environment.GetEnvironmentVariable("TUNIT_DISABLE_HTML_REPORTER"), "true", StringComparison.OrdinalIgnoreCase))
+            await Assert.That(RespireTelemetry.IsEnabled).IsFalse();
+        var read = client.GetStringAsync("held", deadline.Token).AsTask();
+        await selected.Task.WaitAsync(deadline.Token);
+        await replica.SendRawAsync(Bulk("original"));
+        await Assert.That(await read.WaitAsync(deadline.Token)).IsEqualTo("original");
+        await Assert.That(primary.ReceivedCommands.Contains("GET held")).IsFalse();
+    }
+
+    [Test]
     public async Task OptionalServerErrorDoesNotReplaceOriginalSuccess()
     {
         await using var primary = new FakeRespServer("-ERR optional failed\r\n"u8.ToArray());
@@ -349,6 +386,40 @@ public class HedgedReadTests
         var extra = primary.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal));
         await Assert.That(extra).IsGreaterThan(0);
         await Assert.That(extra).IsLessThanOrEqualTo(count * 5 / 100);
+    }
+
+    [Test]
+    public async Task OnlyEligibleLogicalReadsFundBudgetIncludingFastUnhedgeableReads()
+    {
+        await using var primary = new FakeRespServer(16, FakeRespServer.OkReply)
+        { ReplyOverride = (_, command) => NodeReply(command, "primary") };
+        await using var replica = Replica(holdReads: true);
+        await using var client = RespireClient.Create(Options(primary, replica) with
+        {
+            HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 25 },
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 4; i++)
+        {
+            await client.SetAsync("excluded", "value", cancellationToken: deadline.Token);
+            await client.WithReadFrom(RespireReadFrom.Primary).GetStringAsync("excluded", deadline.Token);
+        }
+        var first = client.GetStringAsync("first", deadline.Token).AsTask();
+        await WaitForCommandAsync(replica, "GET first", deadline.Token);
+        await Task.Delay(50, deadline.Token);
+        var duplicatedFirst = primary.ReceivedCommands.Contains("GET first");
+        await replica.SendRawAsync(Bulk("first"));
+        await first;
+        await Assert.That(duplicatedFirst).IsFalse();
+
+        // These fast strict-Replica reads cannot hedge with only one replica, but they are
+        // eligible logical reads and must contribute to the shared denominator.
+        replica.SuppressReply = null;
+        for (var i = 0; i < 2; i++)
+            await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("warm", deadline.Token);
+        replica.SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal);
+        await Assert.That(await client.GetStringAsync("fourth", deadline.Token)).IsEqualTo("primary");
+        await replica.SendRawAsync(Bulk("loser"));
     }
 
     [Test]

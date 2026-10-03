@@ -18,10 +18,7 @@ public sealed partial class RespireClient
             : await cluster.GetReadConnectionAsync(slot, _readFrom, cancellationToken).ConfigureAwait(false);
         budget.RecordRead();
         var sent = false;
-        Task<RespValue>? original = null;
-        Task<RespValue>? hedge = null;
-        Task<RespValue>? returned = null;
-        RespireConnection? alternative = null;
+        var race = new HedgeRace();
         try
         {
             // Advisory cached-topology check only: do not establish optional connections before
@@ -34,7 +31,10 @@ public sealed partial class RespireClient
             // Either leg may outlive its caller. Own the argument bytes before dispatching either
             // request, including when admission/backpressure delays serialization of the loser.
             var snapshot = SnapshotCommand.Create(in command);
-            original = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken).AsTask();
+            var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken);
+            if (pending.IsCompletedSuccessfully) return pending.Result;
+            var original = pending.AsTask();
+            race.Original = original;
             if (!original.IsCompleted)
             {
                 using var timer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -52,8 +52,8 @@ public sealed partial class RespireClient
                         : cluster.GetHedgeConnectionAsync(slot!.Value, _readFrom, connection, selectionStop.Token).AsTask();
                     if (await Task.WhenAny(original, selection).ConfigureAwait(false) == selection)
                     {
-                        try { alternative = await selection.ConfigureAwait(false); }
-                        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+                        try { race.Alternative = await selection.ConfigureAwait(false); }
+                        catch (Exception error) when (!IsFatalHedgeFailure(error))
                         { /* An optional candidate failure must not replace the original outcome. */ }
                     }
                     else
@@ -61,39 +61,31 @@ public sealed partial class RespireClient
                         selectionStop.Cancel();
                         _ = ObserveHedgeSelectionAsync(selection);
                     }
-                    if (alternative is not null && !original.IsCompleted
+                    if (race.Alternative is { } alternative && !original.IsCompleted
                         && !cancellationToken.IsCancellationRequested && budget.TrySpend())
                     {
                         sent = true;
                         RespireTelemetry.RecordHedgeSent(alternative);
-                        hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken).AsTask();
+                        try
+                        {
+                            race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken).AsTask();
+                        }
+                        catch (Exception error) when (!IsFatalHedgeFailure(error))
+                        {
+                            // Retirement can reject admission synchronously after selection.
+                            race.Hedge = Task.FromException<RespValue>(error);
+                        }
                     }
                 }
             }
 
-            var winner = hedge is null ? original : await Task.WhenAny(original, hedge).ConfigureAwait(false);
-            RespValue response;
-            try { response = await winner.ConfigureAwait(false); }
-            catch (Exception error) when (hedge is not null
-                && error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
-            {
-                // Prefer a successful response over a failed optional leg. If both fail, preserve
-                // the original request's exception type and identity instead of aggregating it.
-                winner = ReferenceEquals(winner, original) ? hedge : original;
-                try { response = await winner.ConfigureAwait(false); }
-                catch (Exception otherError) when (otherError is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
-                { return await original.ConfigureAwait(false); }
-            }
-            returned = winner;
-            if (ReferenceEquals(winner, hedge)) RespireTelemetry.RecordHedgeWon(alternative!);
-            return response;
+            var result = await race.ResolveAsync().ConfigureAwait(false);
+            race.Returned = result.Winner;
+            return result.Response;
         }
         finally
         {
-            // Do not cancel a losing accepted read: it still owns a FIFO response slot. Observe
-            // its completion and dispose its buffer without delaying the winning caller.
-            if (original is not null && !ReferenceEquals(original, returned)) _ = DisposeLosingReadAsync(original);
-            if (hedge is not null && !ReferenceEquals(hedge, returned)) _ = DisposeLosingReadAsync(hedge);
+            race.DisposeLosers();
             RespireTelemetry.RecordHedgeExtraLoad(connection, sent);
         }
     }
@@ -106,11 +98,8 @@ public sealed partial class RespireClient
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect), initialConnection: connection, allowReadFrom: true)
             : SendOnConnectionAsync(operation, connection, command, cancellationToken);
 
-    private static async Task DisposeLosingReadAsync(Task<RespValue> response)
-    {
-        try { using var discarded = await response.ConfigureAwait(false); }
-        catch (Exception) { /* The winning caller cannot observe the losing request's failure. */ }
-    }
+    private static bool IsFatalHedgeFailure(Exception error)
+        => error is OutOfMemoryException or StackOverflowException or AccessViolationException;
 
     private static async Task ObserveHedgeSelectionAsync(Task<RespireConnection?> selection)
     {
