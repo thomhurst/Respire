@@ -1,3 +1,24 @@
+function Test-ClaudeReviewRequired {
+    [CmdletBinding()]
+    param([AllowNull()]$Checks, [AllowNull()][string]$AuthorLogin)
+
+    $reviews = @($Checks | Where-Object { $_.name -eq 'claude-review' })
+    if ($reviews.Count -eq 0) { return $false }
+
+    # GitHub CLI represents bot authors as app/name; webhook logins use [bot].
+    # Branch names are author-controlled and must never grant an exemption.
+    $dependencyBot = $AuthorLogin -in @('app/dependabot', 'app/renovate', 'dependabot[bot]', 'renovate[bot]')
+    return -not $dependencyBot -or @($reviews | Where-Object { $_.conclusion -ne 'SKIPPED' }).Count -gt 0
+}
+
+function Test-ClaudeReviewSkipped {
+    [CmdletBinding()]
+    param([AllowNull()]$Checks, [AllowNull()][string]$AuthorLogin)
+
+    return @($Checks | Where-Object { $_.name -eq 'claude-review' }).Count -gt 0 -and
+        -not (Test-ClaudeReviewRequired -Checks $Checks -AuthorLogin $AuthorLogin)
+}
+
 function ConvertTo-UtcDateTimeOffset {
     [CmdletBinding()]
     param(
@@ -378,7 +399,10 @@ function Get-UnansweredClaudeReviewReason {
     [CmdletBinding()]
     param(
         [AllowNull()][object[]]$Comments,
-        [AllowNull()][string[]]$AuthorizedLogins
+        [AllowNull()][string[]]$AuthorizedLogins,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$HeadSha,
+        [switch]$RequireReview,
+        [switch]$ReviewSkipped
     )
 
     $present = @($Comments | Where-Object { $null -ne $_ })
@@ -396,8 +420,21 @@ function Get-UnansweredClaudeReviewReason {
             Sort-Object { Get-CommentCreatedAt $_ }
     )
 
-    $latestReview = $ordered | Where-Object { Test-IsClaudeReviewComment $_ } | Select-Object -Last 1
+    $reviews = @($ordered | Where-Object { Test-IsClaudeReviewComment $_ })
+    $headPattern = '(?im)^\s*<!--\s*REVIEW_HEAD_SHA:\s*([0-9a-f]{40})\s*-->\s*$'
+    $matchesHead = {
+        param($Comment)
+        $heads = [regex]::Matches([string]$Comment.body, $headPattern)
+        return $heads.Count -eq 1 -and $heads[0].Groups[1].Value -eq $HeadSha
+    }
+    $latestReview = $reviews | Where-Object { & $matchesHead $_ } | Select-Object -Last 1
     if ($null -eq $latestReview) {
+        # An explicitly skipped dependency review cannot replace older comments.
+        # A current manual review, when present, still governs this head.
+        if ($ReviewSkipped -and -not $RequireReview) { return $null }
+        if ($RequireReview -or $reviews.Count -gt 0) {
+            return "no Claude review matches current head $HeadSha; run the Claude Code Review workflow manually (workflow_dispatch with pr_number) to request a current-head review"
+        }
         return $null
     }
 
@@ -422,7 +459,8 @@ function Get-UnansweredClaudeReviewReason {
     }
     $reviewedAt = Get-CommentCreatedAt $latestReview
     $reply = $ordered | Where-Object {
-        ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
+        ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (& $matchesHead $_) -and
+            (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
     } | Select-Object -First 1
     if ($null -ne $reply) {
         return $null

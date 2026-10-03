@@ -44,15 +44,17 @@ function Find-WorktreeForBranch([string]$RepoPath, [string]$Branch) {
     return $null
 }
 
-# --- 1. Gate: the pure predicate decides. No merge unless it exits 0. -----------
-& pwsh (Join-Path $PSScriptRoot 'Assert-PrGreen.ps1') -Pr $Pr @repoArgs
-if ($LASTEXITCODE -ne 0) { Fail "Assert-PrGreen denied (exit $LASTEXITCODE). Not merging." }
-
-# Resolve the head branch before merging so post-merge cleanup can remove it.
+# Capture one head for validation, merge, and cleanup. A change before the gate
+# is rejected there; a change afterward is rejected atomically by GitHub.
 $head = gh pr view $Pr @repoArgs --json headRefName,headRefOid,isCrossRepository 2>$null | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $head.headRefName -or -not $head.headRefOid) { Fail 'could not resolve PR head for cleanup' }
+if ($LASTEXITCODE -ne 0 -or -not $head.headRefName -or $head.headRefOid -notmatch '^[0-9a-fA-F]{40}$') { Fail 'could not resolve PR head for validation' }
 $headRef = $head.headRefName
 $mergedHead = $head.headRefOid
+
+# --- 1. Gate: the pure predicate decides. No merge unless it exits 0. -----------
+& pwsh (Join-Path $PSScriptRoot 'Assert-PrGreen.ps1') -Pr $Pr @repoArgs -ExpectedHead $mergedHead
+if ($LASTEXITCODE -ne 0) { Fail "Assert-PrGreen denied (exit $LASTEXITCODE). Not merging." }
+
 $remoteUrl = @(git remote get-url --push --all origin 2>$null)
 $canDeleteRemote = $LASTEXITCODE -eq 0 -and $remoteUrl.Count -eq 1 -and $head.isCrossRepository -eq $false
 
@@ -88,7 +90,7 @@ if ($Worktree) {
 }
 
 # --- 2. Merge. -----------------------------------------------------------------
-gh pr merge $Pr @repoArgs --squash
+gh pr merge $Pr @repoArgs --squash --match-head-commit $mergedHead
 $mergeExitCode = $LASTEXITCODE
 if ($mergeExitCode -ne 0) {
     if ($worktreeIdentityFile) { Remove-Item -LiteralPath $worktreeIdentityFile -Force -ErrorAction SilentlyContinue }

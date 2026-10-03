@@ -20,10 +20,21 @@ internal sealed class SentinelMonitorProbe
 
     public async IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
-        await foreach (var message in Messages.Reader.ReadAllAsync(IgnoreCancellation ? default : cancellationToken))
+        try
         {
-            yield return message;
-            MessageProcessed.TrySetResult();
+            await foreach (var message in Messages.Reader.ReadAllAsync(IgnoreCancellation ? default : cancellationToken))
+            {
+                yield return message;
+                MessageProcessed.TrySetResult();
+            }
+        }
+        finally
+        {
+            // A cancelled read can finish and dispose the subscription registration
+            // before that registration's callback runs. Report observed cancellation
+            // here too, without changing probes that intentionally ignore the token.
+            if (!IgnoreCancellation && cancellationToken.IsCancellationRequested)
+                Cancelled.TrySetResult();
         }
     }
 

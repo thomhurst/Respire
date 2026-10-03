@@ -27,7 +27,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$Pr,
-    [string]$Repo
+    [string]$Repo,
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,7 +43,7 @@ $repoArgs = @()
 if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 # Re-fetch fresh — survey output goes stale within seconds.
-$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits 2>$null
+$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid,author 2>$null
 if ($LASTEXITCODE -ne 0) { Deny "gh pr view failed (exit $LASTEXITCODE)" }
 try {
     $view = $raw | ConvertFrom-Json
@@ -52,6 +53,7 @@ catch {
 }
 
 if ($view.state -ne 'OPEN') { Deny "state=$($view.state) (need OPEN)" }
+if ($ExpectedHead -and $view.headRefOid -ne $ExpectedHead) { Deny 'PR head changed before gate validation' }
 if ($view.mergeable -ne 'MERGEABLE') { Deny "mergeable=$($view.mergeable) (need MERGEABLE)" }
 if ($view.mergeStateStatus -ne 'CLEAN') { Deny "mergeStateStatus=$($view.mergeStateStatus) (need CLEAN)" }
 
@@ -200,7 +202,10 @@ foreach ($login in $candidateLogins) {
     }
 }
 
-$claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins
+$requiresClaude = Test-ClaudeReviewRequired -Checks $checks -AuthorLogin $view.author.login
+$skippedClaude = Test-ClaudeReviewSkipped -Checks $checks -AuthorLogin $view.author.login
+$claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins `
+    -HeadSha $view.headRefOid -RequireReview:$requiresClaude -ReviewSkipped:$skippedClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }
 
 Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."
