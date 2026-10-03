@@ -128,7 +128,7 @@ internal static class ScopeWalker
             return before.SpanStart < after.SpanStart;
         }
 
-        var systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
+        var systemException = GetSystemException(semanticModel);
         return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
                && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
     }
@@ -182,7 +182,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            graph, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
     }
 
@@ -214,7 +214,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            graph, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
     }
 
@@ -245,7 +245,7 @@ internal static class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            graph, GetSystemException(semanticModel),
             graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
     }
 
@@ -277,7 +277,7 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
-            semanticModel.Compilation.GetTypeByMetadataName("System.Exception"),
+            GetSystemException(semanticModel),
             beforeBlock,
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
@@ -335,6 +335,9 @@ internal static class ScopeWalker
             _ => false,
         };
     }
+
+    private static INamedTypeSymbol? GetSystemException(SemanticModel semanticModel)
+        => semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
 
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
