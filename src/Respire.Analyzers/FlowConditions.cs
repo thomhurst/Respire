@@ -282,6 +282,12 @@ internal sealed class FlowConditions
             operand = isPattern.Value;
             if (pattern is IConstantPatternOperation { Value.ConstantValue.HasValue: true } constantPattern)
                 comparison = constantPattern.Value.ConstantValue.Value;
+            else if (pattern is IRecursivePatternOperation { DeconstructionSubpatterns.Length: 0, PropertySubpatterns.Length: 0 }
+                && pattern.Syntax is RecursivePatternSyntax { Type: null })
+            {
+                comparison = null;
+                expected = !expected;
+            }
             else if (pattern is IRelationalPatternOperation { Value.ConstantValue.HasValue: true } relationalPattern)
             {
                 comparison = relationalPattern.Value.ConstantValue.Value;

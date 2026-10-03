@@ -93,6 +93,9 @@ public class ExceptionAwareFlowTests
     [Arguments("_ = new Owner(result, Throws());", false)]
     [Arguments("Take(result, Throws());", true)]
     [Arguments("Take(result, 0);", false, false)]
+    [Arguments("holder.Take(result, 0);", false)]
+    [Arguments("target.Take(result, 0);", false)]
+    [Arguments("holder.Take(result, 0);", true)]
     [Arguments("_ = new Owner(result, 0) { Property = Throws() };", false, false)]
     [Arguments("Owner owner = new(result, 0) { Property = Throws() };", false, false)]
     [Arguments("_ = new Owner(result, Throws()) { Property = 0 };", false)]
@@ -102,12 +105,12 @@ public class ExceptionAwareFlowTests
             using System;
             using System.Threading.Tasks;
             using Respire;
-            class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } public int Property { get; set; } }
+            class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } public int Property { get; set; } public void Take(RespireResult result, int value) { result.Dispose(); } }
             class Caller
             {
                 int Throws() => throw new InvalidOperationException();
                 void Take(RespireResult result, int value) { result.Dispose(); }
-                async Task Run(RespireClient client, bool choice)
+                async Task Run(RespireClient client, bool choice, Owner holder, dynamic target)
                 {
                     var {{(warning && !cleanupInCatch ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{transfer}} }
@@ -454,6 +457,8 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments("holder.Method", false, true)]
     [Arguments("holder.Method", true, false)]
+    [Arguments("holder.Method", false, false, "InvalidOperationException")]
+    [Arguments("holder.Method", false, true, "OutOfMemoryException")]
     [Arguments("Holder.StaticMethod", false, false)]
     [Arguments("this.Method", false, false)]
     [Arguments("Holder.StaticMethod", false, true, "OutOfMemoryException")]
@@ -582,6 +587,10 @@ public class ExceptionAwareFlowTests
 
     [Test]
     [Arguments("value is not null", "value is not null", "", false)]
+    [Arguments("value is { }", "value is { }", "", false)]
+    [Arguments("value is { }", "value != null", "", false)]
+    [Arguments("value is not { }", "value is null", "", false)]
+    [Arguments("value is { }", "value is { }", "value = null;", true)]
     [Arguments("value is not null", "value != null", "", false)]
     [Arguments("value is not null", "value is null", "", true)]
     [Arguments("value is string", "value is string", "", false)]

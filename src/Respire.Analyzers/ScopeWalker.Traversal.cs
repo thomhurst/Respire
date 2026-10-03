@@ -316,10 +316,15 @@ internal static partial class ScopeWalker
                     exceptionSource = _conditions.ResolveCapturedTarget(target);
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
+            // Receiver checks and dynamic binding happen before the callee accepts ownership.
+            var transferFailure = operation.Syntax.Span.End - 1 == firstBarrier
+                && (operation is IDynamicInvocationOperation
+                    || operation is IInvocationOperation { Instance: { } transferReceiver }
+                        && CanDereferenceNull(transferReceiver));
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
-                && operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource))
+                && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure))
             {
                 if (dispatch != 0)
                     // The runtime treats a throwing filter as a rejected filter.
@@ -329,14 +334,17 @@ internal static partial class ScopeWalker
                     // Elements and arguments have their own exception paths. Fixed arrays
                     // and simple framework exception constructors only add allocation failure.
                     Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                        nullPath: transferFailure && operation is IInvocationOperation,
                         allocationOnly: arrayAllocation
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
                             || IsAllocationOnlyInterpolation(exceptionSource)
-                            || exceptionSource is IDelegateCreationOperation delegateCreation && !DelegateCanDereferenceNull(delegateCreation)
+                            || exceptionSource is IDelegateCreationOperation
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
+                    if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                 }
             }
             // Construction/allocation can fail before any initializer runs.
@@ -490,8 +498,9 @@ internal static partial class ScopeWalker
             }
             if (implicitException)
             {
-                exceptionType = allocationOnly
-                    ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException") : null;
+                exceptionType = nullPath
+                    ? semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException")
+                    : allocationOnly ? semanticModel.Compilation.GetTypeByMetadataName("System.OutOfMemoryException") : null;
                 exactType = exceptionType is not null;
             }
 
@@ -616,7 +625,10 @@ internal static partial class ScopeWalker
 
         private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)
             => operation.Target is IMethodReferenceOperation { Method.IsStatic: false, Instance: { } receiver }
-                && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
+                && CanDereferenceNull(receiver);
+
+        private bool CanDereferenceNull(IOperation receiver)
+            => receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
                 && !_conditions.IsConstructedReceiver(receiver);
 
         private static bool IsAllocationOnlyInterpolation(IOperation operation)
