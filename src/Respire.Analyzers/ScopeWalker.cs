@@ -129,8 +129,8 @@ internal static class ScopeWalker
         }
 
         var systemException = GetSystemException(semanticModel);
-        return PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
-               && !PathExistsAvoiding(graph, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
+        return PathExistsAvoiding(graph, semanticModel.Compilation, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
+               && !PathExistsAvoiding(graph, semanticModel.Compilation, systemException, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -182,7 +182,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel.Compilation, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
     }
 
@@ -214,7 +214,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel.Compilation, GetSystemException(semanticModel),
             beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
     }
 
@@ -245,7 +245,7 @@ internal static class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, GetSystemException(semanticModel),
+            graph, semanticModel.Compilation, GetSystemException(semanticModel),
             graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
     }
 
@@ -278,6 +278,7 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
+            semanticModel.Compilation,
             GetSystemException(semanticModel),
             beforeBlock,
             before.SpanStart,
@@ -342,6 +343,7 @@ internal static class ScopeWalker
 
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
+        Compilation compilation,
         INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
@@ -349,11 +351,12 @@ internal static class ScopeWalker
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
-        => new ReachabilityWalker(graph, systemException, startBlock, startPosition, targetBlock,
+        => new ReachabilityWalker(graph, compilation, systemException, startBlock, startPosition, targetBlock,
             targetPosition, barriers, startPolicy).Search();
 
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
+        Compilation compilation,
         INamedTypeSymbol? systemException,
         BasicBlock startBlock,
         int startPosition,
