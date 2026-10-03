@@ -612,12 +612,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
-        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        string? preferredZone = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
 
-        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery)
+        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)
@@ -805,18 +806,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection? RedirectSource = null);
 
     private ValueTask<DedicatedConnectionPool> ReselectDedicatedPoolAsync(
-        DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, string? preferredZone)
         => route.AskRedirect is { } ask
             ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery)
-            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery);
+            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, preferredZone);
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
         bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
-        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery),
+        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery, preferredZone),
             cancellationToken, reuseIdle, kind, preferredZone);
 
-    private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery) : IDedicatedLeaseRoute
+    private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery,
+        string? preferredZone) : IDedicatedLeaseRoute
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
@@ -833,7 +835,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             discovery?.Failed(error);
         }
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
-            => owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery);
+            => owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery, preferredZone);
         public void SetTerminalError(Exception error) => _scope.SetTerminalError(error);
         public void Dispose() => _scope.Dispose();
     }

@@ -2064,7 +2064,7 @@ public sealed partial class RespireClient : IRespireClient
                 if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -2548,7 +2548,7 @@ public sealed partial class RespireClient : IRespireClient
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                        connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
             }
@@ -2608,7 +2608,7 @@ public sealed partial class RespireClient : IRespireClient
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                            connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
 
@@ -3180,7 +3180,7 @@ public sealed partial class RespireClient : IRespireClient
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                            connection, slot, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -3528,7 +3528,7 @@ public sealed partial class RespireClient : IRespireClient
         // Role fallback narrows readFrom, but the physical-zone preference belongs to the whole read.
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
+        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null, preferredZone).ConfigureAwait(false);
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
@@ -3596,7 +3596,7 @@ public sealed partial class RespireClient : IRespireClient
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
                                 redirectedPool = await cluster.GetReadDedicatedPoolAsync(
-                                        slot, readFrom, cancellationToken, discovery)
+                                        slot, readFrom, cancellationToken, discovery, preferredZone)
                                     .ConfigureAwait(false);
                             }
                             acquiringRedirectPool = false;

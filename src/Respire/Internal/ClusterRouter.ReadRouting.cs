@@ -19,13 +19,18 @@ internal sealed partial class ClusterRouter
         => GetKnownReplicas(slot) is { } routes && !ReferenceEquals(routes, _unknownReplicaRoutes);
 
     internal ValueTask<RespireConnection> GetReadConnectionAsync(
-        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery = null,
+        string? preferredZone = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
         {
             return GetConnectionAsync(slot, cancellationToken, discovery);
         }
 
+        // Role fallback narrows eligibility to replicas, but redirects and pool replacement
+        // must still rank those replicas by the original client's configured zone.
+        if (readFrom == RespireReadFrom.Replica && preferredZone is not null)
+            return GetReplicaConnectionAsync(slot.Value, cancellationToken, lastError: null, discovery, RespireReadFrom.AzAffinity);
         return GetReadConnectionWithPolicyAsync(slot.Value, readFrom, cancellationToken, discovery);
     }
 
@@ -36,11 +41,7 @@ internal sealed partial class ClusterRouter
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery, preferredZone);
-        // Role fallback pins replicas, but retains the original client's zone ranking.
-        // Use replica selection directly so retirement cannot switch back to the primary.
-        if (readFrom == RespireReadFrom.Replica && preferredZone is not null)
-            return GetReplicaConnectionAsync(slot.Value, cancellationToken, lastError: null, discovery, RespireReadFrom.AzAffinity);
-        return GetReadConnectionWithPolicyAsync(slot.Value, readFrom, cancellationToken, discovery);
+        return GetReadConnectionAsync(slot.Value, readFrom, cancellationToken, discovery, preferredZone);
     }
 
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(
@@ -397,7 +398,7 @@ internal sealed partial class ClusterRouter
 
     internal async ValueTask<RespireConnection> SelectReadConnectionAfterRedirectAsync(
         RespireConnection redirected, int? slot, RespireReadFrom readFrom,
-        CancellationToken cancellationToken, DiscoveryRound? discovery)
+        CancellationToken cancellationToken, DiscoveryRound? discovery, string? preferredZone = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is not { } value) return redirected;
         if (!await RefreshTopologyFromAsync(redirected, value, cancellationToken, discovery).ConfigureAwait(false))
@@ -414,6 +415,6 @@ internal sealed partial class ClusterRouter
             return redirected;
         }
 
-        return await GetReadConnectionAsync(value, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+        return await GetReadConnectionAsync(value, readFrom, cancellationToken, discovery, preferredZone).ConfigureAwait(false);
     }
 }

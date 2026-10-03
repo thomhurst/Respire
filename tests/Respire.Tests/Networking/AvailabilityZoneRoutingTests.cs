@@ -706,6 +706,107 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    public async Task DedicatedReplicaReselectionKeepsZoneWithoutReturningPrimary()
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var localReplica = Node("local", "local", true);
+        await using var remoteReplica = Node("remote", "remote", true);
+        ConfigureTopology(primary, localReplica, remoteReplica);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with { ClusterTopologyRefreshInterval = null });
+        var router = client.Core.Cluster!;
+        var slot = ClusterHash.GetSlot("key");
+        var previous = await router.GetReadDedicatedPoolAsync(slot, RespireReadFrom.Replica, default, null);
+        await previous.RetireAsync();
+        var lease = await router.RentDedicatedConnectionAsync(previous,
+            new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Replica), default, null, preferredZone: "local");
+        try
+        {
+            await Assert.That(lease.Connection.Port).IsEqualTo(localReplica.Port);
+            await Assert.That(lease.Pool.IsReadOnly).IsTrue();
+        }
+        finally { lease.Pool.Return(lease.Connection); }
+    }
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    public async Task ReplicaRoleFallbackRetainsZoneAfterMovedRefresh(int mode, bool mixedSockets)
+    {
+        await using var primary = Node("primary", "local", false);
+        await using var oldReplica = Node("old-replica", "remote", true);
+        await using var target = Node("target", "remote", false);
+        await using var localReplica = Node("local", "local", true);
+        await using var remoteReplica = Node("remote", "remote", true);
+        ConfigureTopology(primary, oldReplica);
+        // A new set starts round-robin at index 1: without affinity it picks the remote endpoint.
+        ConfigureTopology(target, mixedSockets ? [localReplica] : [localReplica, remoteReplica]);
+        var key = Enumerable.Range(0, 100).Select(index => $"role-redirect-{index}")
+            .First(value => ClusterHash.GetSlot(value) % 2 == 1);
+        var slot = ClusterHash.GetSlot(key);
+        if (mixedSockets)
+        {
+            var previous = localReplica.ReplyOverride!;
+            localReplica.ReplyOverride = (id, command) => command switch
+            {
+                "INFO SERVER" => Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n"),
+                _ when command.StartsWith("GET ") => Bulk(id % 2 == 0 ? "local" : "remote"),
+                _ => previous(id, command),
+            };
+        }
+        var redirected = 0;
+        var originalPrimaryReply = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command switch
+        {
+            _ when command.StartsWith("GET ") || command.StartsWith("XREAD ") => "-LOADING primary unavailable\r\n"u8.ToArray(),
+            "CLUSTER SLOTS" when Volatile.Read(ref redirected) != 0 => target.ReplyOverride!(id, command),
+            _ => originalPrimaryReply(id, command),
+        };
+        var originalReplicaReply = oldReplica.ReplyOverride!;
+        oldReplica.ReplyOverride = (id, command) =>
+        {
+            if (!command.StartsWith("GET ") && !command.StartsWith("XREAD ")) return originalReplicaReply(id, command);
+            Volatile.Write(ref redirected, 1);
+            return Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        {
+            Connections = mixedSockets ? 2 : 1, ClusterTopologyRefreshInterval = null,
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        string? result;
+        if (mode == 1)
+        {
+            using var batch = client.CreateBatch();
+            var pending = batch.Strings.GetString(key);
+            await batch.ExecuteAsync(timeout.Token);
+            result = await pending;
+        }
+        else if (mode == 2)
+        {
+            await using var stream = await client.Strings.GetStreamAsync(key, timeout.Token);
+            using var reader = new StreamReader(stream!);
+            result = await reader.ReadToEndAsync(timeout.Token);
+        }
+        else if (mode == 3)
+        {
+            using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                ["BLOCK", 1, "STREAMS", key, "0"], cancellationToken: timeout.Token);
+            result = reply.AsString();
+        }
+        else result = await client.GetStringAsync(key, timeout.Token);
+        await Assert.That(result).IsEqualTo("local");
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(oldReplica.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(true, 0)]
     [Arguments(true, 1)]
