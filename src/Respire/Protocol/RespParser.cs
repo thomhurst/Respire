@@ -22,6 +22,10 @@ internal enum RespParseStatus : byte
     NeedMoreData,
     InvalidData,
     NeedDirectFill,
+    /// <summary>
+    /// A top-level attribute was consumed; resume at the following reply.
+    /// Only the resumable parser with stopAfterAttributes enabled returns this status.
+    /// </summary>
     SkippedAttribute,
 }
 
