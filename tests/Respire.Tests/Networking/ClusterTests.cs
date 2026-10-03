@@ -988,7 +988,23 @@ public class ClusterTests
     [Arguments("ASK", 1)]
     [Arguments("ASK", 2)]
     [Arguments("ASK", 3)]
-    public async Task ReadFrom_RoleFallbackFollowsRedirectWithoutReturningToFailedReplica(string redirect, int mode)
+    [Arguments("MOVED", 0, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 1, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 2, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 3, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 0, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 1, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 2, RespireReadFrom.AzAffinity)]
+    [Arguments("ASK", 3, RespireReadFrom.AzAffinity)]
+    [Arguments("MOVED", 0, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 1, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 2, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("MOVED", 3, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 0, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 1, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 2, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments("ASK", 3, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task ReadFrom_RoleFallbackFollowsRedirectWithoutReturningToFailedReplica(string redirect, int mode, RespireReadFrom policy = RespireReadFrom.ReplicaPreferred)
     {
         const string key = "{batch-fallback}:key";
         var slot = ClusterHash.GetSlot(key);
@@ -1012,9 +1028,10 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ClientAvailabilityZone = "local",
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
-        await using var reads = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        await using var reads = client.WithReadFrom(policy);
         if (mode == 1)
         {
             using var batch = reads.CreateBatch();
@@ -1153,6 +1170,7 @@ public class ClusterTests
     public async Task ReadFrom_RevalidationDiscoversPromotionThroughConnectedReplica()
     {
         byte[]? promotedTopology = null;
+        var primaryStopped = false;
         await using var replica = new FakeRespServer(4)
         {
             ReplyOverride = (_, command) => command switch
@@ -1169,13 +1187,16 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            // Healthy startup uses the ordinary connection deadline. After shutdown, fail
+            // primary discovery explicitly instead of imposing a 200 ms deadline on all peers.
+            TestingStreamFactory = OpenStreamAsync,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
         var strict = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await strict.Strings.GetStringAsync("key")).IsEqualTo("value");
         Volatile.Write(ref promotedTopology, ClusterTopologyWithoutReplicas(replica.Port));
         await primary.DisposeAsync();
+        Volatile.Write(ref primaryStopped, true);
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
         try { await strict.Strings.GetStringAsync("key"); }
         catch (RespireConnectionException) { }
@@ -1190,6 +1211,20 @@ public class ClusterTests
         await Assert.That(async () => await strict.Strings.GetStringAsync("sibling"))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(replica.ReceivedCommands).DoesNotContain("GET sibling");
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (port == primary.Port && Volatile.Read(ref primaryStopped))
+                throw new RespireConnectionException("The test primary has stopped.");
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
     }
 
     [Test]

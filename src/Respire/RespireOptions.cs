@@ -122,6 +122,13 @@ public sealed record RespireOptions
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
     /// <summary>
+    /// Client availability zone used by AZ-affinity read policies. Zone names are compared
+    /// ordinally. Configure this before connecting, including when selecting a policy through a view.
+    /// Servers without zone metadata remain eligible for fallback.
+    /// </summary>
+    public string? ClientAvailabilityZone { get; init; }
+
+    /// <summary>
     /// Bounds how stale replica read topology can be. A connection's <c>ROLE</c> check is reused
     /// for this long, Sentinel replica discovery refreshes at most this often, and a replica that
     /// failed a connection or role check is skipped for this long. Defaults to one second;
@@ -367,7 +374,11 @@ public sealed record RespireOptions
         if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
 
-        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be Primary, PrimaryPreferred, Replica, ReplicaPreferred, or Nearest");
+        Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be a defined RespireReadFrom policy");
+        Require(ClientAvailabilityZone is null || !string.IsNullOrWhiteSpace(ClientAvailabilityZone),
+            nameof(ClientAvailabilityZone), "must be nonempty when provided");
+        Require(ReadFrom is not (RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary)
+            || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
         Require(
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),
@@ -523,6 +534,7 @@ public sealed record RespireOptions
             ClientName = ClientName,
             Database = Database,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,
+            DiscoverAvailabilityZone = ClientAvailabilityZone is not null,
             Protocol = Protocol,
             TcpKeepAliveTime = TcpKeepAliveTime,
             TcpKeepAliveInterval = TcpKeepAliveInterval,

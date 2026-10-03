@@ -361,7 +361,8 @@ different order on each pass), and keeps the last published slot map when discov
 partial `CLUSTER SLOTS` reply, for example from a cluster with `cluster-require-full-coverage no`
 that has lost a shard, updates the slots it covers and keeps the previous owners of the rest. Replica endpoints, node IDs, and aliases from `CLUSTER SLOTS` stay current
 in router metadata and are used as refresh fallbacks when every primary and seed fails; command
-routing still uses primaries (reading from replicas is out of scope).
+routing uses primaries by default. Read policies can select replicas for eligible commands,
+as described in [Read from replicas](#read-from-replicas).
 
 ## Redis Sentinel
 
@@ -581,6 +582,62 @@ while it makes progress. A streamed reply that receives no data for 30 seconds (
 `CommandTimeout`, if that is longer) is treated as abandoned, for example a stream that was never
 read or disposed: the replica then closes and the stream fails. Disposing the client closes any
 replica that is still draining.
+
+### Availability-zone affinity
+
+Set `ClientAvailabilityZone` before connecting, then choose an affinity policy as the
+default or through `WithReadFrom`:
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new RespireEndpoint("primary.example", 6379)],
+    ReplicaEndpoints = [new RespireEndpoint("replica.example", 6379)],
+    ClientAvailabilityZone = "eu-west-2a",
+    ReadFrom = RespireReadFrom.AzAffinity
+});
+```
+
+Affinity works with standalone replica endpoints, Sentinel discovery, and Redis Cluster.
+Zone names use ordinal, case-sensitive comparison. The selection order is:
+
+| Policy | Selection order |
+| --- | --- |
+| `AzAffinity` | Same-zone replicas, other replicas, primary |
+| `AzAffinityReplicasAndPrimary` | Same-zone replicas, same-zone primary, other replicas, primary |
+
+The existing replica health checks still apply: a linked replica takes precedence over
+an unlinked replica. For `AzAffinityReplicasAndPrimary`, a same-zone primary also precedes
+unlinked replicas, including same-zone replicas. If no linked replica or preferred primary
+is available, unlinked same-zone replicas precede other unlinked replicas.
+Writes and operations that already require the primary keep their
+existing routing. Replica reads can return stale data regardless of zone.
+
+Valkey servers configured with `availability-zone` advertise `availability_zone` in
+`HELLO` or `INFO SERVER`. Respire captures that metadata for each physical connection.
+RESP2 clients with `ClientAvailabilityZone` configured request `INFO SERVER` during
+the handshake. Missing metadata or an ACL denial leaves the zone unknown; such replicas
+remain eligible in the other-replica tier. Redis deployments without this metadata
+therefore retain replica-first fallback behavior. Reconnecting refreshes the metadata;
+changing the server setting does not change an already established connection's zone.
+
+Both affinity policies require a nonempty `ClientAvailabilityZone`, including when
+selected through `WithReadFrom`. Selection respects cancellation and existing timeout,
+cursor-pinning, retirement, and accepted-command ownership rules.
+
+Pinned cursors retain the zone preference on every page while staying on the server that
+issued the cursor. When a dedicated read pool has mixed zone metadata, rental prefers a
+healthy same-zone idle connection compatible with the operation. If none is idle, normal
+rental or connection establishment preserves availability; it does not open extra
+connections merely to search for a matching zone. Role fallback retains this
+physical-connection preference after narrowing the read to its fallback role.
+
+Blocking reads such as `XREAD BLOCK` select an endpoint using the read policy, then rent a
+dedicated connection from that endpoint. This applies to configured replica groups,
+Sentinel, and Cluster. Standalone and Sentinel replica leases validate their own socket's
+`ROLE` before use. Blocking waits do not occupy the multiplexed read connection or inherit
+the normal response timeout; caller cancellation still ends the wait and discards its
+socket. Removing a replica drains accepted blocking reads, while client disposal aborts them.
 
 ### Cursor reads
 

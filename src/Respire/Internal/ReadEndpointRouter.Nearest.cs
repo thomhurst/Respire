@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -65,9 +64,7 @@ internal sealed partial class ReadEndpointRouter
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     lastError = error;
-                    entry.MarkFailed();
-                    try { Core.Logger?.LogDebug(error, "Nearest read candidate unavailable at {Endpoint}", entry.Endpoint); }
-                    catch (Exception) { }
+                    TryRecordFailure(entry, error, "Nearest read candidate unavailable at {Endpoint}");
                     continue;
                 }
             }

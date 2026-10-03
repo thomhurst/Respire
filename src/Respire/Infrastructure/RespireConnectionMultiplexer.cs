@@ -241,6 +241,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    // Metadata belongs to each physical connection and changes on replacement. A known
+    // remote primary need not reconnect merely to lose an AZ-affinity comparison.
+    internal bool MayBeInAvailabilityZone(string? clientZone)
+    {
+        if (IsRetired) return true;
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            var connection = Volatile.Read(ref _connections[slot]);
+            if (connection?.AvailabilityZone is not { } zone
+                || string.Equals(zone, clientZone, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
     internal bool HasConnection(Func<RespireConnection, bool> predicate)
     {
         if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected) return false;
@@ -385,7 +399,15 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     internal RespireConnection GetConnection(int affinity) => GetConnection(unchecked((uint)affinity));
 
-    private RespireConnection GetConnection(uint startIndex)
+    /// <summary>Prefers a matching physical connection while retaining round-robin or slot-affinity order.</summary>
+    internal RespireConnection GetConnectionForZone(string zone, int? affinity = null)
+    {
+        if (_connections.Length == 1) return GetSingleConnection();
+        var start = affinity is { } value ? unchecked((uint)value) : Interlocked.Increment(ref _next);
+        return GetConnection(start, zone);
+    }
+
+    private RespireConnection GetConnection(uint startIndex, string? preferredZone = null)
     {
         ThrowIfUnavailable();
         if (!_connected)
@@ -394,6 +416,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 $"Not connected to {Host}:{Port} — call {nameof(EnsureConnectedAsync)} first.");
         }
 
+        RespireConnection? fallback = null;
         var count = _connections.Length;
         for (var i = 0; i < count; i++)
         {
@@ -404,12 +427,14 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             var connection = Volatile.Read(ref _connections[slot]);
             if (connection is { IsAcceptingCommands: true })
             {
-                return connection;
+                if (preferredZone is null || string.Equals(connection.AvailabilityZone, preferredZone, StringComparison.Ordinal))
+                    return connection;
+                fallback ??= connection;
             }
-
-            ScheduleReconnect(slot);
+            else ScheduleReconnect(slot);
         }
 
+        if (fallback is not null) return fallback;
         ThrowIfUnavailable();
         ThrowIfRecoveryExhausted();
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");

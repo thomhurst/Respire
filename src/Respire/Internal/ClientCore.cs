@@ -126,8 +126,9 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, CancellationToken cancellationToken, bool reuseIdle = true,
-        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
-        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this), cancellationToken, reuseIdle, kind);
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
+        => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this),
+            cancellationToken, reuseIdle, kind, preferredZone);
 
     private readonly struct DedicatedLeaseRoute(ClientCore owner) : IDedicatedLeaseRoute
     {

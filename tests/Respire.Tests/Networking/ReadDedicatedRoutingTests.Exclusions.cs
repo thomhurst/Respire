@@ -12,6 +12,8 @@ public partial class ReadDedicatedRoutingTests
 {
     [Test]
     [Arguments(RespireReadFrom.ReplicaPreferred, true)]
+    [Arguments(RespireReadFrom.AzAffinity, true)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true)]
     [Arguments(RespireReadFrom.Nearest, true)]
     [Arguments(RespireReadFrom.Nearest, false)]
     public async Task ZeroCooldownDoesNotRetryFailedDedicatedEndpoints(RespireReadFrom policy, bool allReplicasFail)
@@ -24,6 +26,7 @@ public partial class ReadDedicatedRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [first, second], policy) with
         {
             ReplicaRefreshInterval = TimeSpan.Zero,
+            ClientAvailabilityZone = ReadFallbackPolicy.UsesAvailabilityZone(policy) ? "local" : null,
             TestingStreamFactory = OpenStreamAsync,
         });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
