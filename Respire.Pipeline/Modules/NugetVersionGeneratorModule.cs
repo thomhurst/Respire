@@ -107,7 +107,7 @@ internal sealed record GitVersionDetails(
     string IncrementKind)
 {
     private static readonly Regex VersionTagRegex = new(
-        @"^[vV]?(?<major>\d+)\.(?<minor>\d+)(?:\.(?<patch>\d+))?",
+        @"\A[vV]?(?<major>[0-9]+)\.(?<minor>[0-9]+)\.(?<patch>[0-9]+)\z",
         RegexOptions.Compiled);
 
     public static async Task<GitVersionDetails> CreateAsync(
@@ -118,16 +118,7 @@ internal sealed record GitVersionDetails(
         var branchName = await GetBranchNameAsync(repositoryRoot, cancellationToken);
         var commitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
         var shortCommitHash = await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
-        var latestVersionTag = await TryRunGitAsync(
-            repositoryRoot,
-            cancellationToken,
-            "describe",
-            "--tags",
-            "--abbrev=0",
-            "--match",
-            "v[0-9]*",
-            "--match",
-            "[0-9]*");
+        var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken);
 
         var baseVersion = ParseVersion(latestVersionTag) ?? ParseVersion(settings.BaseVersion);
         if (baseVersion is null)
@@ -196,6 +187,18 @@ internal sealed record GitVersionDetails(
         return branch == "HEAD" ? "detached" : branch;
     }
 
+    internal static async Task<string?> GetLatestStableVersionTagAsync(string repositoryRoot, CancellationToken cancellationToken)
+    {
+        List<string> arguments = ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--match", "V[0-9]*", "--match", "[0-9]*"];
+        while (await TryRunGitAsync(repositoryRoot, cancellationToken, arguments.ToArray()) is { } tag)
+        {
+            if (ParseVersion(tag) is not null) return tag;
+            arguments.Add("--exclude");
+            arguments.Add(tag);
+        }
+        return null;
+    }
+
     private static SemanticVersion? ParseVersion(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -209,14 +212,10 @@ internal sealed record GitVersionDetails(
             return null;
         }
 
-        var patch = match.Groups["patch"].Success
-            ? int.Parse(match.Groups["patch"].Value, NumberStyles.None, CultureInfo.InvariantCulture)
-            : 0;
-
-        return new SemanticVersion(
-            int.Parse(match.Groups["major"].Value, NumberStyles.None, CultureInfo.InvariantCulture),
-            int.Parse(match.Groups["minor"].Value, NumberStyles.None, CultureInfo.InvariantCulture),
-            patch);
+        return int.TryParse(match.Groups["major"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var major)
+            && int.TryParse(match.Groups["minor"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minor)
+            && int.TryParse(match.Groups["patch"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var patch)
+            ? new SemanticVersion(major, minor, patch) : null;
     }
 
     private static string NormalizeBranchName(string branchName)
@@ -344,12 +343,14 @@ internal sealed record VersionIncrementResult(VersionIncrement Increment, int Pa
     public static VersionIncrementResult FromCommitMessages(string commitMessages, int commitHeight)
     {
         var commits = commitMessages
-            .Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split('\x1e', StringSplitOptions.TrimEntries);
+        // Git terminates every record with a separator. Only the final split entry is synthetic.
+        var commitCount = commits.Length > 1 && commits[^1].Length == 0 ? commits.Length - 1 : commits.Length;
 
         VersionIncrement? selectedIncrement = null;
         var selectedCommitIndex = -1;
 
-        for (var commitIndex = 0; commitIndex < commits.Length; commitIndex++)
+        for (var commitIndex = 0; commitIndex < commitCount; commitIndex++)
         {
             foreach (Match match in IncrementMarkerRegex.Matches(commits[commitIndex]))
             {
@@ -376,7 +377,7 @@ internal sealed record VersionIncrementResult(VersionIncrement Increment, int Pa
         var increment = selectedIncrement ?? VersionIncrement.Patch;
         var patchHeight = increment switch
         {
-            VersionIncrement.Major or VersionIncrement.Minor => Math.Max(commits.Length - selectedCommitIndex - 1, 0),
+            VersionIncrement.Major or VersionIncrement.Minor => Math.Max(commitCount - selectedCommitIndex - 1, 0),
             VersionIncrement.None => 0,
             _ => commitHeight
         };

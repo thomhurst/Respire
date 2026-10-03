@@ -8,6 +8,16 @@ namespace Respire.Pipeline.Tests;
 public class VersionIncrementResultTests
 {
     [Test]
+    [Arguments("minor")]
+    [Arguments("major")]
+    public async Task EmptyMessagesAfterMarkerStillAdvancePatchHeight(string increment)
+    {
+        var result = VersionIncrementResult.FromCommitMessages(
+            CommitLog("", $"+semver:{increment}", "", " \n ", "fix: follow-up", ""), 6);
+        await Assert.That(result.PatchHeight).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task MinorMarkerAtHead_ResetsPatchHeightToZero()
     {
         var result = VersionIncrementResult.FromCommitMessages(
