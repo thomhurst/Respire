@@ -3549,9 +3549,20 @@ public sealed partial class RespireClient : IRespireClient
                 var acquiringRedirectPool = false;
                 try
                 {
-                    (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                        pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                        cancellationToken, discovery, preferredZone: preferredZone).ConfigureAwait(false);
+                    try
+                    {
+                        (pool, connection) = await cluster.RentDedicatedConnectionAsync(
+                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
+                            cancellationToken, discovery, preferredZone: preferredZone).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (askRedirect is null && fallback.OriginalFailure is not null
+                        && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
+                    {
+                        // Endpoint selection returned a pool, but its private handshake can fail
+                        // later. Preserve the original rejection through that acquisition phase too.
+                        RethrowPreservingStackTrace(fallback.OriginalFailure);
+                        throw;
+                    }
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(

@@ -883,6 +883,203 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    [Arguments(RespireReadFrom.AzAffinity, false, false, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, false, false)]
+    [Arguments(RespireReadFrom.AzAffinity, false, true, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false, true, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, false, false)]
+    [Arguments(RespireReadFrom.AzAffinity, false, false, true)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true, false, true)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, false, false, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false, false, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false, true, false)]
+    [Arguments(RespireReadFrom.Replica, false, false, false)]
+    [Arguments(RespireReadFrom.Replica, false, true, false)]
+    [Arguments(RespireReadFrom.Primary, false, false, false)]
+    [Arguments(RespireReadFrom.Nearest, false, false, false)]
+    public async Task ClusterDedicatedDeadlineTriesRemainingCandidates(
+        RespireReadFrom policy, bool localPrimary, bool onlyReplicaFails, bool cancelCaller)
+    {
+        await using var primary = Node("primary", localPrimary ? "local" : "remote", false);
+        await using var first = Node("first", "remote", true);
+        await using var second = Node("second", "remote", true);
+        ConfigureTopology(primary, onlyReplicaFails ? [first] : [first, second]);
+        var connections = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+        var failedPort = 0;
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, policy) with
+        {
+            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            ClusterTopologyRefreshInterval = null,
+        });
+        using var caller = new CancellationTokenSource();
+        var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        if (cancelCaller)
+        {
+            await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+            var error = await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
+                .Any(command => command.StartsWith("XREAD "))).IsFalse();
+            return;
+        }
+        if (policy == RespireReadFrom.Primary || policy == RespireReadFrom.Replica && onlyReplicaFails)
+        {
+            await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            await Assert.That(caller.IsCancellationRequested).IsFalse();
+            await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
+                .Any(command => command.StartsWith("XREAD "))).IsFalse();
+            return;
+        }
+        using var reply = await read;
+        await Assert.That(caller.IsCancellationRequested).IsFalse();
+        await Assert.That(failedPort).IsNotEqualTo(0);
+        var failed = new[] { primary, first, second }.Single(node => node.Port == failedPort);
+        await Assert.That(failed.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
+            .Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        if (onlyReplicaFails) await Assert.That(reply.AsString()).IsEqualTo("primary");
+        else if (policy != RespireReadFrom.Nearest) await Assert.That(reply.AsString()).IsNotEqualTo("primary");
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (connections.AddOrUpdate(port, 1, (_, count) => count + 1) == 2
+                && Interlocked.CompareExchange(ref failedPort, port, 0) == 0)
+            {
+                connecting.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClusterDedicatedFallbackDeadlinePreservesOriginalRejection(bool startsOnReplica)
+    {
+        await using var primary = Node("primary", startsOnReplica ? "remote" : "local", false);
+        await using var replica = Node("replica", startsOnReplica ? "local" : "remote", true);
+        ConfigureTopology(primary, replica);
+        var rejecting = startsOnReplica ? replica : primary;
+        var target = startsOnReplica ? primary : replica;
+        var original = rejecting.ReplyOverride!;
+        rejecting.ReplyOverride = (id, command) => command.StartsWith("XREAD ")
+            ? "-LOADING original rejection\r\n"u8.ToArray() : original(id, command);
+        var targetConnections = 0;
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        {
+            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            ClusterTopologyRefreshInterval = null,
+        });
+        var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask()).Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("LOADING");
+        await Assert.That(error.Message).Contains("original rejection");
+        await Assert.That(rejecting.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == target.Port && Interlocked.Increment(ref targetConnections) == 2)
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
+    }
+
+    [Test]
+    public async Task ClusterDedicatedFailureTriesMoreCandidatesThanRedirectLimit()
+    {
+        await using var primary = Node("primary", "remote", false);
+        var replicas = Enumerable.Range(0, 7).Select(index => Node($"replica-{index}", "local", true)).ToArray();
+        try
+        {
+            ConfigureTopology(primary, replicas);
+            var connections = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+            var rentals = 0;
+            await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.Replica) with
+            {
+                Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+                ClusterTopologyRefreshInterval = null,
+            });
+            using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
+            await Assert.That(rentals).IsEqualTo(7);
+            await Assert.That(reply.AsString()!.StartsWith("replica-")).IsTrue();
+            await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
+            await Assert.That(replicas.SelectMany(node => node.ReceivedCommands)
+                .Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+
+            async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+            {
+                if (port != primary.Port && connections.AddOrUpdate(port, 1, (_, count) => count + 1) == 2
+                    && Interlocked.Increment(ref rentals) <= 6)
+                    throw new IOException("Dedicated candidate unavailable.");
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            }
+        }
+        finally { foreach (var replica in replicas) await replica.DisposeAsync(); }
+    }
+
+    [Test]
+    public async Task ClusterDedicatedAskDeadlineDoesNotReselectSlotReplicas()
+    {
+        await using var primary = Node("primary", "remote", false);
+        await using var replica = Node("replica", "local", true);
+        await using var importing = Node("importing", "local", false);
+        ConfigureTopology(primary, replica);
+        var original = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command.StartsWith("XREAD ")
+            ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("key")} 127.0.0.1:{importing.Port}\r\n")
+            : original(id, command);
+        var importingConnections = 0;
+        await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.AzAffinity) with
+        {
+            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            ClusterTopologyRefreshInterval = null,
+        });
+        await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask()).Throws<OperationCanceledException>();
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
+        await Assert.That(primary.ReceivedCommands.Concat(importing.ReceivedCommands)
+            .Any(command => command.StartsWith("XREAD "))).IsFalse();
+
+        async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
+        {
+            if (port == importing.Port && Interlocked.Increment(ref importingConnections) == 2)
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+            }
+            catch { socket.Dispose(); throw; }
+        }
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.AzAffinity)]
     [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
     public async Task FailedDedicatedPrimaryWithNoSentinelReplicasPreservesConnectionError(RespireReadFrom policy)

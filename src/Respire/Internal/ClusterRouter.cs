@@ -622,12 +622,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        string? preferredZone = null)
+        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
 
-        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone)
+        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone, excluded)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)
@@ -815,10 +815,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection? RedirectSource = null);
 
     private ValueTask<DedicatedConnectionPool> ReselectDedicatedPoolAsync(
-        DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, string? preferredZone)
+        DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, string? preferredZone,
+        HashSet<RespireConnectionMultiplexer>? excluded)
         => route.AskRedirect is { } ask
             ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery)
-            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, preferredZone);
+            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, preferredZone, excluded);
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
@@ -832,6 +833,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
         private DiscoveryScope _scope;
+        private HashSet<RespireConnectionMultiplexer>? _excluded;
+        private int _candidateLimit;
+        private Exception? _candidateError;
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => owner.CanRetryRetirement(attempt, cancellationToken);
         public void RecordRetirement(Exception error, int attempt)
@@ -843,8 +847,36 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             discovery?.Failed(error);
         }
-        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
-            => owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery, preferredZone);
+        public bool TryExcludeFailedCandidate(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken)
+        {
+            if (route.Slot is not { } slot || route.ReadFrom == RespireReadFrom.Primary
+                || route.AskRedirect is not null || !IsReadCandidateFailure(error, cancellationToken)) return false;
+            if (Volatile.Read(ref owner._disposed) != 0 || pool.MovingOwner is not { } node) return false;
+            // Every node in this route gets a chance, independently of the redirect limit.
+            // Bound topology churn as well, and allocate only after a lease failure.
+            if (_excluded is null)
+            {
+                _excluded = [];
+                _candidateLimit = (owner.RoutingSnapshot[slot].Replicas?.Nodes.Length ?? 0) + 1;
+            }
+            if (_excluded.Count >= _candidateLimit || !_excluded.Add(node)) return false;
+            _candidateError = error;
+            return true;
+        }
+
+        public async ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery, preferredZone, _excluded)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception error) when (_candidateError is not null && IsReadCandidateFailure(error, cancellationToken))
+            {
+                ExceptionDispatchInfo.Capture(_candidateError).Throw();
+                throw;
+            }
+        }
         public void SetTerminalError(Exception error) => _scope.SetTerminalError(error);
         public void Dispose() => _scope.Dispose();
     }
