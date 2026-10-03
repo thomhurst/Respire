@@ -10,11 +10,17 @@ client. A fencing lock carries a random `RespireLockToken` for ownership and a p
 dotnet add package Respire.Coordination
 ```
 
+With C# 14 or later, import `Respire.Coordination` and use `client.Coordination`
+on `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+including its `RateLimiters` factory, and performs no network I/O. Key-prefixed views receive
+their own wrapper. The caller retains ownership of the underlying client.
+The existing `RespireCoordination` constructor remains available.
+
 ```csharp
 using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 await using var attempt = await coordination.TryAcquireFencedLockAsync(
     "{invoice:42}:lease", "{invoice:42}:fence", TimeSpan.FromSeconds(30));
 if (!attempt.Acquired) return;
@@ -47,7 +53,7 @@ await using var waitingClient = await RespireClient.ConnectAsync(new RespireOpti
     Protocol = RespProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
-var waitingCoordination = new RespireCoordination(waitingClient);
+var waitingCoordination = waitingClient.Coordination;
 await using var lease = await waitingCoordination.AcquireFencedLockAsync(
     "{invoice:42}:lease", "{invoice:42}:fence", TimeSpan.FromSeconds(30), CancellationToken.None);
 ```
@@ -102,7 +108,7 @@ only its current token count and last server refill time.
 using System.Threading.RateLimiting;
 using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 await using var limiter = coordination.RateLimiters.FixedWindow(
     "limits:checkout", permitLimit: 100, window: TimeSpan.FromMinutes(1), queueLimit: 20,
     queueProcessingOrder: QueueProcessingOrder.OldestFirst);
@@ -139,7 +145,7 @@ consumed even when the caller does not receive an acquired lease.
 using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.FixedWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1));
 ```
@@ -154,7 +160,7 @@ segment duration. More segments reduce that extra delay.
 using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.SlidingWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1), segments: 10);
 ```
@@ -165,7 +171,7 @@ using var limiter = coordination.RateLimiters.SlidingWindow(
 using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.TokenBucket(
     "limits:api", tokenLimit: 100, tokensPerPeriod: 10,
     replenishmentPeriod: TimeSpan.FromSeconds(1));
@@ -204,7 +210,7 @@ await using var leaseClient = await RespireClient.ConnectAsync(new RespireOption
     Protocol = RespProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
-var leaseCoordination = new RespireCoordination(leaseClient);
+var leaseCoordination = leaseClient.Coordination;
 await using var lease = await leaseCoordination.AcquireLeaseAsync(
     "coordination:leases", "worker:42", TimeSpan.FromSeconds(30));
 ```
@@ -292,7 +298,7 @@ The same package provides immediate shared-read and exclusive-write leases:
 ```csharp
 using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 await using var read = await coordination.TryAcquireReadLockAsync(
     "{account:42}:rw", TimeSpan.FromSeconds(30));
 if (!read.Acquired) return;
@@ -325,7 +331,7 @@ can starve writers. Bound writer retries with backoff:
 ```csharp
 using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 for (var delay = TimeSpan.FromMilliseconds(50); ; delay *= 2)
 {
     await using var write = await coordination.TryAcquireWriteLockAsync(
@@ -394,7 +400,7 @@ already completed generation fails rather than underflowing.
 using Respire.Coordination;
 
 await using var latchClient = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(latchClient);
+var coordination = latchClient.Coordination;
 var latch = await coordination.CreateCountdownLatchAsync("{batch:42}:latch", count: 3);
 var completed = latch.WaitAsync();
 
@@ -435,7 +441,7 @@ Use `RespireSemaphore` for immediate permit acquisition:
 using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var semaphore = new RespireSemaphore(client, "{batch:42}:permits", capacity: 4);
+var semaphore = client.Coordination.CreateSemaphore("{batch:42}:permits", capacity: 4);
 await using var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
 if (!attempt.Acquired) return;
 // Run work while holding attempt.Permit.

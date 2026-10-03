@@ -715,17 +715,41 @@ public class ClusterNotificationRoutingTests
             JitterRatio = 0,
             MaxAttempts = 2,
         });
+        var clock = new NotificationRecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
-        var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await using var subscription = await hub.SubscribeAsync(
+            SubscriptionKind.Pattern, [descriptor], new(), CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         // One failure against the second primary, then a newer topology replaces it.
         topology = Topology(first.Port, second.Port);
         _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        hub.NotifyTopologyChanged(1,
+            [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
+            authoritative: true);
         await secondRejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Hold this retry until the replacement topology is published. Scheduler or
+        // topology-discovery latency must not spend the second endpoint's budget.
+        var replacedRetry = await clock.NextAsync();
         topology = Topology(first.Port, third.Port);
         _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        hub.NotifyTopologyChanged(2,
+            [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", third.Port)],
+            authoritative: true);
+        var replacementRetry = await clock.NextAsync();
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+        await Assert.That(second.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(1);
+        await Assert.That(third.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
+            .IsEqualTo(1);
+
+        // A stale topology's timer cannot retry its departed endpoint. Only the
+        // replacement timer may consume the new endpoint's second attempt.
+        replacedRetry.Fire();
+        replacementRetry.Fire();
 
         await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);

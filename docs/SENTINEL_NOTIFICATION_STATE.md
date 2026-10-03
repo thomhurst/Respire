@@ -1,8 +1,9 @@
 # Sentinel notification state and invariants
 
-`SentinelRouter.Notifications` supervises subscriptions and runs one notification
-discovery worker. `SentinelNotificationCoalescer` is synchronous state owned by the
-router gate. Network queries and DNS resolution happen outside that gate.
+`SentinelMonitoring` supervises subscriptions. `SentinelRouter.Notifications` runs one
+notification discovery worker. `SentinelBackgroundWork` registers both components' tasks
+under the router gate. `SentinelNotificationCoalescer` is synchronous state owned by that
+gate. Network queries and DNS resolution happen outside it.
 
 ## Review boundaries
 
@@ -70,10 +71,29 @@ their observation-time owner when later DNS or publication changes the current o
 
 | Work | Owner and shutdown contract |
 | --- | --- |
-| Monitor supervisor and endpoint monitors | `SentinelMonitoring` owns subscriptions, reconnect episodes, parsing, the clock/resolver seams, and publication rearm signals. It shares the router gate for registration and shutdown. `Stop` rejects new registrations and returns the owned tasks for the router's bounded join. |
-| Notification rediscovery and switch-source DNS tasks | The router retains generation-sensitive evidence and task registration under its gate. Disposal sets `_disposed`, cancels `_lifetime`, then joins these tasks and the monitor tasks with one shared ten-second notification shutdown bound. A straggler must recheck the disposed gate before publication or retirement. |
+| Monitor supervisor, endpoint monitors, and removed-monitor cleanup | `SentinelBackgroundWork` registers every task under the router gate. `SentinelMonitoring` owns subscription resources, reconnect episodes, parsing, transport/clock/resolver seams, and publication rearm signals. Removed endpoints receive individual cancellation; their cleanup remains registered until completion. |
+| Notification rediscovery and switch-source DNS tasks | The same background owner registers these tasks while the router retains generation-sensitive evidence. Disposal sets `_disposed` and stops registration atomically, then cancels `_lifetime`. All background tasks and cancellation callbacks share one ten-second shutdown bound. A straggler must recheck disposal and its endpoint cancellation before publication or retirement. Successful tasks are released; the last eight completed failures per work kind remain available for aggregate shutdown reporting, with a count of omitted earlier failures. Active tasks are never evicted by this history limit. |
 | Generation retirement and correction-fence drainage | Each owned generation retains its retirement task. Disposal starts cleanup for every owned connection/pool, then joins retirement tasks and propagates aggregated failures. Failed cleanup stays owned until disposal. |
 | State/health observer callbacks | Serialized in `_notifications`, outside publication locks. Pending application callbacks are suppressed after disposal; explicitly retained telemetry callbacks may still run. This chain is not joined because an active observer can synchronously dispose the client itself. |
+
+Shutdown initiates both monitor-client and subscription cleanup even when one fails or
+does not complete. Cleanup collects every failure before recovery policy is applied;
+shutdown failures propagate after generation cleanup. A timed-out background join still
+observes late faults. The internal monitor transport seam and shutdown clock allow tests
+to exercise cancellation-ignoring clients without private task-collection reflection.
+
+Discovery signals both additions and explicit removal of learned endpoints. Configured
+endpoints cannot be removed, and the limit remains 64 learned endpoints. Removing membership
+does not erase primary/epoch evidence. No age-based pruning occurs here. A removed monitor
+cannot submit late messages or readiness, and re-adding its endpoint creates a new monitor
+with an independent delivery gap. Membership versions preserve this restart even when removal
+and re-addition occur between supervisor snapshots. Subscription history and reporter validation versions
+remain available across that restart.
+
+Address resolution checks cancellation both before starting and after its resolver returns.
+A cancellation-ignoring source lookup cannot initiate target lookups after shutdown. Generation
+invalidation checks disposal before changing retirement state; late responses cannot retire a
+generation while background shutdown is still joining its tasks.
 
 First-subscription acknowledgements advance a monitor version. Discovery captures that version
 before its network lookup and marks it validated only for the reporter whose primary was
@@ -89,8 +109,13 @@ delivery gap. Gap callbacks run outside the shared gate with the startup version
 under it; user logging cannot hold the publication/disposal gate. The router rechecks disposal
 when consuming a late callback before queuing discovery or changing a generation.
 
-The dedicated background-work owner and pure reducer are the next architectural change in
-#727. That extraction must preserve these different joining and reentrancy contracts.
+`WaitForSubscriptionsAsync` waits for the requested number of ready endpoints through a
+membership/readiness signal. It supports caller cancellation and wakes on shutdown. Readiness
+is published only after the delivery-gap callback successfully queues validation. Tests then
+join startup rediscovery separately; subscription readiness alone does not prove validation
+has completed. The shared test helper no longer polls a subscription count.
+
+The pure reducer remains tracked by #727 and must preserve these joining and reentrancy contracts.
 
 ## State transitions
 

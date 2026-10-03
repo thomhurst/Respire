@@ -710,20 +710,14 @@ public class ClusterTopologyRefreshTests
         await using var replicaServer = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var replicaPort = replicaServer.Port;
-        var refreshReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var slotsCalls = 0;
+        var refreshReceived = new TaskCompletionSource<(SharedRefreshCoordinator.RefreshFlight Flight, bool Started)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var incompleteTopology = Encoding.UTF8.GetBytes(
             "*1\r\n*4\r\n:0\r\n:100\r\n"
             + $"*3\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n$9\r\nmaster-id\r\n"
             + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$9\r\n127.0.0.1\r\n");
-        seed.ReplyOverride = (_, command) =>
-        {
-            if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref slotsCalls) == 1)
-                return Topology(seed.Port, replicaPort, "127.0.0.1");
-            refreshReceived.TrySetResult();
-            return incompleteTopology;
-        };
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Topology(seed.Port, replicaPort, "127.0.0.1") : null;
         replicaServer.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? incompleteTopology : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -745,9 +739,28 @@ public class ClusterTopologyRefreshTests
         var originalReplicaTransport = originalReplicaNodes.Single();
         var staleReplicaTransport = router.GetMultiplexer(originalReplica.Endpoint);
 
+        seed.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            // Join while the server holds the response, so the worker cannot finish
+            // before the test captures its publication/retirement completion.
+            router.SharedRefreshCoordinator.JoinTopology(false, out var flight, out var started);
+            refreshReceived.TrySetResult((flight, started));
+            return true;
+        };
         router.SignalTopologyRefresh();
-        await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.Delay(100);
+        var (refresh, started) = await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await Assert.That(started).IsFalse();
+            await Assert.That(refresh.Task.IsCompleted).IsFalse();
+            await seed.SendRawAsync(incompleteTopology);
+            await Assert.That(await refresh.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        }
+        finally
+        {
+            router.SharedRefreshCoordinator.ReleaseWaiter(refresh);
+        }
 
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(originalOwner);
         await Assert.That(router.GetSlotOwnerEndpoint(16383)).IsEqualTo(originalOwner);

@@ -40,8 +40,7 @@ public class SentinelFailoverIntegrationTests
 
         var sentinelRouter = client.Core.Sentinel!;
         // Count distinct Sentinels: a monitor that reconnects during startup must not stand in for another.
-        while (sentinelRouter.SubscribedSentinelCount < fixture.SentinelEndpoints.Count)
-            await Task.Delay(20, deadline.Token);
+        await sentinelRouter.Monitoring.WaitForSubscriptionsAsync(fixture.SentinelEndpoints.Count, deadline.Token);
 
         await using var replica = await RespireClient.ConnectAsync(new RespireOptions
         {
