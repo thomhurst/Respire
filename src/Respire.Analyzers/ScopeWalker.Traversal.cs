@@ -169,7 +169,7 @@ internal static partial class ScopeWalker
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
             var assignmentTransfer = false;
-            if (expression is not null && Unwrap(expression) is IdentifierNameSyntax
+            if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
                 && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression)
             {
@@ -183,11 +183,7 @@ internal static partial class ScopeWalker
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
                         if (ContainsCall(operation, call))
                         {
-                            var position = call switch
-                            {
-                                BaseObjectCreationExpressionSyntax { ArgumentList: { } constructorArguments } => constructorArguments.CloseParenToken.SpanStart,
-                                _ => call.Span.End - 1,
-                            };
+                            var position = TransferPosition(call);
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
@@ -220,6 +216,12 @@ internal static partial class ScopeWalker
                 => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation
                     || operation.ChildOperations.Any(child => ContainsReference(child, reference));
         }
+
+        private static int TransferPosition(SyntaxNode operation) => operation switch
+        {
+            BaseObjectCreationExpressionSyntax { ArgumentList: { } arguments } => arguments.CloseParenToken.SpanStart,
+            _ => operation.Span.End - 1,
+        };
 
         private List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> FindCatchOrigins()
         {
@@ -376,8 +378,8 @@ internal static partial class ScopeWalker
                     exceptionSource = _conditions.ResolveCapturedTarget(target);
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
-            // Receiver checks and dynamic binding happen before the callee accepts ownership.
-            var transferFailure = operation.Syntax.Span.End - 1 == firstBarrier
+            // Receiver checks, allocation and dynamic binding precede accepting ownership.
+            var transferFailure = TransferPosition(operation.Syntax) == firstBarrier
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
@@ -403,8 +405,9 @@ internal static partial class ScopeWalker
                                 implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
                     }
                     else Dispatch(GetDispatch(successor, continuation, implicitException: true,
-                        nullPath: transferFailure == TransferFailure.NullReceiver,
-                        allocationOnly: arrayAllocation
+                        nullPath: transferFailure == TransferFailure.NullReceiver
+                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false },
+                        allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
@@ -425,7 +428,7 @@ internal static partial class ScopeWalker
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
         }
 
-        private enum TransferFailure { None, NullReceiver, Unknown }
+        private enum TransferFailure { None, NullReceiver, Allocation, Unknown }
 
         private TransferFailure GetTransferFailure(IOperation operation, ulong known, ulong values)
         {
@@ -433,6 +436,7 @@ internal static partial class ScopeWalker
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
             return operation switch
             {
+                IObjectCreationOperation { Type.IsReferenceType: true } => TransferFailure.Allocation,
                 IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
                 IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,

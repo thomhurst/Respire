@@ -7,6 +7,62 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("holder.Value = (RespireResult)result;", "NullReferenceException", true)]
+    [Arguments("holder.Field = choice ? result : existing;", "NullReferenceException", true)]
+    [Arguments("holder.Field = choice ? result : existing;", "InvalidOperationException", true)]
+    [Arguments("holder.Field = choice ? result : result;", "InvalidOperationException", false)]
+    [Arguments("holder.Value = (RespireResult)result;", "InvalidOperationException", false)]
+    [Arguments("buffer[0] = (RespireResult)result;", "IndexOutOfRangeException", true)]
+    public async Task WrappedAssignmentWaitsForTargetChecks(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder
+        {
+            public RespireResult Field;
+            public RespireResult Value { set { value.Dispose(); } }
+        }
+        class Caller
+        {
+            async Task Run(RespireClient client, Holder holder, RespireResult existing, RespireResult[] buffer, bool choice)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("_ = new Owner(result);", "OutOfMemoryException", false, true)]
+    [Arguments("_ = new Owner(result);", "Exception", false, true)]
+    [Arguments("_ = new Owner(result);", "OutOfMemoryException", true, false)]
+    [Arguments("_ = new Owner(result);", "InvalidOperationException", false, false)]
+    [Arguments("_ = new Owner(result) { Value = 1 };", "OutOfMemoryException", false, true)]
+    [Arguments("Owner owner = new(result) { Value = 1 };", "OutOfMemoryException", false, true)]
+    [Arguments("_ = new ValueOwner(result);", "OutOfMemoryException", false, false)]
+    public async Task ConstructorAllocationPrecedesOwnershipTransfer(string transfer, string catchType, bool cleanupInCatch, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner
+        {
+            public Owner(RespireResult result) { result.Dispose(); }
+            public int Value { set { } }
+        }
+        struct ValueOwner { public ValueOwner(RespireResult result) { result.Dispose(); } }
+        class Caller
+        {
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("Take((result, 0), Throw());", true)]
     [Arguments("Take((result, 0), 0);", false)]
     [Arguments("Take((((result)), 0), 0);", false)]
@@ -308,10 +364,10 @@ public class ExceptionAwareFlowTests
     [Arguments("holder.Take(result, 0);", false)]
     [Arguments("target.Take(result, 0);", false)]
     [Arguments("holder.Take(result, 0);", true)]
-    [Arguments("_ = new Owner(result, 0) { Property = Throws() };", false, false)]
-    [Arguments("Owner owner = new(result, 0) { Property = Throws() };", false, false)]
+    [Arguments("_ = new Owner(result, 0) { Property = Throws() };", false, false, "InvalidOperationException")]
+    [Arguments("Owner owner = new(result, 0) { Property = Throws() };", false, false, "InvalidOperationException")]
     [Arguments("_ = new Owner(result, Throws()) { Property = 0 };", false)]
-    public async Task OwnershipTransferWaitsForArguments(string transfer, bool cleanupInCatch, bool warning = true)
+    public async Task OwnershipTransferWaitsForArguments(string transfer, bool cleanupInCatch, bool warning = true, string catchType = "Exception")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -326,7 +382,7 @@ public class ExceptionAwareFlowTests
                 {
                     var {{(warning && !cleanupInCatch ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{transfer}} }
-                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                    catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
             }
             """);
