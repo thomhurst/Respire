@@ -16,9 +16,6 @@ internal sealed partial class SentinelRouter
     private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
     private const string SentinelMonitorReconnectScope = "sentinel-monitor";
 
-    private static TimeSpan GetNotificationRetryDelay(RespireReconnectPolicy? policy, int attempt)
-        => policy?.GetDelay(attempt) ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(attempt - 1, 5)));
-
     // Monitoring starts after the first validated publication. Until then every command runs
     // discovery itself, and a client whose initial discovery keeps failing has no primary to move.
     private void StartNotificationMonitoringLocked()
@@ -64,7 +61,7 @@ internal sealed partial class SentinelRouter
 
     private async Task MonitorSentinelAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
-        var attempt = 0;
+        var budget = new SentinelRetryBudget(core.Options.ReconnectPolicy);
         var subscribedBefore = false;
         // Captured when a reconnect episode starts, not when the monitor parks: a publication
         // that lands while the last attempts are failing must still grant the fresh budget.
@@ -81,12 +78,12 @@ internal sealed partial class SentinelRouter
                     {
                         // Temporary clients that close before SUBSCRIBE succeeds belong to
                         // the same outer retry episode. Preserve any publication it captured.
-                        if (Volatile.Read(ref attempt) == 0)
+                        if (budget.Attempts == 0)
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
                     }));
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref attempt, 0);
+                budget.Reset();
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
                 // may already have completed that captured epoch before this continuation runs.
@@ -120,15 +117,13 @@ internal sealed partial class SentinelRouter
 
             // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
             // initial subscription failure still receives a retry.
-            var policy = core.Options.ReconnectPolicy;
-            if (subscriptionReconnectExhausted && policy?.MaxAttempts is { } exhaustedAt)
-                attempt = exhaustedAt;
-            if (policy?.IsExhausted(attempt) == true)
+            if (subscriptionReconnectExhausted) budget.MarkSubscriptionExhausted();
+            if (!budget.TryStartRetry())
             {
                 // Surface the lost fast path: respire.connection.reconnect.exhausted with
                 // respire.reconnect.scope=sentinel-monitor, plus a warning.
                 if (!subscriptionReconnectExhausted)
-                    RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, null, core.Logger);
+                    RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, null, core.Logger);
                 SafeLog(endpoint, static (logger, endpoint) => logger.LogWarning(
                     "Sentinel event monitor exhausted reconnect attempts at {Endpoint}; failover events from this "
                     + "Sentinel are not observed until a new primary is published, and discovery runs on demand", endpoint));
@@ -142,13 +137,12 @@ internal sealed partial class SentinelRouter
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
                 SafeLog(endpoint, static (logger, endpoint) => logger.LogInformation(
                     "Sentinel event monitor at {Endpoint} resumes after a new primary was published", endpoint));
-                attempt = 0;
+                budget.Reset();
                 rearm = CurrentMonitorRearm();
                 continue;
             }
-            attempt++;
-            var delay = GetNotificationRetryDelay(policy, attempt);
-            RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, attempt, delay, core.Logger);
+            var delay = budget.GetDelay();
+            RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, delay, core.Logger);
             try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
         }
@@ -439,7 +433,7 @@ internal sealed partial class SentinelRouter
 
     private async Task RediscoverFromNotificationAsync()
     {
-        var failures = 0;
+        var budget = new SentinelRetryBudget(core.Options.ReconnectPolicy);
         // Consecutive failed attempts. Only the first of a run logs a warning, so a long Sentinel
         // outage without a ReconnectPolicy does not repeat it every 30 seconds.
         var consecutiveFailures = 0;
@@ -461,7 +455,7 @@ internal sealed partial class SentinelRouter
                 {
                     // Evidence can arrive after TakePending, during backoff or its wake-up.
                     // Spend the remaining retry on that evidence, not the failed reporter again.
-                    if (failures > 0 && _coalescer.Pending is not null)
+                    if (budget.Attempts > 0 && _coalescer.Pending is not null)
                     {
                         var next = _coalescer.TakePending(activeFailed: true)!.Value;
                         _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -497,12 +491,11 @@ internal sealed partial class SentinelRouter
                         _notificationRediscovery = null;
                         return;
                     }
-                    failures = 0;
+                    budget.Reset();
                     _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     continue;
                 }
-                var policy = core.Options.ReconnectPolicy;
-                if (!succeeded && policy?.IsExhausted(failures) == true)
+                if (!succeeded && !budget.TryStartRetry())
                 {
                     // Pending hints cannot bypass the shared retry budget.
                     _coalescer.Complete();
@@ -524,15 +517,14 @@ internal sealed partial class SentinelRouter
                         _notificationRediscovery = null;
                         return;
                     }
-                    retryDelay = GetNotificationRetryDelay(policy, ++failures);
+                    retryDelay = budget.GetDelay();
                 }
                 else
                 {
                     _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     // A newer hint restarts discovery at once. Count each failed attempt against
                     // the same policy budget; only success starts a fresh run.
-                    if (succeeded) failures = 0;
-                    else failures++;
+                    if (succeeded) budget.Reset();
                     var current = Current;
                     if (!next.MustRediscover && next.Target is { } target && current is { IsRetired: false }
                         && IsConfirmedTarget(current, target))

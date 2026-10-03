@@ -47,6 +47,7 @@ public partial class ReadDedicatedRoutingTests
             return true;
         };
         var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 0, "STREAMS", "key", "0"]).AsTask();
+        Task cancellation = Task.CompletedTask;
         try
         {
             await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -59,7 +60,9 @@ public partial class ReadDedicatedRoutingTests
             // the router takes its ownership snapshot. No task scheduling race is required.
             var lifetime = (CancellationTokenSource)typeof(ReadEndpointRouter)
                 .GetField("_lifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(router)!;
-            await lifetime.CancelAsync();
+            // Cancellation callbacks can synchronously reach the paused cleanup logger.
+            // Observe cleanup before joining cancellation, otherwise neither side can release it.
+            cancellation = lifetime.CancelAsync();
             await logger.Started.Task.WaitAsync(limit.Token);
             if (finishBeforeRouterDispose)
             {
@@ -87,6 +90,7 @@ public partial class ReadDedicatedRoutingTests
         finally
         {
             logger.Release.Set();
+            await cancellation.WaitAsync(TimeSpan.FromSeconds(5));
             try { using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (Exception error) when (error is RespireConnectionException || ReferenceEquals(error, logger.Failure)) { }
         }

@@ -2942,7 +2942,10 @@ public class SentinelRoutingTests
         await using var client = RespireClient.Create(Options(sentinel.Port));
         if (rediscovery)
         {
-        await client.PingAsync();
+            await client.PingAsync();
+            // This case measures one post-startup replacement. Do not retire the
+            // generation while its first-subscription validation is still using it.
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
             var generation = client.Core.Sentinel!.Current!;
             await generation.Multiplexer.GetConnection().DisposeAsync();
         }
