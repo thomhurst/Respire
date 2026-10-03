@@ -24,7 +24,7 @@ public sealed partial class RespireClient
         internal void Reject(LockCapability capability) => Interlocked.Or(ref _unsupported, (int)capability);
     }
 
-    internal sealed class TrackedLockExecution(TrackedConnectionIdentity connectionIdentity)
+    internal sealed class TrackedLockExecution(TrackedConnectionIdentity connectionIdentity) : ITrackedCorrectionExecution<bool>
     {
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; } = connectionIdentity;
         internal ValueTask<bool> Response { get; set; }
@@ -40,6 +40,9 @@ public sealed partial class RespireClient
         /// <see cref="Response"/> completes.
         /// </summary>
         internal bool CommandMayBeOutstanding { get; set; } = true;
+        ValueTask<bool> ITrackedCorrectionExecution<bool>.Response => Response;
+        TrackedConnectionIdentity ITrackedCorrectionExecution<bool>.ConnectionIdentity => ConnectionIdentity;
+        bool ITrackedCorrectionExecution<bool>.CommandMayBeOutstanding => CommandMayBeOutstanding;
     }
 
     private int _unfencedLockReleaseLogged;

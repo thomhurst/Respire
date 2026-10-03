@@ -473,7 +473,13 @@ public sealed class RespireCoordination
                 execution = await concreteClient.StartTrackedScriptExecutionAsync(
                     AcquireHashFieldLease, [hashKey], [field, owner.Bytes, milliseconds], cancellationToken,
                     requireReliableCorrectionOrdering: true).ConfigureAwait(false);
-                using var response = await execution.Response.ConfigureAwait(false);
+                using var response = await concreteClient.ExecuteWithCorrectionAsync(
+                    execution,
+                    // This correction retains FIFO ordering and owns any required kill barrier.
+                    ordering: RespireClient.CorrectionOrdering.OrderedCorrection,
+                    state: (Owner: this, HashKey: hashKey, Field: field, Token: owner, Client: concreteClient),
+                    correct: static (state, identity) => state.Owner.BestEffortReleaseHashFieldLeaseAsync(
+                        state.HashKey, state.Field, state.Token, state.Client, identity)).ConfigureAwait(false);
                 acquired = !response.IsNull && response.AsInteger() != 0;
             }
         }
@@ -484,7 +490,7 @@ public sealed class RespireCoordination
         }
         catch
         {
-            if (concreteClient is null || execution is not null)
+            if (concreteClient is null)
             {
                 await BestEffortReleaseHashFieldLeaseAsync(
                     hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);

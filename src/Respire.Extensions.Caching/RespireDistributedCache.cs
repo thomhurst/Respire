@@ -286,8 +286,6 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
-        RespireClient.TrackedConnectionIdentity originalConnection = default;
-        RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
             RespireResult result;
@@ -300,9 +298,29 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             };
             if (trackedWire is not null)
             {
-                trackedExecution = await trackedWire.StartTrackedScriptExecutionAsync(SetScript, [key], args, token)
-                    .ConfigureAwait(false);
-                result = await trackedExecution.Response.ConfigureAwait(false);
+                var execution = await trackedWire.StartTrackedScriptExecutionAsync(
+                    SetScript, [key], args, token).ConfigureAwait(false);
+                result = await trackedWire.ExecuteWithCorrectionAsync(
+                    execution,
+                    // TTL correction first uses FIFO ordering and fences only if that pass stalls.
+                    // An uncertain write without a TTL correction still needs an explicit fence.
+                    ordering: absoluteExpiration.HasValue
+                        ? RespireClient.CorrectionOrdering.OrderedCorrection : RespireClient.CorrectionOrdering.FenceFirst,
+                    state: (Cache: this, Key: key, Deadline: absoluteExpiration.GetValueOrDefault(), Options: options),
+                    correct: absoluteExpiration.HasValue
+                        ? static async (state, identity) =>
+                        {
+                            try
+                            {
+                                await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (RespireException correctionFailure) when (
+                                identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                            {
+                            }
+                        }
+                        : null).ConfigureAwait(false);
             }
             else
             {
@@ -312,33 +330,26 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             result.Dispose();
         }
         catch (Exception ex) when (
+            trackedWire is null &&
             ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
-            originalConnection = trackedExecution?.ConnectionIdentity ?? default;
             // An abandoned wait or lost connection does not prove the send was rejected — a
             // queued set can still reach Redis, and if that send was delayed it stores a TTL
             // computed before the delay. With no reply to measure the delay against, correct
             // unconditionally: a correction that beats a still-queued set no-ops on the
-            // ownership check. When the original Redis client ID was captured, it is fenced
-            // before correction retries so latent bytes cannot overtake the final pass.
-            // Untracked and mock/decorator corrections remain best-effort.
+            // ownership check. This untracked/mock/decorator path remains best-effort;
+            // tracked operations use the explicit ordering policy above.
             if (absoluteExpiration is { } cancelledDeadline)
             {
                 try
                 {
                     await CapDelayedTtlAsync(
-                        key, cancelledDeadline, options, originalConnection).ConfigureAwait(false);
+                        key, cancelledDeadline, options).ConfigureAwait(false);
                 }
                 catch (RespireException correctionFailure) when (
-                    originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                    correctionFailure is not RespireServerException)
                 {
                 }
-            }
-            else if (trackedWire is not null && originalConnection.ServerClientId > 0)
-            {
-                // No TTL needs correction, but the write itself still must not land after the
-                // caller observes failure and writes a replacement.
-                await trackedWire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
             }
 
             throw;
