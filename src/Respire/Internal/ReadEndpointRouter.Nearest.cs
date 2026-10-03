@@ -29,7 +29,7 @@ internal sealed partial class ReadEndpointRouter
                 primary = await GetPrimaryAsync(cancellationToken).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
-            catch (Exception error) when (IsNearestCandidateFailure(error, cancellationToken))
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 lastError = error;
                 sampler.ConnectionFailed(primaryCandidate);
@@ -38,7 +38,7 @@ internal sealed partial class ReadEndpointRouter
 
         var endpoints = Volatile.Read(ref _replicas);
         try { endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null).ConfigureAwait(false); }
-        catch (Exception error) when (IsNearestCandidateFailure(error, cancellationToken))
+        catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
             // Failed Sentinel discovery does not remove a usable primary or already-known replica.
         }
@@ -98,7 +98,7 @@ internal sealed partial class ReadEndpointRouter
             // join a pending/due refresh before the one bounded retry. The same endpoint can
             // recover during that wait, so unchanged addresses do not suppress reselection.
             try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
-            catch (Exception error) when (IsNearestCandidateFailure(error, cancellationToken)) { lastError = error; }
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
         }
         if (retry)
             return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
@@ -106,12 +106,6 @@ internal sealed partial class ReadEndpointRouter
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
     }
-
-    // A connection's own connect/handshake deadline can surface as cancellation. Only the
-    // caller's token stops selection; an unavailable candidate must not hide healthy peers.
-    private static bool IsNearestCandidateFailure(Exception error, CancellationToken cancellationToken)
-        => IsUnavailable(error, cancellationToken)
-            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
     private async ValueTask<RespireEndpoint[]> GetReplicaEndpointsAsync(CancellationToken cancellationToken,
         bool waitForUnknown = true)

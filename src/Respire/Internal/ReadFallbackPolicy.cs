@@ -24,8 +24,12 @@ internal static class ReadFallbackPolicy
     /// </remarks>
     internal static bool CanFallBackToOtherRole(
         RespireServerException error, RespireReadFrom readFrom, int? slot, bool onReplica)
+        => slot is not null && CanFallBackToOtherRole(error, readFrom, onReplica);
+
+    internal static bool CanFallBackToOtherRole(
+        RespireServerException error, RespireReadFrom readFrom, bool onReplica)
     {
-        if (slot is null || error.Code is not (RespireErrorCodes.Loading or RespireErrorCodes.MasterDown
+        if (error.Code is not (RespireErrorCodes.Loading or RespireErrorCodes.MasterDown
             or RespireErrorCodes.ClusterDown))
         {
             return false;
