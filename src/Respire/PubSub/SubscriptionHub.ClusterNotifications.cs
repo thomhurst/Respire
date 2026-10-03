@@ -1010,6 +1010,11 @@ internal sealed partial class SubscriptionHub
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, refreshPrimaries: endpoints is null).ConfigureAwait(false);
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+        // The router publishes before delivering its callback. An older authoritative
+        // event must not lend removal authority to a newer partial endpoint set.
+        if (endpoints is not null
+            && subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries)
+            && !new HashSet<RespireEndpoint>(endpoints).SetEquals(desired.Keys)) return false;
         HashSet<RespireEndpoint> current;
         lock (_gate)
         {

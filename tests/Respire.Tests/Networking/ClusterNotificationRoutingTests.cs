@@ -385,6 +385,37 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task StaleAuthoritativeEventCannotRemoveRoutesUsingNewerPartialMap()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, () => topology, resp3: false);
+        Configure(second, () => topology, resp3: false);
+        await using var client = CreateClusterClient(first.Port, resp3: false);
+        await using var hub = new SubscriptionHub(client.Core, new NotificationRecoveryClock());
+        var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        await using var subscription = await hub.SubscribeAsync(
+            SubscriptionKind.Channel, [descriptor], new(), CancellationToken.None);
+
+        // Publish newer routing evidence without delivering its callback to this standalone
+        // hub, then deliver the older complete event while only a partial map is visible.
+        topology = SinglePrimaryTopology(first.Port);
+        var router = client.Core.Cluster!;
+        _ = await router.GetPrimaryEndpointsAsync(CancellationToken.None);
+        router.ClearSlotOwner(0, router.GetKnownSlotOwner(0)!);
+        hub.NotifyTopologyChanged(1, [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)], authoritative: true);
+        var key = Enumerable.Range(0, 100).Select(static index => $"barrier:{index}")
+            .First(static value => ClusterHash.GetSlot(value) != 0);
+        // A later subscription waits for the queued reconciliation under the control gate.
+        await using var barrier = await hub.SubscribeAsync(SubscriptionKind.Channel,
+            [RespireChannel.KeySpaceSingleKey(key, 0)], new(), CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(second.ReceivedCommands).DoesNotContain($"UNSUBSCRIBE {descriptor}");
+        await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task OnePrimaryReconnectsWithoutStoppingHealthyPrimaryDelivery()
     {
         using var telemetryListener = new MeterListener
