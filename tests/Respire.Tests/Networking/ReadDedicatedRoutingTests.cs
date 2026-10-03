@@ -8,7 +8,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class ReadDedicatedRoutingTests
+public partial class ReadDedicatedRoutingTests
 {
     [Test]
     [Arguments(false)]

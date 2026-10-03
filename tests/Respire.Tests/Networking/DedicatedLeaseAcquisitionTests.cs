@@ -153,7 +153,7 @@ public class DedicatedLeaseAcquisitionTests
             return state.SelectionGate is { } gate
                 ? new(gate.Task.WaitAsync(cancellationToken)) : ValueTask.FromResult(state.Replacement);
         }
-        public void SetTerminalError(DedicatedConnectionPool pool, Exception error) => state.TerminalError = error;
+        public void SetTerminalError(Exception error) => state.TerminalError = error;
         public void Dispose() => state.Completions++;
     }
 }

@@ -839,7 +839,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
             => owner.ReselectDedicatedPoolAsync(route, cancellationToken, discovery);
-        public void SetTerminalError(DedicatedConnectionPool pool, Exception error) => _scope.SetTerminalError(error);
+        public void SetTerminalError(Exception error) => _scope.SetTerminalError(error);
         public void Dispose() => _scope.Dispose();
     }
 
