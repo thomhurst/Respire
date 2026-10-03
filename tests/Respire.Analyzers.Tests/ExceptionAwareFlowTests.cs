@@ -7,6 +7,45 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("int[] copy = [..source];", false)]
+    [Arguments("int[] copy = [1, 2];", false)]
+    [Arguments("System.Collections.Generic.List<int> copy = [..source];", false)]
+    [Arguments("int[] copy = [..source];", true)]
+    public async Task CollectionExpressionsCanBypassCleanup(string expression, bool cleanupInCatch)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, IEnumerable<int> source)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { {{expression}} result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, IEnumerable<int> source)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{expression}} await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("holder is (0, 0)", false, true)]
     [Arguments("holder is [0]", false, true)]
     [Arguments("holder is [.. var rest]", false, true)]

@@ -507,6 +507,8 @@ internal static partial class ScopeWalker
                 or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
                 or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
                 or IIncrementOrDecrementOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
+                // Roslyn 4.8 exposes these syntax nodes without public operation interfaces.
+                || operation.Syntax is CollectionExpressionSyntax or SpreadElementSyntax
                 || operation is IListPatternOperation listPattern
                     && (listPattern.LengthSymbol is not null || listPattern.IndexerSymbol is not null)
                     && listPattern.InputType.TypeKind != TypeKind.Array
