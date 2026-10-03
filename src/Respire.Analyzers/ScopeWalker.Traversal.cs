@@ -321,6 +321,7 @@ internal static partial class ScopeWalker
             // Evaluate children before their parent's write. Each exception sees only writes
             // that have already executed, including writes in earlier call arguments.
             var exceptionSource = operation;
+            var deconstructionStoresHandled = false;
             var arrayAllocation = operation.Type is IArrayTypeSymbol
                 && operation.Syntax is CollectionExpressionSyntax collection
                 && !collection.Elements.Any(static element => element is SpreadElementSyntax);
@@ -347,9 +348,13 @@ internal static partial class ScopeWalker
                 VisitDeconstructionLocations(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
                     started, dispatch, ref known, ref values);
                 Visit(deconstruction.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
-                if (operation.Syntax.Span.End <= firstBarrier)
-                    VisitDeconstructionStores(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
-                        started, dispatch, ref known, ref values);
+                if ((operation.Syntax.Span.End <= firstBarrier || TransferPosition(operation.Syntax) == firstBarrier)
+                    && HasMatchingDeconstructionShape(deconstruction.Target, deconstruction.Value))
+                {
+                    VisitDeconstructionStores(deconstruction.Target, deconstruction.Value, block, entryPosition, firstBarrier,
+                        continuation, started, dispatch, ref known, ref values);
+                    deconstructionStoresHandled = true;
+                }
             }
             else if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
@@ -378,7 +383,7 @@ internal static partial class ScopeWalker
             // callee entry, where responsibility transfers. Callee-body failures are excluded.
             var transferFailure = TransferPosition(operation.Syntax) == firstBarrier
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
-            if (operation.Syntax.SpanStart > entryPosition
+            if (!deconstructionStoresHandled && operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
                 && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } fieldReceiver }
@@ -511,58 +516,48 @@ internal static partial class ScopeWalker
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
         }
 
-        private void VisitDeconstructionStores(IOperation target, BasicBlock block, int entryPosition, int firstBarrier,
-            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            target = _conditions.ResolveCapturedTarget(target);
-            if (target is ITupleOperation or IDeclarationExpressionOperation)
-            {
-                foreach (var child in target.ChildOperations)
-                    VisitDeconstructionStores(child, block, entryPosition, firstBarrier, continuation,
-                        started, dispatch, ref known, ref values);
-            }
-            else
-                // Receivers and indexes were evaluated before the RHS; only the store runs now.
-                Visit(target, block, entryPosition, firstBarrier, continuation, started, dispatch,
-                    ref known, ref values, deconstructionStore: true);
-        }
-
-        private TransferFailure DeconstructionFailure(IOperation target, IOperation value, ulong known, ulong values, out bool transferred)
+        private bool HasMatchingDeconstructionShape(IOperation target, IOperation value)
         {
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
             value = _conditions.ResolveCapturedTarget(value);
-            transferred = false;
-            if (target is ITupleOperation targets)
+            return target is not ITupleOperation targets
+                || value is ITupleOperation sources && targets.Elements.Length == sources.Elements.Length
+                    && targets.Elements.Select((element, index) => HasMatchingDeconstructionShape(element, sources.Elements[index])).All(static matches => matches);
+        }
+
+        private bool VisitDeconstructionStores(IOperation target, IOperation value, BasicBlock block, int entryPosition, int firstBarrier,
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            target = _conditions.ResolveCapturedTarget(target);
+            value = _conditions.ResolveCapturedTarget(value);
+            if (target is ITupleOperation targets && value is ITupleOperation sources)
             {
-                if (value is not ITupleOperation sources || sources.Elements.Length != targets.Elements.Length)
-                    return TransferFailure.Unknown;
                 for (var index = 0; index < targets.Elements.Length; index++)
-                {
-                    var failure = DeconstructionFailure(targets.Elements[index], sources.Elements[index], known, values, out transferred);
-                    if (failure != TransferFailure.None || transferred) return failure;
-                }
-                return TransferFailure.None;
+                    if (VisitDeconstructionStores(targets.Elements[index], sources.Elements[index], block, entryPosition,
+                        firstBarrier, continuation, started, dispatch, ref known, ref values)) return true;
+                return false;
             }
-            transferred = _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
-                && (known & values & trigger.Value) != 0);
-            // Earlier setters can fail before the target accepting the owned value runs.
-            if (!transferred && target is IPropertyReferenceOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation)
-                return TransferFailure.Unknown;
-            return GetTransferFailure(target, known, values);
+            var activeTransfers = known & values;
+            var transferred = _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
+                && (activeTransfers & trigger.Value) != 0);
+            // Receivers and indexes were evaluated before the RHS; only the store runs now.
+            // At the owning target, model pre-entry failures but not the accepting setter's body.
+            Visit(target, block, entryPosition, transferred ? TransferPosition(target.Syntax) : firstBarrier,
+                continuation, started, dispatch, ref known, ref values, deconstructionStore: true);
+            _conditions.Forget(target, ref known, ref values);
+            return transferred;
         }
 
         private TransferFailure GetTransferFailure(IOperation operation, ulong known, ulong values)
         {
-            if (operation is IDeconstructionAssignmentOperation deconstruction)
-                return DeconstructionFailure(deconstruction.Target, deconstruction.Value, known, values, out _);
             if (operation is ISimpleAssignmentOperation assignment)
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
             return operation switch
             {
                 IObjectCreationOperation { Type.IsReferenceType: true } => TransferFailure.Allocation,
-                IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
+                IDeconstructionAssignmentOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
                 IInvocationOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
@@ -771,7 +766,7 @@ internal static partial class ScopeWalker
         {
             if (_throwingOperations.TryGetValue(operation, out var cached))
                 return cached;
-            var throwing = operation is IInvocationOperation or IFunctionPointerInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
+            var throwing = operation is IDeconstructionAssignmentOperation or IInvocationOperation or IFunctionPointerInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
                 or IEventAssignmentOperation or IArrayCreationOperation
                 or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation

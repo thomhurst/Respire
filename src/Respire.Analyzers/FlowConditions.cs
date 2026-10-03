@@ -190,7 +190,7 @@ internal sealed class FlowConditions
             Forget(increment.Target, ref known, ref values);
     }
 
-    private void Forget(IOperation target, ref ulong known, ref ulong values)
+    internal void Forget(IOperation target, ref ulong known, ref ulong values)
     {
         if (Symbol(target) is { } symbol)
             for (var index = 0; index < _predicates.Count; index++)

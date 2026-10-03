@@ -8,6 +8,33 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("(choice, holder.Number, holder.Value) = (false, 0, result);", true)]
+    [Arguments("(holder.Number, choice, holder.Number, holder.Value) = (0, false, 0, result);", true)]
+    [Arguments("(holder.Number, holder.Value, choice) = (0, result, false);", false)]
+    [Arguments("(choice, holder.Number) = (false, 0); result.Dispose();", true)]
+    [Arguments("(holder.Number, choice) = (0, false); result.Dispose();", false)]
+    public async Task DeconstructionStoresInvalidatePredicatesInOrder(string operation, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder
+        {
+            public int Number { set { throw new InvalidOperationException(); } }
+            public RespireResult Value { set { value.Dispose(); } }
+        }
+        class Caller
+        {
+            async Task Run(RespireClient client, bool choice, Holder holder)
+            {
+                if (!choice) return;
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} }
+                catch (InvalidOperationException) { if (choice) result.Dispose(); }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("(values[0], _) = (new object(), 0);", "ArrayTypeMismatchException", true)]
     [Arguments("(_, (values[0], _)) = (0, (new object(), 0));", "ArrayTypeMismatchException", true)]
     [Arguments("(values[1], _) = (new object(), 0);", "IndexOutOfRangeException", true)]
