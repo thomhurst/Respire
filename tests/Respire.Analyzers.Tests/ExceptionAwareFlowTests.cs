@@ -137,6 +137,10 @@ public class ExceptionAwareFlowTests
     [Arguments("this[0] = (flag = false);", true)]
     [Arguments("Property = Throws(); flag = false;", false)]
     [Arguments("Property &= (flag = false);", true)]
+    [Arguments("target.Value = (flag = false);", true)]
+    [Arguments("target[0] = (flag = false);", true)]
+    [Arguments("target.Value = Throws(); flag = false;", false)]
+    [Arguments("target.Value &= (flag = false);", true)]
     public async Task SetterExceptionsFollowRhsWrites(string assignment, bool warning)
     {
         const string members = """
@@ -150,7 +154,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 {{members}}
-                async Task Run(RespireClient client, RespireResult existing, bool flag)
+                async Task Run(RespireClient client, RespireResult existing, bool flag, dynamic target)
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
                     try { {{assignment}} result.Dispose(); }
@@ -164,7 +168,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 {{members}}
-                async Task Run(RespireClient client, RespirePending<string> existing, bool flag)
+                async Task Run(RespireClient client, RespirePending<string> existing, bool flag, dynamic target)
                 {
                     var batch = client.CreateBatch();
                     var pending = flag ? batch.GetStringAsync("key") : existing;
@@ -251,16 +255,18 @@ public class ExceptionAwareFlowTests
     [Arguments("_ = new T();", true, false)]
     [Arguments("_ = nameof(holder.Property);", false, false)]
     [Arguments("_ = holder.Property;", false, true)]
+    [Arguments("_ = new Holder(value);", false, true)]
+    [Arguments("_ = new Holder(value);", true, false)]
     public async Task ExceptionSourcesRespectEvaluation(string operation, bool cleanupInCatch, bool warning)
     {
         await Disposal.VerifyAsync($$"""
             using System;
             using System.Threading.Tasks;
             using Respire;
-            class Holder { public int Property => throw new Exception(); }
+            class Holder { public Holder(object value) { } public int Property => throw new Exception(); }
             class Caller
             {
-                async Task Run<T>(RespireClient client, Holder holder) where T : new()
+                async Task Run<T>(RespireClient client, Holder holder, dynamic value) where T : new()
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{operation}} result.Dispose(); }
@@ -272,10 +278,10 @@ public class ExceptionAwareFlowTests
             using System;
             using System.Threading.Tasks;
             using Respire;
-            class Holder { public int Property => throw new Exception(); }
+            class Holder { public Holder(object value) { } public int Property => throw new Exception(); }
             class Caller
             {
-                async Task Run<T>(RespireClient client, Holder holder) where T : new()
+                async Task Run<T>(RespireClient client, Holder holder, dynamic value) where T : new()
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");

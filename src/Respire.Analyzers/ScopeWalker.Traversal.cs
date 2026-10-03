@@ -249,12 +249,14 @@ internal static partial class ScopeWalker
             {
                 IObjectCreationOperation creation => creation.Initializer,
                 ITypeParameterObjectCreationOperation creation => creation.Initializer,
+                IDynamicObjectCreationOperation creation => creation.Initializer,
                 IArrayCreationOperation creation => creation.Initializer,
                 _ => null,
             };
             if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
-                    or IFieldReferenceOperation or IArrayElementReferenceOperation)
+                    or IFieldReferenceOperation or IArrayElementReferenceOperation
+                    or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation)
             {
                 // Evaluate the receiver and indexes, then the RHS, then perform the store.
                 // A property target is not a getter call in a simple assignment.
@@ -482,12 +484,15 @@ internal static partial class ScopeWalker
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
                 or IEventAssignmentOperation or IArrayCreationOperation
                 or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
+                or IDynamicObjectCreationOperation
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
                 or IIncrementOrDecrementOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { Target: IPropertyReferenceOperation }
                 or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
+                or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
+                or IIncrementOrDecrementOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
                 || !operation.ConstantValue.HasValue && (operation switch
                 {
                     IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
