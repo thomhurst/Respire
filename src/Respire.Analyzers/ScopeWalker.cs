@@ -13,6 +13,8 @@ namespace Respire.Analyzers;
 /// </summary>
 internal static class ScopeWalker
 {
+    internal enum BarrierStartPolicy { Exclude, Include }
+
     /// <summary>
     /// The executable scope owning <paramref name="node"/> — the method, accessor, local function
     /// or lambda body it lives in. Top-level statements report the whole compilation unit so that
@@ -126,8 +128,8 @@ internal static class ScopeWalker
             return before.SpanStart < after.SpanStart;
         }
 
-        return PathExistsAvoiding(graph, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
-               && !PathExistsAvoiding(graph, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
+        return PathExistsAvoiding(graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [])
+               && !PathExistsAvoiding(graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before]);
     }
 
     /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
@@ -179,7 +181,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
+            graph, semanticModel.Compilation, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
     }
 
     /// <summary>
@@ -193,7 +195,7 @@ internal static class ScopeWalker
         SyntaxNode after,
         IEnumerable<SyntaxNode> barriers,
         CancellationToken cancellationToken,
-        bool includeStart = false)
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
         if (graph is null)
@@ -210,7 +212,7 @@ internal static class ScopeWalker
         }
 
         return PathExistsAvoiding(
-            graph, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, includeStart);
+            graph, semanticModel.Compilation, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers, startPolicy);
     }
 
     /// <summary>True when every path to <paramref name="after"/> crosses one of <paramref name="barriers"/>.</summary>
@@ -240,7 +242,7 @@ internal static class ScopeWalker
         }
 
         return !PathExistsAvoiding(
-            graph, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
+            graph, semanticModel.Compilation, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
     }
 
     /// <summary>True when every path from <paramref name="before"/> to exit crosses one of <paramref name="barriers"/>.</summary>
@@ -271,6 +273,7 @@ internal static class ScopeWalker
 
         return !PathExistsAvoiding(
             graph,
+            semanticModel.Compilation,
             beforeBlock,
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
@@ -331,61 +334,120 @@ internal static class ScopeWalker
 
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
+        Compilation compilation,
         BasicBlock startBlock,
         int startPosition,
         BasicBlock targetBlock,
         int targetPosition,
         IEnumerable<SyntaxNode> barriers,
-        bool includeStart = false)
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
+        => new ReachabilityWalker(graph, compilation, startBlock, startPosition, targetBlock,
+            targetPosition, barriers, startPolicy).Search();
+
+    private sealed class ReachabilityWalker(
+        ControlFlowGraph graph,
+        Compilation compilation,
+        BasicBlock startBlock,
+        int startPosition,
+        BasicBlock targetBlock,
+        int targetPosition,
+        IEnumerable<SyntaxNode> barriers,
+        BarrierStartPolicy startPolicy)
     {
-        var barrierPositions = new Dictionary<int, List<int>>();
-        foreach (var barrier in barriers)
+        private readonly INamedTypeSymbol? _systemException = compilation.GetTypeByMetadataName("System.Exception");
+        private readonly Dictionary<int, List<int>> _barrierPositions = new();
+        // Interned continuations keep each finally's return destination in the search state.
+        private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
+        private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
+        private readonly Stack<(BasicBlock Block, int EntryPosition, int Continuation, bool Started)> _pending = new();
+        private readonly Dictionary<(int Block, int Continuation, bool Started), int> _earliestEntries = new();
+
+        internal bool Search()
         {
-            if (FindBlock(graph, barrier) is not { } block)
+            foreach (var barrier in barriers)
             {
-                continue;
+                if (FindBlock(graph, barrier) is not { } block)
+                {
+                    continue;
+                }
+
+                if (!_barrierPositions.TryGetValue(block.Ordinal, out var positions))
+                {
+                    positions = [];
+                    _barrierPositions.Add(block.Ordinal, positions);
+                }
+
+                positions.Add(barrier.SpanStart);
             }
 
-            if (!barrierPositions.TryGetValue(block.Ordinal, out var positions))
+            var startsInFinally = false;
+            for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
             {
-                positions = [];
-                barrierPositions.Add(block.Ordinal, positions);
+                startsInFinally |= region.Kind == ControlFlowRegionKind.Finally;
             }
 
-            positions.Add(barrier.SpanStart);
+            // Discover the actual continuation when the origin itself is inside a finally.
+            _pending.Push(startsInFinally
+                ? (graph.Blocks[0], int.MinValue, 0, false)
+                : (startBlock, startPosition, 0, true));
+            while (_pending.Count > 0)
+            {
+                var (block, entryPosition, continuation, started) = _pending.Pop();
+                if (!started && block.Ordinal == startBlock.Ordinal)
+                {
+                    started = true;
+                    entryPosition = startPosition;
+                }
+
+                var state = (block.Ordinal, continuation, started);
+                if (_earliestEntries.TryGetValue(state, out var earliestEntry)
+                    && earliestEntry <= entryPosition)
+                {
+                    continue;
+                }
+
+                _earliestEntries[state] = entryPosition;
+
+                var firstBarrier = started && _barrierPositions.TryGetValue(block.Ordinal, out var positions)
+                    ? positions.Where(position => position > entryPosition
+                                                   || startPolicy == BarrierStartPolicy.Include && block.Ordinal == startBlock.Ordinal
+                                                   && entryPosition == startPosition && position == entryPosition)
+                        .DefaultIfEmpty(int.MaxValue).Min()
+                    : int.MaxValue;
+
+                if (started && block.Ordinal == targetBlock.Ordinal
+                    && targetPosition > entryPosition
+                    && targetPosition <= firstBarrier)
+                {
+                    return true;
+                }
+
+                if (firstBarrier != int.MaxValue)
+                {
+                    continue;
+                }
+
+                Follow(block.FallThroughSuccessor, continuation, started);
+                Follow(block.ConditionalSuccessor, continuation, started);
+            }
+
+            return false;
         }
 
-        // A finally block can return to different destinations. Keep that continuation in the
-        // search state so a returning path cannot resume at an unrelated normal destination.
-        var continuations = new List<(int Block, int Next, ControlFlowRegion? Finally)> { (-1, 0, null) };
-        var continuationIds = new Dictionary<(int Block, int Next, ControlFlowRegion Finally), int>();
-        var pending = new Stack<(BasicBlock Block, int EntryPosition, int Continuation, bool Started)>();
-        var earliestEntries = new Dictionary<(int Block, int Continuation, bool Started), int>();
-        var startsInFinally = false;
-        for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-        {
-            startsInFinally |= region.Kind == ControlFlowRegionKind.Finally;
-        }
-
-        // Discover the actual continuation when the origin itself is inside a finally.
-        pending.Push(startsInFinally
-            ? (graph.Blocks[0], int.MinValue, 0, false)
-            : (startBlock, startPosition, 0, true));
-
-        int Prepend(BasicBlock? destination, int continuation, ControlFlowRegion finalizer)
+        private int Prepend(BasicBlock? destination, int continuation, ControlFlowRegion finalizer)
         {
             var key = (destination?.Ordinal ?? -1, continuation, finalizer);
-            if (!continuationIds.TryGetValue(key, out var id))
+            if (!_continuationIds.TryGetValue(key, out var id))
             {
-                id = continuations.Count;
-                continuations.Add(key);
-                continuationIds.Add(key, id);
+                id = _continuations.Count;
+                _continuations.Add(key);
+                _continuationIds.Add(key, id);
             }
 
             return id;
         }
 
-        void Enqueue(BasicBlock? destination, IEnumerable<ControlFlowRegion> finalizers, int continuation, bool started)
+        private void Enqueue(BasicBlock? destination, IEnumerable<ControlFlowRegion> finalizers, int continuation, bool started)
         {
             foreach (var finalizer in finalizers.Reverse())
             {
@@ -395,11 +457,11 @@ internal static class ScopeWalker
 
             if (destination is not null && (destination.IsReachable || destination.Kind == BasicBlockKind.Exit))
             {
-                pending.Push((destination, int.MinValue, continuation, started));
+                _pending.Push((destination, int.MinValue, continuation, started));
             }
         }
 
-        void Follow(ControlFlowBranch? branch, int continuation, bool started)
+        private void Follow(ControlFlowBranch? branch, int continuation, bool started)
         {
             if (branch is null)
             {
@@ -415,10 +477,10 @@ internal static class ScopeWalker
                     return;
                 }
 
-                var resume = continuations[continuation];
+                var resume = _continuations[continuation];
                 if (resume.Block >= 0)
                 {
-                    pending.Push((graph.Blocks[resume.Block], int.MinValue, resume.Next, started));
+                    _pending.Push((graph.Blocks[resume.Block], int.MinValue, resume.Next, started));
                 }
 
                 return;
@@ -436,51 +498,34 @@ internal static class ScopeWalker
                     exception = conversion.Operand;
                 }
 
-                var exceptionType = exception?.Type;
                 for (var region = branch.Source.EnclosingRegion; region is not null; region = region.EnclosingRegion)
                 {
                     if (region.Kind == ControlFlowRegionKind.Try
                         && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndCatch)
                     {
-                        foreach (var handler in region.EnclosingRegion.NestedRegions.Skip(1))
+                        foreach (var handler in region.EnclosingRegion.NestedRegions.Where(static nested =>
+                                     nested.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler))
                         {
-                            var catchesException = handler.ExceptionType is null
-                                                   || handler.ExceptionType.SpecialType == SpecialType.System_Object
-                                                   || handler.ExceptionType.ToDisplayString() == "System.Exception";
-                            for (var type = exceptionType; type is not null; type = type.BaseType)
-                            {
-                                catchesException |= SymbolEqualityComparer.Default.Equals(type, handler.ExceptionType);
-                            }
-
-                            var couldCatchDerivedException = false;
-                            if (exception is not IObjectCreationOperation)
-                            {
-                                for (var type = handler.ExceptionType; type is not null; type = type.BaseType)
-                                {
-                                    couldCatchDerivedException |= SymbolEqualityComparer.Default.Equals(type, exceptionType);
-                                }
-                            }
-
-                            if (catchesException || couldCatchDerivedException || exceptionType is null
-                                || handler.Kind == ControlFlowRegionKind.FilterAndHandler)
+                            var (possible, certain) = GetCatchApplicability(handler, exception, _systemException);
+                            if (possible)
                             {
                                 var catchContinuation = continuation;
                                 while (catchContinuation != 0)
                                 {
-                                    var activeFinally = continuations[catchContinuation].Finally!;
+                                    var activeFinally = _continuations[catchContinuation].Finally!;
                                     if (handler.FirstBlockOrdinal >= activeFinally.FirstBlockOrdinal
                                         && handler.LastBlockOrdinal <= activeFinally.LastBlockOrdinal)
                                     {
                                         break;
                                     }
 
-                                    catchContinuation = continuations[catchContinuation].Next;
+                                    catchContinuation = _continuations[catchContinuation].Next;
                                 }
 
                                 Enqueue(graph.Blocks[handler.FirstBlockOrdinal], unwind, catchContinuation, started);
                             }
 
-                            if (catchesException && handler.Kind == ControlFlowRegionKind.Catch)
+                            if (certain && handler.Kind == ControlFlowRegionKind.Catch)
                             {
                                 return;
                             }
@@ -504,48 +549,38 @@ internal static class ScopeWalker
             Enqueue(destination, finalizers, continuation, started);
         }
 
-        while (pending.Count > 0)
+        private static (bool Possible, bool Certain) GetCatchApplicability(
+            ControlFlowRegion handler, IOperation? exception, INamedTypeSymbol? systemException)
         {
-            var (block, entryPosition, continuation, started) = pending.Pop();
-            if (!started && block.Ordinal == startBlock.Ordinal)
-            {
-                started = true;
-                entryPosition = startPosition;
-            }
-
-            var state = (block.Ordinal, continuation, started);
-            if (earliestEntries.TryGetValue(state, out var earliestEntry)
-                && earliestEntry <= entryPosition)
-            {
-                continue;
-            }
-
-            earliestEntries[state] = entryPosition;
-
-            var firstBarrier = started && barrierPositions.TryGetValue(block.Ordinal, out var positions)
-                ? positions.Where(position => position > entryPosition
-                                               || includeStart && block.Ordinal == startBlock.Ordinal
-                                               && entryPosition == startPosition && position == entryPosition)
-                    .DefaultIfEmpty(int.MaxValue).Min()
-                : int.MaxValue;
-
-            if (started && block.Ordinal == targetBlock.Ordinal
-                && targetPosition > entryPosition
-                && targetPosition <= firstBarrier)
-            {
-                return true;
-            }
-
-            if (firstBarrier != int.MaxValue)
-            {
-                continue;
-            }
-
-            Follow(block.FallThroughSuccessor, continuation, started);
-            Follow(block.ConditionalSuccessor, continuation, started);
+            // A filtered region wraps separate filter/catch regions. The catch type still
+            // restricts entry to the filter; a filter does not make incompatible types reachable.
+            var catchRegion = handler.Kind == ControlFlowRegionKind.FilterAndHandler
+                ? handler.NestedRegions.FirstOrDefault(static region => region.Kind == ControlFlowRegionKind.Catch)
+                : handler;
+            var catchType = catchRegion?.ExceptionType;
+            var catchesAll = catchType is null || catchType.SpecialType == SpecialType.System_Object
+                || SymbolEqualityComparer.Default.Equals(catchType, systemException);
+            var exceptionType = exception?.Type;
+            var certain = catchesAll || HasBaseType(exceptionType, catchType);
+            // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
+            // handlers. A fresh construction has an exact type; other values may be derived.
+            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
+                || catchType is ITypeParameterSymbol
+                || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
+            return (possible, certain);
         }
 
-        return false;
+        private static bool HasBaseType(ITypeSymbol? type, ITypeSymbol? expected)
+        {
+            for (; type is not null; type = type.BaseType)
+            {
+                if (SymbolEqualityComparer.Default.Equals(type, expected))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     private static bool IsUnconditionalTopLevelSequence(

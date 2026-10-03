@@ -688,7 +688,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 && IsTopLevelBranchStatement(completion, branch)
                 && !ScopeWalker.CanReachWithoutCrossing(
                     context.SemanticModel, scope, branchStart, read, [completion], context.CancellationToken,
-                    includeStart: true)
+                    startPolicy: ScopeWalker.BarrierStartPolicy.Include)
                 && !IsReassignedBetween(context, scope, batch, origin, flush))
             {
                 return true;
