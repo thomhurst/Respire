@@ -6,7 +6,7 @@ namespace Respire.Internal;
 internal sealed class CorrectionCoordinator(ClientCore core)
 {
     internal CorrectionFence CreateFence(RespireClient client, RespireClient.TrackedConnectionIdentity identity)
-        => new(identity, client.SendCorrectionFenceAsync);
+        => new(identity, client.SendCorrectionFenceAsync, core);
 
     internal Task<bool> EnqueueAsync(
         Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt, Func<bool>? shouldContinue,
@@ -28,18 +28,18 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         {
             var ordered = await fence.TryAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
             if (ordered != CleanupAttemptResult.Succeeded) return ordered;
-            return await AttemptAsync(correct, attemptTimeout, cancellationToken).ConfigureAwait(false);
+            return await AttemptAsync(correct, attemptTimeout, cancellationToken, owner: core).ConfigureAwait(false);
         }, null, retry, reason => onAbandoned(fence.IsAcknowledged ? "release" : "fence", reason));
 
     /// <summary>Classifies one bounded attempt. Only acknowledged ordering survives a later local failure.</summary>
     internal static ValueTask<CleanupAttemptResult> AttemptAsync(
         Func<CancellationToken, ValueTask> attempt, TimeSpan timeout, CancellationToken stopping = default,
-        Func<bool>? acknowledged = null)
-        => AttemptAsync(attempt, static (send, token) => send(token), timeout, stopping, acknowledged);
+        Func<bool>? acknowledged = null, ClientCore? owner = null)
+        => AttemptAsync(attempt, static (send, token) => send(token), timeout, stopping, acknowledged, owner);
 
     internal static async ValueTask<CleanupAttemptResult> AttemptAsync<TState>(
         TState state, Func<TState, CancellationToken, ValueTask> attempt,
-        TimeSpan timeout, CancellationToken stopping = default, Func<bool>? acknowledged = null)
+        TimeSpan timeout, CancellationToken stopping = default, Func<bool>? acknowledged = null, ClientCore? owner = null)
     {
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         bound.CancelAfter(timeout);
@@ -51,7 +51,8 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         catch (Exception error)
         {
             if (acknowledged?.Invoke() == true) return CleanupAttemptResult.Succeeded;
-            return error is ObjectDisposedException || error is OperationCanceledException && stopping.IsCancellationRequested
+            return error is ObjectDisposedException && owner?.Disposed == true
+                || error is OperationCanceledException && stopping.IsCancellationRequested
                 ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed;
         }
     }
@@ -116,7 +117,7 @@ internal sealed class CorrectionCoordinator(ClientCore core)
             if (!await WaitAsync(pass, waitBound).ConfigureAwait(false))
             {
                 if (!canFence) return; // The idempotent ordered pass can still complete later.
-                await fence!.EnsureAsync().ConfigureAwait(false);
+                await fence!.EnsureBoundedAsync().ConfigureAwait(false);
                 canFence = false;
                 // Preserve the original peer and FIFO/ASK route until a broadcast completes.
                 identity = identity with { ServerClientId = 0 };
@@ -136,25 +137,37 @@ internal sealed class CorrectionCoordinator(ClientCore core)
 /// <summary>
 /// One correction's immutable physical identity and monotonic fence acknowledgement.
 /// The owner serializes attempts (the cleanup queue runs one attempt per item at a time).
+/// A transport callback publishes acknowledgement with explicit cross-thread visibility.
 /// </summary>
 internal sealed class CorrectionFence(
     RespireClient.TrackedConnectionIdentity identity,
-    Func<RespireClient.TrackedConnectionIdentity, CancellationToken, Action, ValueTask> send)
+    Func<RespireClient.TrackedConnectionIdentity, CancellationToken, Action, ValueTask> send,
+    ClientCore? owner = null)
 {
-    internal bool IsAcknowledged { get; private set; }
+    private bool _acknowledged;
+    internal bool IsAcknowledged => Volatile.Read(ref _acknowledged);
+
+    internal async ValueTask EnsureBoundedAsync()
+    {
+        if (IsAcknowledged) return;
+        // A cold control handshake can outlast the foreground broadcast wait. Fence sends
+        // disable command deadlines, so give them the independent connection timeout budget.
+        using var deadline = new CancellationTokenSource(owner?.Options.ConnectTimeout ?? TimeSpan.FromSeconds(10));
+        await EnsureAsync(deadline.Token).ConfigureAwait(false);
+    }
 
     internal async ValueTask EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (IsAcknowledged) return;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
-        await send(identity, cancellationToken, () => IsAcknowledged = true).ConfigureAwait(false);
+        await send(identity, cancellationToken, () => Volatile.Write(ref _acknowledged, true)).ConfigureAwait(false);
         // Successful transport drain also proves ordering without sending CLIENT KILL.
-        IsAcknowledged = true;
+        Volatile.Write(ref _acknowledged, true);
     }
 
     internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default)
         => IsAcknowledged ? new(CleanupAttemptResult.Succeeded)
-            : CorrectionCoordinator.AttemptAsync(EnsureAsync, timeout, stopping, () => IsAcknowledged);
+            : CorrectionCoordinator.AttemptAsync(EnsureAsync, timeout, stopping, () => IsAcknowledged, owner);
 }
 
 internal readonly record struct CleanupRetryPolicy(TimeSpan Limit, TimeSpan InitialDelay, TimeSpan MaximumDelay);

@@ -105,18 +105,60 @@ public class CorrectionCoordinatorTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
     public async Task AttemptsDistinguishTerminalDisposalFromRetryableErrors(int failure)
     {
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+        if (failure == 0) await client.DisposeAsync();
         using var stop = new CancellationTokenSource();
         if (failure == 1) stop.Cancel();
         Exception error = failure switch
         {
-            0 => new ObjectDisposedException("client"),
+            0 or 5 => new ObjectDisposedException("client"),
+            4 => new ObjectDisposedException("unrelated-resource"),
             1 or 2 => new OperationCanceledException(),
             _ => new RespireServerException("NOPERM release rejected"),
         };
-        var result = await CorrectionCoordinator.AttemptAsync(_ => ValueTask.FromException(error), Limit, stop.Token);
+        var result = await CorrectionCoordinator.AttemptAsync(_ => ValueTask.FromException(error), Limit, stop.Token,
+            owner: failure == 5 ? null : client.Core);
         await Assert.That(result).IsEqualTo(failure < 2 ? CleanupAttemptResult.Abandoned : CleanupAttemptResult.Failed);
+    }
+
+    [Test]
+    public async Task OverduePassBoundsFenceWithoutAuthorizingDependentCorrection()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)], ConnectTimeout = TimeSpan.FromMilliseconds(10),
+        });
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sends = 0;
+        var fence = new CorrectionFence(Identity, async (_, token, _) =>
+        {
+            entered.SetResult(token);
+            await releaseFence.Task.WaitAsync(token);
+        }, client.Core);
+        var correction = CorrectionCoordinator.ConvergeAsync(Identity, fence,
+            (_, _) => ++sends == 1 ? pending.Task : Task.CompletedTask,
+            TimeSpan.FromMilliseconds(10), TimeSpan.MaxValue).AsTask();
+        try
+        {
+            var token = await entered.Task.WaitAsync(Limit);
+            await Assert.That(token.CanBeCanceled).IsTrue();
+            await Assert.That(async () => await correction.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(fence.IsAcknowledged).IsFalse();
+            await Assert.That(sends).IsEqualTo(1);
+        }
+        finally
+        {
+            releaseFence.TrySetResult();
+            pending.TrySetResult();
+            try { await correction.WaitAsync(Limit); }
+            catch (OperationCanceledException) { }
+        }
     }
 
     [Test]

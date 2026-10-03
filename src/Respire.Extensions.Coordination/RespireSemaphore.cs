@@ -231,7 +231,7 @@ public sealed class RespireSemaphore
         CancellationToken cancellationToken = default)
         => CorrectionCoordinator.AttemptAsync((Client: client, Key: key, Owner: owner),
             static (state, token) => ReleaseOnceAsync(state.Client, state.Key, state.Owner, token),
-            BestEffortCleanupTimeout, cancellationToken);
+            BestEffortCleanupTimeout, cancellationToken, owner: (client as RespireClient)?.Core);
 
     private static async ValueTask ReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner, CancellationToken cancellationToken)

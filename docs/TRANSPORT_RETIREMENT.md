@@ -203,14 +203,19 @@ The policies preserve different completion contracts:
 - Native extension and strict corrections propagate fence failures; compatible managed
   release logs a fence failure while preserving its original error and ownership-loss notice.
 - Semaphore cleanup uses one-second attempts and foreground waits, with a one-minute retry
-  window and jittered exponential delays from 100 ms to five seconds. Disposal is terminal;
-  server errors and attempt timeouts remain retryable. Fence acknowledgement survives release
+  window and jittered exponential delays from 100 ms to five seconds. Confirmed core disposal
+  or cleanup shutdown is terminal; an unrelated resource's disposal remains retryable.
+  Server errors and attempt timeouts remain retryable. Fence acknowledgement survives release
   retries and local retirement failures. The existing core queue retains four workers, 256
   queued items, and at most 256 admission waiters; overload and abandonment diagnostics remain.
 - Cache corrections first use owner-checked FIFO broadcasts. A completed broadcast proves
   ordering without a kill. An overdue pass fences the captured connection before retrying,
-  retaining its original peer and ASK state until the broadcast completes. The cache supplies
-  fresh TTL arguments for each pass; the coordinator stops when latency no longer halves or
+  retaining its original peer and ASK state until the broadcast completes. The fence's control
+  connection uses the independent `ConnectTimeout` budget (ten seconds by default), because
+  a cold fencing handshake can outlast the foreground broadcast wait and fence sends disable
+  ordinary command deadlines. Timeout propagates without granting ordering proof or starting
+  a dependent retry; cancellation retires the control connection. The cache supplies fresh
+  TTL arguments for each pass; the coordinator stops when latency no longer halves or
   falls below the tolerance. A detached shrink-only pass remains observed and safe if it lands.
 - Hash-field lease cleanup retains its owner-checked scripts and current Sentinel/Cluster
   route targeting. Shared foreground observation and capped probe delays bound the caller's
