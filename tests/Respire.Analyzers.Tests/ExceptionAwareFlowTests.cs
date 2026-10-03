@@ -76,7 +76,6 @@ public class ExceptionAwareFlowTests
         """);
 
     [Test]
-    [Arguments("(result, Throw())", false, true)]
     [Arguments("(result, Throw())", true, false)]
     [Arguments("(result, 0)", false, false)]
     [Arguments("(choice ? result : existing, 0)", false, true)]
@@ -98,6 +97,23 @@ public class ExceptionAwareFlowTests
                     {{(cleanupInCatch ? "result.Dispose();" : "")}}
                     return default;
                 }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task TupleReturnWithThrowingSecondElementRetainsWarning() => await Disposal.VerifyAsync("""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            async Task<(RespireResult, int)> Run(RespireClient client)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                try { return (result, Throws()); }
+                catch { return default; }
             }
         }
         """);
