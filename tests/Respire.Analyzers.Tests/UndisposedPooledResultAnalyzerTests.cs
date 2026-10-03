@@ -8,6 +8,44 @@ namespace Respire.Analyzers.Tests;
 public class UndisposedPooledResultAnalyzerTests
 {
     [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task FinallyDispose_CoversEarlyExit(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var result = await client.ExecuteAsync("PING");
+                try { if (skip) { {{{exit}}} } }
+                finally { result.Dispose(); }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task ConditionalFinallyDispose_DoesNotCoverEarlyExit(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip, bool dispose)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                try { if (skip) { {{{exit}}} } }
+                finally { if (dispose) result.Dispose(); }
+            }
+        }
+        """);
+
+    [Test]
     public async Task AwaitedResultNeverDisposed_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;
