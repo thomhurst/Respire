@@ -17,8 +17,22 @@ internal static class IsolatedTagDescriber
             .Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
         if (metadata.Length != 5) throw new InvalidOperationException("Git returned unexpected repository metadata.");
         var (objectFormat, objects, shallow, grafts, head) = (metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]);
+        // rev-parse reports the default shallow path even when --shallow-file/GIT_SHALLOW_FILE
+        // selects another boundary; Git resolves a relative value from the worktree root.
+        if (Environment.GetEnvironmentVariable("GIT_SHALLOW_FILE") is { Length: > 0 } shallowFile)
+            shallow = Path.GetFullPath(shallowFile, repositoryRoot);
+
+        // Copy replacements only when the source applies them. The isolated commands inherit
+        // GIT_REPLACE_REF_BASE and GIT_NO_REPLACE_OBJECTS, so they read the same namespace.
+        var replaceRefBase = Environment.GetEnvironmentVariable("GIT_REPLACE_REF_BASE") is { Length: > 0 } configuredBase
+            ? configuredBase
+            : "refs/replace/";
+        var useReplaceRefs = Environment.GetEnvironmentVariable("GIT_NO_REPLACE_OBJECTS") is null
+            && await GitCommand.RunAsync(repositoryRoot, cancellationToken,
+                "config", "--type=bool", "--default", "true", "--get", "core.useReplaceRefs") == "true";
+        string[] refPatterns = useReplaceRefs ? ["refs/tags", replaceRefBase] : ["refs/tags"];
         var localRefs = await GitCommand.RunAsync(repositoryRoot, cancellationToken,
-            "for-each-ref", "--format=%(objectname) %(refname)", "refs/tags", "refs/replace");
+            ["for-each-ref", "--format=%(objectname) %(refname)", .. refPatterns]);
         var packedRefs = new StringBuilder();
         foreach (var line in localRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {

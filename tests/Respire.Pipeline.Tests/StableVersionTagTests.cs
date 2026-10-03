@@ -157,6 +157,77 @@ public class StableVersionTagTests
     }
 
     [Test]
+    public async Task DisabledReplacementRefsAreNotApplied()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("unreleased");
+        await repository.Git("replace", "HEAD", "HEAD~1");
+        await Assert.That(await repository.SelectAsync()).IsNull();
+        await repository.Git("config", "core.useReplaceRefs", "false");
+        await Assert.That(await repository.Git("describe", "--tags", "--abbrev=0")).IsEqualTo("v1.2.3");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("GIT_REPLACE_REF_BASE")]
+    [Arguments("GIT_NO_REPLACE_OBJECTS")]
+    public async Task ReplacementEnvironmentMatchesTheSourceHistory(string variable)
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("unreleased");
+        var head = await repository.Git("rev-parse", "HEAD");
+        var parent = await repository.Git("rev-parse", "HEAD~1");
+        var previous = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            if (variable == "GIT_REPLACE_REF_BASE")
+            {
+                // A replacement outside the default namespace applies only when selected.
+                await repository.Git("update-ref", $"refs/alternate-replace/{head}", parent);
+                await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+                Environment.SetEnvironmentVariable(variable, "refs/alternate-replace/");
+                await Assert.That(await repository.SelectAsync()).IsNull();
+            }
+            else
+            {
+                await repository.Git("replace", "HEAD", "HEAD~1");
+                await Assert.That(await repository.SelectAsync()).IsNull();
+                Environment.SetEnvironmentVariable(variable, "1");
+                await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable(variable, previous); }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ExplicitShallowFileBoundsTheHistory()
+    {
+        using var repository = new TestRepository();
+        using var boundary = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("unreleased");
+        var shallowFile = System.IO.Path.Combine(boundary.Path, "custom-shallow");
+        await File.WriteAllTextAsync(shallowFile, await repository.Git("rev-parse", "HEAD") + "\n");
+        var previous = Environment.GetEnvironmentVariable("GIT_SHALLOW_FILE");
+        try
+        {
+            await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+            Environment.SetEnvironmentVariable("GIT_SHALLOW_FILE", shallowFile);
+            await Assert.That(await repository.Git("describe", "--tags", "--always", "--abbrev=0"))
+                .IsNotEqualTo("v1.2.3");
+            await Assert.That(await repository.SelectAsync()).IsNull();
+        }
+        finally { Environment.SetEnvironmentVariable("GIT_SHALLOW_FILE", previous); }
+    }
+
+    [Test]
     public async Task CancelledLookupPreservesCancellation()
     {
         using var repository = new TestRepository();
