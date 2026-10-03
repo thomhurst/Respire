@@ -183,6 +183,43 @@ public class SentinelDiscoveryAgingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReconnectBeforeSubscriptionReturnsPreservesFailure(bool recovered)
+    {
+        var state = Create();
+        using var lifetime = new CancellationTokenSource();
+        var seed = new SentinelMonitorProbe();
+        var peer = new SentinelMonitorProbe();
+        peer.Subscribed = () =>
+        {
+            peer.ChangeConnectionState(new(Peer, RespireConnectionState.Reconnecting, null)
+                { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+            if (recovered)
+                peer.ChangeConnectionState(new(Peer, RespireConnectionState.Connected, null)
+                    { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+        };
+        var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "mymaster" }, null,
+            new object(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+        {
+            ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client : peer.Client,
+        };
+        try
+        {
+            monitor.Published();
+            await monitor.WaitForSubscriptionsAsync(2, lifetime.Token).WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 3; i++) Miss(state);
+            await Assert.That(state.Snapshot().Contains(Peer)).IsEqualTo(recovered);
+        }
+        finally
+        {
+            var tasks = monitor.Stop();
+            await lifetime.CancelAsync();
+            await CleanupTasks.WhenAllAsync(tasks).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
     public async Task AgingFreesCapacityAndPreservesEpochEvidence()
     {
         var state = new SentinelDiscoveryState([Seed]);

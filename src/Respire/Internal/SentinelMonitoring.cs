@@ -227,12 +227,14 @@ internal sealed class SentinelMonitoring(
     private async Task MonitorSentinelAsync(SentinelDiscoveryState.Membership membership, CancellationToken cancellationToken)
     {
         var endpoint = membership.Endpoint;
+        long connectionStateVersion = 0;
         void ObserveConnectionState(RespireConnectionStateChange change)
         {
             if (change.ReconnectSource != RespireReconnectSource.SentinelMonitor) return;
             lock (_gate)
             {
                 if (_disposed || cancellationToken.IsCancellationRequested) return;
+                connectionStateVersion++;
                 _discovery.RecordConnection(membership,
                     succeeded: (change.SourceState ?? change.State) == RespireConnectionState.Connected);
             }
@@ -257,9 +259,17 @@ internal sealed class SentinelMonitoring(
                         if (budget.Attempts == 0)
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
                     }));
+                long subscribingStateVersion;
+                lock (_gate) subscribingStateVersion = connectionStateVersion;
                 client.ConnectionStateChanged += ObserveConnectionState;
                 subscription = await client.SubscribeAsync(cancellationToken).ConfigureAwait(false);
-                _discovery.RecordConnection(membership, succeeded: true);
+                lock (_gate)
+                {
+                    // A reconnect transition after the acknowledgement is newer evidence
+                    // than this continuation. Never clear that failure with startup success.
+                    if (connectionStateVersion == subscribingStateVersion)
+                        _discovery.RecordConnection(membership, succeeded: true);
+                }
                 budget.Reset();
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
