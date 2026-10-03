@@ -9,6 +9,29 @@ namespace Respire.Tests.Networking;
 public class ClusterRoutingSnapshotTests
 {
     [Test]
+    public async Task UnchangedPublicationReusesSnapshotButChangedCountsAndCompletenessDoNot()
+    {
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        router.ApplyTopology(Topology(6379, 6380), 0, 1);
+        var before = router.RoutingSnapshot;
+        var counts = (int[])before.MasterSlotCounts.Clone();
+        var unchanged = before.Publish([], [], 0, before.Masters, before.ReplicaNodes, before.Replicas, counts, true);
+        await Assert.That(unchanged).IsSameReferenceAs(before);
+
+        counts[0]--;
+        var changed = before.Publish([], [], 0, before.Masters, before.ReplicaNodes, before.Replicas, counts, true);
+        await Assert.That(changed.MasterSlotCounts[0]).IsEqualTo(16383);
+        await Assert.That(before.MasterSlotCounts[0]).IsEqualTo(16384);
+        counts[0]--;
+        await Assert.That(changed.MasterSlotCounts[0]).IsEqualTo(16383);
+        var incomplete = changed.Publish([], [], 0, changed.Masters, changed.ReplicaNodes,
+            changed.Replicas, changed.MasterSlotCounts, false);
+        await Assert.That(incomplete.IsComplete).IsFalse();
+        await Assert.That(changed.IsComplete).IsTrue();
+    }
+
+    [Test]
     [NotInParallel]
     public async Task SnapshotSelectionDoesNotAllocate()
     {

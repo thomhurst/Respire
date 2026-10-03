@@ -52,6 +52,10 @@ internal sealed class ClusterRoutingSnapshot
         RespireConnectionMultiplexer[] replicaNodes, ClusterTopologyReplica[] replicas,
         int[] masterSlotCounts, bool complete)
     {
+        if (dirtyPages == 0 && complete == IsComplete
+            && ReferenceEquals(masters, Masters) && ReferenceEquals(replicaNodes, ReplicaNodes)
+            && ReferenceEquals(replicas, Replicas) && masterSlotCounts.AsSpan().SequenceEqual(MasterSlotCounts))
+            return this;
         var pages = dirtyPages == 0 ? _pages : (SlotRoute[][])_pages.Clone();
         while (dirtyPages != 0)
         {

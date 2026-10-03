@@ -38,7 +38,14 @@ internal sealed partial class ClusterRouter
         }
         var route = RoutingSnapshot[slot];
         owner = route.Primary;
-        if (primary is not null && !ReferenceEquals(primary.Multiplexer, owner)) primary = null;
+        if (primary is not null && !ReferenceEquals(primary.Multiplexer, owner))
+        {
+            // Retry a replacement owner before unknown replica coverage can block this read.
+            if (retry)
+                return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
+                    samplingDeadline: deadline, previousFailure: lastError).ConfigureAwait(false);
+            primary = null;
+        }
         var routes = route.Replicas;
         if (routes is null || ReferenceEquals(routes, _unknownReplicaRoutes))
         {
@@ -98,6 +105,7 @@ internal sealed partial class ClusterRouter
         if (best.TryGet(out var selected))
         {
             var node = selected.Multiplexer;
+            // Sampling may await: revalidate both roles together against the latest publication.
             var currentRoute = RoutingSnapshot[slot];
             if (selected.IsAcceptingCommands && node is { IsRetired: false }
                 && (ReferenceEquals(currentRoute.Primary, node) || currentRoute.Replicas?.Nodes.Contains(node) == true))

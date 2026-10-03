@@ -23,6 +23,8 @@ dependency processing.
 
 The snapshot uses 64 pages of 256 slots. A writer copies each changed page once; all other
 pages remain shared with the previous snapshot. Unchanged publications share every page.
+When node summary references, slot counts, and completeness are also unchanged, publication
+reuses the snapshot itself. Counts are compared by value because writer staging mutates them.
 One point update therefore does not copy the entire slot table or allocate a large object.
 Readers allocate nothing to capture a snapshot or select a slot.
 
@@ -81,11 +83,12 @@ The temporary benchmarks used normal measurement iterations and `MemoryDiagnoser
 | Snapshot slot lookup | 0.792 ns | 0 B |
 | Direct cached connection lookup | 1.595 ns | 0 B |
 | Healthy Cluster connection dispatch | 29.921 ns | 0 B |
-| Publish with no changed pages | 32.45 ns | 88 B |
-| Publish with one changed page | 863.30 ns | 4,744 B |
-| Publish with all 64 pages changed | 49.30 us | 264,304 B |
+| Reuse with no changed pages or metadata | 2.909 ns | 0 B |
+| Publish with one changed page | 783.406 ns | 4,744 B |
+| Publish with all 64 pages changed | 45.00 us | 264,304 B |
 
-Publication measurements isolate the snapshot copy mechanism with empty node summaries;
+Publication measurements were repeated after adding unchanged-snapshot reuse (previously
+32.45 ns and 88 B for no changed pages). They isolate the copy mechanism with empty summaries;
 they exclude identity reconciliation, summary construction, and transport retirement.
 Dispatch uses an already connected transport and excludes command serialization and network
 latency. Subnanosecond lookups are close to the measurement overhead floor; the useful result
