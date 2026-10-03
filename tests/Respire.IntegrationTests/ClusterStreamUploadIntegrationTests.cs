@@ -32,6 +32,14 @@ public class ClusterStreamUploadIntegrationTests
         await cluster.MoveKeysAsync(slot, source: 0, target: 1);
         if (!asking) await cluster.FinishMoveAsync(slot, target: 1);
 
+        await using var directSource = RespireClient.Create(new RespireOptions
+        {
+            Protocol = protocol, Endpoints = [new(cluster.Host, cluster.Port(0))],
+        });
+        Func<Task> rejectedRead = async () => await directSource.Strings.GetBytesAsync(key);
+        var rejection = await rejectedRead.Should().ThrowAsync<RespireServerException>();
+        rejection.Which.Code.Should().Be(asking ? "ASK" : "MOVED");
+
         // Larger than several upload chunks, including binary bytes and a nonzero stream origin.
         var payload = Enumerable.Range(0, 96 * 1024 + 7).Select(index => (byte)(index % 251)).ToArray();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -42,15 +50,30 @@ public class ClusterStreamUploadIntegrationTests
         }
         else
         {
-            await using var source = new MemoryStream([255, .. payload, 254]) { Position = 1 };
+            await using var source = new ReplayCountingStream([255, .. payload, 254]) { Position = 1 };
             (await client.Strings.SetAsync(key, source, payload.Length,
                 cancellationToken: deadline.Token)).Should().BeTrue();
             source.Position.Should().Be(payload.Length + 1);
+            source.Rewinds.Should().Be(1);
         }
 
         using var stored = await client.ExecuteAsync(RespireCommands.String.GET, [key], cancellationToken: deadline.Token);
         stored.AsBytes().Should().Equal(payload);
         // ASK is temporary; MOVED publishes the new slot owner.
         client.Core.Cluster.GetSlotOwnerEndpoint(slot)!.Value.Port.Should().Be(cluster.Port(asking ? 0 : 1));
+    }
+
+    private sealed class ReplayCountingStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        internal int Rewinds { get; private set; }
+        public override long Position
+        {
+            get => base.Position;
+            set
+            {
+                if (value < base.Position) Rewinds++;
+                base.Position = value;
+            }
+        }
     }
 }

@@ -302,7 +302,7 @@ public sealed partial class RespireClient
         finally { discovery?.Finish(); }
     }
 
-    private static async ValueTask<(DedicatedConnectionPool Pool, ClusterRouter.StreamRouteVersion Version, UploadAskState Asking)>
+    private static async ValueTask<UploadRedirect>
         AcquireUploadRedirectAsync(ClusterRouter cluster, RespireServerException error, RespireConnection source,
             int? slot, ClusterRouter.DiscoveryRound? discovery, CancellationToken cancellationToken)
     {
@@ -313,7 +313,7 @@ public sealed partial class RespireClient
             .ConfigureAwait(false);
         // MOVED and READONLY recovery can publish an owner during acquisition.
         if (!asking) version = cluster.CaptureSlotVersion(slot);
-        return (pool, version, asking ? new UploadAskState(source, error) : default);
+        return new(pool, version, asking ? new UploadAskState(source, error) : default);
     }
 
     private static void ResetUploadSourceForReplay<TCommand>(in TCommand command, RespireServerException error)
@@ -327,6 +327,9 @@ public sealed partial class RespireClient
             RethrowPreservingStackTrace(error);
         }
     }
+
+    private readonly record struct UploadRedirect(
+        DedicatedConnectionPool Pool, ClusterRouter.StreamRouteVersion Version, UploadAskState Asking);
 
     // ASK identity must be set and cleared together. Slot version and discovery also serve
     // ordinary routes, so they remain independent of this optional redirect state.
