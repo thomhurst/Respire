@@ -10,6 +10,8 @@ namespace Respire.Tests.Networking;
 
 public partial class ReadDedicatedRoutingTests
 {
+    private const string SentinelPrimaryLookupCommand = "SENTINEL GET-MASTER-ADDR-BY-NAME ";
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -112,7 +114,7 @@ public partial class ReadDedicatedRoutingTests
         var currentPrimary = oldPrimary;
         await using var sentinel = Sentinel(oldPrimary, () => [replica]);
         var originalReply = sentinel.ReplyOverride!;
-        sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+        sentinel.ReplyOverride = (id, command) => command.StartsWith(SentinelPrimaryLookupCommand)
             ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${currentPrimary.Port.ToString().Length}\r\n{currentPrimary.Port}\r\n")
             : originalReply(id, command);
         var blockOldRental = false;
@@ -322,14 +324,9 @@ public partial class ReadDedicatedRoutingTests
         }
         var failedNode = failPrimary ? primary : replica;
         var failDedicated = false;
-        var sentinelReply = sentinel.ReplyOverride!;
-        sentinel.ReplyOverride = (id, command) =>
-            // A failed dedicated primary retires its Sentinel generation. Keep background
-            // rediscovery from opening another primary socket while counting read attempts.
-            // Restore the advertisement below so the recovery read still proves progress.
-            Volatile.Read(ref failDedicated) && command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
-                ? "*-1\r\n"u8.ToArray()
-                : sentinelReply(id, command);
+        // A failed dedicated primary retires its Sentinel generation. Fence background
+        // connections while counting read attempts; restore the advertisement for recovery.
+        SuppressPrimaryAdvertisement(sentinel, () => Volatile.Read(ref failDedicated));
         var failedNodeConnections = 0;
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var previous = failedNode.ReplyOverride!;
@@ -708,9 +705,17 @@ public partial class ReadDedicatedRoutingTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
+    private static void SuppressPrimaryAdvertisement(FakeRespServer sentinel, Func<bool> suppressed)
+    {
+        var original = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => suppressed() && command.StartsWith(SentinelPrimaryLookupCommand)
+            ? "*-1\r\n"u8.ToArray()
+            : original(id, command);
+    }
+
     private static FakeRespServer Sentinel(FakeRespServer primary, Func<FakeRespServer[]> replicas) => new(16)
     {
-        ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+        ReplyOverride = (_, command) => command.StartsWith(SentinelPrimaryLookupCommand)
             ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
             : command.StartsWith("SENTINEL REPLICAS ")
                 ? Encoding.ASCII.GetBytes(ReplicaReply(replicas()))

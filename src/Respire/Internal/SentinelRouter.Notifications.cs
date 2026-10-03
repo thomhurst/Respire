@@ -75,9 +75,6 @@ internal sealed partial class SentinelRouter
                 foreach (var target in hint.Targets)
                 {
                     if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _)) continue;
-                    // Disposal cancels the monitor token through CancelAsync, whose linked-token
-                    // callbacks may still be queued. Do not start more DNS work once disposed.
-                    lock (_gate) if (_disposed) return;
                     var targetAddresses = await Monitoring.ResolveAddressesAsync(target.Host, cancellationToken).ConfigureAwait(false);
                     targets.Add(new(target, targetAddresses));
                 }
