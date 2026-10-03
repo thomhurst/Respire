@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -185,33 +186,57 @@ internal sealed record GitVersionDetails(
 
     internal static async Task<string?> GetLatestStableVersionTagAsync(string repositoryRoot, CancellationToken cancellationToken)
     {
-        // Filter only a temporary mirror's refs. Shared objects avoid copying history;
-        // the source repository's tags, branches and working tree remain untouched.
-        // All Git argument lists are constant-size, regardless of tag count.
-        var mirror = Directory.CreateTempSubdirectory("respire-stable-version-");
+        // Read local refs directly: clone/fetch advertisements can hide release tags.
+        // Capture the calling worktree's HEAD and shared object/shallow paths together.
+        var metadata = (await RunGitAsync(repositoryRoot, cancellationToken, "rev-parse",
+            "--show-object-format", "--path-format=absolute", "--git-path", "objects", "--git-path", "shallow", "HEAD"))
+            .Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        if (metadata.Length != 4) throw new InvalidOperationException("Git returned unexpected repository metadata.");
+        var (objectFormat, objects, shallow, head) = (metadata[0], metadata[1], metadata[2], metadata[3]);
+        var localRefs = await RunGitAsync(repositoryRoot, cancellationToken,
+            "for-each-ref", "--format=%(objectname) %(refname)", "refs/tags", "refs/replace");
+        var updates = new StringBuilder();
+        foreach (var line in localRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = line.IndexOf(' ');
+            var name = line[(separator + 1)..];
+            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && ParseVersion(name[10..]) is null) continue;
+            updates.Append("update ").Append(name).Append(' ').Append(line.AsSpan(0, separator)).Append('\n');
+        }
+
+        // Isolate filtered refs while borrowing objects. Include replacements and the
+        // shallow boundary so Git walks the same local history without touching source refs.
+        // Every argument list remains constant-size; ref updates travel over stdin.
+        var temporary = Directory.CreateTempSubdirectory("respire-stable-version-");
         try
         {
-            await RunGitAsync(repositoryRoot, cancellationToken, "clone", "--mirror", "--shared", "--quiet", "--",
-                Path.GetFullPath(repositoryRoot), mirror.FullName);
-            var tags = await RunGitAsync(mirror.FullName, cancellationToken,
-                "for-each-ref", "--format=%(refname:strip=2)", "refs/tags");
-            var removals = string.Join('\n', tags.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(tag => ParseVersion(tag) is null).Select(tag => $"delete refs/tags/{tag}"));
-            if (removals.Length != 0)
-                await RunGitWithInputAsync(mirror.FullName, cancellationToken, removals + "\n", "update-ref", "--stdin");
+            await RunGitAsync(temporary.FullName, cancellationToken,
+                "init", "--bare", "--quiet", "--template=", $"--object-format={objectFormat}");
+            await File.WriteAllTextAsync(Path.Combine(temporary.FullName, "objects", "info", "alternates"),
+                objects + "\n", cancellationToken);
+            if (File.Exists(shallow)) File.Copy(shallow, Path.Combine(temporary.FullName, "shallow"));
+            if (updates.Length != 0)
+                await RunGitWithInputAsync(temporary.FullName, cancellationToken, updates.ToString(), "update-ref", "--stdin");
 
             // Git retains native distance, merge-history and annotated-tag precedence.
             // --always reports a commit hash only when no retained tag is reachable;
             // unlike catching Git failures, this leaves repository errors observable.
-            var selected = await RunGitAsync(mirror.FullName, cancellationToken,
-                "describe", "--tags", "--abbrev=0", "--always");
+            var selected = await RunGitAsync(temporary.FullName, cancellationToken,
+                "describe", "--tags", "--abbrev=0", "--always", head);
             return ParseVersion(selected) is null ? null : selected;
         }
         finally
         {
-            foreach (var file in mirror.EnumerateFiles("*", SearchOption.AllDirectories))
-                file.Attributes &= ~FileAttributes.ReadOnly;
-            mirror.Delete(recursive: true);
+            // Temporary metadata cleanup is best-effort: a locked file must not replace
+            // the Git failure/cancellation, or prevent returning an already computed version.
+            try
+            {
+                foreach (var file in temporary.EnumerateFiles("*", SearchOption.AllDirectories))
+                    file.Attributes &= ~FileAttributes.ReadOnly;
+                temporary.Delete(recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
@@ -303,7 +328,7 @@ internal sealed record GitVersionDetails(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Join this owned process before the caller removes its temporary mirror.
+            // Join this owned process before the caller removes its temporary repository.
             try { process.Kill(entireProcessTree: true); }
             catch (InvalidOperationException) { /* The process already exited. */ }
             await process.WaitForExitAsync(CancellationToken.None);

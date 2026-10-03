@@ -9,6 +9,55 @@ namespace Respire.Pipeline.Tests;
 public class StableVersionTagTests
 {
     [Test]
+    public async Task UsesSourceRepositoryObjectFormat()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync("sha256");
+        await repository.Git("tag", "v1.2.3");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+    }
+
+    [Test]
+    public async Task LocalReplacementRefsPreserveTheEffectiveHistory()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.CommitAsync("unreleased");
+        // Replacing HEAD with the root's content removes the tagged ancestor from
+        // the effective history, while preserving HEAD's own untagged object identity.
+        await repository.Git("replace", "HEAD", "HEAD~1");
+        await Assert.That(await repository.SelectAsync()).IsNull();
+        await repository.Git("replace", "-d", "HEAD");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
+    }
+
+    [Test]
+    public async Task CancelledLookupPreservesCancellation()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.That(() => GitVersionDetails.GetLatestStableVersionTagAsync(repository.Path, cancellation.Token))
+            .Throws<OperationCanceledException>();
+    }
+
+    [Test]
+    [Arguments("transfer.hideRefs", "refs/tags")]
+    [Arguments("uploadpack.hideRefs", "refs/tags")]
+    [Arguments("transfer.hideRefs", "refs")]
+    public async Task LocalTagsRemainVisibleWhenUploadAdvertisementsHideThem(string setting, string hiddenRefs)
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v1.2.3");
+        await repository.Git("config", setting, hiddenRefs);
+        var expected = await repository.Git("describe", "--tags", "--abbrev=0");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo(expected);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
@@ -190,9 +239,9 @@ public class StableVersionTagTests
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("respire-version-tags-");
         internal string Path => _directory.FullName;
-        internal async Task InitializeAsync()
+        internal async Task InitializeAsync(string objectFormat = "sha1")
         {
-            await Git("init", "-b", "main");
+            await Git("init", "-b", "main", $"--object-format={objectFormat}");
             await Git("config", "user.name", "Test");
             await Git("config", "user.email", "test@example.com");
             await CommitAsync("base");
