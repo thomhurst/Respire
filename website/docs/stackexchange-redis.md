@@ -209,7 +209,8 @@ while (!applied);
 
 For single-key compare-and-set on Redis 8.4+, use `Strings.SetConditionalAsync` or
 `Strings.DeleteConditionalAsync` with a `RespireValueCondition` instead. See
-[compare values before writing or deleting](./commands/strings-and-keys#compare-values-before-writing-or-deleting). See [batches and transactions](./guides/batches-and-transactions).
+[batches and transactions](./guides/batches-and-transactions) and
+[compare values before writing or deleting](./commands/strings-and-keys#compare-values-before-writing-or-deleting).
 
 ## Pub/sub
 
