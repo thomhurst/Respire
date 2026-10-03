@@ -7,6 +7,53 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("(holder.Value, _) = (result, Throws());", "Exception", true)]
+    [Arguments("(holder.Value, _) = (result, 0);", "InvalidOperationException", false)]
+    [Arguments("(holder.Value, _) = (result, 0);", "NullReferenceException", true)]
+    [Arguments("(holder.Number, holder.Value) = (0, result);", "InvalidOperationException", true)]
+    [Arguments("(holder.Value, holder.Number) = (result, 0);", "InvalidOperationException", false)]
+    public async Task DeconstructionEvaluatesRhsBeforeTransfer(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder
+        {
+            public RespireResult Value { set { value.Dispose(); } }
+            public int Number { set { throw new InvalidOperationException(); } }
+        }
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            async Task Run(RespireClient client, Holder holder)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("object", "OutOfMemoryException", true)]
+    [Arguments("IDisposable", "OutOfMemoryException", true)]
+    [Arguments("object", "InvalidOperationException", false)]
+    [Arguments("RespireResult", "OutOfMemoryException", false)]
+    public async Task DirectReturnWaitsForImplicitConversion(string returnType, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task<{{returnType}}> Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { return result; }
+                catch ({{catchType}}) { return default; }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("holder[result, 0] = Throws();", "Exception", true)]
     [Arguments("holder[result, Throws()] = 0;", "Exception", true)]
     [Arguments("holder[result, 0] = 0;", "NullReferenceException", true)]
@@ -93,7 +140,14 @@ public class ExceptionAwareFlowTests
     [Arguments("sbyte", "unchecked { value /= -1; }", "OverflowException", false)]
     [Arguments("sbyte", "checked { value %= -1; }", "OverflowException", false)]
     [Arguments("sbyte", "checked { value /= -1; }", "InvalidOperationException", false)]
-    public async Task CompoundDivisionIncludesCheckedResultConversion(string type, string expression, string catchType, bool warning)
+    [Arguments("int", "checked { value /= divisor; }", "OverflowException", false, "ushort")]
+    [Arguments("short", "checked { value /= divisor; }", "OverflowException", false, "byte")]
+    [Arguments("short", "checked { value /= divisor; }", "DivideByZeroException", true, "byte")]
+    [Arguments("sbyte", "checked { value /= divisor; }", "OverflowException", true, "sbyte")]
+    [Arguments("short?", "checked { value /= divisor; }", "OverflowException", false, "byte?")]
+    [Arguments("sbyte", "checked { value /= 2; }", "OverflowException", false)]
+    [Arguments("sbyte", "checked { value /= -2; }", "OverflowException", false)]
+    public async Task CompoundDivisionIncludesCheckedResultConversion(string type, string expression, string catchType, bool warning, string divisorType = "int")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -101,7 +155,7 @@ public class ExceptionAwareFlowTests
             using Respire;
             class Caller
             {
-                async Task Run(RespireClient client, {{type}} value)
+                async Task Run(RespireClient client, {{type}} value, {{divisorType}} divisor)
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{expression}} result.Dispose(); }
@@ -115,7 +169,7 @@ public class ExceptionAwareFlowTests
             using Respire;
             class Caller
             {
-                async Task Run(RespireClient client, {{type}} value)
+                async Task Run(RespireClient client, {{type}} value, {{divisorType}} divisor)
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");

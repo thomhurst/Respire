@@ -168,7 +168,7 @@ internal static partial class ScopeWalker
             }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
-            var returnTransfer = wrapped && expression?.Parent is ReturnStatementSyntax;
+            var returnTransfer = expression?.Parent is ReturnStatementSyntax;
             var assignmentTransfer = false;
             var indexerTransfer = expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax };
             if (expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax { Parent: ElementAccessExpressionSyntax indexer } })
@@ -221,7 +221,7 @@ internal static partial class ScopeWalker
             static bool ContainsCall(IOperation operation, SyntaxNode call)
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
-                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation
+                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation)
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
@@ -370,6 +370,12 @@ internal static partial class ScopeWalker
                     if (member is ISimpleAssignmentOperation memberAssignment)
                         Visit(memberAssignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             }
+            else if (operation is IDeconstructionAssignmentOperation deconstruction)
+            {
+                VisitDeconstructionLocations(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
+                    started, dispatch, ref known, ref values);
+                Visit(deconstruction.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
             else if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
                     or IFieldReferenceOperation or IArrayElementReferenceOperation
@@ -461,8 +467,45 @@ internal static partial class ScopeWalker
 
         private enum TransferFailure { None, NullReceiver, Allocation, Unknown }
 
+        private void VisitDeconstructionLocations(IOperation target, BasicBlock block, int entryPosition, int firstBarrier,
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+        {
+            foreach (var child in target.ChildOperations)
+                if (target is ITupleOperation)
+                    VisitDeconstructionLocations(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                else
+                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+        }
+
+        private TransferFailure DeconstructionFailure(IOperation target, IOperation value, ulong known, ulong values, out bool transferred)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            target = _conditions.ResolveCapturedTarget(target);
+            value = _conditions.ResolveCapturedTarget(value);
+            transferred = false;
+            if (target is ITupleOperation targets)
+            {
+                if (value is not ITupleOperation sources || sources.Elements.Length != targets.Elements.Length)
+                    return TransferFailure.Unknown;
+                for (var index = 0; index < targets.Elements.Length; index++)
+                {
+                    var failure = DeconstructionFailure(targets.Elements[index], sources.Elements[index], known, values, out transferred);
+                    if (failure != TransferFailure.None || transferred) return failure;
+                }
+                return TransferFailure.None;
+            }
+            transferred = _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
+                && (known & values & trigger.Value) != 0);
+            // Earlier setters can fail before the target accepting the owned value runs.
+            if (!transferred && target is IPropertyReferenceOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation)
+                return TransferFailure.Unknown;
+            return GetTransferFailure(target, known, values);
+        }
+
         private TransferFailure GetTransferFailure(IOperation operation, ulong known, ulong values)
         {
+            if (operation is IDeconstructionAssignmentOperation deconstruction)
+                return DeconstructionFailure(deconstruction.Target, deconstruction.Value, known, values, out _);
             if (operation is ISimpleAssignmentOperation assignment)
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
             return operation switch
@@ -797,11 +840,32 @@ internal static partial class ScopeWalker
             if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)
                 return (true, false);
             if (kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder)
-                return (type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
+            {
+                var overflow = type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
                     || kind == BinaryOperatorKind.Divide && (type?.SpecialType == SpecialType.System_Decimal
                         || type?.SpecialType is SpecialType.System_SByte or SpecialType.System_Int16
-                            && operation is ICompoundAssignmentOperation { IsChecked: true, OutConversion.IsIdentity: false }), true);
+                            && operation is ICompoundAssignmentOperation { IsChecked: true, OutConversion.IsIdentity: false });
+                var divisor = operation is IBinaryOperation binary ? binary.RightOperand
+                    : ((ICompoundAssignmentOperation)operation).Value;
+                if (IsIntegral(type) && !IntegralDivisionCanOverflow(divisor)) overflow = false;
+                return (overflow, true);
+            }
             return null;
+        }
+
+        private static bool IntegralDivisionCanOverflow(IOperation divisor)
+        {
+            // Implicit numeric promotion preserves an unsigned divisor's range.
+            while (divisor is IConversionOperation { IsImplicit: true, Conversion.IsUserDefined: false, OperatorMethod: null } conversion)
+                divisor = conversion.Operand;
+            var type = divisor.Type;
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
+            if (type?.SpecialType is SpecialType.System_Byte or SpecialType.System_UInt16 or SpecialType.System_Char
+                or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_UIntPtr) return false;
+            if (IsIntegral(type) && divisor.ConstantValue is { HasValue: true, Value: { } value })
+                return Convert.ToDecimal(value) == -1;
+            return true;
         }
 
         private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)
