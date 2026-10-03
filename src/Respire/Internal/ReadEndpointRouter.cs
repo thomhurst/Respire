@@ -642,9 +642,22 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
         }
 
+        internal ValueTask<RespireConnection?> GetNearestConnectionAsync(
+            ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken)
+        {
+            // Exclude this candidate for the whole selection, even if PING completes immediately
+            // afterwards. Returning the connection could let a fresh sample bypass a due ROLE check.
+            if (!_closed && Volatile.Read(ref _multiplexer) is { } current
+                && sampler.HasPendingProbe(current.GetConnection()))
+                return ValueTask.FromResult<RespireConnection?>(null);
+            return AcquireAsync();
+
+            async ValueTask<RespireConnection?> AcquireAsync()
+                => await GetConnectionAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         /// <summary>Acquires a current connection after validating its replication role.</summary>
-        internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null,
-            ReadLatencySampler<RespireConnection>? sampler = null)
+        internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
             RespireConnection? selected = null;
@@ -654,9 +667,6 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 selected = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
                 selectedFrom = current;
-                // Nearest will reject the pending sample. Do not enqueue ROLE behind its
-                // unanswered PING before the selector can try another endpoint.
-                if (sampler?.HasPendingProbe(selected) == true) return selected;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
             }

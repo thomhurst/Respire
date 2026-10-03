@@ -60,7 +60,9 @@ internal sealed partial class ReadEndpointRouter
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
                 {
-                    selection = new(await entry.GetConnectionAsync(cancellationToken, sampler: sampler).ConfigureAwait(false), entry, null);
+                    var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken).ConfigureAwait(false);
+                    if (connection is null) continue;
+                    selection = new(connection, entry, null);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {

@@ -2289,7 +2289,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _options.CommandTimeout ?? _options.ConnectTimeout);
         try
         {
-            var reply = await (queryConnection ?? seed.GetConnection()).SendAsync(
+            var connection = queryConnection ?? seed.GetConnection();
+            var reply = await connection.SendAsync(
                 new Cmd(Verbs.ClusterSlots), timeoutSource.Token).ConfigureAwait(false);
             try
             {
@@ -2331,7 +2332,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                         continue;
                     }
 
-                    var preferred = new RespireEndpoint(string.IsNullOrEmpty(host) ? seed.Host : host, (int)port);
+                    var preferred = new RespireEndpoint(string.IsNullOrEmpty(host) ? connection.Host : host, (int)port);
                     var nodeId = primary.Length > 2 && !primary[2].IsNull ? primary[2].AsString() : null;
                     if (string.IsNullOrEmpty(nodeId))
                     {
@@ -2342,7 +2343,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     List<ClusterTopologyReplica> replicas = [];
                     for (var replicaIndex = 3; replicaIndex < values.Length; replicaIndex++)
                     {
-                        if (TryParseReplica(values[replicaIndex], seed.Host) is not { } replica
+                        if (TryParseReplica(values[replicaIndex], connection.Host) is not { } replica
                             || MatchesPrimary(replica, preferred, nodeId, aliases)
                             || replicas.Any(existing => RespireEndpointComparer.Instance.Equals(existing.Endpoint, replica.Endpoint)))
                         {

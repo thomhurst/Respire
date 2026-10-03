@@ -174,7 +174,7 @@ public class ReadLatencySamplerTests
     }
 
     [Test]
-    public async Task FreshSamplesAreReusedAndExpiredSamplesWaitForNewEvidence()
+    public async Task FreshSamplesWaitForOutstandingProbesBeforeTheyCanBeReused()
     {
         long now = 100;
         var reply = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,13 +183,18 @@ public class ReadLatencySamplerTests
             ++calls == 1 ? ValueTask.FromResult(100L) : new(reply.Task.WaitAsync(token)), () => now);
         var connection = new object();
         await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(100);
-        now += ReadLatencySampler<object>.IntervalMilliseconds;
         await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(100);
+        now += ReadLatencySampler<object>.IntervalMilliseconds;
+        var fresh = sampler.GetLatencyAsync(connection, default).AsTask();
+        await Assert.That(fresh.IsCompleted).IsFalse();
+        await Assert.That(await NearestReadSelection.GetLatencyAsync(new(fresh), null, default))
+            .IsEqualTo(ReadLatencySampler.Pending);
         await Assert.That(calls).IsEqualTo(2);
         now += ReadLatencySampler<object>.MaximumAgeMilliseconds;
         var expired = sampler.GetLatencyAsync(connection, default).AsTask();
         await Assert.That(expired.IsCompleted).IsFalse();
         reply.SetResult(500);
+        await Assert.That(await fresh).IsEqualTo(200);
         await Assert.That(await expired).IsEqualTo(200);
     }
 

@@ -68,14 +68,12 @@ internal sealed class ReadLatencySampler<TConnection>(
             }
         }
         if (start is not null) _ = MeasureAsync(connection, sample, start);
+        // A fresh estimate cannot bypass an outstanding command in this connection's FIFO.
+        if (pending is not null) return new ValueTask<long>(pending.WaitAsync(cancellationToken));
         var measurement = Volatile.Read(ref sample.Measurement);
         if (measurement is not null && now - measurement.MeasuredAt < MaximumAgeMilliseconds)
             return ValueTask.FromResult(measurement.Latency);
-        // A usable old sample keeps reads off the sampling path. Only cold/expired samples wait,
-        // and canceling a caller detaches that caller without canceling the shared measurement.
-        return pending is not null
-            ? new ValueTask<long>(pending.WaitAsync(cancellationToken))
-            : ValueTask.FromResult(Unknown);
+        return ValueTask.FromResult(Unknown);
     }
 
     private async Task MeasureAsync(TConnection connection, Sample sample, Probe probe)
