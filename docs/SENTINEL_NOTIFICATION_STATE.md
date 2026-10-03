@@ -25,6 +25,11 @@ The monitor and reducer extraction in #727 separates the first two runtime bound
 Fixtures and documentation accompany the behavior they verify and describe, so intermediate
 changes retain executable coverage and an accurate public contract.
 
+Logger callbacks are isolated from monitoring and discovery. Non-fatal callback failures
+increment the process-wide `respire.sentinel.logging.failures` counter instead of logging
+through the same failing sink. Non-fatal metric-listener exceptions are also isolated;
+fatal exceptions still propagate.
+
 ## State transitions
 
 | State/event | Transition |
@@ -34,7 +39,7 @@ changes retain executable coverage and an accurate public contract.
 | Active+pending, duplicate of active switch | Retain the duplicate's reporter without adding the active switch's source to the independent pending switch. |
 | Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer only in reconciliation of that completed evidence; independent pending switches keep their fences. Source DNS aliases must be unambiguous. |
 | Discovery succeeds without remaining source evidence | Bind reporter-only reconciliation to the validated owner and socket peer. A different owner requires a strictly newer configuration epoch. |
-| Discovery succeeds with another report of the same master-down outage pending | Bind reconciliation to the validated owner; the affected endpoint identifies the outage independently of reporter, channel and quorum count. |
+| Discovery succeeds with another report of the same master-down outage pending | Bind reconciliation to the validated owner; the affected endpoint identifies the outage independently of reporter, channel and quorum count. Normalize numeric addresses and fold hostname case while retaining the port. |
 | Discovery succeeds with an independent down/gap hint pending | Discover again without binding that hint to the completed primary. A down report for a different endpoint or a delivery gap may describe a subsequent promotion, including on deployments without epoch metadata. |
 | Discovery fails | Retain source evidence and prioritize unqueried reporters before retrying with bounded backoff. |
 | Another discovery publishes a different generation | Discard superseded active evidence, preserve pending notifications, and continue from the published generation. |

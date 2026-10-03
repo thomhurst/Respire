@@ -234,7 +234,7 @@ internal sealed partial class SentinelRouter
                 // Ignore changing quorum counts, but distinguish a later outage of the promoted
                 // primary from another reporter describing the outage already being recovered.
                 var downKey = sentinelEvent.OldPrimary is { } down
-                    ? $"{_masterDownKey}:{SentinelResolver.NormalizeHost(down.Host)}:{down.Port}" : _masterDownKey;
+                    ? $"{_masterDownKey}:{SentinelResolver.NormalizeHost(down.Host).ToUpperInvariant()}:{down.Port}" : _masterDownKey;
                 QueueNotificationRediscovery(SentinelHint.FromDown(downKey, sentinel));
                 return ValueTask.CompletedTask;
             case SentinelEventKind.SwitchMaster:
@@ -374,7 +374,10 @@ internal sealed partial class SentinelRouter
     {
         if (core.Logger is not { } logger) return;
         try { log(logger, state); }
-        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException) { }
+        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        {
+            RespireTelemetry.RecordSentinelLoggingFailure();
+        }
     }
 
     private void LogSentinelEvent(LogLevel level, in RespireMessage message, RespireEndpoint sentinel)
@@ -385,7 +388,10 @@ internal sealed partial class SentinelRouter
                 core.Logger.Log(level, "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}",
                     message.Channel.ToString(), core.Options.SentinelPrimaryName, sentinel, message.Text);
         }
-        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException) { }
+        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        {
+            RespireTelemetry.RecordSentinelLoggingFailure();
+        }
     }
 
     private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, bool initialSubscription = false)

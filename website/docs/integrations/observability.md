@@ -157,6 +157,10 @@ records primary endpoint changes with `server.address` and `server.port` tags. I
 discovery and reconnection to the same endpoint do not increment it. Published failover
 measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run
 outside discovery and transport work; queued events are suppressed after client disposal.
+The process-wide `respire.sentinel.logging.failures` counter records non-fatal logger
+callback failures without endpoint or exception tags. Logging failures do not interrupt
+Sentinel recovery, even when a metric listener also throws; inspect the logging provider
+when this counter increases.
 The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
 still owned while accepted work or correction fences drain. Continued growth warrants
 investigation. A persistently nonzero value after normal commands and borrowed leases have

@@ -987,6 +987,59 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("primary.example", "primary.example")]
+    [Arguments("PRIMARY.example", "primary.EXAMPLE")]
+    [Arguments("::ffff:127.0.0.1", "127.0.0.1")]
+    public async Task SameOutageFromAnotherReporterCannotUndoPromotion(string firstHost, string secondHost)
+    {
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var firstPort = original.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => original.Port);
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        var firstMonitor = first.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var secondMonitor = second.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        var router = client.Core.Sentinel!;
+        var queued = QueuedNotificationCount(router);
+        const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+        var firstQueries = first.ReceivedCommands.Count(command => command == query);
+        var secondQueries = second.ReceivedCommands.Count(command => command == query);
+        first.SuppressReply = command => command == query;
+        Volatile.Write(ref firstPort, promoted.Port);
+
+        await SendSentinelMessageAsync(first, first.ReceivedConnectionIds[firstMonitor], "+sdown",
+            $"master mymaster {firstHost} {original.Port}");
+        await WaitForCommandCountAsync(first, query, firstQueries + 1);
+        var blockedConnection = first.ReceivedConnectionIds[^1];
+        var worker = router.NotificationRediscovery!;
+        await SendSentinelMessageAsync(second, second.ReceivedConnectionIds[secondMonitor], "+odown",
+            $"master mymaster {secondHost} {original.Port} #quorum 2/2");
+        await WaitForQueuedNotificationsAsync(router, queued + 2);
+
+        // The second Sentinel still names the old server, which still answers ROLE master.
+        // Equivalent outage identities must reconcile without undoing the first publication.
+        first.SuppressReply = null;
+        await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
+        await worker.WaitAsync(Limit);
+        await Assert.That(second.ReceivedCommands.Count(command => command == query)).IsGreaterThan(secondQueries);
+        await Assert.That(client.Endpoint.Port).IsEqualTo(promoted.Port);
+    }
+
+    [Test]
     public async Task RepeatedMasterDownDuringRediscoveryTriggersAnotherDiscovery()
     {
         await using var original = Primary();
@@ -1506,10 +1559,49 @@ public class SentinelRoutingTests
         await Assert.That(unavailable.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
     }
 
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LoggerFailureMetricsCannotInterruptSentinelRecovery(bool throwingListener)
+    {
+        var failures = 0L;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.logging.failures")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            Interlocked.Add(ref failures, value);
+            if (throwingListener) throw new InvalidOperationException("Metrics listener failed");
+        });
+        listener.Start();
+        await using var original = Primary();
+        await using var promoted = Primary();
+        var port = original.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var logger = new RediscoveryLogger { ThrowOnSentinelLog = true };
+        await using var client = RespireClient.Create(Options(sentinel.Port) with { LoggerFactory = logger });
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        await Assert.That(Volatile.Read(ref failures)).IsGreaterThan(0);
+        var beforeEvent = Volatile.Read(ref failures);
+        var monitor = sentinel.ReceivedCommands.ToList()
+            .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
+        Volatile.Write(ref port, promoted.Port);
+        await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitor], "+sdown",
+            $"master mymaster 127.0.0.1 {original.Port}");
+        await WaitForEndpointAsync(client, promoted.Port);
+        await Assert.That(Volatile.Read(ref failures)).IsGreaterThan(beforeEvent);
+    }
+
     private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _recoveries;
         internal Action? OnRecovery { get; set; }
+        internal bool ThrowOnSentinelLog { get; init; }
         internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures { get; } = new();
         internal int Recoveries => Volatile.Read(ref _recoveries);
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
@@ -1521,6 +1613,8 @@ public class SentinelRoutingTests
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             var message = formatter(state, exception);
+            if (ThrowOnSentinelLog && message.StartsWith("Sentinel ", StringComparison.Ordinal))
+                throw new InvalidOperationException("Sentinel logger failed");
             if (message.StartsWith("Sentinel notification-triggered primary discovery failed", StringComparison.Ordinal))
                 Failures.Enqueue(level);
             else if (message.StartsWith("Sentinel notification-triggered primary discovery succeeded after", StringComparison.Ordinal))
