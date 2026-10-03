@@ -245,16 +245,22 @@ internal sealed partial class SubscriptionHub
 
     private async ValueTask<Dictionary<RespireEndpoint, List<RespireChannel>>> GetNotificationCoverageAsync(
         RespireSubscription subscription, CancellationToken cancellationToken,
-        RespireEndpoint[]? primarySnapshot = null)
+        bool refreshPrimaries = true)
     {
         var cluster = core.Cluster ?? throw new InvalidOperationException("Cluster notification routing requires Redis Cluster.");
+        var allPrimaries = subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries);
+        if (allPrimaries && refreshPrimaries)
+            await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RespireEndpoint[] primaries = [];
-            if (subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries))
-                primaries = primarySnapshot ?? await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
             var snapshot = cluster.RoutingSnapshot;
+            // The refresh and topology event arrays can predate this publication. Build
+            // all-primary coverage from the same immutable map checked after owner lookup.
+            RespireEndpoint[] primaries = allPrimaries
+                ? snapshot.Masters.Where((_, index) => snapshot.MasterSlotCounts[index] > 0)
+                    .Select(static node => new RespireEndpoint(node.Host, node.Port)).Distinct().ToArray()
+                : [];
             Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
             foreach (var name in subscription.Names)
             {
@@ -1002,7 +1008,7 @@ internal sealed partial class SubscriptionHub
         StrongBox<RespireEndpoint?> failingEndpoint, CancellationToken cancellationToken)
     {
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
-        var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, endpoints).ConfigureAwait(false);
+        var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, refreshPrimaries: endpoints is null).ConfigureAwait(false);
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
         HashSet<RespireEndpoint> current;
         lock (_gate)

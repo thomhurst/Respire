@@ -328,13 +328,17 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
-    public async Task TopologyChangeDuringOwnerResolutionDoesNotMixNotificationRoutes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TopologyChangeDuringOwnerResolutionDoesNotMixNotificationRoutes(bool includeAllPrimaries)
     {
         await using var first = new FakeRespServer(20);
         await using var second = new FakeRespServer(20);
+        await using var third = new FakeRespServer(20);
         var topology = Topology(first.Port, second.Port);
         Configure(first, () => Volatile.Read(ref topology), resp3: true);
         Configure(second, () => Volatile.Read(ref topology), resp3: true);
+        Configure(third, () => Volatile.Read(ref topology), resp3: true);
         var resolvingSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
@@ -350,12 +354,16 @@ public class ClusterNotificationRoutingTests
             .First(static value => ClusterHash.GetSlot(value) >= 8192);
         var firstChannel = RespireChannel.KeySpaceSingleKey(firstKey, 0);
         var secondChannel = RespireChannel.KeySpaceSingleKey(secondKey, 0);
-        var subscribing = client.SubscribeAsync(new[] { firstChannel, secondChannel }, CancellationToken.None).AsTask();
+        var allChannel = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        RespireChannel[] channels = includeAllPrimaries
+            ? [allChannel, firstChannel, secondChannel] : [firstChannel, secondChannel];
+        var subscribing = client.SubscribeAsync(channels, CancellationToken.None).AsTask();
         await resolvingSecond.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.Cluster!.TopologyChanged += (_, _, _) => published.TrySetResult();
-        Volatile.Write(ref topology, Topology(second.Port, first.Port));
+        var newSecondOwner = includeAllPrimaries ? third : first;
+        Volatile.Write(ref topology, Topology(second.Port, newSecondOwner.Port));
         var refresh = client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
         await published.Task.WaitAsync(TimeSpan.FromSeconds(10));
         second.SuppressReply = null;
@@ -365,9 +373,15 @@ public class ClusterNotificationRoutingTests
 
         // Both routes must come from the new map, even though the first key resolved before publication.
         await Assert.That(first.ReceivedCommands).DoesNotContain($"SUBSCRIBE {firstChannel}");
-        await Assert.That(first.ReceivedCommands).Contains($"SUBSCRIBE {secondChannel}");
+        await Assert.That(newSecondOwner.ReceivedCommands).Contains($"SUBSCRIBE {secondChannel}");
         await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {firstChannel}");
         await Assert.That(second.ReceivedCommands).DoesNotContain($"SUBSCRIBE {secondChannel}");
+        if (includeAllPrimaries)
+        {
+            await Assert.That(first.ReceivedCommands).DoesNotContain($"SUBSCRIBE {allChannel}");
+            await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {allChannel}");
+            await Assert.That(third.ReceivedCommands).Contains($"SUBSCRIBE {allChannel}");
+        }
     }
 
     [Test]
@@ -1371,6 +1385,9 @@ public class ClusterNotificationRoutingTests
                 recovered.TrySetResult();
         };
         topology = Topology(first.Port, second.Port);
+        // A real topology notification follows publication of the routing snapshot.
+        // Keep this standalone hub's injected event consistent with the router too.
+        _ = await client.Core.Cluster!.GetPrimaryEndpointsAsync(CancellationToken.None);
         hub.NotifyTopologyChanged(1,
             [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
             authoritative: true);
