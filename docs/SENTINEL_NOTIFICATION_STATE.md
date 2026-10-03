@@ -10,7 +10,7 @@ Review the implementation in these dependency groups, keeping each group's regre
 tests beside its runtime changes:
 
 1. **Wire and subscription lifecycle:** `SentinelEvent`, the connection close observer,
-   `SubscriptionHub` recovery, and the monitor methods in `SentinelRouter.Notifications`.
+   `SubscriptionHub` recovery, and `SentinelMonitoring`.
    Check channel/service filtering, separate Sentinel credentials, reconnect episode capture,
    subscription gaps, and disposal. The parsing and Pub/Sub reconnect tests cover this boundary.
 2. **Discovery and publication:** `SentinelNotificationCoalescer`, `SentinelDiscoveryState`,
@@ -41,9 +41,24 @@ those ownership boundaries intentionally do not discard errors through a recover
 
 | Work | Owner and shutdown contract |
 | --- | --- |
-| Monitor supervisor, endpoint monitors, notification rediscovery, and switch-source DNS tasks | Registered under the router gate. Disposal sets `_disposed`, cancels `_lifetime`, then snapshots and joins this work with the shared ten-second notification shutdown bound. A straggler must recheck the disposed gate before publication or retirement. |
+| Monitor supervisor and endpoint monitors | `SentinelMonitoring` owns subscriptions, reconnect episodes, parsing, the clock/resolver seams, and publication rearm signals. It shares the router gate for registration and shutdown. `Stop` rejects new registrations and returns the owned tasks for the router's bounded join. |
+| Notification rediscovery and switch-source DNS tasks | The router retains generation-sensitive evidence and task registration under its gate. Disposal sets `_disposed`, cancels `_lifetime`, then joins these tasks and the monitor tasks with one shared ten-second notification shutdown bound. A straggler must recheck the disposed gate before publication or retirement. |
 | Generation retirement and correction-fence drainage | Each owned generation retains its retirement task. Disposal starts cleanup for every owned connection/pool, then joins retirement tasks and propagates aggregated failures. Failed cleanup stays owned until disposal. |
 | State/health observer callbacks | Serialized in `_notifications`, outside publication locks. Pending application callbacks are suppressed after disposal; explicitly retained telemetry callbacks may still run. This chain is not joined because an active observer can synchronously dispose the client itself. |
+
+First-subscription acknowledgements advance a monitor version. Discovery captures that version
+before its network lookup and marks it validated only for the reporter whose primary was
+accepted. An initial gap from that reporter can reuse the healthy generation without another
+ROLE pass. Other reporters remain unvalidated even if they attached before the lookup began;
+their views may disagree. A subscription that attaches during the lookup still requires a later pass. Merging an
+initial gap with any real switch, down event, reconnect, or overflow gap clears this shortcut;
+those events keep their independent rediscovery requirements.
+
+A restarted monitor task does not turn its endpoint's next subscription into a first
+subscription: that endpoint has already been observed, so the restart reports an independent
+delivery gap. Gap callbacks run outside the shared gate with the startup version captured
+under it; user logging cannot hold the publication/disposal gate. The router rechecks disposal
+when consuming a late callback before queuing discovery or changing a generation.
 
 The dedicated background-work owner and pure reducer are the next architectural change in
 #727. That extraction must preserve these different joining and reentrancy contracts.

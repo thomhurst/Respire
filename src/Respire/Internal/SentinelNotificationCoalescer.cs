@@ -26,6 +26,9 @@ internal readonly record struct SentinelHint(
     SentinelHintKey Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
     RespireEndpoint[] Reporters, bool MustRediscover)
 {
+    // Positive only for first-subscription gaps. Mixing any independent event clears
+    // this marker so an earlier successful discovery can never swallow real evidence.
+    internal long StartupSubscriptionVersion { get; init; }
     // Reporter-only reconciliation has no demotion evidence. Without a newer epoch it may
     // confirm this owner, but must not let a stale reporter undo the successful recovery.
     internal SentinelValidatedPrimary? ReconciliationPrimary { get; init; }
@@ -212,6 +215,8 @@ internal sealed class SentinelNotificationCoalescer
         var key = hint.Sources.Length > 0 || previous.Sources.Length == 0 ? hint.Key : previous.Key;
         return new(key, targets, sources, reporters, mustRediscover)
         {
+            StartupSubscriptionVersion = previous.StartupSubscriptionVersion > 0 && hint.StartupSubscriptionVersion > 0
+                ? Math.Max(previous.StartupSubscriptionVersion, hint.StartupSubscriptionVersion) : 0,
             // An independent wake-up remains independent even when its key duplicates an
             // active reconciliation pass. Only two reconciliation-only hints retain a bound.
             DownKey = previous.DownKey == hint.DownKey ? hint.DownKey : null,
