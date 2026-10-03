@@ -52,6 +52,9 @@ identity comparison performs no additional interface lookup.
 lookup lifetime. It reuses already canonical arrays and copies only when normalization
 changes an address. Repeated matching compares retained canonical strings without parsing
 IPs in the address-pair loop. Switch sources retain this evidence across matching calls.
+Evidence provides typed value equality so comparing or hashing switch sources does not
+box its fields. Equality retains array-snapshot identity; ownership and alias matching
+still use the explicit operations below. Default evidence never matches an observation.
 Its conservative `CouldMatch` operation can fence a possible demoted source, but ownership
 confirmation uses `ConfirmsPeer` and requires one unambiguous address. Overlapping sets of
 several addresses cannot confirm an owner or consume its demotion fence. Duplicate evidence

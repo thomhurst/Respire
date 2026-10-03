@@ -10,6 +10,49 @@ namespace Respire.Tests.Networking;
 public class SentinelIdentityTests
 {
     [Test]
+    public async Task DefaultAddressEvidenceCannotMatchAnObservation()
+    {
+        var missing = default(SentinelAddressEvidence);
+        var observed = new SentinelAddressEvidence(new("primary.test", 6379), ["192.0.2.1"]);
+        await Assert.That(missing.CouldMatch(missing)).IsFalse();
+        await Assert.That(missing.CouldMatch(observed)).IsFalse();
+        await Assert.That(observed.CouldMatch(missing)).IsFalse();
+        await Assert.That(missing.ConfirmsPeer(observed.Endpoint)).IsFalse();
+        await Assert.That(missing.SingleAddress).IsNull();
+        await Assert.That(observed.CouldMatch(observed)).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task SwitchSourceEqualityAndHashingDoNotAllocate()
+    {
+        var source = new SentinelSwitchSource(new("primary.test", 6379), ["192.0.2.1"]);
+        var same = new SentinelSwitchSource(source.Endpoint, source.Addresses);
+        var other = new SentinelSwitchSource(new("primary.test", 6380), source.Addresses);
+        await Assert.That(source.Equals(same)).IsTrue();
+        await Assert.That(source.Equals(other)).IsFalse();
+        _ = MeasureSourceEquality(source, same, false);
+        _ = MeasureSourceEquality(source, same, true);
+        var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureSourceEquality(source, same, false), MeasureSourceEquality(source, same, true)));
+        await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(37_000);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureSourceEquality(SentinelSwitchSource source, SentinelSwitchSource same, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1_000; index++)
+        {
+            if (!source.Equals(same) || source.GetHashCode() != same.GetHashCode())
+                throw new InvalidOperationException("Equivalent source snapshots must remain equal.");
+            if (allocate) GC.KeepAlive(AllocateControl());
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
     public async Task RuntimeShorthandUsesTheSameIdentityAsTheConnectedPeer()
     {
         await using var server = new FakeRespServer(1);

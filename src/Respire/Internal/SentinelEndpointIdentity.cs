@@ -62,7 +62,7 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
 
 // Addresses belong to one observation/lookup lifetime. Consumers retain the existing
 // arrays without copying on duplicate hints; unions create a new evidence snapshot.
-internal readonly struct SentinelAddressEvidence
+internal readonly record struct SentinelAddressEvidence
 {
     internal RespireEndpoint Endpoint { get; }
     internal string[]? Addresses { get; }
@@ -122,7 +122,7 @@ internal readonly struct SentinelAddressEvidence
     // used to confirm ownership or consume a fence: those require ConfirmsPeer.
     internal bool CouldMatch(SentinelAddressEvidence candidate)
     {
-        if (Endpoint.Port != candidate.Endpoint.Port) return false;
+        if (_identity.Host is null || candidate._identity.Host is null || Endpoint.Port != candidate.Endpoint.Port) return false;
         if (Contains(candidate._identity.Host)) return true;
         if (candidate.Addresses is not null)
             foreach (var address in candidate.Addresses)
