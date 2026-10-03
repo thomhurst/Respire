@@ -59,6 +59,8 @@ internal sealed class SentinelMonitoring(
             // earlier subscription means the restart is a real delivery gap.
             if (first && _subscribedSentinels.Add(endpoint)) startupVersion = ++_subscriptionVersion;
         }
+        // If the callback throws, deliberately leave a new endpoint unready. The monitor
+        // recovery loop retries the subscription; a finally block must not publish readiness.
         deliveryGap(endpoint, startupVersion);
         // Readiness must not become visible before the router queues this subscription's
         // validation. Moving the callback outside gate must preserve that startup fence.
