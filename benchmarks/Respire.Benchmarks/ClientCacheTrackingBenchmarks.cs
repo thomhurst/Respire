@@ -43,7 +43,8 @@ public class ClientCacheTrackingBenchmarks
             mode.SetValue(cache, Enum.Parse(mode.PropertyType, "Broadcast"));
             if (Mode is "BroadcastPrefix" or "BroadcastManyPrefixes")
             {
-                var prefixes = typeof(RespireClientSideCacheOptions).GetProperty("BroadcastPrefixes")
+                var prefixes = typeof(RespireClientSideCacheOptions).GetProperty("KeyPrefixes")
+                    ?? typeof(RespireClientSideCacheOptions).GetProperty("BroadcastPrefixes")
                     ?? throw new InvalidOperationException("The selected build has no broadcast prefix support.");
                 RespireKey[] values = Mode == "BroadcastPrefix" ? ["cache:benchmark:"]
                     : Enumerable.Range(0, 255).Select(index => new RespireKey($"unused:{index:D3}:"))

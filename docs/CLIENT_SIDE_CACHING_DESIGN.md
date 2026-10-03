@@ -16,7 +16,7 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     {
         MaxEntries = 10_000,
         MaxSizeBytes = 64 * 1024 * 1024,
-        TimeToLive = TimeSpan.FromMinutes(5),
+        LocalExpiration = TimeSpan.FromMinutes(5),
     },
 });
 
@@ -149,8 +149,9 @@ redirected invalidation connection.
 `RespireClientSideCacheOptions.TrackingMode = Broadcast` instead configures
 `CLIENT TRACKING ON BCAST [PREFIX ...]` on every cache-bearing connection. Its reads have no
 `CLIENT CACHING YES` prelude. The options snapshot owns nonoverlapping literal physical
-`BroadcastPrefixes`; an empty list covers all keys. Prefixes are not transformed by client
-key-prefix views. Per-key insertion requires that key to be covered, while a command projection
+`KeyPrefixes`; an empty list covers all keys. In `OptIn` mode the same prefixes are a local
+filter: uncovered reads are sent without `CLIENT CACHING YES`, so Redis never tracks them.
+Prefixes are not transformed by client key-prefix views. Per-key insertion requires that key to be covered, while a command projection
 requires every dependency to be covered. Uncovered reads still execute but cannot create cache
 entries. These insertion guards also cover mixed covered/uncovered MGET misses.
 

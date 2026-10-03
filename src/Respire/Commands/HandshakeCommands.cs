@@ -66,10 +66,10 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
 internal readonly record struct ClientTrackingConfiguration
 {
     internal RespireClientTrackingMode Mode { get; }
-    internal Internal.BroadcastPrefixSet? Prefixes { get; }
+    internal Internal.ClientCachePrefixSet? Prefixes { get; }
 
     internal ClientTrackingConfiguration(RespireClientTrackingMode mode, IReadOnlyList<RespireKey> prefixes)
-        => (Mode, Prefixes) = (mode, Internal.BroadcastPrefixSet.Create(prefixes));
+        => (Mode, Prefixes) = (mode, Internal.ClientCachePrefixSet.Create(prefixes));
 }
 
 /// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
@@ -84,7 +84,7 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
             writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
             return;
         }
-        var prefixes = configuration.Prefixes ?? Internal.BroadcastPrefixSet.Empty;
+        var prefixes = configuration.Prefixes ?? Internal.ClientCachePrefixSet.Empty;
         writer.WriteArrayHeader(checked(4 + prefixes.Count * 2));
         writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nBCAST\r\n"u8);
         prefixes.WritePrefixes(ref writer);

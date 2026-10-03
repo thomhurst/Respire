@@ -36,6 +36,65 @@ other replies use exact command-and-argument identities.
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects.
 
+## Options
+
+Every option has a bounded default, so `new()` is a complete configuration:
+
+| Option | Default | Purpose |
+|---|---|---|
+| `MaxEntries` | `10_000` | Maximum resident entries. |
+| `MaxSizeBytes` | 64 MiB | Approximate maximum bytes owned by cached replies. |
+| `LocalExpiration` | 5 minutes | Maximum local lifetime of an entry, independent of the key's Redis TTL. `null` keeps entries until invalidated or evicted. |
+| `KeyPrefixes` | empty (all keys) | Physical key prefixes eligible for caching. |
+| `TrackingMode` | `OptIn` | How Redis tracks cached keys: per read (`OptIn`) or by prefix (`Broadcast`). |
+| `CoalesceConcurrentMisses` | `false` | Share concurrent identical misses and `GetOrSetAsync` factories (stampede protection). |
+| `ReuseHashFields` | `false` | Serve `HMGET` fields from cached `HGET` entries. |
+
+<!-- doc-test-ignore: Object-initializer fragment for the RespireOptions.ClientSideCache property. -->
+```csharp
+ClientSideCache = new()
+{
+    KeyPrefixes = ["product:", "price:"],
+    MaxEntries = 50_000,
+    LocalExpiration = TimeSpan.FromMinutes(1),
+    CoalesceConcurrentMisses = true,
+},
+```
+
+## Choose what gets cached
+
+By default every eligible read is cached. Set `KeyPrefixes` to cache only the keys that benefit:
+hot, read-mostly data such as catalogs or configuration. Reads of other keys go straight to Redis,
+are never registered for tracking, and never compete for cache capacity. This works in both
+tracking modes; in `Broadcast` mode the same prefixes are also sent to Redis.
+
+Prefixes are literal bytes, not Redis glob patterns; `*`, `?`, NUL, and non-UTF-8 bytes retain
+their literal meaning. Pass binary prefixes as `RespireKey` values. Options snapshot both the list
+and its storage. Prefixes identify **physical wire keys**: a `WithKeyPrefix("tenant:")` view does
+not add its prefix, so `KeyPrefixes = ["tenant:products:"]` covers `products:42` read through
+that view, but not an unprefixed `products:42` call. Duplicates and overlapping prefixes are
+rejected before connecting; one empty prefix covers everything and therefore cannot accompany
+another prefix.
+
+Mixed `MGET` calls retain covered hits and fetch misses together, caching only covered keys.
+A cached multi-key projection requires **every** dependency to be covered. Hash fields inherit
+their physical hash key's coverage. Invalidation subscriptions require a covered key.
+
+## Bypass the cache for one read
+
+`WithoutClientCache()` returns a view whose reads always go to Redis. Use it when a code path
+must observe the latest server value, for example immediately before a conditional write:
+
+```csharp
+var fresh = redis.WithoutClientCache();
+var stock = await fresh.Strings.GetAsync<int>("product:42:stock");
+```
+
+The view shares the client's connections and keeps its key prefix and read routing. Writes
+through the view still invalidate cached entries, and its reads never populate the cache.
+`GetOrSetAsync` on the view reads Redis directly and never shares factories. When client-side
+caching is disabled, `WithoutClientCache()` returns the same client.
+
 ## Concurrent misses
 
 Set `ClientSideCache.CoalesceConcurrentMisses = true` to share concurrent misses for the same
@@ -101,7 +160,7 @@ lists may differ when their cached fields differ. Each caller keeps its own cach
 order, and independently owned result. Different missing lists run independently; they are not
 split into per-field requests. For example, missing lists `[a, b]` and `[b, a]` do not share
 one producer: matching uses argument order, not set equality. Cancellation, invalidation, and continuity changes follow the
-shared-read rules above. Hashes outside broadcast prefix coverage bypass per-field reuse.
+shared-read rules above. Hashes outside `KeyPrefixes` bypass per-field reuse.
 
 Hit/miss statistics count field lookups, including repeated fields. As with cached MGET,
 a result may combine values cached at different times; use an uncached transaction when
@@ -251,7 +310,7 @@ With `OPTIN`, Redis tracks only misses Respire deliberately sends with `CLIENT C
 Local mutations also evict before and after execution. If tracking continuity is lost, Respire
 clears affected cache state instead of trusting entries whose invalidations may have been missed.
 
-## Broadcast tracking and physical prefixes
+## Broadcast tracking
 
 `OptIn` remains the default. Choose `Broadcast` when invalidations for a known keyspace are
 preferable to Redis registering each read key:
@@ -263,27 +322,16 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     ClientSideCache = new()
     {
         TrackingMode = RespireClientTrackingMode.Broadcast,
-        BroadcastPrefixes = ["tenant:products:", "tenant:prices:"],
+        KeyPrefixes = ["tenant:products:", "tenant:prices:"],
     },
 });
 ```
 
-Each cache-bearing connection sends `CLIENT TRACKING ON BCAST PREFIX ...` during setup and
-repeats it on reconnect. Broadcast reads omit `CLIENT CACHING YES`. Prefixes are literal
-bytes, not Redis glob patterns; `*`, `?`, NUL, and non-UTF-8 bytes retain their literal meaning.
-Pass binary prefixes as `RespireKey` values. Options snapshot both the list and its storage.
-
-Prefixes identify **physical wire keys**. A `WithKeyPrefix("tenant:")` view does not add that
-prefix to the tracking configuration. The example covers `products:42` through that view,
-but not an unprefixed `products:42` call. Empty `BroadcastPrefixes` means every key.
-Duplicates and overlapping prefixes are rejected before connecting; one empty prefix covers
-everything and therefore cannot accompany another prefix. Prefixes are invalid in `OptIn` mode.
-
-Uncovered reads still go to Redis and are returned normally, but are never inserted locally.
-Mixed `MGET` calls retain covered hits and fetch misses together, caching only covered keys.
-A cached multi-key projection requires **every** dependency to be covered. Hash fields inherit
-their physical hash key's coverage. Local writes, in-flight invalidations, and reconnect
-continuity use the same eviction and stale-insertion checks as `OptIn`.
+Each cache-bearing connection sends `CLIENT TRACKING ON BCAST PREFIX ...` with the configured
+`KeyPrefixes` during setup and repeats it on reconnect; empty `KeyPrefixes` sends plain `BCAST`,
+covering every key. Broadcast reads omit `CLIENT CACHING YES`. Coverage rules are the same as in
+[Choose what gets cached](#choose-what-gets-cached). Local writes, in-flight invalidations, and
+reconnect continuity use the same eviction and stale-insertion checks as `OptIn`.
 
 RESP3 remains required. Standalone, discovered Sentinel data connections, and Redis/Valkey
 Cluster data nodes retain the selected configuration; Cluster slot and database restrictions
@@ -377,7 +425,7 @@ and periodic reconciliation; an undetected partition can delay notifications ind
 
 ## Bounds
 
-Tune entry count, approximate owned bytes, and local TTL together:
+Tune entry count, approximate owned bytes, and local lifetime together:
 
 <!-- doc-test-ignore: Object-initializer fragment for the RespireOptions.ClientSideCache property. -->
 ```csharp
@@ -385,7 +433,7 @@ ClientSideCache = new RespireClientSideCacheOptions
 {
     MaxEntries = 25_000,
     MaxSizeBytes = 128L * 1024 * 1024,
-    TimeToLive = TimeSpan.FromMinutes(2),
+    LocalExpiration = TimeSpan.FromMinutes(2),
 },
 ```
 

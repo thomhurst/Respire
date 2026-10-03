@@ -358,7 +358,7 @@ public class ClientCacheInvalidationObserverTests
     {
         var cache = new ClientSideCacheCoordinator(new()
         {
-            TrackingMode = RespireClientTrackingMode.Broadcast, BroadcastPrefixes = ["tenant:"],
+            TrackingMode = RespireClientTrackingMode.Broadcast, KeyPrefixes = ["tenant:"],
         });
         await Assert.That(() => cache.SubscribeInvalidations("other:key", _ => { })).ThrowsExactly<ArgumentException>();
         using var cancellation = new CancellationTokenSource();

@@ -117,7 +117,7 @@ public class ClientSideCacheCoalescingTests
             ClientSideCache = new()
             {
                 CoalesceConcurrentMisses = true, TrackingMode = RespireClientTrackingMode.Broadcast,
-                BroadcastPrefixes = ["covered:"],
+                KeyPrefixes = ["covered:"],
             },
         });
         var key = covered ? "covered:key" : "outside:key";
