@@ -398,13 +398,25 @@ internal sealed class SentinelMonitoring(
     internal async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate) if (_disposed) return null;
         if (IPAddress.TryParse(host, out var literal)) return [SentinelEndpointIdentity.NormalizeAddress(literal)];
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.ConnectTimeout);
-            var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
+            Task<IPAddress[]> resolution;
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_disposed) return null;
+                // Starting DNS shares Stop's gate; its asynchronous completion must not.
+                // The internal resolver seam must return its task without blocking.
+                resolution = HostResolver(host, timeout.Token);
+            }
+            var addresses = await resolution.ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            // Stop closes ownership before linked cancellation callbacks necessarily run.
+            lock (_gate) if (_disposed) return null;
             return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))

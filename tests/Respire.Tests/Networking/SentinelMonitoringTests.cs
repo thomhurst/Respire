@@ -11,6 +11,35 @@ public class SentinelMonitoringTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
     [Test]
+    public async Task DnsStartSharesStopGateAndRejectsLateEvidence()
+    {
+        using var lifetime = new CancellationTokenSource();
+        var gate = new object();
+        var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
+            gate, new([]), lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { });
+        var reply = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queries = new List<string>();
+        var startedUnderGate = false;
+        monitor.HostResolver = (host, _) =>
+        {
+            startedUnderGate = Monitor.IsEntered(gate);
+            queries.Add(host);
+            return reply.Task;
+        };
+        var resolution = monitor.ResolveAddressesAsync("old.alias", default).AsTask();
+        monitor.Stop();
+        // No token cancellation is required to close ownership. The resolver may ignore
+        // cancellation, and linked cancellation callbacks may not have run yet.
+        reply.SetResult([System.Net.IPAddress.Loopback]);
+        var result = await resolution.WaitAsync(Limit);
+        await Assert.That(startedUnderGate).IsTrue();
+        await Assert.That(result).IsNull();
+        await Assert.That(await monitor.ResolveAddressesAsync("new.alias", default)).IsNull();
+        await Assert.That(await monitor.ResolveAddressesAsync("127.0.0.1", default)).IsNull();
+        await Assert.That(queries).IsEquivalentTo(new[] { "old.alias" });
+    }
+
+    [Test]
     public async Task ProbeDoesNotReportCancellationForNormalCompletion()
     {
         using var lifetime = new CancellationTokenSource();

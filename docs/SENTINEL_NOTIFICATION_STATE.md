@@ -3,8 +3,10 @@
 `SentinelMonitoring` supervises subscriptions. `SentinelRouter.Notifications` runs one
 notification discovery worker. `SentinelBackgroundWork` registers both components' tasks
 under the router gate. `SentinelNotificationCoalescer` applies the pure
-`SentinelNotificationState.Transition` function under that gate. Network queries and DNS
-resolution happen outside it.
+`SentinelNotificationState.Transition` function under that gate. Network queries and waits
+for DNS completion happen outside it. Switch-source DNS startup captures the resolver task
+under the gate so starting a lookup is atomic with stopping monitor ownership; the internal
+resolver seam must return its task promptly.
 
 ## Review boundaries
 
@@ -124,8 +126,10 @@ with an independent delivery gap. Membership versions preserve this restart even
 and re-addition occur between supervisor snapshots. Subscription history and reporter validation versions
 remain available across that restart.
 
-Address resolution checks cancellation both before starting and after its resolver returns.
-A cancellation-ignoring source lookup cannot initiate target lookups after shutdown. Generation
+Address resolution checks cancellation and monitor ownership before starting and after its
+resolver returns. DNS startup shares the disposal gate, while awaiting completion releases it.
+A cancellation-ignoring source lookup cannot initiate target lookups after shutdown, even
+before asynchronous linked-token callbacks run. Generation
 invalidation checks disposal before changing retirement state; late responses cannot retire a
 generation while background shutdown is still joining its tasks.
 
