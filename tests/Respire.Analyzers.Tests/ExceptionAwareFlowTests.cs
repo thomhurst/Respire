@@ -8,6 +8,76 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Action owner = () => result.Dispose();", "OutOfMemoryException", true)]
+    [Arguments("Action owner = delegate { result.Dispose(); };", "OutOfMemoryException", true)]
+    [Arguments("Action owner = new Action(() => result.Dispose());", "OutOfMemoryException", true)]
+    [Arguments("Action owner = () => result.Dispose();", "InvalidOperationException", false)]
+    public async Task CapturedOwnerWaitsForDelegateAllocation(string capture, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{capture}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("holder.Field", "if (holder is null) return;", "NullReferenceException", false)]
+    [Arguments("holder.Field", "if (holder is null) return; holder = null;", "NullReferenceException", true)]
+    [Arguments("holder.Field", "", "NullReferenceException", true)]
+    [Arguments("value / 2", "", "DivideByZeroException", false)]
+    [Arguments("value / 'a'", "", "DivideByZeroException", false)]
+    [Arguments("value % -2", "", "DivideByZeroException", false)]
+    [Arguments("value / divisor", "", "DivideByZeroException", true)]
+    [Arguments("value / -1", "", "OverflowException", true)]
+    [Arguments("fraction / 2m", "", "DivideByZeroException", false)]
+    [Arguments("fraction % 0m", "", "DivideByZeroException", true)]
+    [Arguments("nullable / (int?)2", "", "DivideByZeroException", false)]
+    public async Task KnownOperandsExcludeImpossibleFailures(string operation, string setup, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int value, int divisor, decimal fraction, int? nullable)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{operation}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int value, int divisor, decimal fraction, int? nullable)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{operation}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("while (true) { }", false)]
     [Arguments("loop: goto loop;", false)]
     [Arguments("while (true) { await Task.Yield(); }", false)]

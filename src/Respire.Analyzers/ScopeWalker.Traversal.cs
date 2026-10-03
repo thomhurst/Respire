@@ -147,6 +147,16 @@ internal static partial class ScopeWalker
 
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
         {
+            var scope = origin is null ? graph.OriginalOperation.Syntax : GetEnclosingScope(origin);
+            var capture = barrier.Ancestors().TakeWhile(node => node != scope)
+                .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
+            if (capture is not null)
+            {
+                foreach (var block in graph.Blocks)
+                    foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
+                        if (FindDelegateCreation(operation, capture) is { } creation)
+                            return (block, creation.Syntax.Span.End);
+            }
             var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
             var wrapped = false;
             while (expression is not null)
@@ -231,6 +241,15 @@ internal static partial class ScopeWalker
                     || operation.ChildOperations.Any(child => ContainsReference(child, reference));
         }
 
+        private static IDelegateCreationOperation? FindDelegateCreation(IOperation operation, SyntaxNode capture)
+        {
+            if (operation is IDelegateCreationOperation creation && creation.Target.Syntax == capture)
+                return creation;
+            foreach (var child in operation.ChildOperations)
+                if (FindDelegateCreation(child, capture) is { } found) return found;
+            return null;
+        }
+
         private static int TransferPosition(SyntaxNode operation) => operation switch
         {
             BaseObjectCreationExpressionSyntax { ArgumentList: { } arguments } => arguments.CloseParenToken.SpanStart,
@@ -266,6 +285,7 @@ internal static partial class ScopeWalker
                 while (index < positions.Count && positions[index] == entryPosition)
                     index++;
             }
+
             for (; index < positions.Count; index++)
                 if (_unconditionalBarriers.Contains((block.Ordinal, positions[index]))
                     || !_transferGuards.TryGetValue((block.Ordinal, positions[index]), out var guards)
@@ -357,6 +377,8 @@ internal static partial class ScopeWalker
             if (operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
+                && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } fieldReceiver }
+                    && _conditions.IsKnownNonNull(fieldReceiver, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
@@ -822,16 +844,17 @@ internal static partial class ScopeWalker
                 var divisor = operation is IBinaryOperation binary ? binary.RightOperand
                     : ((ICompoundAssignmentOperation)operation).Value;
                 if (IsIntegral(type) && !IntegralDivisionCanOverflow(divisor)) overflow = false;
-                return (overflow, true);
+                var constantDivisor = UnwrapDivisor(divisor).ConstantValue;
+                var divideByZero = !constantDivisor.HasValue || constantDivisor.Value is null
+                    || (constantDivisor.Value is char character ? character == 0 : Convert.ToDouble(constantDivisor.Value) == 0);
+                return (overflow, divideByZero);
             }
             return null;
         }
 
         private static bool IntegralDivisionCanOverflow(IOperation divisor)
         {
-            // Implicit numeric promotion preserves an unsigned divisor's range.
-            while (divisor is IConversionOperation { IsImplicit: true, Conversion.IsUserDefined: false, OperatorMethod: null } conversion)
-                divisor = conversion.Operand;
+            divisor = UnwrapDivisor(divisor);
             var type = divisor.Type;
             if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
                 type = nullable.TypeArguments[0];
@@ -840,6 +863,16 @@ internal static partial class ScopeWalker
             if (IsIntegral(type) && divisor.ConstantValue is { HasValue: true, Value: { } value })
                 return Convert.ToDecimal(value) == -1;
             return true;
+        }
+
+        private static IOperation UnwrapDivisor(IOperation divisor)
+        {
+            // Numeric promotion and wrapping the same value in Nullable<T> preserve zero.
+            while (divisor is IConversionOperation { Conversion.IsUserDefined: false, OperatorMethod: null } conversion
+                && (conversion.IsImplicit || conversion.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+                    && SymbolEqualityComparer.Default.Equals(nullable.TypeArguments[0], conversion.Operand.Type)))
+                divisor = conversion.Operand;
+            return divisor;
         }
 
         private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)
