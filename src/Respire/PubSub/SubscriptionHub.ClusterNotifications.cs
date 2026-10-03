@@ -97,14 +97,23 @@ internal sealed partial class SubscriptionHub
             while (true)
             {
                 NotificationTopology? latest;
-                lock (_gate) latest = _clusterNotifications.LatestTopology;
+                Task topologyChanged;
+                lock (_gate)
+                {
+                    latest = _clusterNotifications.LatestTopology;
+                    topologyChanged = _clusterNotifications.TopologyChanged.Task;
+                }
                 if (latest is null || latest.Version <= observedTopologyVersion) break;
-                observedTopologyVersion = latest.Version;
                 // Use the caller's token too, so a stalled new primary cannot outlive cancellation.
                 using var activation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken, _lifetimeCancellation.Token);
-                await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
-                    latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token).ConfigureAwait(false);
+                if (await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
+                        latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token).ConfigureAwait(false))
+                    observedTopologyVersion = latest.Version;
+                else
+                    // The router can publish before its callback reaches this hub. A rejected
+                    // catch-up is unfinished; wait for that callback before retrying it.
+                    await topologyChanged.WaitAsync(activation.Token).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
@@ -245,29 +254,49 @@ internal sealed partial class SubscriptionHub
 
     private async ValueTask<Dictionary<RespireEndpoint, List<RespireChannel>>> GetNotificationCoverageAsync(
         RespireSubscription subscription, CancellationToken cancellationToken,
-        RespireEndpoint[]? primarySnapshot = null)
+        bool refreshPrimaries = true)
     {
         var cluster = core.Cluster ?? throw new InvalidOperationException("Cluster notification routing requires Redis Cluster.");
-        RespireEndpoint[] primaries = [];
-        if (subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries))
-            primaries = primarySnapshot ?? await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
-        Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
-        foreach (var name in subscription.Names)
+        var allPrimaries = subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries);
+        if (allPrimaries && refreshPrimaries)
+            await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+        while (true)
         {
-            IEnumerable<RespireEndpoint> endpoints = name.RoutingScope switch
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = cluster.RoutingSnapshot;
+            if (allPrimaries && refreshPrimaries && !snapshot.IsComplete)
             {
-                RespireChannelRoutingScope.AllPrimaries => primaries,
-                RespireChannelRoutingScope.KeyOwner when name.RoutingSlot is { } slot
-                    => [await cluster.GetSlotOwnerEndpointAsync(slot, cancellationToken).ConfigureAwait(false)],
-                _ => throw new ArgumentException("Cluster notification descriptor has no valid routing scope.", nameof(subscription)),
-            };
-            foreach (var endpoint in endpoints)
-            {
-                if (!desired.TryGetValue(endpoint, out var names)) desired.Add(endpoint, names = []);
-                if (!names.Contains(name)) names.Add(name);
+                // Activation has no existing routes to preserve. A partial publication
+                // after the initial refresh cannot establish complete subscription coverage.
+                await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+                continue;
             }
+            // The refresh and topology event arrays can predate this publication. Build
+            // all-primary coverage from the same immutable map checked after owner lookup.
+            RespireEndpoint[] primaries = allPrimaries
+                ? snapshot.Masters.Where((_, index) => snapshot.MasterSlotCounts[index] > 0)
+                    .Select(static node => new RespireEndpoint(node.Host, node.Port)).Distinct().ToArray()
+                : [];
+            Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
+            foreach (var name in subscription.Names)
+            {
+                IEnumerable<RespireEndpoint> endpoints = name.RoutingScope switch
+                {
+                    RespireChannelRoutingScope.AllPrimaries => primaries,
+                    RespireChannelRoutingScope.KeyOwner when name.RoutingSlot is { } slot
+                        => [await cluster.GetSlotOwnerEndpointAsync(slot, cancellationToken).ConfigureAwait(false)],
+                    _ => throw new ArgumentException("Cluster notification descriptor has no valid routing scope.", nameof(subscription)),
+                };
+                foreach (var endpoint in endpoints)
+                {
+                    if (!desired.TryGetValue(endpoint, out var names)) desired.Add(endpoint, names = []);
+                    if (!names.Contains(name)) names.Add(name);
+                }
+            }
+            // Resolving an owner can await connection or discovery. Never reconcile a set
+            // assembled across publications: it can remove a route before its replacement is added.
+            if (ReferenceEquals(snapshot, cluster.RoutingSnapshot)) return desired;
         }
-        return desired;
     }
 
     // Callers hold _controlGate. That serializes node creation and connection replacement for
@@ -775,6 +804,8 @@ internal sealed partial class SubscriptionHub
             if (version <= _clusterNotifications.TopologyVersion) return;
             _clusterNotifications.LatestTopology = new NotificationTopology(version, endpoints, authoritative);
             Volatile.Write(ref _clusterNotifications.TopologyVersion, version);
+            _clusterNotifications.TopologyChanged.TrySetResult();
+            _clusterNotifications.TopologyChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
             if (authoritative)
             {
                 // An endpoint absent from a complete map has left the cluster. Forget its terminal
@@ -995,8 +1026,13 @@ internal sealed partial class SubscriptionHub
         StrongBox<RespireEndpoint?> failingEndpoint, CancellationToken cancellationToken)
     {
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
-        var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, endpoints).ConfigureAwait(false);
+        var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, refreshPrimaries: endpoints is null).ConfigureAwait(false);
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+        // The router publishes before delivering its callback. An older authoritative
+        // event must not lend removal authority to a newer partial endpoint set.
+        if (endpoints is not null
+            && subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries)
+            && !new HashSet<RespireEndpoint>(endpoints).SetEquals(desired.Keys)) return false;
         HashSet<RespireEndpoint> current;
         lock (_gate)
         {
