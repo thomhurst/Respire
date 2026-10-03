@@ -134,6 +134,117 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    [Arguments("|0\r\n", false)]
+    [Arguments("|1\r\n+key\r\n+value\r\n|0\r\n", false)]
+    [Arguments("|1\r\n+key\r\n*2\r\n:1\r\n:2\r\n", true)]
+    public async Task GetStream_AttributesDoNotBufferTheFollowingPayload(string attributes, bool fragmented)
+    {
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = client.Strings.GetStreamAsync("key", deadline.Token).AsTask();
+        while (server.CommandsSeen == 0) await Task.Delay(1, deadline.Token);
+        if (fragmented)
+        {
+            foreach (var value in Encoding.ASCII.GetBytes(attributes)) await server.SendRawAsync([value]);
+            await server.SendRawAsync("$5\r\n"u8.ToArray());
+        }
+        else await server.SendRawAsync(Encoding.ASCII.GetBytes(attributes + "$5\r\n"));
+        // The stream must be returned before any payload bytes arrive.
+        await using var stream = await pending.WaitAsync(deadline.Token);
+        await Assert.That(stream).IsNotNull();
+        await server.SendRawAsync("value\r\n"u8.ToArray());
+        using var reader = new StreamReader(stream!);
+        await Assert.That(await reader.ReadToEndAsync(deadline.Token)).IsEqualTo("value");
+    }
+
+    [Test]
+    [Arguments(536870905L, 5L, false)]
+    [Arguments(536870906L, 5L, true)]
+    [Arguments(536870910L, 0L, false)]
+    [Arguments(536870911L, 0L, true)]
+    [Arguments(536870912L, -1L, false)]
+    [Arguments(536870913L, -1L, true)]
+    [Arguments(12L, long.MaxValue, true)]
+    [Arguments(5L, -2L, true)]
+    public async Task BulkResponseBudgetIncludesAttributesHeadersAndTerminator(long consumedBytes, long payloadLength, bool exceedsLimit)
+    {
+        if (exceedsLimit)
+        {
+            await Assert.That(() => RespireConnection.ValidateBulkResponseSize(consumedBytes, payloadLength))
+                .Throws<RespireProtocolException>();
+        }
+        else
+        {
+            RespireConnection.ValidateBulkResponseSize(consumedBytes, payloadLength);
+        }
+    }
+
+    [Test]
+    [Arguments("", 536870899)]
+    [Arguments("|0\r\n", 536870895)]
+    [Arguments("|0\r\n|0\r\n", 536870891)]
+    public async Task GetStream_RejectsAttributeAndHeaderBudgetOverflowBeforeReturningStream(string attributes, int payloadLength)
+    {
+        // The advertised payload fits by itself, but the entire response exceeds
+        // 512 MiB by one byte. No payload allocation or transmission is needed.
+        await using var server = new FakeRespServer(Encoding.ASCII.GetBytes($"{attributes}${payloadLength}\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(async () =>
+        {
+            await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
+        }).Throws<RespireProtocolException>();
+    }
+
+    [Test]
+    public async Task GetStream_FlushesEarlierRepliesBeforeWaitingForPayload()
+    {
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var earlier = client.GetStringAsync("earlier", deadline.Token).AsTask();
+        var pending = client.Strings.GetStreamAsync("stream", deadline.Token).AsTask();
+        while (server.CommandsSeen < 2) await Task.Delay(1, deadline.Token);
+        await server.SendRawAsync("$5\r\nfirst\r\n$5\r\n"u8.ToArray());
+        await using var stream = await pending.WaitAsync(deadline.Token);
+        try
+        {
+            await Assert.That(await earlier.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("first");
+        }
+        finally
+        {
+            await server.SendRawAsync("value\r\n"u8.ToArray());
+        }
+    }
+
+    [Test]
+    public async Task GetStream_LazySentinelReadDiscoversThePrimary()
+    {
+        await using var primary = new FakeRespServer(8, "$5\r\nvalue\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : null,
+        };
+        await using var sentinel = new FakeRespServer(8, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n") : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
+        using var reader = new StreamReader(stream!);
+        await Assert.That(await reader.ReadToEndAsync(deadline.Token)).IsEqualTo("value");
+        await Assert.That(sentinel.ReceivedCommands).DoesNotContain("GET key");
+        await Assert.That(primary.ReceivedCommands).Contains("GET key");
+    }
+
+    [Test]
     public async Task GetStream_FiftyMegabytesArriveIncrementally()
     {
         const int totalBytes = 50 * 1024 * 1024;

@@ -8,6 +8,32 @@ namespace Respire.Tests.Protocol;
 public class RespParseStateTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FragmentedAttribute_YieldsOnlyWhenEnabled(bool stopAfterAttributes)
+    {
+        using var parser = new RespParseState(int.MaxValue, stopAfterAttributes);
+        var pos = 0;
+        var status = parser.TryParse("|1\r\n+key\r\n"u8, ref pos, out _, out _);
+        await Assert.That(status).IsEqualTo(RespParseStatus.NeedMoreData);
+
+        pos = 0;
+        status = parser.TryParse(":1\r\n:99\r\n"u8, ref pos, out var value, out _);
+        if (stopAfterAttributes)
+        {
+            await Assert.That(status).IsEqualTo(RespParseStatus.SkippedAttribute);
+            await Assert.That(pos).IsEqualTo(4);
+            await Assert.That(parser.IsIdle).IsTrue();
+            status = parser.TryParse(":1\r\n:99\r\n"u8, ref pos, out value, out _);
+        }
+
+        await Assert.That(status).IsEqualTo(RespParseStatus.Done);
+        await Assert.That(value.AsInteger()).IsEqualTo(99);
+        await Assert.That(pos).IsEqualTo(9);
+        value.Dispose();
+    }
+
+    [Test]
     public async Task FragmentedNestedAggregate_ResumesFromConsumedPosition()
     {
         var frame = "*3\r\n:1\r\n*2\r\n+OK\r\n:2\r\n$5\r\nhello\r\n"u8.ToArray();

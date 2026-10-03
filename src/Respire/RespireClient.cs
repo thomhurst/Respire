@@ -3151,7 +3151,7 @@ public sealed partial class RespireClient : IRespireClient
         if (_readFrom != RespireReadFrom.Primary && command.ReadKind != ReadCommandKind.None)
             return SendBulkStreamViaReadRouterAsync(operation, command, cancellationToken);
 
-        if (!core.Multiplexer.IsInitialized)
+        if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
             return SendBulkStreamAfterConnectAsync(operation, command, cancellationToken);
         }
@@ -3177,7 +3177,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         return await SendBulkStreamOnConnectionAsync(
             operation, _core.Multiplexer.GetConnection(), command, cancellationToken).ConfigureAwait(false);
     }

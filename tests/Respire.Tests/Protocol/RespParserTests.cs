@@ -8,6 +8,15 @@ namespace Respire.Tests.Protocol;
 
 public class RespParserTests
 {
+    [Test]
+    public async Task AttributeStart_RecognizesOnlyTheResp3Marker()
+    {
+        for (var value = 0; value <= byte.MaxValue; value++)
+        {
+            await Assert.That(RespParser.IsAttributeStart((byte)value)).IsEqualTo(value == '|');
+        }
+    }
+
     private static (RespParseStatus Status, RespValue Value, int Consumed) Parse(ReadOnlySpan<byte> data)
     {
         var pos = 0;
