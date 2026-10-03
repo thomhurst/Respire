@@ -1114,6 +1114,117 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DownReportAliasTimeoutPreservesCandidateDeadlineAndCallerCancellation(bool cancelCaller)
+    {
+        const int primaryPort = 7001;
+        await using var sentinel = HostnameSentinel(primaryPort);
+        using var cancellation = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = Options(sentinel.Port) with { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(200) };
+        var owner = new RespireEndpoint("127.0.0.1", primaryPort);
+        var reporter = new RespireEndpoint("127.0.0.1", sentinel.Port);
+        var hint = SentinelHint.FromDown("slow", reporter, new("slow.test", primaryPort))
+            .BindDownReportsToCurrentPrimary(new(owner, owner));
+        var validations = 0;
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync(options, async (candidate, _, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Delay(50, token);
+            validations++;
+            return candidate.PrimaryEndpoint;
+        }, cancellation.Token, notificationHint: hint, hostResolver: async (host, token) =>
+        {
+            if (host != "slow.test") return [IPAddress.Loopback];
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return [];
+        }).AsTask();
+        await entered.Task.WaitAsync(Limit);
+        if (cancelCaller)
+        {
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            await Assert.That(validations).IsEqualTo(0);
+        }
+        else
+        {
+            var selected = await pending.WaitAsync(Limit);
+            await Assert.That(selected.Host).IsEqualTo("owner.test");
+            await Assert.That(validations).IsEqualTo(1);
+        }
+    }
+
+    [Test]
+    public async Task UnreportedSentinelCannotBorrowAnotherDownReportsEvidence()
+    {
+        await using var stale = Primary();
+        await using var current = Primary();
+        await using var replica = Primary((_, command) => command == "ROLE" ? "*1\r\n+slave\r\n"u8.ToArray() : null);
+        var firstPort = current.Port;
+        var secondPort = current.Port;
+        await using var first = Sentinel(() => Volatile.Read(ref firstPort));
+        await using var second = Sentinel(() => Volatile.Read(ref secondPort));
+        foreach (var sentinel in new[] { first, second })
+        {
+            var reply = sentinel.ReplyOverride!;
+            sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+                ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        await WaitForInitialSentinelValidationAsync(client, first);
+        await WaitForInitialSentinelValidationAsync(client, second);
+        Volatile.Write(ref firstPort, replica.Port);
+        Volatile.Write(ref secondPort, stale.Port);
+        var hint = SentinelHint.FromDown("current-down", new("127.0.0.1", first.Port), new("127.0.0.1", current.Port));
+        await Assert.That(async () => await client.Core.Sentinel!.GetGenerationAsync(CancellationToken.None,
+            forceDiscovery: true, notificationHint: hint).AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
+        await Assert.That(client.Endpoint.Port).IsEqualTo(current.Port);
+        await Assert.That(stale.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SlowDownReportAliasCannotHideOtherCurrentOwnerEvidence(bool numeric)
+    {
+        await using var current = Primary();
+        await using var promoted = Primary();
+        var port = current.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var reply = sentinel.ReplyOverride!;
+        sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
+            ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var router = client.Core.Sentinel!;
+        var slowStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slowStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.HostResolver = async (host, token) =>
+        {
+            if (host != "slow.test") return [IPAddress.Loopback];
+            slowStarted.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            finally { slowStopped.TrySetResult(); }
+            return [];
+        };
+        Volatile.Write(ref port, promoted.Port);
+        var reporter = new RespireEndpoint("127.0.0.1", sentinel.Port);
+        var slow = SentinelHint.FromDown("slow", reporter, new("slow.test", current.Port));
+        var known = SentinelHint.FromDown("known", reporter, new(numeric ? "127.0.0.1" : "known.test", current.Port));
+        var hint = SentinelNotificationCoalescer.Merge(slow, in known);
+        var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
+            notificationHint: hint).AsTask().WaitAsync(Limit);
+        await Assert.That(selected.Endpoint.Port).IsEqualTo(promoted.Port);
+        if (slowStarted.Task.IsCompleted) await slowStopped.Task.WaitAsync(Limit);
+    }
+
+    [Test]
     public async Task NewerEpochDoesNotRequireDownReportAliasResolution()
     {
         await using var original = Primary();
@@ -1761,7 +1872,7 @@ public class SentinelRoutingTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, owner) =>
         {
-            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.logging.failures")
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.guarded_logging.failures")
                 owner.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) =>

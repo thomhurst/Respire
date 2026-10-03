@@ -27,12 +27,12 @@ internal static class RespireTelemetry
     public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
         "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
 
-    private static readonly Counter<long> SentinelLoggingFailures = Meter.CreateCounter<long>(
-        "respire.sentinel.logging.failures", unit: "{failure}", description: "Non-fatal logger failures caught by Sentinel notification and optional discovery logging wrappers.");
+    private static readonly Counter<long> SentinelGuardedLoggingFailures = Meter.CreateCounter<long>(
+        "respire.sentinel.guarded_logging.failures", unit: "{failure}", description: "Non-fatal logger failures caught by Sentinel notification and optional discovery logging wrappers.");
 
-    internal static void RecordSentinelLoggingFailure()
+    internal static void RecordSentinelGuardedLoggingFailure()
     {
-        try { SentinelLoggingFailures.Add(1); }
+        try { SentinelGuardedLoggingFailures.Add(1); }
         catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
             // A failing metrics listener must not replace the logger failure or stop recovery.

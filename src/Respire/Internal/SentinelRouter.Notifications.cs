@@ -376,7 +376,7 @@ internal sealed partial class SentinelRouter
         try { log(logger, state); }
         catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
-            RespireTelemetry.RecordSentinelLoggingFailure();
+            RespireTelemetry.RecordSentinelGuardedLoggingFailure();
         }
     }
 
@@ -390,7 +390,7 @@ internal sealed partial class SentinelRouter
         }
         catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
-            RespireTelemetry.RecordSentinelLoggingFailure();
+            RespireTelemetry.RecordSentinelGuardedLoggingFailure();
         }
     }
 

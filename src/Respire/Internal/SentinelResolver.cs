@@ -159,6 +159,13 @@ internal static class SentinelResolver
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                // Advisory alias resolution has its own bound. It must not spend the
+                // candidate's DNS/connection/ROLE deadline or discard another report's proof.
+                var reconciliationPrimary = !discoveryState.IsNewerConfiguration(observation.Epoch)
+                    && notificationHint is { } downHint
+                    ? await GetReconciliationPrimaryAsync(downHint, endpoint, observation.Endpoint,
+                        hostResolver, options.ConnectTimeout, cancellationToken).ConfigureAwait(false)
+                    : null;
                 // Owner resolution is part of primary setup, after the Sentinel query deadline.
                 using var connectTimeoutSource = CommandTimeoutCancellation.Create(
                     cancellationToken, options.ConnectTimeout);
@@ -192,11 +199,6 @@ internal static class SentinelResolver
                         && (preferredTarget is not null || notificationHint is { Sources.Length: > 0 })
                         && !matchesPreferredTarget
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
-                    var reconciliationPrimary = !discoveryState.IsNewerConfiguration(observation.Epoch)
-                        && notificationHint is { } downHint
-                        ? await GetReconciliationPrimaryAsync(downHint, endpoint, hostResolver, connectTimeoutSource.Token)
-                            .ConfigureAwait(false)
-                        : null;
                     var contradictsRecovery = reconciliationPrimary is { } recovered
                         && !recovered.Matches(primary, primaryAddresses)
                         && !discoveryState.IsNewerConfiguration(observation.Epoch);
@@ -494,7 +496,7 @@ internal static class SentinelResolver
         catch (Exception logError) when (logError is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
             // Diagnostic callbacks must not discard the already completed primary reply.
-            RespireTelemetry.RecordSentinelLoggingFailure();
+            RespireTelemetry.RecordSentinelGuardedLoggingFailure();
         }
     }
 
@@ -505,36 +507,64 @@ internal static class SentinelResolver
         => (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     private static async ValueTask<SentinelValidatedPrimary?> GetReconciliationPrimaryAsync(
-        SentinelHint hint, RespireEndpoint reporter,
-        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver, CancellationToken cancellationToken)
+        SentinelHint hint, RespireEndpoint reporter, RespireEndpoint candidate,
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver, TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         if (hint.ReconciliationPrimary is { } reconciliation) return reconciliation;
         if (hint.DownReportPrimary is not { } current) return null;
+        // Confirming the known numeric peer needs no advisory alias lookup. ROLE still runs.
+        if (IPAddress.TryParse(candidate.Host, out _) && current.Matches(candidate, null)) return current;
         var comparer = SentinelDiscoveryState.EndpointComparer.Instance;
-        var hasOwnReports = false;
-        foreach (var report in hint.DownReports)
-            if (comparer.Equals(report.Reporter, reporter)) { hasOwnReports = true; break; }
+        List<RespireEndpoint>? aliases = null;
         foreach (var report in hint.DownReports)
         {
-            // A reporter named by the batch may use only its own evidence. Other fallback
-            // Sentinels may discover the current outage, but cannot override a known stale report.
-            if (hasOwnReports && !comparer.Equals(report.Reporter, reporter)) continue;
+            // Unreported fallback Sentinels cannot borrow another reporter's outage proof.
+            if (!comparer.Equals(report.Reporter, reporter)) continue;
             var primary = report.Primary;
             if (primary.Port != (current.Peer ?? current.Endpoint).Port) continue;
-            string[]? addresses = null;
-            if (!IPAddress.TryParse(primary.Host, out _))
+            if (IPAddress.TryParse(primary.Host, out _))
             {
-                try
-                {
-                    var resolved = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, cancellationToken)
-                        .ConfigureAwait(false);
-                    addresses = Array.ConvertAll(resolved, NormalizeAddress);
-                }
-                catch (System.Net.Sockets.SocketException) { /* Unresolved aliases cannot prove ownership. */ }
+                if (current.Matches(primary, null)) return null;
             }
-            if (current.Matches(primary, addresses)) return null;
+            else (aliases ??= []).Add(primary);
         }
-        return current;
+        if (aliases is null) return current;
+        using var aliasTimeout = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        // One slow advisory hostname cannot hide another alias that already proves ownership.
+        var pending = aliases.Select(MatchesAliasAsync).ToList();
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var completed = await Task.WhenAny(pending).ConfigureAwait(false);
+                pending.Remove(completed);
+                var matches = await completed.ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (matches) return null;
+            }
+            return current;
+        }
+        finally
+        {
+            aliasTimeout.Cancel();
+            if (pending.Count > 0) await Task.WhenAll(pending).ConfigureAwait(false);
+        }
+
+        async Task<bool> MatchesAliasAsync(RespireEndpoint primary)
+        {
+            try
+            {
+                var resolved = await (hostResolver ?? Dns.GetHostAddressesAsync)(primary.Host, aliasTimeout.Token)
+                    .WaitAsync(aliasTimeout.Token).ConfigureAwait(false);
+                return current.Matches(primary, Array.ConvertAll(resolved, NormalizeAddress));
+            }
+            catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+            {
+                // Unknown advisory identity retains the fence; caller cancellation is checked above.
+                return false;
+            }
+        }
     }
 
     internal static bool TryParsePrimaryConfiguration(in RespValue reply, out RespireEndpoint endpoint, out long epoch,
