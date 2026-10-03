@@ -214,6 +214,7 @@ internal sealed partial class SentinelRouter
                 SentinelHint? hint;
                 lock (_gate)
                 {
+                    if (_disposed) return;
                     // Evidence can arrive after TakePending, during backoff or its wake-up.
                     // Spend the remaining retry on that evidence, not the failed reporter again.
                     if (budget.Attempts > 0 && _coalescer.Pending is not null)
@@ -326,7 +327,7 @@ internal sealed partial class SentinelRouter
     // Caller holds _gate so source matching and admission retirement see one current generation.
     private bool RetireIfSwitchSourceLocked(Generation? current, in SentinelHint hint)
     {
-        if (IsAnnouncedTarget(current, in hint) || !IsSwitchSource(current, in hint)) return false;
+        if (_disposed || IsAnnouncedTarget(current, in hint) || !IsSwitchSource(current, in hint)) return false;
         Invalidate(current!);
         return true;
     }

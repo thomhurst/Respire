@@ -79,6 +79,11 @@ cannot submit late messages or readiness, and re-adding its endpoint creates a n
 with an independent delivery gap. Subscription history and reporter validation versions
 remain available across that restart.
 
+Address resolution checks cancellation both before starting and after its resolver returns.
+A cancellation-ignoring source lookup cannot initiate target lookups after shutdown. Generation
+invalidation checks disposal before changing retirement state; late responses cannot retire a
+generation while background shutdown is still joining its tasks.
+
 First-subscription acknowledgements advance a monitor version. Discovery captures that version
 before its network lookup and marks it validated only for the reporter whose primary was
 accepted. An initial gap from that reporter can reuse the healthy generation without another

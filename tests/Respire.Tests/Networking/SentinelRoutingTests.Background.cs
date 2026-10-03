@@ -8,6 +8,40 @@ namespace Respire.Tests.Networking;
 public partial class SentinelRoutingTests
 {
     [Test]
+    public async Task LateGenerationResponseCannotRetireDuringShutdown()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var router = client.Core.Sentinel!;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new SentinelMonitorProbe { DisposeClient = () => new(release.Task) };
+        router.Monitoring.ClientFactory = _ => probe.Client;
+        try
+        {
+            await client.PingAsync();
+            await SentinelTestSetup.WaitForStartupAsync(client);
+            var generation = router.Current!;
+            var connection = generation.Multiplexer.GetConnection();
+            var disposal = client.DisposeAsync().AsTask();
+            await probe.ClientCleanup.Task.WaitAsync(Limit);
+            // Background shutdown is still joining the probe, so generation disposal
+            // has not retired this connection yet. A late response must not do so.
+            await Assert.That(disposal.IsCompleted).IsFalse();
+            await Assert.That(generation.IsRetired).IsFalse();
+            using var response = Respire.Protocol.RespValue.Error("READONLY late response");
+            generation.ObserveResponse(connection, "SET", in response);
+            await Assert.That(generation.IsRetired).IsFalse();
+            await Assert.That(generation.CountedAsRetired).IsFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        }
+    }
+
+    [Test]
     public async Task LateSourceResolutionRemainsJoinedButCannotRetireAfterShutdown()
     {
         await using var primary = Primary();
@@ -19,6 +53,7 @@ public partial class SentinelRoutingTests
         router.Monitoring.ClientFactory = _ => probe.Client;
         var release = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queries = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var clock = new FenceClock();
         router.ShutdownClock = clock;
         Task[] background = [];
@@ -27,8 +62,9 @@ public partial class SentinelRoutingTests
             await client.PingAsync();
             await SentinelTestSetup.WaitForStartupAsync(client);
             var original = router.Current!;
-            router.HostResolver = (_, _) => { started.TrySetResult(); return release.Task; };
-            var text = $"mymaster old.alias {primary.Port} 127.0.0.1 {promoted.Port}";
+            router.HostResolver = (host, _) => { queries.Enqueue(host); started.TrySetResult(); return release.Task; };
+            sentinel.SuppressReply = command => command.StartsWith("SENTINEL GET-MASTER");
+            var text = $"mymaster old.alias {primary.Port} new.alias {primary.Port}";
             probe.Messages.Writer.TryWrite(new("+switch-master", null,
                 System.Text.Encoding.ASCII.GetBytes(text), null!));
             await probe.MessageProcessed.Task.WaitAsync(Limit);
@@ -46,6 +82,7 @@ public partial class SentinelRoutingTests
             await Assert.That(router.Current).IsSameReferenceAs(original);
             await Assert.That(original.IsRetired).IsEqualTo(retired);
             await Assert.That(promoted.CommandsSeen).IsEqualTo(0);
+            await Assert.That(queries.ToArray()).IsEquivalentTo(new[] { "old.alias" });
         }
         finally
         {

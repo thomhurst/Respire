@@ -312,7 +312,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             // Retirement and its cleanup task become visible together to disposal. Once
             // disposal owns the router, it aborts every generation itself.
-            if (!generation.TryRetire() || _disposed || !ReferenceEquals(Current, generation)) return;
+            if (_disposed || !generation.TryRetire() || !ReferenceEquals(Current, generation)) return;
             // Unpublished candidates are disposed by their discovery owner. Only the current
             // published generation can lose client continuity or need background draining.
             // The transport admission check sees retirement before any waiting caller resumes.

@@ -385,12 +385,14 @@ internal sealed class SentinelMonitoring(
     // failover discovery or prevent this monitor from reading later events.
     internal async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (IPAddress.TryParse(host, out var literal)) return [SentinelEndpointIdentity.NormalizeAddress(literal)];
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.ConnectTimeout);
             var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
