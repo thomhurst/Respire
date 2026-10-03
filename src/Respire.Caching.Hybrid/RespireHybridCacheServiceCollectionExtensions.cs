@@ -16,7 +16,7 @@ public static class RespireHybridCacheServiceCollectionExtensions
     /// </summary>
     public static IHybridCacheBuilder AddRespireHybridCache(
         this IServiceCollection services,
-        Action<RespireCacheOptions>? configureCache = null,
+        Action<RespireCacheRegistrationOptions>? configureCache = null,
         Action<HybridCacheOptions>? configureHybridCache = null)
     {
         ArgumentNullException.ThrowIfNull(services);
