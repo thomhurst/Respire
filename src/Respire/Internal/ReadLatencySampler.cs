@@ -24,6 +24,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     private readonly CancellationTokenSource _stop = new();
     private int _disposed;
     private long _started;
+    private long _reservationSequence;
 
     internal long SamplesStarted => Volatile.Read(ref _started);
     private long Now => clock?.Invoke() ?? Environment.TickCount64;
@@ -31,24 +32,27 @@ internal sealed class ReadLatencySampler<TConnection>(
     internal bool HasPendingProbe(TConnection connection)
         => _samples.TryGetValue(connection, out var sample) && Volatile.Read(ref sample.Pending) is not null;
 
-    internal bool TryReserveForValidation(TConnection connection)
+    internal bool TryReserveForValidation(TConnection connection, out ValidationReservation reservation)
     {
+        reservation = default;
         var sample = _samples.GetValue(connection, static _ => new Sample());
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            if (sample.Pending is not null || sample.Reserved) return false;
-            Volatile.Write(ref sample.Reserved, true);
+            if (sample.Pending is not null || sample.Reservation != 0) return false;
+            var identity = ++_reservationSequence;
+            Volatile.Write(ref sample.Reservation, identity);
+            reservation = new(this, connection, identity);
             return true;
         }
     }
 
-    internal void ReleaseValidationReservation(TConnection connection)
+    private void ReleaseValidationReservation(TConnection connection, long identity)
     {
         lock (_gate)
         {
-            if (_samples.TryGetValue(connection, out var sample))
-                Volatile.Write(ref sample.Reserved, false);
+            if (_samples.TryGetValue(connection, out var sample) && sample.Reservation == identity)
+                Volatile.Write(ref sample.Reservation, 0);
         }
     }
 
@@ -70,38 +74,37 @@ internal sealed class ReadLatencySampler<TConnection>(
         var sample = _samples.GetValue(connection, static _ => new Sample());
         // ROLE owns this socket until validation completes. Exclude it without starting
         // a probe or publishing a cached estimate to a concurrent selection.
-        if (Volatile.Read(ref sample.Reserved)) return ValueTask.FromResult(ReadLatencySampler.Pending);
+        if (Volatile.Read(ref sample.Reservation) != 0) return ValueTask.FromResult(ReadLatencySampler.Pending);
         var now = Now;
-        var pending = Volatile.Read(ref sample.Pending);
+        Task<long>? pending;
         Probe? start = null;
-        if (now >= Volatile.Read(ref sample.NextAttempt))
+        lock (_gate)
         {
-            lock (_gate)
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+            // Cached estimates and probe starts both share the ROLE reservation gate.
+            // Pending also means ROLE owns the FIFO, not only an outstanding PING.
+            if (sample.Reservation != 0) return ValueTask.FromResult(ReadLatencySampler.Pending);
+            pending = sample.Pending;
+            // No queue of health checks: callers without a sample can still select a
+            // healthy connection without latency evidence when all four slots are busy.
+            if (pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
             {
-                ObjectDisposedException.ThrowIf(_disposed != 0, this);
-                // Pair this check with TryReserveForValidation under the same gate: a
-                // PING cannot enter the FIFO between the pending check and ROLE.
-                if (sample.Reserved) return ValueTask.FromResult(ReadLatencySampler.Pending);
-                pending = sample.Pending;
-                // No queue of health checks: callers without a sample can still select a
-                // healthy connection without latency evidence when all four slots are busy.
-                if (pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
-                {
-                    Volatile.Write(ref sample.NextAttempt, now + IntervalMilliseconds);
-                    start = new();
-                    pending = sample.Pending = start.Result.Task;
-                    _running.Add(start.Finished.Task);
-                    Interlocked.Increment(ref _started);
-                }
+                sample.NextAttempt = now + IntervalMilliseconds;
+                start = new();
+                pending = sample.Pending = start.Result.Task;
+                _running.Add(start.Finished.Task);
+                Interlocked.Increment(ref _started);
+            }
+            if (pending is null)
+            {
+                var measurement = sample.Measurement;
+                return ValueTask.FromResult(measurement is not null && now - measurement.MeasuredAt < MaximumAgeMilliseconds
+                    ? measurement.Latency : Unknown);
             }
         }
         if (start is not null) _ = MeasureAsync(connection, sample, start);
         // A fresh estimate cannot bypass an outstanding command in this connection's FIFO.
-        if (pending is not null) return new ValueTask<long>(pending.WaitAsync(cancellationToken));
-        var measurement = Volatile.Read(ref sample.Measurement);
-        if (measurement is not null && now - measurement.MeasuredAt < MaximumAgeMilliseconds)
-            return ValueTask.FromResult(measurement.Latency);
-        return ValueTask.FromResult(Unknown);
+        return new ValueTask<long>(pending.WaitAsync(cancellationToken));
     }
 
     private async Task MeasureAsync(TConnection connection, Sample sample, Probe probe)
@@ -174,7 +177,15 @@ internal sealed class ReadLatencySampler<TConnection>(
         internal Measurement? Measurement;
         internal long NextAttempt;
         internal Task<long>? Pending;
-        internal bool Reserved;
+        internal long Reservation;
+    }
+
+    internal readonly struct ValidationReservation(
+        ReadLatencySampler<TConnection> owner, TConnection connection, long identity) : IDisposable
+    {
+        // Identity makes repeated disposal (including a copied lease) harmless after
+        // another validation has reserved the same connection.
+        public void Dispose() => owner?.ReleaseValidationReservation(connection, identity);
     }
 
     private sealed record Measurement(long Latency, long MeasuredAt);

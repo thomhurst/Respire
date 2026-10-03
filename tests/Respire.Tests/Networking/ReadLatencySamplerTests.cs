@@ -9,19 +9,53 @@ namespace Respire.Tests.Networking;
 public class ReadLatencySamplerTests
 {
     [Test]
+    public async Task CachedSampleRechecksReservationAfterReadingClock()
+    {
+        using var readingClock = new ManualResetEventSlim();
+        using var resumeClock = new ManualResetEventSlim();
+        var pause = false;
+        await using var sampler = new ReadLatencySampler<object>((_, _) => ValueTask.FromResult(10L), () =>
+        {
+            if (Volatile.Read(ref pause))
+            {
+                readingClock.Set();
+                if (!resumeClock.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException();
+            }
+            return 100;
+        });
+        var connection = new object();
+        await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(10);
+        Volatile.Write(ref pause, true);
+        var cached = Task.Run(async () => await sampler.GetLatencyAsync(connection, default));
+        ReadLatencySampler<object>.ValidationReservation reservation = default;
+        try
+        {
+            await Assert.That(readingClock.Wait(TimeSpan.FromSeconds(5))).IsTrue();
+            await Assert.That(sampler.TryReserveForValidation(connection, out reservation)).IsTrue();
+            resumeClock.Set();
+            await Assert.That(await cached).IsEqualTo(ReadLatencySampler.Pending);
+        }
+        finally
+        {
+            resumeClock.Set();
+            reservation.Dispose();
+            await cached;
+        }
+    }
+
+    [Test]
     public async Task ValidationReservationIsExclusiveAndDoesNotReserveOtherConnections()
     {
         await using var sampler = new ReadLatencySampler<object>((_, _) => ValueTask.FromResult(10L));
         var connection = new object();
-        await Assert.That(sampler.TryReserveForValidation(connection)).IsTrue();
-        try
+        await Assert.That(sampler.TryReserveForValidation(connection, out var reservation)).IsTrue();
+        using (reservation)
         {
-            await Assert.That(sampler.TryReserveForValidation(connection)).IsFalse();
+            await Assert.That(sampler.TryReserveForValidation(connection, out _)).IsFalse();
             await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencySampler.Pending);
             await Assert.That(await sampler.GetLatencyAsync(new object(), default)).IsEqualTo(10);
             await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         }
-        finally { sampler.ReleaseValidationReservation(connection); }
         await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(10);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(2);
     }
@@ -33,13 +67,29 @@ public class ReadLatencySamplerTests
         await using var sampler = new ReadLatencySampler<object>((_, token) => new(reply.Task.WaitAsync(token)));
         var connection = new object();
         var probe = sampler.GetLatencyAsync(connection, default).AsTask();
-        await Assert.That(sampler.TryReserveForValidation(connection)).IsFalse();
+        await Assert.That(sampler.TryReserveForValidation(connection, out _)).IsFalse();
         reply.SetResult(10);
         await probe;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (sampler.HasPendingProbe(connection)) await Task.Delay(1, deadline.Token);
-        await Assert.That(sampler.TryReserveForValidation(connection)).IsTrue();
-        sampler.ReleaseValidationReservation(connection);
+        await Assert.That(sampler.TryReserveForValidation(connection, out var reservation)).IsTrue();
+        reservation.Dispose();
+    }
+
+    [Test]
+    public async Task DisposingOldLeaseCannotReleaseNewReservation()
+    {
+        await using var sampler = new ReadLatencySampler<object>((_, _) => ValueTask.FromResult(10L));
+        var connection = new object();
+        await Assert.That(sampler.TryReserveForValidation(connection, out var first)).IsTrue();
+        first.Dispose();
+        await Assert.That(sampler.TryReserveForValidation(connection, out var second)).IsTrue();
+        using (second)
+        {
+            first.Dispose();
+            await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencySampler.Pending);
+        }
+        await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(10);
     }
 
     [Test]

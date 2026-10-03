@@ -272,16 +272,17 @@ public class ClusterNodeIdentityTests
             },
             SuppressReply = static command => command == "PING",
         };
+        server.DelayCommand("HELLO", 250);
         server.DelayCommand("ECHO", 250);
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            // Keep the 250 ms reply beyond the ordinary 100 ms deadline, with scheduling
-            // headroom inside the maintenance deadline on parallel test workers.
-            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
+            // The explicit ECHO deadline below leaves 100 ms, while the maintenance
+            // allowance adds two seconds. Setup keeps its independent five-second budget.
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(7),
             MaintenanceWindowTimeout = TimeSpan.FromSeconds(5),
-            CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromMilliseconds(100),
+            CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(5),
             // Connection setup is outside the maintenance deadline under test.
             ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -294,7 +295,9 @@ public class ClusterNodeIdentityTests
         using var pushTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!connection.HasMaintenanceWindow) await Task.Delay(10, pushTimeout.Token);
 
-        var acceptedCommand = connection.SendAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray())).AsTask();
+        var deadline = disableCommandTimeout ? CommandDeadline.None : CommandDeadline.After(100);
+        var acceptedCommand = connection.SendCheckedAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray()),
+            commandDeadline: deadline).AsTask();
         using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.ReceivedCommands.Count(command => command == "ECHO x") == 0)
             await Task.Delay(10, commandTimeout.Token);

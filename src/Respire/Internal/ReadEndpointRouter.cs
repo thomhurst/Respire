@@ -726,8 +726,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (sampler?.HasPendingProbe(selected) == true) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
-                if (sampler is not null && !sampler.TryReserveForValidation(selected)) return null;
-                try
+                ReadLatencySampler<RespireConnection>.ValidationReservation reservation = default;
+                if (sampler is not null && !sampler.TryReserveForValidation(selected, out reservation)) return null;
+                using (reservation)
                 {
                     var checkedAt = Stopwatch.GetTimestamp();
                     using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token).ConfigureAwait(false);
@@ -735,7 +736,6 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                         throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
                     return selected;
                 }
-                finally { sampler?.ReleaseValidationReservation(selected); }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested
                 && router._lifetime.IsCancellationRequested)
