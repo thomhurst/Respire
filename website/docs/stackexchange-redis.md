@@ -113,7 +113,7 @@ also work.
 | `multiplexer.GetDatabase()` | The client itself (`IRespireClient`) |
 | `multiplexer.GetDatabase(2)` | A separate client with `Database = 2` |
 | `multiplexer.GetSubscriber()` | `redis.SubscribeAsync` and `redis.PublishAsync` on the client |
-| `multiplexer.GetServer(endpoint)` | `redis.Server` facet; `*OnAllNodesAsync` methods fan out |
+| `multiplexer.GetServer(endpoint)` | No per-endpoint selection. `redis.Server` uses normal routing; `*OnAllNodesAsync` methods run on every node |
 | `ConnectionFailed`, `ConnectionRestored` | `ConnectionStateChanged` |
 | `multiplexer.IsConnected` | `redis.IsConnected` |
 | `services.AddSingleton<IConnectionMultiplexer>(...)` | [`services.AddRespire(...)`](./integrations/dependency-injection) |
@@ -206,6 +206,9 @@ do
 }
 while (!applied);
 ```
+
+If the client can read from replicas, read the input through `redis.WithReadFrom(RespireReadFrom.Primary)`.
+`WATCH` cannot detect a replica value that was already stale before the watch started.
 
 For single-key compare-and-set on Redis 8.4+, use `Strings.SetConditionalAsync` or
 `Strings.DeleteConditionalAsync` with a `RespireValueCondition` instead. See
