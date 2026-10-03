@@ -23,8 +23,19 @@ internal static partial class ScopeWalker
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
-        private readonly Stack<(BasicBlock Block, int EntryPosition, int Continuation, bool Started, ulong Known, ulong Values, int Dispatch)> _pending = new();
+        private readonly Stack<SearchState> _pending = new();
         private readonly Dictionary<(int Block, int Continuation, bool Started, ulong Known, ulong Values, int Dispatch), int> _earliestEntries = new();
+
+        private readonly struct SearchState(
+            BasicBlock block, int continuation, bool started, ulong known, ulong values, int dispatch)
+        {
+            internal BasicBlock Block { get; } = block;
+            internal int Continuation { get; } = continuation;
+            internal bool Started { get; } = started;
+            internal ulong Known { get; } = known;
+            internal ulong Values { get; } = values;
+            internal int Dispatch { get; } = dispatch;
+        }
 
         internal bool Search()
         {
@@ -58,7 +69,7 @@ internal static partial class ScopeWalker
                 if (owner?.Kind == ControlFlowRegionKind.TryAndCatch)
                     catchOrigins.Add((region, owner.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Try)));
             }
-            _pending.Push((graph.Blocks[0], int.MinValue, 0, false, 0, 0, 0));
+            _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = 16384;
             while (_pending.Count > 0)
             {
@@ -66,7 +77,14 @@ internal static partial class ScopeWalker
                 // Exhaustion is a possible path, never a proof of safety.
                 if (--remaining == 0)
                     return true;
-                var (block, entryPosition, continuation, started, known, values, dispatch) = _pending.Pop();
+                var pending = _pending.Pop();
+                var block = pending.Block;
+                var entryPosition = int.MinValue;
+                var continuation = pending.Continuation;
+                var started = pending.Started;
+                var known = pending.Known;
+                var values = pending.Values;
+                var dispatch = pending.Dispatch;
                 if (!started && block.Ordinal == startBlock.Ordinal)
                 {
                     started = true;
@@ -166,7 +184,8 @@ internal static partial class ScopeWalker
 
             if (destination is not null && (destination.IsReachable || destination.Kind == BasicBlockKind.Exit))
             {
-                _pending.Push((destination, int.MinValue, continuation, started, known, values, dispatch));
+                _pending.Push(new(destination, continuation: continuation, started: started,
+                    known: known, values: values, dispatch: dispatch));
             }
         }
 
@@ -209,7 +228,8 @@ internal static partial class ScopeWalker
             {
                 var resume = _continuations[continuation];
                 if (resume.Block >= 0)
-                    _pending.Push((graph.Blocks[resume.Block], int.MinValue, resume.Next, started, known, values, dispatch));
+                    _pending.Push(new(graph.Blocks[resume.Block], continuation: resume.Next, started: started,
+                        known: known, values: values, dispatch: dispatch));
                 return;
             }
 
