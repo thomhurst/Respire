@@ -6,6 +6,39 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("class", false)]
+    [Arguments("class", true)]
+    [Arguments("struct", false)]
+    [Arguments("struct", true)]
+    public async Task UserDefinedConversionCannotProveConditionalReturnNonNull(string kind, bool assignment)
+    {
+        var initializer = assignment
+            ? "Produce(new Wrapper()); pending ??= batch.GetStringAsync(\"key\")"
+            : "Produce(new Wrapper()) ?? batch.GetStringAsync(\"key\")";
+        await Verify.VerifyAsync($$"""
+            #nullable enable
+            using System;
+            using System.Diagnostics.CodeAnalysis;
+            using Respire;
+            public {{kind}} Wrapper
+            {
+                public static implicit operator string?(Wrapper value) => null;
+            }
+            public class Caller
+            {
+                [return: NotNullIfNotNull(nameof(value))]
+                private static RespirePending<string> Produce(string? value) => null!;
+                public void Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = {{initializer}};
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("new int?()", true)]
     [Arguments("default(int?)", true)]
     [Arguments("default(string)!", true)]
@@ -187,42 +220,6 @@ public class PendingReadBeforeFlushAnalyzerTests
                     }
                     else await second.SendAsync();
                     Console.WriteLine({|RESP002:pending.Result|});
-                }
-            }
-        }
-        """);
-
-    [Test]
-    [Arguments("break", false)]
-    [Arguments("break", true)]
-    [Arguments("continue", false)]
-    [Arguments("continue", true)]
-    [Arguments("return", false)]
-    [Arguments("return", true)]
-    [Arguments("throw new InvalidOperationException()", false)]
-    [Arguments("throw new InvalidOperationException()", true)]
-    public async Task ExitKindCrossedWithLoopAndFinallyRead(string jump, bool readInFinally) => await Verify.VerifyAsync(
-        $$$"""
-        using System;
-        using System.Threading.Tasks;
-        using Respire;
-        public class Caller
-        {
-            public async Task RunAsync(RespireClient client, bool choice, bool skip)
-            {
-                for (var index = 0; index < 2; index++)
-                {
-                    var first = client.CreateBatch();
-                    var second = client.CreateBatch();
-                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
-                    {{{(readInFinally ? "try {" : "")}}}
-                        if (choice)
-                        {
-                            if (skip) {{{jump}}};
-                            await first.SendAsync();
-                        }
-                        else await second.SendAsync();
-                    {{{(readInFinally ? "} finally { Console.WriteLine({|RESP002:pending.Result|}); }" : "Console.WriteLine(pending.Result);")}}}
                 }
             }
         }

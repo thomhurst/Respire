@@ -402,7 +402,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return !block.Statements
             .Skip(acquisitionIndex + 1)
             .Take(releaseIndex - acquisitionIndex - 1)
-            .Any(statement => ScopeWalker.CanBypassFollowingStatement(semanticModel, statement, ScopeWalker.ExitMode.Disposal));
+            .Any(statement => ScopeExitAnalysis.CanBypassFollowingStatement(semanticModel, statement, ScopeExitAnalysis.ExitMode.Disposal));
     }
 
     private static StatementSyntax? GetSelectedBranch(

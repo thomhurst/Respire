@@ -432,7 +432,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return false;
         }
 
-        var value = argument.Value is IConversionOperation { IsImplicit: true } conversion ? conversion.Operand : argument.Value;
+        // User-defined conversions can return null even for a freshly constructed operand.
+        var value = argument.Value is IConversionOperation { IsImplicit: true, Conversion.IsUserDefined: false } conversion
+            ? conversion.Operand : argument.Value;
         return value.Type is { IsValueType: true, OriginalDefinition.SpecialType: not SpecialType.System_Nullable_T }
                || value.Syntax is ExpressionSyntax expression && IsDefinitelyNonNullPending(context, expression)
                || value.ConstantValue is { HasValue: true, Value: not null }
@@ -783,7 +785,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             _ => default,
         };
         if (statements.TakeWhile(previous => !ReferenceEquals(previous, statement))
-            .Any(previous => ScopeWalker.CanBypassFollowingStatement(semanticModel, previous, ScopeWalker.ExitMode.FlushProof, read)))
+            .Any(previous => ScopeExitAnalysis.CanBypassFollowingStatement(semanticModel, previous, ScopeExitAnalysis.ExitMode.FlushProof, read)))
         {
             return false;
         }
