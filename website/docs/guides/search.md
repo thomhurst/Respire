@@ -8,13 +8,19 @@ title: Redis Search
 dotnet add package Respire.Search
 ```
 
+With C# 14 or later, import the namespace shown below and use `client.Search` on
+`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+performs no network I/O, and leaves ownership of the underlying client with you.
+Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
+The existing `new RespireSearchClient(client)` constructor remains available.
+
 The package ID is `Respire.Search`. Its types live in the `Redis.Search` namespace. This package provides the client API. Your Redis server must also provide the Redis Search module.
 
 ```csharp
 using Redis.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var search = new RespireSearchClient(client);
+var search = client.Search;
 
 await search.CreateIndexAsync("books", new RespireSearchIndexDefinition
 {

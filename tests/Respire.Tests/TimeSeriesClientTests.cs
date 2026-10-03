@@ -310,7 +310,7 @@ public class TimeSeriesClientTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var prefixed = client.WithKeyPrefix("tenant:");
-        var timeSeries = new RespireTimeSeriesClient(prefixed);
+        var timeSeries = prefixed.TimeSeries;
         var labelQuery = new RespireTimeSeriesRangeOptions { Filters = ["room=1"] };
 
         Func<Task> typed = command switch

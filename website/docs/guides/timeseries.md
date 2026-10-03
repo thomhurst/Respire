@@ -8,11 +8,17 @@ The `Respire.TimeSeries` package (namespace `Respire.Extensions.TimeSeries`) add
 dotnet add package Respire.TimeSeries
 ```
 
+With C# 14 or later, import the namespace shown below and use `client.TimeSeries` on
+`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+performs no network I/O, and leaves ownership of the underlying client with you.
+Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
+The existing `new RespireTimeSeriesClient(client)` constructor remains available.
+
 ```csharp
 using Respire.Extensions.TimeSeries;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var timeSeries = new RespireTimeSeriesClient(client);
+var timeSeries = client.TimeSeries;
 RespireKey key = "sensor:room-1";
 
 await timeSeries.CreateAsync(key, new RespireTimeSeriesOptions
