@@ -6,13 +6,34 @@ internal static class ContainerStartupDiagnostics
 {
     internal const int MaximumCharacters = 32 * 1024;
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(2);
+    private static readonly SemaphoreSlim s_reporting = new(1, 1);
 
-    internal static async Task<string> CaptureAsync(IContainer container, int[] ports)
+    internal static async Task ReportAsync(string diagnostics)
+    {
+        // A custom TextWriter can block even in WriteLineAsync. Isolate the write and
+        // permit only one outstanding report so a stalled sink cannot accumulate workers.
+        using var deadline = new CancellationTokenSource(s_timeout);
+        try
+        {
+            await s_reporting.WaitAsync(deadline.Token).ConfigureAwait(false);
+            var writer = Console.Error;
+            var pending = Task.Run(() =>
+            {
+                try { writer.WriteLine(diagnostics); }
+                catch (Exception) { }
+                finally { s_reporting.Release(); }
+            });
+            await pending.WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+    }
+
+    internal static async Task<string> CaptureAsync(IContainer container, int[] ports, TimeProvider? timeProvider = null)
     {
         if (ports.Length == 0) return "Daemon logs unavailable: no daemon ports were selected.";
         // Startup's token is commonly already cancelled. Diagnostics get a separate, short
         // deadline; even a transport that ignores cancellation must not delay fixture cleanup.
-        using var deadline = new CancellationTokenSource(s_timeout);
+        using var deadline = new CancellationTokenSource(s_timeout, timeProvider ?? TimeProvider.System);
         // Reserve separators before splitting the budget so a noisy port cannot displace
         // every earlier daemon's tail. Keep the final bound for unusually large port arrays.
         var perPortBudget = Math.Max(1, (MaximumCharacters - ports.Length + 1) / ports.Length);

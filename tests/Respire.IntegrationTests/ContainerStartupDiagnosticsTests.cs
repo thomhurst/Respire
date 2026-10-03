@@ -82,11 +82,78 @@ public class ContainerStartupDiagnosticsTests
             original.Data["RespireFixture.DaemonLogs"].Should().BeOfType<string>().Which
                 .Should().Contain("preserved daemon tail");
             probe.DisposeCount.Should().Be(1);
-            writer.Writes.Should().Be(0);
+            writer.Writes.Should().BeGreaterThan(0);
         }
         finally { Console.SetError(previous); }
     }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StartupFailureReportsAfterCleanupWithBoundedWait(bool blocked)
+    {
+        var original = new IOException("Controlled startup failure.");
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        var probe = (ContainerProbe)container;
+        probe.HostnameError = original;
+        probe.Execute = (_, _) => Task.FromResult(new ExecResult("automatic daemon tail", "", 0));
+        var previous = Console.Error;
+        using var writer = new ControlledErrorWriter(() => probe.DisposeCount, blocked);
+        Console.SetError(writer);
+        try
+        {
+            Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
+                (_, _) => Task.FromResult(container)).WaitAsync(TimeSpan.FromSeconds(10));
+            (await start.Should().ThrowAsync<IOException>()).Which.Should().BeSameAs(original);
+            writer.CleanupCount.Should().Be(1);
+            writer.Text.Should().Contain("automatic daemon tail");
+            writer.Completed.Task.IsCompleted.Should().Be(!blocked);
+            // Another failure must not queue a second worker behind a stalled sink.
+            if (blocked)
+            {
+                await ContainerStartupDiagnostics.ReportAsync("second report").WaitAsync(TimeSpan.FromSeconds(10));
+                writer.Writes.Should().Be(1);
+            }
+            else
+            {
+                await Task.WhenAll(Enumerable.Range(0, 8)
+                    .Select(index => ContainerStartupDiagnostics.ReportAsync($"report {index}")));
+                writer.Writes.Should().Be(9);
+            }
+        }
+        finally
+        {
+            writer.Release.Set();
+            await writer.Completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Console.SetError(previous);
+        }
+    }
 #pragma warning restore TUnit0055
+
+    private sealed class ControlledErrorWriter(Func<int> cleanupCount, bool blocked) : TextWriter
+    {
+        internal readonly ManualResetEventSlim Release = new(false);
+        internal readonly TaskCompletionSource Completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int CleanupCount;
+        internal int Writes;
+        internal string? Text;
+        public override Encoding Encoding => Encoding.UTF8;
+        public override void WriteLine(string? value)
+        {
+            CleanupCount = cleanupCount();
+            Text = value;
+            Interlocked.Increment(ref Writes);
+            if (blocked) Release.Wait();
+            Completed.TrySetResult();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Release.Dispose();
+            base.Dispose(disposing);
+        }
+    }
 
     private sealed class RejectingErrorWriter : TextWriter
     {
@@ -105,12 +172,14 @@ public class ContainerStartupDiagnosticsTests
     public async Task ExpiredStartupTokenDoesNotCancelDiagnostics(bool callerCancellation)
     {
         using var caller = new CancellationTokenSource();
+        var clock = new CredentialTestClock();
         var original = new IOException("Failed after startup cancellation.");
         CancellationToken startupToken = default;
         var container = ContainerProbe.Create(async token =>
         {
             startupToken = token;
             if (callerCancellation) caller.Cancel();
+            else clock.Advance(TimeSpan.FromMilliseconds(100));
             try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         });
@@ -126,7 +195,7 @@ public class ContainerStartupDiagnosticsTests
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new()
         {
             StartupTimeout = callerCancellation ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(100),
-        }, caller.Token, (_, _) => Task.FromResult(container));
+        }, caller.Token, (_, _) => Task.FromResult(container), clock);
         Exception error;
         if (callerCancellation)
         {
@@ -166,17 +235,23 @@ public class ContainerStartupDiagnosticsTests
     [Test]
     public async Task IgnoredDiagnosticCancellationCannotPreventCleanup()
     {
+        var clock = new CredentialTestClock();
         var original = new IOException("Startup failed.");
         var pending = new TaskCompletionSource<ExecResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var container = ContainerProbe.Create(_ => Task.CompletedTask);
         var probe = (ContainerProbe)container;
         probe.HostnameError = original;
         CancellationToken diagnosticToken = default;
-        probe.Execute = (_, token) => { diagnosticToken = token; return pending.Task; };
+        probe.Execute = (_, token) =>
+        {
+            diagnosticToken = token;
+            clock.Advance(TimeSpan.FromSeconds(2));
+            return pending.Task;
+        };
         try
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
-                (_, _) => Task.FromResult(container)).WaitAsync(TimeSpan.FromSeconds(10));
+                (_, _) => Task.FromResult(container), clock).WaitAsync(TimeSpan.FromSeconds(10));
             (await start.Should().ThrowAsync<IOException>()).Which.Should().BeSameAs(original);
             diagnosticToken.IsCancellationRequested.Should().BeTrue();
             pending.Task.IsCompleted.Should().BeFalse();
