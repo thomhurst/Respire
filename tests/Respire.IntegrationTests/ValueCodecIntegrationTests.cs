@@ -1,6 +1,8 @@
 using System.Buffers;
 using FluentAssertions;
 using Respire.Compression;
+using Respire.Compression.Lz4;
+using Respire.Compression.Zstd;
 using Respire.Serialization;
 using TUnit.Core;
 

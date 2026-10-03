@@ -8,7 +8,51 @@ namespace Respire.DocTests;
 
 internal static class Program
 {
-    public static void Main() => SnippetCatalog.Report();
+    public static void Main()
+    {
+        VerifyPackageNamespaces();
+        SnippetCatalog.Report();
+    }
+
+    private static void VerifyPackageNamespaces()
+    {
+        var expected = typeof(Program).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), inherit: false)
+            .Cast<System.Reflection.AssemblyMetadataAttribute>()
+            .Where(attribute => attribute.Key == "ExpectedRuntimeAssembly")
+            .Select(attribute => attribute.Value!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (expected.Count == 0)
+            throw new InvalidOperationException("No expected runtime assemblies were generated from package references.");
+
+        var paths = Directory.GetFiles(AppContext.BaseDirectory, "Respire*.dll")
+            .Where(path => Path.GetFileNameWithoutExtension(path) != typeof(Program).Assembly.GetName().Name)
+            .ToDictionary(path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal);
+        var missing = expected.Except(paths.Keys, StringComparer.Ordinal).Order().ToArray();
+        var unexpected = paths.Keys.Except(expected, StringComparer.Ordinal).Order().ToArray();
+        if (missing.Length != 0 || unexpected.Length != 0)
+            throw new InvalidOperationException(
+                $"Runtime assembly set mismatch. Missing: [{string.Join(", ", missing)}]. Unexpected: [{string.Join(", ", unexpected)}].");
+
+        // Inspect the actual NuGet runtime assets, including packages that a snippet
+        // does not use directly. The analyzer is a compiler asset, not a runtime library.
+        foreach (var (name, path) in paths)
+        {
+            var assembly = System.Reflection.Assembly.LoadFrom(path);
+            if (assembly.GetName().Name != name)
+                throw new InvalidOperationException($"Assembly name does not match {path}.");
+
+            var publicTypes = assembly.GetExportedTypes();
+            if (!publicTypes.Any(type => type.Namespace == name))
+                throw new InvalidOperationException($"{name} has no public types in its root namespace.");
+
+            foreach (var type in publicTypes)
+            {
+                if (type.Namespace != name && !(type.Namespace?.StartsWith(name + ".", StringComparison.Ordinal) ?? false))
+                    throw new InvalidOperationException($"{type.FullName} is outside the {name} namespace hierarchy.");
+            }
+        }
+    }
 }
 
 #pragma warning disable CS0162, CS0169, CS0219, CS0414, CS0649, CS1998

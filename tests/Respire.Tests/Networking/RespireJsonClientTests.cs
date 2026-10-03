@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Respire;
 using Respire.Commands;
-using Respire.Extensions.Json;
+using Respire.Json;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -349,7 +349,7 @@ public partial class RespireJsonClientTests
                     operations.Add(command.Name);
             }
         }
-        var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Extensions.Json.IRespireJsonModifierCommands")!;
+        var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Json.IRespireJsonModifierCommands")!;
         foreach (var type in new[] { typeof(IRespireJsonCommands), modifierCommands })
         {
             foreach (var method in type.GetMethods())

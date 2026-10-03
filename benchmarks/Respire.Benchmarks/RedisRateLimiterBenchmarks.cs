@@ -1,7 +1,7 @@
 using BenchmarkDotNet.Attributes;
 #if RATE_LIMITER_API
 using System.Threading.RateLimiting;
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 #endif
 
 namespace Respire.Benchmarks;

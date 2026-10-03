@@ -84,18 +84,18 @@ jobs:
 
       - name: Run Coordination Tests
         run: |
-          dotnet run --project tests/Respire.Extensions.Coordination.Tests/Respire.Extensions.Coordination.Tests.csproj \
+          dotnet run --project tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj \
             -c Release -f ${{ matrix.framework }} --no-build -- --maximum-parallel-tests 4
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
 
       - name: Run Caching Tests
         run: |
-          dotnet run --project tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj \
+          dotnet run --project tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj \
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build
-          dotnet run --project tests/Respire.Extensions.Caching.Hybrid.Tests/Respire.Extensions.Caching.Hybrid.Tests.csproj \
+          dotnet run --project tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj \
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build
@@ -104,7 +104,7 @@ jobs:
       
       - name: Run Caching Tests on Redis 7.4
         run: |
-          dotnet run --project tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj \
+          dotnet run --project tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj \
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build

@@ -1,6 +1,6 @@
 using Amazon;
 using Amazon.Runtime;
-using Respire.Extensions.Aws;
+using Respire.Aws;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

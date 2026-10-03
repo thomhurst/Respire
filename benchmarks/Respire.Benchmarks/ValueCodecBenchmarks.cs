@@ -4,6 +4,8 @@ using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 using Respire.Compression;
+using Respire.Compression.Lz4;
+using Respire.Compression.Zstd;
 
 namespace Respire.Benchmarks;
 

@@ -1,0 +1,194 @@
+using System.Net.Security;
+using Microsoft.Extensions.Logging;
+using Respire.Serialization;
+
+namespace Respire.DependencyInjection;
+
+/// <summary>
+/// Mutable builder for <see cref="RespireOptions"/>. It is used by the action-based dependency
+/// injection overload while keeping <see cref="RespireOptions"/> itself immutable after creation.
+/// </summary>
+public sealed class RespireOptionsBuilder
+{
+    private bool _useCluster;
+    private string? _sentinelPrimaryName;
+    private TimeSpan? _connectionIdleReadTimeout;
+
+    /// <inheritdoc cref="RespireOptions.Endpoints"/>
+    /// <remarks>
+    /// Standalone registrations accept at most one endpoint. Multiple endpoints require
+    /// <see cref="UseCluster"/>; otherwise resolving the registered client throws
+    /// <see cref="RespireConfigurationException"/>. Sentinel discovery requires
+    /// <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>;
+    /// the lazy dependency-injection registrations do not support Sentinel configurations.
+    /// </remarks>
+    public IList<RespireEndpoint> Endpoints { get; } = [];
+
+    /// <inheritdoc cref="RespireOptions.UseCluster"/>
+    public bool UseCluster
+    {
+        get => _useCluster;
+        set => _useCluster = value;
+    }
+
+    /// <inheritdoc cref="RespireOptions.SentinelPrimaryName"/>
+    public string? SentinelPrimaryName
+    {
+        get => _sentinelPrimaryName;
+        set => _sentinelPrimaryName = value;
+    }
+
+    /// <inheritdoc cref="RespireOptions.Username"/>
+    public string? Username { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.Password"/>
+    public string? Password { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.CredentialProvider"/>
+    public IRespireCredentialProvider? CredentialProvider { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SentinelCredentialProvider"/>
+    public IRespireCredentialProvider? SentinelCredentialProvider { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.CredentialRefreshBeforeExpiry"/>
+    public TimeSpan CredentialRefreshBeforeExpiry { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <inheritdoc cref="RespireOptions.CredentialRefreshRetryDelay"/>
+    public TimeSpan CredentialRefreshRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <inheritdoc cref="RespireOptions.SentinelUsername"/>
+    public string? SentinelUsername { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SentinelPassword"/>
+    public string? SentinelPassword { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SentinelUseTls"/>
+    public bool? SentinelUseTls { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SentinelTlsOptions"/>
+    public SslClientAuthenticationOptions? SentinelTlsOptions { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.ClientName"/>
+    public string? ClientName { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.Database"/>
+    public int Database { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.AllowAdmin"/>
+    public bool AllowAdmin { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.Protocol"/>
+    public RespProtocol Protocol { get; set; } = RespProtocol.Auto;
+
+    /// <inheritdoc cref="RespireOptions.ConnectTimeout"/>
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <inheritdoc cref="RespireOptions.ReconnectPolicy"/>
+    public RespireReconnectPolicy? ReconnectPolicy { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.UseTls"/>
+    public bool UseTls { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.TlsOptions"/>
+    public SslClientAuthenticationOptions? TlsOptions { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.ConnectionIdleReadTimeout"/>
+    public TimeSpan? ConnectionIdleReadTimeout
+    {
+        get => _connectionIdleReadTimeout;
+        set => _connectionIdleReadTimeout = value;
+    }
+
+    /// <inheritdoc cref="RespireOptions.CommandTimeout"/>
+    public TimeSpan? CommandTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <inheritdoc cref="RespireOptions.Connections"/>
+    public int Connections { get; set; } = 1;
+
+    /// <inheritdoc cref="RespireOptions.Serializer"/>
+    public IRespireSerializer Serializer { get; set; } = RespireSerializer.Default;
+
+    /// <inheritdoc cref="RespireOptions.ClientSideCache"/>
+    public RespireClientSideCacheOptions? ClientSideCache { get; set; }
+
+    /// <summary>Enables RESP3 server-assisted client-side caching with the supplied policy.</summary>
+    public RespireOptionsBuilder UseClientSideCaching(RespireClientSideCacheOptions? options = null)
+    {
+        ClientSideCache = options ?? new RespireClientSideCacheOptions();
+        return this;
+    }
+
+    /// <inheritdoc cref="RespireOptions.LoggerFactory"/>
+    public ILoggerFactory? LoggerFactory { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.ThreadPoolMonitoring"/>
+    public bool ThreadPoolMonitoring { get; set; } = true;
+
+    /// <inheritdoc cref="RespireOptions.ThreadPoolWarningThreshold"/>
+    public TimeSpan ThreadPoolWarningThreshold { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveTime"/>
+    public TimeSpan? TcpKeepAliveTime { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveInterval"/>
+    public TimeSpan? TcpKeepAliveInterval { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveRetryCount"/>
+    public int? TcpKeepAliveRetryCount { get; set; }
+
+    /// <inheritdoc cref="RespireOptions.SubscriptionBufferSize"/>
+    public int SubscriptionBufferSize { get; set; } = 1024;
+
+    /// <inheritdoc cref="RespireOptions.SubscriptionOverflow"/>
+    public SubscriptionOverflow SubscriptionOverflow { get; set; } = SubscriptionOverflow.DropOldest;
+
+    /// <inheritdoc cref="RespireOptions.ReceiveBufferSize"/>
+    public int ReceiveBufferSize { get; set; } = 64 * 1024;
+
+    /// <inheritdoc cref="RespireOptions.WriteBufferSize"/>
+    public int WriteBufferSize { get; set; } = 64 * 1024;
+
+    /// <inheritdoc cref="RespireOptions.MaxInflightCommands"/>
+    public int MaxInflightCommands { get; set; } = 16 * 1024;
+
+    internal RespireOptions Build() => new()
+    {
+        Endpoints = Endpoints.ToArray(),
+        UseCluster = UseCluster,
+        SentinelPrimaryName = SentinelPrimaryName,
+        Username = Username,
+        Password = Password,
+        CredentialProvider = CredentialProvider,
+        SentinelCredentialProvider = SentinelCredentialProvider,
+        CredentialRefreshBeforeExpiry = CredentialRefreshBeforeExpiry,
+        CredentialRefreshRetryDelay = CredentialRefreshRetryDelay,
+        SentinelUsername = SentinelUsername,
+        SentinelPassword = SentinelPassword,
+        SentinelUseTls = SentinelUseTls,
+        SentinelTlsOptions = SentinelTlsOptions,
+        ClientName = ClientName,
+        Database = Database,
+        AllowAdmin = AllowAdmin,
+        Protocol = Protocol,
+        ConnectTimeout = ConnectTimeout,
+        ReconnectPolicy = ReconnectPolicy,
+        UseTls = UseTls,
+        TlsOptions = TlsOptions,
+        ConnectionIdleReadTimeout = ConnectionIdleReadTimeout,
+        CommandTimeout = CommandTimeout,
+        Connections = Connections,
+        Serializer = Serializer,
+        ClientSideCache = ClientSideCache,
+        LoggerFactory = LoggerFactory,
+        ThreadPoolMonitoring = ThreadPoolMonitoring,
+        ThreadPoolWarningThreshold = ThreadPoolWarningThreshold,
+        TcpKeepAliveTime = TcpKeepAliveTime,
+        TcpKeepAliveInterval = TcpKeepAliveInterval,
+        TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,
+        SubscriptionBufferSize = SubscriptionBufferSize,
+        SubscriptionOverflow = SubscriptionOverflow,
+        ReceiveBufferSize = ReceiveBufferSize,
+        WriteBufferSize = WriteBufferSize,
+        MaxInflightCommands = MaxInflightCommands,
+    };
+}

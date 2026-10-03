@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Coordination</PackageId>
+    <Title>Respire.Coordination</Title>
+    <Description>Redis coordination primitives with explicit lease, capacity, hash-field, and fencing semantics, plus distributed rate limiters.</Description>
+    <PackageTags>$(PackageTags);coordination;distributed-lock;fencing;rate-limiting;semaphore;hash-field</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Threading.RateLimiting" />
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <InternalsVisibleTo Include="Respire.Coordination.Tests" />
+  </ItemGroup>
+</Project>

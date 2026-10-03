@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="TUnit" />
+        <PackageReference Include="Testcontainers.Redis" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+        <Using Include="Respire.Testing" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Respire.Caching.Hybrid\Respire.Caching.Hybrid.csproj" />
+    </ItemGroup>
+
+</Project>

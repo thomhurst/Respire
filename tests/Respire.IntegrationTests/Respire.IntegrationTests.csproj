@@ -20,14 +20,14 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Extensions.Coordination\Respire.Extensions.Coordination.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Coordination\Respire.Coordination.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Lz4\Respire.Compression.Lz4.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Zstd\Respire.Compression.Zstd.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Extensions.Json\Respire.Extensions.Json.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Extensions.Search\Respire.Extensions.Search.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Extensions.Probabilistic\Respire.Extensions.Probabilistic.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Json\Respire.Json.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Search\Respire.Search.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Probabilistic\Respire.Probabilistic.csproj" />
         <ProjectReference Include="..\..\src\Respire.Testing\Respire.Testing.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Extensions.TimeSeries\Respire.Extensions.TimeSeries.csproj" />
+        <ProjectReference Include="..\..\src\Respire.TimeSeries\Respire.TimeSeries.csproj" />
         <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     </ItemGroup>
 
