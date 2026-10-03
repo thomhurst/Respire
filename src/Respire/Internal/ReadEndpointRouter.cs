@@ -317,7 +317,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     }
 
     internal async ValueTask<Selection> GetReplicaFromEndpointsAsync(
-        RespireEndpoint[] endpoints, CancellationToken cancellationToken, RespireReadFrom readFrom = RespireReadFrom.Replica)
+        RespireEndpoint[] endpoints, CancellationToken cancellationToken, RespireReadFrom readFrom = RespireReadFrom.Replica,
+        RespireConnection? excluded = null)
     {
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
@@ -334,6 +335,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var endpoint = endpoints[(int)((start + (uint)offset) % (uint)endpoints.Length)];
+                if (excluded is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoint, excluded)) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoint).ConfigureAwait(false);
                 if (entry is null) continue;
                 // A failed replica remains in cooldown so it cannot add a timeout to every read.
@@ -343,6 +345,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     var selection = new Selection(await entry.GetConnectionAsync(cancellationToken,
                         ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null).ConfigureAwait(false), entry, null);
+                    if (excluded is not null && !HedgedReadPolicy.IsDifferentPeer(excluded, selection.Connection)) continue;
                     var local = ReadFallbackPolicy.IsSameZone(selection.Connection, core.Options.ClientAvailabilityZone);
                     if (candidates.Offer(selection, local, !entry.IsReplicationLinkDown, readFrom)) return selection;
                 }
@@ -358,7 +361,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 try
                 {
                     var primary = await GetPrimaryAsync(cancellationToken, core.Options.ClientAvailabilityZone).ConfigureAwait(false);
-                    if (ReadFallbackPolicy.IsSameZone(primary.Connection, core.Options.ClientAvailabilityZone)) return primary;
+                    if (ReadFallbackPolicy.IsSameZone(primary.Connection, core.Options.ClientAvailabilityZone)
+                        && (excluded is null || HedgedReadPolicy.IsDifferentPeer(excluded, primary.Connection))) return primary;
                 }
                 catch (Exception error) when (IsUnavailable(error, cancellationToken)) { lastError = error; }
             }

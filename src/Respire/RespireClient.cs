@@ -2219,7 +2219,13 @@ public sealed partial class RespireClient : IRespireClient
 
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         ValueTask<RespValue> response;
-        if (routeRead && core.Cluster is null)
+        if (readKind == ReadCommandKind.Read && core.HedgedReads is { } hedgeBudget
+            && command is not IRespCommandWrapper && HedgedReadPolicy.IsEligible(operation)
+            && (core.Cluster is null || command.TryGetClusterSlot(out _)))
+        {
+            response = SendHedgedReadAsync(operation, command, hedgeBudget, flags, cancellationToken);
+        }
+        else if (routeRead && core.Cluster is null)
         {
             response = SendReadFromAsync(operation, command, readKind, cursorAffinity, cancellationToken);
         }
