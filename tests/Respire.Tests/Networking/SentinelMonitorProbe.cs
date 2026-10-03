@@ -13,6 +13,9 @@ internal sealed class SentinelMonitorProbe
     internal Func<ValueTask> DisposeClient = static () => ValueTask.CompletedTask;
     internal Func<ValueTask> DisposeSubscription = static () => ValueTask.CompletedTask;
     internal Action? CancellationCallback;
+    internal Action? Subscribed;
+    internal event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+    internal void ChangeConnectionState(RespireConnectionStateChange change) => ConnectionStateChanged?.Invoke(change);
     internal bool IgnoreCancellation;
     internal CancellationToken SubscriptionToken;
     private CancellationTokenRegistration _cancellation;
@@ -43,6 +46,11 @@ internal sealed class SentinelMonitorProbe
 
     private sealed class ClientAdapter(SentinelMonitorProbe owner) : ISentinelMonitorClient
     {
+        public event Action<RespireConnectionStateChange>? ConnectionStateChanged
+        {
+            add => owner.ConnectionStateChanged += value;
+            remove => owner.ConnectionStateChanged -= value;
+        }
         public ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken)
         {
             owner.SubscriptionToken = cancellationToken;
@@ -51,6 +59,7 @@ internal sealed class SentinelMonitorProbe
                 owner.Cancelled.TrySetResult();
                 owner.CancellationCallback?.Invoke();
             });
+            owner.Subscribed?.Invoke();
             return ValueTask.FromResult<ISentinelMonitorSubscription>(new SubscriptionAdapter(owner));
         }
         public async ValueTask DisposeAsync()

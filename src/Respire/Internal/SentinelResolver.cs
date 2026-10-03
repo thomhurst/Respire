@@ -121,7 +121,9 @@ internal static class SentinelResolver
 
         discoveryState ??= new SentinelDiscoveryState(options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost", 26379)] : options.Endpoints);
-        var sentinelEndpoints = discoveryState.Snapshot().ToList();
+        using var discoveryRound = discoveryState.BeginDiscovery(cancellationToken);
+        var memberships = discoveryState.MembershipSnapshot(out _);
+        var sentinelEndpoints = memberships.Select(item => item.Endpoint).ToList();
         if (preferredSentinel is { } preferred)
         {
             var preferredIndex = sentinelEndpoints.FindIndex(endpoint =>
@@ -159,7 +161,17 @@ internal static class SentinelResolver
                         logger,
                         discoveryTimeoutSource.Token,
                         cancellationToken,
-                        index < initialCount ? AddPeer : null)
+                        index < initialCount ? (peers, complete) =>
+                        {
+                            foreach (var peer in peers) AddPeer(peer);
+                            discoveryRound.Report(endpoint, peers, complete);
+                        } : null,
+                        succeeded =>
+                        {
+                            foreach (var membership in memberships)
+                                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(membership.Endpoint, endpoint))
+                                    discoveryState.RecordConnection(membership, succeeded);
+                        })
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
                 discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -352,15 +364,27 @@ internal static class SentinelResolver
         ILogger? logger,
         CancellationToken cancellationToken,
         CancellationToken callerCancellationToken,
-        Action<RespireEndpoint>? addPeer)
+        Action<RespireEndpoint[], bool>? reportPeers,
+        Action<bool> recordConnection)
     {
-        await using var connection = await RespireConnection.ConnectAsync(
+        RespireConnection connected;
+        try
+        {
+            connected = await RespireConnection.ConnectAsync(
                 sentinel.Host,
                 sentinel.Port,
                 options,
                 logger,
                 cancellationToken)
             .ConfigureAwait(false);
+        }
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
+        {
+            if (!callerCancellationToken.IsCancellationRequested) recordConnection(false);
+            throw;
+        }
+        await using var connection = connected;
+        recordConnection(true);
         var reply = await connection.SendAsync(
                 new Cmd1(Verbs.SentinelGetMasterAddressByName, serviceName),
                 cancellationToken)
@@ -369,9 +393,9 @@ internal static class SentinelResolver
         {
             // Peers may rescue a stale or missing primary response. Only endpoints known at
             // the start of this attempt expand discovery, preventing recursive exploration.
-            if (addPeer is not null)
+            if (reportPeers is not null)
             {
-                try { await DiscoverPeersAsync(connection, serviceName, addPeer, logger, cancellationToken).ConfigureAwait(false); }
+                try { await DiscoverPeersAsync(connection, serviceName, reportPeers, logger, cancellationToken).ConfigureAwait(false); }
                 catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
                 {
                     callerCancellationToken.ThrowIfCancellationRequested();
@@ -602,7 +626,7 @@ internal static class SentinelResolver
     }
 
     private static async ValueTask DiscoverPeersAsync(RespireConnection connection, string serviceName,
-        Action<RespireEndpoint> addPeer, ILogger? logger, CancellationToken cancellationToken)
+        Action<RespireEndpoint[], bool> reportPeers, ILogger? logger, CancellationToken cancellationToken)
     {
         using var reply = await connection.SendAsync(
             new Cmd1(SentinelPeers, serviceName), cancellationToken).ConfigureAwait(false);
@@ -612,22 +636,27 @@ internal static class SentinelResolver
             return; // Optional discovery permissions must not reject a usable configured Sentinel.
         }
         if (reply.Type != RespDataType.Array) return;
+        var peers = new List<RespireEndpoint>();
+        var complete = true;
         foreach (ref readonly var peer in reply.AsArray())
         {
-            if (peer.Type != RespDataType.Array) continue;
+            if (peer.Type != RespDataType.Array) { complete = false; continue; }
             var fields = peer.AsArray();
-            if (fields.Length % 2 != 0) continue;
+            if (fields.Length % 2 != 0) { complete = false; continue; }
             string? host = null, port = null;
             for (var field = 0; field < fields.Length; field += 2)
             {
                 if (fields[field].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                    || fields[field + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) continue;
+                    || fields[field + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+                { complete = false; continue; }
                 var name = fields[field].AsString();
                 if (name == "ip") host = fields[field + 1].AsString();
                 else if (name == "port") port = fields[field + 1].AsString();
             }
-            if (TryParseEndpoint(host, port, out var endpoint)) addPeer(endpoint);
+            if (!TryParseEndpoint(host, port, out var endpoint)) { complete = false; continue; }
+            peers.Add(endpoint);
         }
+        reportPeers(peers.ToArray(), complete);
     }
 
     private static bool TryParseEndpoint(string? host, string? portText, out RespireEndpoint endpoint)

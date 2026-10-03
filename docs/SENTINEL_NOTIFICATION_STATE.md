@@ -43,6 +43,33 @@ those ownership boundaries intentionally do not discard errors through a recover
 
 ## Endpoint identity and address evidence
 
+Configured Sentinel seeds are never aged out. Learned endpoints are removed after
+three completed discovery rounds omit them and their last recorded connection attempt
+failed. A round needs at least one complete `SENTINEL SENTINELS` reply to count;
+permission errors, malformed lists, and caller-cancelled rounds do not supply omission
+evidence. Valid rows in a partially malformed list can still add or refresh peers.
+Any reporter listing a peer resets its missing count, as does the peer reporting its
+own list. Successful connections clear failure evidence. No periodic discovery is
+introduced: aging progresses when primary discovery runs.
+
+The three omitted rounds provide hysteresis; connection failure is a separate health
+gate, not another retry threshold. A single failed attempt can therefore remove a peer
+already omitted three times. Requiring a majority of Sentinel replies would prevent
+cleanup while most old addresses are unreachable. The tradeoff is that one partitioned
+reporter can supply omissions: a healthy peer remains protected by successful connections,
+but an unreachable peer may be removed and later rediscovered from a fresh report.
+
+Each round retains a bounded membership snapshot and report counters so overlapping
+rounds cannot age a peer refreshed by a newer report. A single mutable round epoch per
+peer would lose that overlapping-round evidence. The snapshot is bounded by the 64-peer
+limit and occurs only during discovery, not on steady-state command routing.
+
+Reports from overlapping discovery rounds protect peers from older omission evidence.
+Membership versions prevent retired monitors from changing the health of a re-added
+endpoint. Removal signals the monitor supervisor, which cancels that endpoint's linked
+token and joins its cleanup. Configured seeds, the 64 learned-endpoint cap, and accepted
+primary/epoch evidence remain intact.
+
 `SentinelEndpointIdentity` defines textual endpoint equality and hashing for discovery,
 monitor registration, hint keys, evidence unions, and retained validated owners. Hostname
 case is ignored; numeric addresses use their canonical spelling, including IPv4-mapped
