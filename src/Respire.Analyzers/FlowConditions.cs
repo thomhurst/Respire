@@ -17,9 +17,10 @@ internal sealed class FlowConditions
     private readonly Dictionary<CaptureId, IOperation> _captures = new();
     private readonly HashSet<CaptureId> _ambiguousCaptures = [];
     private readonly HashSet<ISymbol> _unstable = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
     private readonly List<(ISymbol Symbol, object? Constant)> _predicates = [];
 
-    internal FlowConditions(ControlFlowGraph graph, CancellationToken cancellationToken)
+    internal FlowConditions(ControlFlowGraph graph, int originPosition, CancellationToken cancellationToken)
     {
         _cancellationToken = cancellationToken;
         _scope = graph.OriginalOperation.Syntax;
@@ -31,6 +32,19 @@ internal sealed class FlowConditions
                 Inspect(operation);
             }
         }
+        // Earlier selections only matter when a later branch can use them in the proof.
+        // Forgetting unrelated predicates merges equivalent pre-origin search states.
+        foreach (var block in graph.Blocks)
+            if (block.BranchValue is { } condition && condition.Syntax.Span.End >= originPosition)
+                CollectRelevant(condition);
+    }
+
+    private void CollectRelevant(IOperation operation)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+        operation = Unwrap(operation);
+        if (Symbol(operation) is { } symbol) _relevant.Add(symbol);
+        foreach (var child in operation.ChildOperations) CollectRelevant(child);
     }
 
     private void Inspect(IOperation operation)
@@ -63,6 +77,9 @@ internal sealed class FlowConditions
                 break;
             case IArgumentOperation { Parameter.RefKind: not RefKind.None } argument:
                 Invalidate(argument.Value);
+                break;
+            case IAddressOfOperation address:
+                Invalidate(address.Reference);
                 break;
         }
 
@@ -143,7 +160,7 @@ internal sealed class FlowConditions
             return true;
 
         var symbol = Symbol(operand);
-        if (symbol is null || _unstable.Contains(symbol)
+        if (symbol is null || !_relevant.Contains(symbol) || _unstable.Contains(symbol)
             || symbol is IParameterSymbol { RefKind: not RefKind.None }
             || symbol is ILocalSymbol { RefKind: not RefKind.None })
             return true;

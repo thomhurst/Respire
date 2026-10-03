@@ -9,6 +9,52 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task AddressTakenPredicateCannotProveConditionalFlush(bool local) => await Pending.VerifyUnsafeAsync($$"""
+        using System;
+        using Respire;
+        class Caller
+        {
+            unsafe void Run(RespireClient client, bool choice)
+            {
+                {{(local ? "bool condition = choice;" : "")}}
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = {{(local ? "condition" : "choice")}} ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                bool* pointer = &{{(local ? "condition" : "choice")}};
+                *pointer = false;
+                try { throw new Exception(); }
+                catch (Exception) when ({{(local ? "condition" : "choice")}}) { first.SendAsync().AsTask().GetAwaiter().GetResult(); }
+                catch (Exception) { second.SendAsync().AsTask().GetAwaiter().GetResult(); }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task UnrelatedBranchesBeforeAcquisitionDoNotExhaustSearch()
+    {
+        var parameters = string.Join(", ", Enumerable.Range(0, 14).Select(index => $"bool condition{index}"));
+        var branches = string.Join(Environment.NewLine, Enumerable.Range(0, 14)
+            .Select(index => $"if (condition{index}) Console.WriteLine({index});"));
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{parameters}})
+                {
+                    {{branches}}
+                    var result = await client.ExecuteAsync("PING");
+                    result.Dispose();
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task FilteredCatchOriginRetainsSelectionForDisposal(bool inverted)
     {
         var local = inverted ? "{|RESP001:result|}" : "result";

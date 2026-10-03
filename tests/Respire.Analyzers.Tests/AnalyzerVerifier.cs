@@ -18,7 +18,10 @@ internal static class AnalyzerVerifier<TAnalyzer>
     public static Task VerifyTopLevelAsync(string source)
         => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.ConsoleApplication);
 
-    private static Task VerifyAsync(string source, Microsoft.CodeAnalysis.OutputKind outputKind)
+    public static Task VerifyUnsafeAsync(string source)
+        => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true);
+
+    private static Task VerifyAsync(string source, Microsoft.CodeAnalysis.OutputKind outputKind, bool allowUnsafe = false)
     {
         var test = new CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
         {
@@ -28,6 +31,10 @@ internal static class AnalyzerVerifier<TAnalyzer>
         test.TestState.OutputKind = outputKind;
         test.TestState.Sources.Add(source);
         test.TestState.Sources.Add(RespireApiStub.Source);
+        if (allowUnsafe)
+            test.SolutionTransforms.Add((solution, projectId) => solution.WithProjectCompilationOptions(projectId,
+                ((Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions)solution.GetProject(projectId)!.CompilationOptions!)
+                    .WithAllowUnsafe(true)));
 
         return test.RunAsync(CancellationToken.None);
     }

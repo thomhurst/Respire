@@ -18,7 +18,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken)
     {
         private readonly INamedTypeSymbol? _systemException = systemException;
-        private readonly FlowConditions _conditions = new(graph, cancellationToken);
+        private readonly FlowConditions _conditions = new(graph, startPosition, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
