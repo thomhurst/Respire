@@ -8,6 +8,10 @@ namespace Respire;
 /// Distributed lock commands. Prefer <see cref="AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/>
 /// for managed locks. Use the token-based methods only when ownership must cross process boundaries.
 /// </summary>
+/// <remarks>
+/// Positive fractional milliseconds are rounded up to Redis millisecond precision, capped at the largest
+/// whole millisecond representable by <see cref="TimeSpan"/>. Values above that cap are rounded down to it.
+/// </remarks>
 public interface ILockCommands
 {
     /// <summary>
@@ -190,7 +194,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
     {
-        var normalizedExpiry = TimeSpan.FromMilliseconds(ValidateExpiry(expiry));
+        var normalizedExpiry = TimeSpan.FromTicks(ValidateExpiry(expiry) * TimeSpan.TicksPerMillisecond);
         var token = RespireLock.NewToken();
         var acquiredTimestamp = Stopwatch.GetTimestamp();
         var mutex = await TryTakeAsync(key, token, normalizedExpiry, cancellationToken).ConfigureAwait(false)
@@ -416,13 +420,13 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 
     private static long ValidateExpiry(TimeSpan expiry, string parameterName)
     {
-        var milliseconds = (long)expiry.TotalMilliseconds;
+        var milliseconds = RespireLock.NormalizeDuration(expiry).Ticks / TimeSpan.TicksPerMillisecond;
         if (milliseconds <= 0)
         {
             throw new ArgumentOutOfRangeException(
                 parameterName,
                 expiry,
-                "Lock expiry must be at least 1 millisecond.");
+                "Lock expiry must be positive.");
         }
 
         return milliseconds;
