@@ -10,6 +10,8 @@ public static class RespireDistributedCacheClientExtensions
     /// <remarks>
     /// Performs no network I/O. Disposing the adapter does not dispose the client.
     /// The instance name is appended to any existing client key prefix.
+    /// If passed a <see cref="RespireCacheRegistrationOptions"/> instance, its connection settings
+    /// are ignored because the adapter uses the supplied client.
     /// </remarks>
     /// <exception cref="ArgumentNullException">The client is null.</exception>
     public static RespireDistributedCache AsDistributedCache(this IRespireClient client, RespireCacheOptions? options = null)

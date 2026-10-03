@@ -31,15 +31,22 @@ public class DistributedCacheAccessorTests
     }
 
     [Test]
-    public async Task OptionsComposePrefixesAndDisposalLeavesClientUsable()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OptionsComposePrefixesAndDisposalLeavesClientUsable(bool registrationOptions)
     {
         await using var server = new FakeRespServer("*2\r\n:0\r\n$5\r\nhello\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         IRespireClient prefixed = client.WithKeyPrefix("tenant:");
-        await using (var cache = prefixed.AsDistributedCache(new RespireCacheOptions
-        {
-            InstanceName = "cache:",
-        }))
+        RespireCacheOptions options = registrationOptions
+            ? new RespireCacheRegistrationOptions
+            {
+                ConnectionString = "unused:1",
+                ClientOptions = _ => throw new InvalidOperationException("Must use the supplied client."),
+            }
+            : new RespireCacheOptions();
+        options.InstanceName = "cache:";
+        await using (var cache = prefixed.AsDistributedCache(options))
         {
             await Assert.That(Encoding.UTF8.GetString((await cache.GetAsync("key"))!)).IsEqualTo("hello");
             cache.Dispose();

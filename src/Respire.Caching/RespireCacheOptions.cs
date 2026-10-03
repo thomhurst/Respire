@@ -7,6 +7,10 @@ namespace Respire.Caching;
 /// supplied; see <see cref="RespireCacheRegistrationOptions"/> for DI registrations that can
 /// create their own client.
 /// </summary>
+/// <remarks>
+/// Inheritance supports <see cref="RespireCacheRegistrationOptions"/>; this type is not intended
+/// as an extension point for external subclasses.
+/// </remarks>
 public class RespireCacheOptions
 {
     /// <summary>
