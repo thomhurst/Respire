@@ -67,48 +67,26 @@ internal sealed partial class SentinelRouter
             var addresses = await Monitoring.ResolveAddressesAsync(oldPrimary.Host, cancellationToken).ConfigureAwait(false);
             if (addresses is null) return;
 
-            // Resolve hostname targets before treating a source's fresh DNS as demotion
-            // evidence. Both names may now point to the promoted peer, before or after
-            // its publication. Their overlap cannot identify that peer as the old owner.
+            // I/O collects facts only. The reducer decides whether target aliases
+            // disqualify these addresses as evidence of a demoted source.
+            var targets = ImmutableArray.CreateBuilder<SentinelAddressEvidence>();
             if (!IPAddress.TryParse(oldPrimary.Host, out _))
             {
-                HashSet<string> resolvedTargets = new(SentinelEndpointIdentity.AddressComparer.Instance);
                 foreach (var target in hint.Targets)
                 {
                     if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _)) continue;
                     var targetAddresses = await Monitoring.ResolveAddressesAsync(target.Host, cancellationToken).ConfigureAwait(false);
-                    if (new SentinelAddressEvidence(target, targetAddresses).SingleAddress is { } targetAddress)
-                        resolvedTargets.Add(targetAddress);
-                }
-                if (resolvedTargets.Count > 0)
-                {
-                    // Fresh DNS overlap cannot erase the peer known when the event arrived.
-                    // Both names may still alias that demoted socket while it answers ROLE master.
-                    var knownPeer = arrivedDuring.ValidatedPeer;
-                    addresses = Array.FindAll(addresses, address => !resolvedTargets.Contains(address)
-                        || knownPeer is { } peer && peer.Port == oldPrimary.Port
-                            && SentinelEndpointIdentity.AddressComparer.Instance.Equals(address, peer.Host));
-                    if (addresses.Length == 0) return;
+                    targets.Add(new(target, targetAddresses));
                 }
             }
-
             lock (_gate)
             {
                 if (_disposed || cancellationToken.IsCancellationRequested) return;
-                var current = Current;
-                _coalescer.RetainResolvedOldPrimaryAddresses(oldPrimary, addresses, resolution);
-                var retained = resolution.Hint;
-                // Do not apply an old resolution to a later generation for the same endpoint:
-                // a failback can legitimately publish that address again. A changed endpoint
-                // is checked so a hostname alias is not lost across an in-flight handoff.
-                if (current is null || !ReferenceEquals(current, arrivedDuring)
-                    && (SameEndpoint(current.Endpoint, arrivedDuring.Endpoint)
-                        || arrivedDuring.ValidatedPeer is { } arrivedPeer
-                            && current.Multiplexer.HasCurrentPeer(arrivedPeer.Host, arrivedPeer.Port))) return;
-                if (RetireIfSwitchSourceLocked(current, in retained))
-                {
-                    QueueNotificationRediscoveryCore(retained with { MustRediscover = true });
-                }
+                var transition = _coalescer.Transition(new(SentinelNotificationEventKind.SourceResolved,
+                    ResolutionId: resolution.Id, AddressEvidence: new(oldPrimary, addresses), TargetAddresses: targets.ToImmutable()),
+                    new(CurrentEvidence: CaptureGenerationEvidence(Current),
+                        LookupGeneration: CaptureGenerationEvidence(arrivedDuring)));
+                ApplyQueuedNotificationTransitionLocked(in transition);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
@@ -185,15 +163,9 @@ internal sealed partial class SentinelRouter
             var current = Current;
             var observed = hint.CaptureObservationContext(current is null ? null
                 : new(current.Endpoint, current.ValidatedPeer), _discovery.EpochEvidence);
-            var targetIsCurrent = observed.Target is { } target && current is { IsRetired: false }
-                && IsConfirmedTarget(current, target);
-            var startWorker = _coalescer.Offer(in observed, targetIsCurrent);
-            if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
-            // Compare the switch source with Current under the gate, immediately before retirement.
-            // This also covers hints that wait behind an active discovery, so a direct endpoint
-            // match never waits for that attempt or for DNS.
-            RetireIfSwitchSourceLocked(current, in observed);
-            if (startWorker) _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
+            var transition = _coalescer.Transition(new(SentinelNotificationEventKind.Offer, observed),
+                new(CurrentEvidence: CaptureGenerationEvidence(current)));
+            ApplyQueuedNotificationTransitionLocked(in transition);
         }
     }
 
@@ -207,7 +179,7 @@ internal sealed partial class SentinelRouter
                 lock (_gate)
                 {
                     transition = _coalescer.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
-                        new(NowMilliseconds: Environment.TickCount64));
+                        new(NowMilliseconds: Environment.TickCount64, CurrentEvidence: CaptureGenerationEvidence(Current)));
                     ApplyNotificationTransitionLocked(in transition);
                 }
                 if (transition.Action == SentinelNotificationAction.Stop) return;
@@ -215,7 +187,7 @@ internal sealed partial class SentinelRouter
                 {
                     // Minimum spacing survives worker completion and cannot be interrupted
                     // by another advisory notification. Policy backoff below can be interrupted.
-                    await Task.Delay(transition.Delay, _lifetime.Token).ConfigureAwait(false);
+                    await WaitForNotificationRetryAsync(transition, Task.CompletedTask).ConfigureAwait(false);
                     continue;
                 }
 
@@ -249,10 +221,9 @@ internal sealed partial class SentinelRouter
                     transition = _coalescer.Transition(new(failure is null
                         ? SentinelNotificationEventKind.AttemptSucceeded : SentinelNotificationEventKind.AttemptFailed),
                         new(Policy: core.Options.ReconnectPolicy, RandomUnit: Random.Shared.NextDouble(),
-                            CurrentGeneration: current, ValidatedGeneration: validated,
+                            ValidatedGeneration: validated,
                             ValidatedPrimary: validated is null ? null : new(validated.Endpoint, validated.ValidatedPeer),
-                            ConfirmedCurrentPeer: current is { IsRetired: false }
-                                ? current.Multiplexer.GetConfirmedCurrentPeer() : null));
+                            CurrentEvidence: CaptureGenerationEvidence(current)));
                     ApplyNotificationTransitionLocked(in transition);
                     notification = _pendingNotification.Task;
                 }
@@ -260,17 +231,27 @@ internal sealed partial class SentinelRouter
                 if (transition.Action == SentinelNotificationAction.Stop) return;
                 if (transition.Action != SentinelNotificationAction.RetryAfter || transition.Delay <= TimeSpan.Zero) continue;
 
-                using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-                var delay = Task.Delay(transition.Delay, Clock, retry.Token);
-                if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
-                {
-                    retry.Cancel();
-                    continue;
-                }
-                await delay.ConfigureAwait(false);
+                await WaitForNotificationRetryAsync(transition, notification).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+    }
+
+    private async Task WaitForNotificationRetryAsync(SentinelNotificationTransition transition, Task notification)
+    {
+        if (!transition.Interruptible)
+        {
+            await Task.Delay(transition.Delay, _lifetime.Token).ConfigureAwait(false);
+            return;
+        }
+        using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        var delay = Task.Delay(transition.Delay, Clock, retry.Token);
+        if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
+        {
+            retry.Cancel();
+            return;
+        }
+        await delay.ConfigureAwait(false);
     }
 
     // State replacement and pending-signal replacement share the gate. The reducer
@@ -279,64 +260,25 @@ internal sealed partial class SentinelRouter
     {
         if (transition.ReplacePendingSignal)
             _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (transition.RetireActiveSource && transition.State.Active is { } active)
-            RetireIfSwitchSourceLocked(Current, in active);
+        if (transition.State.Pending is not null) _pendingNotification.TrySetResult();
+        if (!_disposed && transition.RetireGeneration is Generation generation && ReferenceEquals(Current, generation))
+            Invalidate(generation);
         if (transition.Action == SentinelNotificationAction.Stop) _notificationRediscovery = null;
     }
 
-    // Caller holds _gate so source matching and admission retirement see one current generation.
-    private bool RetireIfSwitchSourceLocked(Generation? current, in SentinelHint hint)
+    private void ApplyQueuedNotificationTransitionLocked(in SentinelNotificationTransition transition)
     {
-        if (_disposed || IsAnnouncedTarget(current, in hint) || !IsSwitchSource(current, in hint)) return false;
-        Invalidate(current!);
-        return true;
+        ApplyNotificationTransitionLocked(in transition);
+        if (transition.Action == SentinelNotificationAction.RunNext)
+            _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
     }
 
-    // Whether a switch hint's old primary is the healthy current generation, by announced
-    // endpoint or by the resolved addresses of its connected peers.
-    private static bool IsSwitchSource(Generation? current, in SentinelHint hint)
+    private static SentinelGenerationEvidence? CaptureGenerationEvidence(Generation? generation)
     {
-        if (current is not { IsRetired: false }) return false;
-        foreach (var source in hint.Sources)
-            if (IsCurrentPeer(current, source.Endpoint, source.Addresses)) return true;
-        return false;
-    }
-
-    // A coalesced A→B→A sequence must rediscover, but B can already be a valid current
-    // primary. Keep any announced target alive while that fresh discovery runs.
-    private static bool IsAnnouncedTarget(Generation? current, in SentinelHint hint)
-    {
-        if (current is not { IsRetired: false }) return false;
-        foreach (var endpoint in hint.Targets)
-        {
-            if (IsCurrentPeer(current, endpoint, default, allowHostnameIdentity: false)) return true;
-            // In a cycle the same hostname can be both source and target. Its resolved
-            // addresses must protect a target just as they identify a demoted source.
-            foreach (var source in hint.Sources)
-                if (SameEndpoint(endpoint, source.Endpoint)
-                    && IsCurrentPeer(current, endpoint, source.Addresses)) return true;
-        }
-        return false;
-    }
-
-    // Skipping rediscovery requires every command socket to confirm the target. Source
-    // fencing and cycle protection below intentionally continue to match any known peer.
-    private static bool IsConfirmedTarget(Generation current, RespireEndpoint endpoint)
-        => IPAddress.TryParse(endpoint.Host, out var address)
-            && current.Multiplexer.AllCurrentPeersMatch(SentinelEndpointIdentity.NormalizeAddress(address), endpoint.Port);
-
-    private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, ImmutableArray<string> addresses,
-        bool allowHostnameIdentity = true)
-    {
-        var numeric = IPAddress.TryParse(endpoint.Host, out var literal);
-        // A hostname can move behind an established socket. Source matching and explicit
-        // cycle protection allow textual identity; target shortcuts require peer evidence.
-        if ((allowHostnameIdentity || numeric) && SameEndpoint(current.Endpoint, endpoint)) return true;
-        if (numeric && current.Multiplexer.HasCurrentPeer(SentinelEndpointIdentity.NormalizeAddress(literal!), endpoint.Port)) return true;
-        if (!addresses.IsDefaultOrEmpty)
-            foreach (var address in addresses)
-                if (current.Multiplexer.HasCurrentPeer(address, endpoint.Port)) return true;
-        return false;
+        if (generation is null) return null;
+        var peers = generation.Multiplexer.CaptureSentinelPeers();
+        return new(generation, generation.Endpoint, generation.ValidatedPeer, generation.IsRetired,
+            peers.Peers, peers.ConfirmedPeer);
     }
 
     private static bool SameEndpoint(RespireEndpoint left, RespireEndpoint right)

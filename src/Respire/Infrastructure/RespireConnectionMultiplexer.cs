@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
@@ -812,6 +813,24 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             result = peer;
         }
         return IsRetired ? null : result;
+    }
+
+    internal (ImmutableArray<RespireEndpoint> Peers, RespireEndpoint? ConfirmedPeer) CaptureSentinelPeers()
+    {
+        var peers = ImmutableArray.CreateBuilder<RespireEndpoint>(_connections.Length);
+        var allReady = IsConnected;
+        RespireEndpoint? confirmed = null;
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            var connection = Volatile.Read(ref _connections[slot]);
+            if (connection is not { IsAcceptingCommands: true }) { allReady = false; continue; }
+            var peer = new RespireEndpoint(connection.NetworkPeerAddress ?? connection.Host,
+                connection.NetworkPeerPort ?? connection.Port);
+            peers.Add(peer);
+            if (confirmed is { } previous && (previous.Host != peer.Host || previous.Port != peer.Port)) allReady = false;
+            confirmed = peer;
+        }
+        return IsRetired ? ([], null) : (peers.ToImmutable(), allReady ? confirmed : null);
     }
 
     // Only these fence-entry guards produce this signal. Generic disposal failures from

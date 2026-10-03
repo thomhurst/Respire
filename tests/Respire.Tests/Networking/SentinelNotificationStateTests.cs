@@ -22,7 +22,8 @@ public class SentinelNotificationStateTests
         var lookup = state.Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
             SentinelHint.FromSwitchMaster("lookup", A, B, First)));
         state = lookup.State.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
-            new(CurrentGeneration: generation, ValidatedGeneration: generation, ValidatedPrimary: new(A, A))).State;
+            new(ValidatedGeneration: generation, ValidatedPrimary: new(A, A),
+                CurrentEvidence: new(generation, A, A, false, [A], A))).State;
         await Assert.That(state.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
         state = state.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromDown("down", Second, B))).State;
         state = state.Transition(new(SentinelNotificationEventKind.Offer,

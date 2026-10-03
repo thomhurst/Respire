@@ -79,7 +79,8 @@ public class SentinelReporterLedgerTests
         var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer, merged)).State;
         var generation = new object();
         var reconciled = state.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
-            new(CurrentGeneration: generation, ValidatedGeneration: generation, ValidatedPrimary: owner));
+            new(ValidatedGeneration: generation, ValidatedPrimary: owner,
+                CurrentEvidence: new(generation, A, A, false, [A], A)));
         var next = reconciled.State.Active!.Value;
         await Assert.That(next.Sources).IsEmpty();
         await Assert.That(next.Reporters).IsEquivalentTo([Second]);

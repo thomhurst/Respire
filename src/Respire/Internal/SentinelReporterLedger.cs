@@ -117,13 +117,14 @@ internal readonly record struct SentinelReporterLedger
         return new(observations, reports, IsDownOnly);
     }
 
-    internal SentinelReporterLedger WithSourceEvidence(SentinelAddressEvidence evidence)
+    internal SentinelReporterLedger WithDnsEvidence(SentinelAddressEvidence evidence)
     {
         var observations = Observations;
         for (var index = 0; index < observations.Length; index++)
         {
             var observed = observations[index];
-            if (!SentinelEndpointIdentity.SameEndpoint(observed.Source, evidence.Endpoint)) continue;
+            if (!SentinelEndpointIdentity.SameEndpoint(observed.Source, evidence.Endpoint)
+                && !SentinelEndpointIdentity.SameEndpoint(observed.Target, evidence.Endpoint)) continue;
             var updated = observed.WithDns(evidence);
             if (updated.CompletedDns != observed.CompletedDns) observations = observations.SetItem(index, updated);
         }

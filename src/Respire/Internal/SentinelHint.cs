@@ -117,9 +117,9 @@ internal readonly record struct SentinelHint(
         return this;
     }
 
-    internal SentinelHint WithSourceEvidence(SentinelAddressEvidence evidence)
+    internal SentinelHint WithSourceEvidence(SentinelAddressEvidence evidence, bool retainObservation = true)
     {
-        var updated = this with { Ledger = Ledger.WithSourceEvidence(evidence) };
+        var updated = retainObservation ? this with { Ledger = Ledger.WithDnsEvidence(evidence) } : this;
         for (var index = 0; index < Sources.Length; index++)
         {
             var source = Sources[index];

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Respire.Internal;
 
 internal enum SentinelNotificationEventKind
@@ -14,7 +16,8 @@ internal enum SentinelNotificationEventKind
 
 internal readonly record struct SentinelNotificationEvent(SentinelNotificationEventKind Kind,
     SentinelHint Hint = default, bool TargetIsCurrent = false,
-    long ResolutionId = 0, SentinelAddressEvidence AddressEvidence = default);
+    long ResolutionId = 0, SentinelAddressEvidence AddressEvidence = default,
+    ImmutableArray<SentinelAddressEvidence> TargetAddresses = default);
 
 // Generation objects are opaque identity tokens. The reducer reads only captured values;
 // it never asks a live generation, transport, clock, or random source for information.
@@ -22,10 +25,10 @@ internal readonly record struct SentinelNotificationContext(
     long NowMilliseconds = 0,
     RespireReconnectPolicy? Policy = null,
     double RandomUnit = 0.5,
-    object? CurrentGeneration = null,
     object? ValidatedGeneration = null,
     SentinelValidatedPrimary? ValidatedPrimary = null,
-    RespireEndpoint? ConfirmedCurrentPeer = null);
+    SentinelGenerationEvidence? CurrentEvidence = null,
+    SentinelGenerationEvidence? LookupGeneration = null);
 
 internal enum SentinelNotificationAction
 {
@@ -41,9 +44,9 @@ internal readonly record struct SentinelNotificationTransition(
     TimeSpan Delay = default,
     bool Interruptible = false,
     bool ReplacePendingSignal = false,
-    bool RetireActiveSource = false,
     int RecoveredFailures = 0,
-    long ResolutionId = 0);
+    long ResolutionId = 0,
+    object? RetireGeneration = null);
 
 internal readonly partial record struct SentinelNotificationState
 {
@@ -62,9 +65,12 @@ internal readonly partial record struct SentinelNotificationState
         switch (notification.Kind)
         {
             case SentinelNotificationEventKind.Offer:
-                var offered = Offer(notification.Hint, notification.TargetIsCurrent, out var start);
+                var targetIsCurrent = notification.TargetIsCurrent || notification.Hint.Target is { } target
+                    && context.CurrentEvidence?.ConfirmsTarget(target) == true;
+                var offered = Offer(notification.Hint, targetIsCurrent, out var start);
                 if (start) offered = offered with { RetryAttempts = 0, ConsecutiveFailures = 0 };
-                return new(offered, start ? SentinelNotificationAction.RunNext : SentinelNotificationAction.None);
+                return new(offered, start ? SentinelNotificationAction.RunNext : SentinelNotificationAction.None,
+                    RetireGeneration: RetirementFor(notification.Hint, in context));
             case SentinelNotificationEventKind.PrepareAttempt:
                 if (Active is null) return new(this, SentinelNotificationAction.Stop);
                 if (context.NowMilliseconds < DiscoveryNotBefore)
@@ -78,7 +84,8 @@ internal readonly partial record struct SentinelNotificationState
                 var takePending = RetryAttempts > 0 && Pending is not null;
                 if (takePending) prepared = prepared.TakePending(true, null, null, out _);
                 return new(prepared, SentinelNotificationAction.RunNext,
-                    ReplacePendingSignal: takePending, RetireActiveSource: takePending);
+                    ReplacePendingSignal: takePending,
+                    RetireGeneration: takePending ? RetirementFor(prepared.Active!.Value, in context) : null);
             case SentinelNotificationEventKind.AttemptSucceeded:
                 return FinishAttempt(true, in context);
             case SentinelNotificationEventKind.AttemptFailed:
@@ -87,18 +94,7 @@ internal readonly partial record struct SentinelNotificationState
                 var resolving = BeginSourceResolution(notification.Hint, out var id);
                 return new(resolving, SentinelNotificationAction.None, ResolutionId: id);
             case SentinelNotificationEventKind.SourceResolved:
-                var resolved = this with
-                {
-                    Active = Active?.WithSourceEvidence(notification.AddressEvidence),
-                    Pending = Pending?.WithSourceEvidence(notification.AddressEvidence),
-                };
-                if (SourceResolutions.TryGetValue(notification.ResolutionId, out var lookup))
-                    resolved = resolved with
-                    {
-                        SourceResolutions = SourceResolutions.SetItem(notification.ResolutionId,
-                            lookup.WithSourceEvidence(notification.AddressEvidence)),
-                    };
-                return new(resolved, SentinelNotificationAction.None);
+                return ResolveSourceEvidence(in notification, in context);
             default:
                 throw new ArgumentOutOfRangeException(nameof(notification));
         }
@@ -114,7 +110,7 @@ internal readonly partial record struct SentinelNotificationState
         };
         // The generation returned by discovery, rather than whichever owner is current
         // afterward, determines whether its old active reporters may be reconciled.
-        if (succeeded && !ReferenceEquals(context.ValidatedGeneration, context.CurrentGeneration))
+        if (succeeded && !ReferenceEquals(context.ValidatedGeneration, context.CurrentEvidence?.Identity))
         {
             state = state.SupersedeActive() with { RetryAttempts = 0 };
             return new(state, state.Active is null ? SentinelNotificationAction.Stop : SentinelNotificationAction.RunNext,
@@ -140,15 +136,17 @@ internal readonly partial record struct SentinelNotificationState
                 Interruptible: true, ReplacePendingSignal: true);
         }
         if (!next.Value.MustRediscover && next.Value.Target is { } target
-            && context.ConfirmedCurrentPeer is { } peer && System.Net.IPAddress.TryParse(target.Host, out var address)
-            && SentinelEndpointIdentity.NormalizeAddress(address) == peer.Host && target.Port == peer.Port)
+            && context.CurrentEvidence?.ConfirmsTarget(target) == true)
             return new(state.Complete(), SentinelNotificationAction.Stop, RecoveredFailures: recovered);
         return new(state, SentinelNotificationAction.RunNext, ReplacePendingSignal: true,
-            RetireActiveSource: true, RecoveredFailures: recovered);
+            RecoveredFailures: recovered, RetireGeneration: RetirementFor(next.Value, in context));
     }
 
     private static int IncrementSaturated(int count) => count < int.MaxValue ? count + 1 : count;
 
     internal int GetOutcomeLogCount(bool succeeded)
         => succeeded ? ConsecutiveFailures : IncrementSaturated(ConsecutiveFailures);
+
+    private static object? RetirementFor(in SentinelHint hint, in SentinelNotificationContext context)
+        => context.CurrentEvidence is { } current && current.ShouldRetire(in hint) ? current.Identity : null;
 }

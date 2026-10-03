@@ -69,7 +69,7 @@ completion cannot change an earlier state snapshot.
 
 Each hint also carries a `SentinelReporterLedger`. It retains the original switch,
 down, or gap observations with their reporter, source/target, validated owner at receipt,
-observed and accepted epoch facts, and completed source DNS evidence. Context is captured
+observed and accepted epoch facts, and completed source/target DNS evidence. Context is captured
 once under the router gate. A later publication or DNS-triggered requeue cannot replace
 an observation's owner or fill in an owner that was absent at receipt.
 
@@ -144,6 +144,20 @@ the exact returned generation, and validated owner/peer facts are explicit input
 The reducer returns `Stop`, `RunNext`, or `RetryAfter(delay)` for worker decisions;
 evidence-only changes return `None`. The router replaces pending signals atomically with
 state changes, then executes discovery, waits, and retirement effects.
+
+`SentinelGenerationEvidence` captures the generation identity, endpoint, validated peer,
+retirement state, and accepting command peers. Source and cycle matching may use any
+captured peer; skipping discovery requires one confirmed peer for every command slot.
+The reducer returns the exact generation identity to retire. Under the same gate, the
+router verifies that identity is still current and disposal has not begun, then performs
+retirement. No live transport is read by the reducer.
+
+Source DNS completion includes the collected target DNS answers and snapshots of the
+current and lookup generations. The reducer filters unambiguous target overlap while
+preserving a known demoted peer, checks intervening-generation protection, and decides
+whether to queue rediscovery. The ledger retains the actual DNS answers separately from
+filtered source fences. An empty filtered result does not manufacture demotion evidence;
+an ambiguous target answer cannot prove that the source is the promoted owner.
 
 Retry attempts and consecutive failures are separate state fields. Success resets both;
 pending hints spend the current retry budget. Exhaustion completes active and pending

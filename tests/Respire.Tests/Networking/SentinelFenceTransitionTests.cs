@@ -30,11 +30,13 @@ public class SentinelFenceTransitionTests
         await Assert.That(waiting.Action).IsEqualTo(SentinelNotificationAction.RetryAfter);
         await Assert.That(waiting.Interruptible).IsFalse();
         await Assert.That(waiting.Delay).IsEqualTo(TimeSpan.FromMilliseconds(1));
-        var retry = waiting.State.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1100));
+        var generation = new object();
+        var retry = waiting.State.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
+            new(NowMilliseconds: 1100, CurrentEvidence: new(generation, A, A, false, [A], A)));
         await Assert.That(retry.Action).IsEqualTo(SentinelNotificationAction.RunNext);
         await Assert.That(retry.State.Active!.Value.ReportingSentinel).IsEqualTo(Second);
         await Assert.That(retry.ReplacePendingSignal).IsTrue();
-        await Assert.That(retry.RetireActiveSource).IsTrue();
+        await Assert.That(retry.RetireGeneration).IsSameReferenceAs(generation);
         await Assert.That(retry.State.RetryAttempts).IsEqualTo(1);
         var pending = retry.State.Transition(new(SentinelNotificationEventKind.Offer, SentinelHint.FromGap(First))).State;
         var exhausted = pending.Transition(new(SentinelNotificationEventKind.AttemptFailed), new(Policy: policy));
@@ -58,11 +60,11 @@ public class SentinelFenceTransitionTests
         if (pending) active = active.Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromSwitchMaster("b-a", B, A, Second))).State;
         var completed = active.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
-            new(CurrentGeneration: newGeneration, ValidatedGeneration: oldGeneration,
-                ValidatedPrimary: new(A, A), ConfirmedCurrentPeer: A));
+            new(ValidatedGeneration: oldGeneration, ValidatedPrimary: new(A, A),
+                CurrentEvidence: new(newGeneration, A, A, false, [A], A)));
         await Assert.That(completed.Action).IsEqualTo(pending ? SentinelNotificationAction.RunNext : SentinelNotificationAction.Stop);
         await Assert.That(completed.State.Pending).IsNull();
-        await Assert.That(completed.RetireActiveSource).IsFalse();
+        await Assert.That(completed.RetireGeneration).IsNull();
         if (pending)
         {
             await Assert.That(completed.State.Active!.Value.Reporters).IsEquivalentTo([Second]);
@@ -82,7 +84,8 @@ public class SentinelFenceTransitionTests
         state = state.Transition(new(SentinelNotificationEventKind.AttemptFailed)).State;
         state = state.Transition(new(SentinelNotificationEventKind.PrepareAttempt), new(NowMilliseconds: 1100)).State;
         var succeeded = state.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
-            new(CurrentGeneration: generation, ValidatedGeneration: generation, ValidatedPrimary: new(B, B)));
+            new(ValidatedGeneration: generation, ValidatedPrimary: new(B, B),
+                CurrentEvidence: new(generation, B, B, false, [B], B)));
         await Assert.That(succeeded.Action).IsEqualTo(SentinelNotificationAction.Stop);
         await Assert.That(succeeded.RecoveredFailures).IsEqualTo(1);
         await Assert.That(succeeded.State.RetryAttempts).IsEqualTo(0);
