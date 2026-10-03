@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
@@ -453,6 +454,7 @@ internal static partial class ScopeWalker
                 return cached;
             var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
+                or IEventAssignmentOperation or IArrayCreationOperation
                 or IBinaryOperation { OperatorMethod: not null }
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
@@ -471,8 +473,7 @@ internal static partial class ScopeWalker
                     // A member binding is evaluated only on the non-null conditional-access path.
                     && operation.Syntax is not MemberBindingExpressionSyntax
                 || operation is IConversionOperation conversion
-                    && (conversion.OperatorMethod is not null || !conversion.IsImplicit
-                        && !conversion.Conversion.IsIdentity && !conversion.ConstantValue.HasValue)
+                    && ConversionMayThrow(conversion)
                 || operation is IObjectCreationOperation
                     && ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
             _throwingOperations.Add(operation, throwing);
@@ -488,6 +489,34 @@ internal static partial class ScopeWalker
             return kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder && (integral || decimalType)
                 || kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply
                     && (decimalType || isChecked && integral);
+        }
+
+        private bool ConversionMayThrow(IConversionOperation operation)
+        {
+            if (operation.OperatorMethod is not null)
+                return true;
+            if (operation.IsTryCast || operation.ConstantValue.HasValue || operation.Conversion.IsIdentity)
+                return false;
+            if (operation.Operand.Type is not { } source || operation.Type is not { } destination)
+                return false;
+            // Classify the types, not the cast syntax: an explicit cast can still use
+            // a safe widening or reference conversion.
+            var conversion = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
+            if (conversion.IsImplicit)
+                return conversion.IsDynamic;
+            if (conversion.IsUnboxing || conversion.IsReference || conversion.IsDynamic)
+                return true;
+            if (source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableSource)
+            {
+                if (destination is not INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+                    return true;
+                source = nullableSource.TypeArguments[0];
+            }
+            if (destination is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableDestination)
+                destination = nullableDestination.TypeArguments[0];
+            return operation.IsChecked && IsIntegral(destination)
+                || source.SpecialType == SpecialType.System_Decimal
+                || destination.SpecialType == SpecialType.System_Decimal;
         }
 
         private static bool IsIntegral(ITypeSymbol? type)

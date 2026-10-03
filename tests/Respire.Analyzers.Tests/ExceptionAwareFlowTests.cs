@@ -7,6 +7,70 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("publisher.Changed += handler;", false, true)]
+    [Arguments("publisher.Changed -= handler;", false, true)]
+    [Arguments("publisher.Changed += handler;", true, false)]
+    [Arguments("_ = new byte[number];", false, true)]
+    [Arguments("_ = new byte[number];", true, false)]
+    [Arguments("_ = (long)number;", false, false)]
+    [Arguments("_ = (object)text;", false, false)]
+    [Arguments("_ = unchecked((byte)number);", false, false)]
+    [Arguments("_ = checked((long)number);", false, false)]
+    [Arguments("_ = checked((float)floating);", false, false)]
+    [Arguments("_ = boxed as string;", false, false)]
+    [Arguments("_ = (string)boxed;", false, true)]
+    [Arguments("_ = (int)boxed;", false, true)]
+    [Arguments("_ = checked((byte)number);", false, true)]
+    [Arguments("_ = (int)nullable;", false, true)]
+    [Arguments("_ = (long?)nullable;", false, false)]
+    [Arguments("_ = (int)amount;", false, true)]
+    [Arguments("_ = (decimal)floating;", false, true)]
+    public async Task AdditionalExceptionSourcesAndSafeCasts(string operation, bool cleanupInCatch, bool warning)
+    {
+        const string publisher = """
+            class Publisher
+            {
+                public event System.Action Changed
+                {
+                    add { throw new System.Exception(); }
+                    remove { throw new System.Exception(); }
+                }
+            }
+            """;
+        const string parameters = "Publisher publisher, System.Action handler, int number, string text, object boxed, int? nullable, decimal amount, double floating";
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{publisher}}
+            class Caller
+            {
+                async Task Run(RespireClient client, {{parameters}})
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{publisher}}
+            class Caller
+            {
+                async Task Run(RespireClient client, {{parameters}})
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("_ = new T();", false, true)]
     [Arguments("_ = new T();", true, false)]
     [Arguments("_ = nameof(holder.Property);", false, false)]
