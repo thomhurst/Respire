@@ -10,12 +10,18 @@ These data types are built into Redis Open Source 8 and later; older deployments
 dotnet add package Respire.Probabilistic
 ```
 
+With C# 14 or later, import the namespace shown below and use `client.Probabilistic` on
+`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+performs no network I/O, and leaves ownership of the underlying client with you.
+Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
+The existing `new RespireProbabilisticClient(client)` constructor remains available.
+
 ```csharp
 using Respire;
 using Respire.Probabilistic;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var probabilistic = new RespireProbabilisticClient(client);
+var probabilistic = client.Probabilistic;
 
 await probabilistic.BloomReserveAsync("seen:users", errorRate: 0.01, capacity: 100_000);
 await probabilistic.BloomAddAsync("seen:users", "user:42");

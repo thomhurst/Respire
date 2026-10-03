@@ -151,8 +151,11 @@ redirected invalidation connection.
 `CLIENT CACHING YES` prelude. The options snapshot owns nonoverlapping literal physical
 `KeyPrefixes`; an empty list covers all keys. In `OptIn` mode the same prefixes are a local
 filter: uncovered reads are sent without `CLIENT CACHING YES`, so Redis does not track them.
-A mixed covered/uncovered MGET miss stays one atomic tracked command, so Redis also tracks its
+On the per-key MGET path (typed calls and raw calls with `CoalesceConcurrentMisses = true`),
+a mixed covered/uncovered miss stays one atomic tracked command, so Redis also tracks its
 uncovered keys; their invalidations are harmless because those keys are never inserted.
+With the default `CoalesceConcurrentMisses = false`, raw MGET uses exact-query caching:
+any uncovered dependency makes the whole reply uncached and omits `CLIENT CACHING YES`.
 Prefixes are not transformed by client key-prefix views. Per-key insertion requires that key to be covered, while a command projection
 requires every dependency to be covered. Uncovered reads still execute but cannot create cache
 entries. These insertion guards also cover mixed covered/uncovered MGET misses.

@@ -62,9 +62,11 @@ public sealed record RespireClientSideCacheOptions
     /// Physical key prefixes eligible for caching. Empty (the default) caches every eligible key.
     /// </summary>
     /// <remarks>
-    /// Reads of other keys go straight to Redis and are not tracked, except that an OptIn MGET
-    /// missing both covered and uncovered keys is tracked as one command; only covered replies
-    /// are cached. In
+    /// Reads of other keys go straight to Redis and are not tracked. In OptIn mode, the per-key
+    /// MGET path (typed calls, or raw calls with <see cref="CoalesceConcurrentMisses"/> enabled)
+    /// tracks mixed covered/uncovered misses as one command but caches only covered replies.
+    /// Raw MGET with coalescing disabled uses exact-query caching: any uncovered key makes
+    /// the whole reply uncached and leaves the command untracked. In
     /// <see cref="RespireClientTrackingMode.Broadcast"/> mode the prefixes are also sent to Redis as
     /// BCAST PREFIX arguments. Prefixes are binary-safe, must not overlap or repeat, and are matched
     /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix"/> prefix.

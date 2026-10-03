@@ -15,7 +15,7 @@ public class ProbabilisticClientTests
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
-        var probabilistic = new RespireProbabilisticClient(client.WithKeyPrefix("tenant:"));
+        var probabilistic = client.WithKeyPrefix("tenant:").Probabilistic;
 
         await probabilistic.BloomAddAsync("filter", "item");
 

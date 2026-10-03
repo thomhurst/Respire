@@ -52,7 +52,7 @@ public class SearchClientTests
             },
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
-        var search = new RespireSearchClient(client);
+        var search = client.Search;
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {

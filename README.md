@@ -38,7 +38,8 @@ User? user = await redis.GetAsync<User>("user:1");
   dedicated pooled connection, leaving normal traffic free to flow.
 - **An API that is easy to explore.** Commands are grouped by data type (`redis.Hashes`,
   `redis.Streams`, `redis.SortedSets`, and more), while common string operations remain on the
-  client itself.
+  client itself. Module packages add `redis.Json`, `redis.Search`, `redis.TimeSeries`, and
+  `redis.Probabilistic` extension properties with C# 14 and the module namespace imported.
 - **Modern async patterns.** Pub/sub, stream consumer groups, and the `SCAN` family use
   `IAsyncEnumerable`. Expiries use `TimeSpan` and `DateTimeOffset`.
 - **Safer failure modes.** Early batch awaits fail immediately instead of deadlocking.
