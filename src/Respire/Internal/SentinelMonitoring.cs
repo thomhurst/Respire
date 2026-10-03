@@ -263,6 +263,8 @@ internal sealed class SentinelMonitoring(
                 {
                     subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
                         == RespireSubscriptionEndReason.ReconnectExhausted;
+                    // An established subscription reports exhaustion here; startup failures
+                    // have no subscription and are recorded only by the catch below.
                     if (subscriptionReconnectExhausted) _discovery.RecordConnection(membership, succeeded: false);
                 }
             }

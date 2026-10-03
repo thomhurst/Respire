@@ -52,6 +52,18 @@ Any reporter listing a peer resets its missing count, as does the peer reporting
 own list. Successful connections clear failure evidence. No periodic discovery is
 introduced: aging progresses when primary discovery runs.
 
+The three omitted rounds provide hysteresis; connection failure is a separate health
+gate, not another retry threshold. A single failed attempt can therefore remove a peer
+already omitted three times. Requiring a majority of Sentinel replies would prevent
+cleanup while most old addresses are unreachable. The tradeoff is that one partitioned
+reporter can supply omissions: a healthy peer remains protected by successful connections,
+but an unreachable peer may be removed and later rediscovered from a fresh report.
+
+Each round retains a bounded membership snapshot and report counters so overlapping
+rounds cannot age a peer refreshed by a newer report. A single mutable round epoch per
+peer would lose that overlapping-round evidence. The snapshot is bounded by the 64-peer
+limit and occurs only during discovery, not on steady-state command routing.
+
 Reports from overlapping discovery rounds protect peers from older omission evidence.
 Membership versions prevent retired monitors from changing the health of a re-added
 endpoint. Removal signals the monitor supervisor, which cancels that endpoint's linked
