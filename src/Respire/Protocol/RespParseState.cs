@@ -19,6 +19,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
     internal bool IsIdle => _depth == 0 && !_hasPendingBulk;
 
+    // Only top-level attributes yield to the connection's bulk fast path;
+    // attributes inside an unfinished aggregate remain part of that aggregate.
+    private bool ShouldYieldAfterAttribute => stopAfterAttributes && IsIdle;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public RespParseStatus TryParse(
         ReadOnlySpan<byte> buffer,
@@ -77,7 +81,12 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 {
                     return RespParseStatus.Done;
                 }
-                if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
+
+                if (ShouldYieldAfterAttribute)
+                {
+                    return RespParseStatus.SkippedAttribute;
+                }
+
                 continue;
             }
 
@@ -96,7 +105,12 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                     {
                         return RespParseStatus.Done;
                     }
-                    if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
+
+                    if (ShouldYieldAfterAttribute)
+                    {
+                        return RespParseStatus.SkippedAttribute;
+                    }
+
                     continue;
                 }
 
@@ -119,7 +133,11 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 if (discard)
                 {
                     immediate.Dispose();
-                    if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
+                    if (ShouldYieldAfterAttribute)
+                    {
+                        return RespParseStatus.SkippedAttribute;
+                    }
+
                     continue;
                 }
 
@@ -127,7 +145,12 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 {
                     return RespParseStatus.Done;
                 }
-                if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
+
+                if (ShouldYieldAfterAttribute)
+                {
+                    return RespParseStatus.SkippedAttribute;
+                }
+
                 continue;
             }
 
@@ -143,7 +166,11 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             {
                 return RespParseStatus.Done;
             }
-            if (stopAfterAttributes && IsIdle) return RespParseStatus.SkippedAttribute;
+
+            if (ShouldYieldAfterAttribute)
+            {
+                return RespParseStatus.SkippedAttribute;
+            }
         }
     }
 

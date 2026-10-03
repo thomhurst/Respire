@@ -2140,6 +2140,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
+    internal static void ValidateBulkResponseSize(long consumedBytes, long payloadLength)
+    {
+        // Consumed bytes include every preceding attribute and the bulk header.
+        // A null bulk has no payload terminator. Subtraction avoids length overflow.
+        if (payloadLength < -1 || consumedBytes > MaxResponseSize
+            || (payloadLength >= 0 && payloadLength > MaxResponseSize - consumedBytes - 2))
+        {
+            throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
+        }
+    }
+
     private async Task ReceiveLoopAsync()
     {
         var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
@@ -2168,18 +2179,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     {
                         var hasBulkHeader = RespParser.TryPeekBulkHeader(
                             bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
+                        if (hasBulkHeader)
+                        {
+                            ValidateBulkResponseSize(responseBytes + headerEnd - start, bulkLength);
+                        }
+
                         if (hasBulkHeader
                             && bulkType == RespDataType.BulkString
                             && _inflight.TryPeek(out var pending)
                             && pending is BulkStreamPendingResponseSource streamSource
                             && streamSource.IsFinalReply)
                         {
-                            if (bulkLength < -1 || bulkLength > MaxResponseSize - 2L)
-                            {
-                                throw new RespireProtocolException(
-                                    $"Response exceeds the {MaxResponseSize} byte limit.");
-                            }
-
                             // Publish the active stream before dequeuing it so retirement drain
                             // never observes an empty ring while the payload is still being read.
                             Volatile.Write(ref _activeBulkStreamSource, streamSource);
@@ -2222,12 +2232,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                         if (hasBulkHeader && bulkLength >= DirectFillThreshold)
                         {
-                            if (bulkLength > int.MaxValue - 2)
-                            {
-                                throw new RespireProtocolException(
-                                    $"Response exceeds the {MaxResponseSize} byte limit.");
-                            }
-
                             start = headerEnd;
                             value = default;
                             directFill = new RespDirectFillRequest(bulkType, (int)bulkLength);
@@ -2285,11 +2289,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             CompleteResponse(in value);
                             break;
                         case RespParseStatus.NeedDirectFill:
-                            if (responseBytes + directFill.PayloadLength + 2 > MaxResponseSize)
-                            {
-                                throw new RespireProtocolException(
-                                    $"Response exceeds the {MaxResponseSize} byte limit.");
-                            }
+                            ValidateBulkResponseSize(responseBytes, directFill.PayloadLength);
 
                             // Flush before awaiting so already-parsed replies don't wait on
                             // the rest of a large frame.

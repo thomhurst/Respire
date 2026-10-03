@@ -159,6 +159,45 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    [Arguments(536870905L, 5L, false)]
+    [Arguments(536870906L, 5L, true)]
+    [Arguments(536870910L, 0L, false)]
+    [Arguments(536870911L, 0L, true)]
+    [Arguments(536870912L, -1L, false)]
+    [Arguments(536870913L, -1L, true)]
+    [Arguments(12L, long.MaxValue, true)]
+    [Arguments(5L, -2L, true)]
+    public async Task BulkResponseBudgetIncludesAttributesHeadersAndTerminator(long consumedBytes, long payloadLength, bool exceedsLimit)
+    {
+        if (exceedsLimit)
+        {
+            await Assert.That(() => RespireConnection.ValidateBulkResponseSize(consumedBytes, payloadLength))
+                .Throws<RespireProtocolException>();
+        }
+        else
+        {
+            RespireConnection.ValidateBulkResponseSize(consumedBytes, payloadLength);
+        }
+    }
+
+    [Test]
+    [Arguments("", 536870899)]
+    [Arguments("|0\r\n", 536870895)]
+    [Arguments("|0\r\n|0\r\n", 536870891)]
+    public async Task GetStream_RejectsAttributeAndHeaderBudgetOverflowBeforeReturningStream(string attributes, int payloadLength)
+    {
+        // The advertised payload fits by itself, but the entire response exceeds
+        // 512 MiB by one byte. No payload allocation or transmission is needed.
+        await using var server = new FakeRespServer(Encoding.ASCII.GetBytes($"{attributes}${payloadLength}\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(async () =>
+        {
+            await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
+        }).Throws<RespireProtocolException>();
+    }
+
+    [Test]
     public async Task GetStream_FlushesEarlierRepliesBeforeWaitingForPayload()
     {
         await using var server = new FakeRespServer { SuppressReply = _ => true };
