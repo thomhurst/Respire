@@ -23,11 +23,15 @@ internal static partial class ScopeWalker
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
+        private readonly List<CatchDispatch?> _dispatches = [null];
+        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit), int> _dispatchIds = new();
+        private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
+        private readonly Dictionary<IOperation, bool> _throwingOperations = new();
         private readonly Stack<SearchState> _pending = new();
-        private readonly Dictionary<(int Block, int Continuation, bool Started, ulong Known, ulong Values, int Dispatch), int> _earliestEntries = new();
+        private readonly Dictionary<SearchState, int> _earliestEntries = new();
 
         private readonly struct SearchState(
-            BasicBlock block, int continuation, bool started, ulong known, ulong values, int dispatch)
+            BasicBlock block, int continuation, bool started, ulong known, ulong values, int dispatch) : IEquatable<SearchState>
         {
             internal BasicBlock Block { get; } = block;
             internal int Continuation { get; } = continuation;
@@ -35,6 +39,25 @@ internal static partial class ScopeWalker
             internal ulong Known { get; } = known;
             internal ulong Values { get; } = values;
             internal int Dispatch { get; } = dispatch;
+
+            public bool Equals(SearchState other) => Block == other.Block
+                && Continuation == other.Continuation && Started == other.Started
+                && Known == other.Known && Values == other.Values && Dispatch == other.Dispatch;
+
+            public override bool Equals(object? obj) => obj is SearchState other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    var hash = Block.Ordinal;
+                    hash = hash * 397 ^ Continuation;
+                    hash = hash * 397 ^ Started.GetHashCode();
+                    hash = hash * 397 ^ Known.GetHashCode();
+                    hash = hash * 397 ^ Values.GetHashCode();
+                    return hash * 397 ^ Dispatch;
+                }
+            }
         }
 
         internal bool Search()
@@ -55,20 +78,10 @@ internal static partial class ScopeWalker
                 positions.Add(barrier.SpanStart);
             }
 
+            foreach (var positions in _barrierPositions.Values)
+                positions.Sort();
+            var catchOrigins = FindCatchOrigins();
             // Start at entry so reaching an origin retains the branch that selected it.
-            // Catch origins may also be entered by implicit exceptions. Discover those entries
-            // from their protected blocks so a catch nested in a finally keeps its continuation.
-            var catchOrigins = new List<(ControlFlowRegion Handler, ControlFlowRegion Protected)>();
-            for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-            {
-                if (region.Kind != ControlFlowRegionKind.Catch)
-                    continue;
-                var owner = region.EnclosingRegion;
-                if (owner?.Kind == ControlFlowRegionKind.FilterAndHandler)
-                    owner = owner.EnclosingRegion;
-                if (owner?.Kind == ControlFlowRegionKind.TryAndCatch)
-                    catchOrigins.Add((region, owner.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Try)));
-            }
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = 16384;
             while (_pending.Count > 0)
@@ -91,7 +104,7 @@ internal static partial class ScopeWalker
                     entryPosition = startPosition;
                 }
 
-                var state = (block.Ordinal, continuation, started, known, values, dispatch);
+                var state = new SearchState(block, continuation, started, known, values, dispatch);
                 if (_earliestEntries.TryGetValue(state, out var earliestEntry)
                     && earliestEntry <= entryPosition)
                 {
@@ -100,62 +113,11 @@ internal static partial class ScopeWalker
 
                 _earliestEntries[state] = entryPosition;
 
-                // Forget writes before using this block's exceptional paths as evidence.
-                // A write and the throwing operation may share the same basic block.
-                foreach (var operation in block.Operations)
-                    _conditions.ForgetWrites(operation, ref known, ref values);
-                if (block.BranchValue is { } branchValue)
-                    _conditions.ForgetWrites(branchValue, ref known, ref values);
+                var firstBarrier = FindFirstBarrier(block, entryPosition, started);
                 if (!started)
-                {
-                    foreach (var origin in catchOrigins)
-                    {
-                        if (block.Ordinal < origin.Protected.FirstBlockOrdinal
-                            || block.Ordinal > origin.Protected.LastBlockOrdinal)
-                            continue;
-                        var unwind = new List<ControlFlowRegion>();
-                        for (var region = block.EnclosingRegion; region is not null && region != origin.Protected;
-                             region = region.EnclosingRegion)
-                            if (region.Kind == ControlFlowRegionKind.Try
-                                && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
-                                unwind.Add(region.EnclosingRegion.NestedRegions.Last());
-                        var catchContinuation = CatchContinuation(origin.Handler, continuation);
-                        if (origin.Handler.EnclosingRegion is { Kind: ControlFlowRegionKind.FilterAndHandler } filtered)
-                        {
-                            var key = (block.Ordinal, origin.Handler, catchContinuation);
-                            if (!_catchOriginDispatchIds.TryGetValue(key, out var id))
-                            {
-                                var filter = filtered.NestedRegions.First(static region => region.Kind == ControlFlowRegionKind.Filter);
-                                id = _dispatches.Count;
-                                _dispatches.Add(new CatchDispatch(origin.Handler, filter, unwind.ToArray(),
-                                    catchContinuation, next: 0, certain: true));
-                                _catchOriginDispatchIds.Add(key, id);
-                            }
-                            // Even an unknown implicit exception must pass the filter before
-                            // acquiring a value in its handler. Retain that selection evidence.
-                            Dispatch(id, started: false, known, values);
-                        }
-                        else
-                            Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
-                                catchContinuation, false, known, values, 0);
-                    }
-                }
-
-                var firstBarrier = started && _barrierPositions.TryGetValue(block.Ordinal, out var positions)
-                    ? positions.Where(position => position > entryPosition
-                                                   || startPolicy == BarrierStartPolicy.Include && block.Ordinal == startBlock.Ordinal
-                                                   && entryPosition == startPosition && position == entryPosition)
-                        .DefaultIfEmpty(int.MaxValue).Min()
-                    : int.MaxValue;
-
-                // Opaque calls before a proof barrier can enter local handlers. Barrier
-                // failure and uncaught implicit exceptions remain outside this proof.
-                if (dispatch == 0 && block.FallThroughSuccessor is { } successor
-                    && (block.Operations.Any(operation => operation.Syntax.SpanStart > entryPosition
-                        && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation))
-                        || block.BranchValue is { } condition && condition.Syntax.SpanStart > entryPosition
-                        && condition.Syntax.Span.End <= firstBarrier && MayThrow(condition)))
-                    Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+                    SeedCatchOrigins(block, catchOrigins, continuation, known, values);
+                EnqueueImplicitExceptionPaths(block, entryPosition, firstBarrier, continuation,
+                    started, dispatch, ref known, ref values);
 
                 if (started && block.Ordinal == targetBlock.Ordinal
                     && targetPosition > entryPosition
@@ -164,22 +126,7 @@ internal static partial class ScopeWalker
                     return true;
                 }
 
-                // An iterator can be disposed at any suspension. Its finally regions still
-                // run, but ordinary statements after yield return need not execute.
-                foreach (var operation in block.Operations)
-                {
-                    if (operation.Kind == OperationKind.YieldReturn
-                        && operation.Syntax.SpanStart > entryPosition
-                        && operation.Syntax.SpanStart < firstBarrier)
-                    {
-                        var unwind = new List<ControlFlowRegion>();
-                        for (var region = block.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-                            if (region.Kind == ControlFlowRegionKind.Try
-                                && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
-                                unwind.Add(region.EnclosingRegion.NestedRegions.Last());
-                        Enqueue(graph.Blocks[graph.Blocks.Length - 1], unwind, 0, started, known, values, 0);
-                    }
-                }
+                EnqueueIteratorDisposal(block, entryPosition, firstBarrier, started, known, values);
 
                 if (firstBarrier != int.MaxValue)
                 {
@@ -191,6 +138,126 @@ internal static partial class ScopeWalker
             }
 
             return false;
+        }
+
+        private List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> FindCatchOrigins()
+        {
+            // Catch origins may also be entered by implicit exceptions. Discover those entries
+            // from their protected blocks so a catch nested in a finally keeps its continuation.
+            var catchOrigins = new List<(ControlFlowRegion Handler, ControlFlowRegion Protected)>();
+            for (var region = startBlock.EnclosingRegion; region is not null; region = region.EnclosingRegion)
+            {
+                if (region.Kind != ControlFlowRegionKind.Catch)
+                    continue;
+                var owner = region.EnclosingRegion;
+                if (owner?.Kind == ControlFlowRegionKind.FilterAndHandler)
+                    owner = owner.EnclosingRegion;
+                if (owner?.Kind == ControlFlowRegionKind.TryAndCatch)
+                    catchOrigins.Add((region, owner.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Try)));
+            }
+            return catchOrigins;
+        }
+
+        private void SeedCatchOrigins(BasicBlock block,
+            List<(ControlFlowRegion Handler, ControlFlowRegion Protected)> catchOrigins,
+            int continuation, ulong known, ulong values)
+        {
+            foreach (var origin in catchOrigins)
+            {
+                if (block.Ordinal < origin.Protected.FirstBlockOrdinal
+                    || block.Ordinal > origin.Protected.LastBlockOrdinal)
+                    continue;
+                var unwind = CollectFinallyRegions(block.EnclosingRegion, origin.Protected);
+                var catchContinuation = CatchContinuation(origin.Handler, continuation);
+                if (origin.Handler.EnclosingRegion is { Kind: ControlFlowRegionKind.FilterAndHandler } filtered)
+                {
+                    var key = (block.Ordinal, origin.Handler, catchContinuation);
+                    if (!_catchOriginDispatchIds.TryGetValue(key, out var id))
+                    {
+                        var filter = filtered.NestedRegions.First(static region => region.Kind == ControlFlowRegionKind.Filter);
+                        id = _dispatches.Count;
+                        _dispatches.Add(new CatchDispatch(origin.Handler, filter, unwind.ToArray(),
+                            catchContinuation, next: 0, certain: true));
+                        _catchOriginDispatchIds.Add(key, id);
+                    }
+                    // Even an unknown implicit exception must pass the filter before
+                    // acquiring a value in its handler. Retain that selection evidence.
+                    Dispatch(id, started: false, known, values);
+                }
+                else
+                    Enqueue(graph.Blocks[origin.Handler.FirstBlockOrdinal], unwind,
+                        catchContinuation, false, known, values, 0);
+            }
+        }
+
+        private void EnqueueIteratorDisposal(BasicBlock block, int entryPosition, int firstBarrier,
+            bool started, ulong known, ulong values)
+        {
+            // An iterator can be disposed at any suspension. Its finally regions still
+            // run, but ordinary statements after yield return need not execute.
+            foreach (var operation in block.Operations)
+            {
+                if (operation.Kind == OperationKind.YieldReturn
+                    && operation.Syntax.SpanStart > entryPosition
+                    && operation.Syntax.SpanStart < firstBarrier)
+                {
+                    var unwind = CollectFinallyRegions(block.EnclosingRegion);
+                    Enqueue(graph.Blocks[graph.Blocks.Length - 1], unwind, 0, started, known, values, 0);
+                }
+            }
+        }
+
+        private int FindFirstBarrier(BasicBlock block, int entryPosition, bool started)
+        {
+            if (!started || !_barrierPositions.TryGetValue(block.Ordinal, out var positions))
+                return int.MaxValue;
+            var index = positions.BinarySearch(entryPosition);
+            if (index < 0)
+                index = ~index;
+            else if (startPolicy != BarrierStartPolicy.Include || block != startBlock || entryPosition != startPosition)
+            {
+                while (index < positions.Count && positions[index] == entryPosition)
+                    index++;
+            }
+            return index < positions.Count ? positions[index] : int.MaxValue;
+        }
+
+        private void EnqueueImplicitExceptionPaths(BasicBlock block, int entryPosition, int firstBarrier,
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+        {
+            foreach (var operation in block.Operations)
+                Visit(operation, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            if (block.BranchValue is { } branchValue)
+                Visit(branchValue, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+        }
+
+        private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
+        {
+            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation
+                || operation.Syntax.SpanStart >= firstBarrier)
+                return;
+
+            // Evaluate children before their parent's write. Each exception sees only writes
+            // that have already executed, including writes in earlier call arguments.
+            foreach (var child in operation.ChildOperations)
+                Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            // Barrier failure and uncaught implicit exceptions remain outside this proof.
+            if (dispatch == 0 && operation.Syntax.SpanStart > entryPosition
+                && operation.Syntax.Span.End <= firstBarrier && MayThrow(operation)
+                && block.FallThroughSuccessor is { } successor)
+                Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
+            _conditions.ForgetOwnWrite(operation, ref known, ref values);
+        }
+
+        private static List<ControlFlowRegion> CollectFinallyRegions(ControlFlowRegion from, ControlFlowRegion? until = null)
+        {
+            var finalizers = new List<ControlFlowRegion>();
+            for (var region = from; region is not null && region != until; region = region.EnclosingRegion)
+                if (region.Kind == ControlFlowRegionKind.Try
+                    && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
+                    finalizers.Add(region.EnclosingRegion.NestedRegions.Last());
+            return finalizers;
         }
 
         private int Prepend(BasicBlock? destination, int continuation, ControlFlowRegion finalizer)
@@ -295,10 +362,6 @@ internal static partial class ScopeWalker
             internal bool Certain { get; } = certain;
         }
 
-        private readonly List<CatchDispatch?> _dispatches = [null];
-        private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit), int> _dispatchIds = new();
-        private readonly Dictionary<(int Block, ControlFlowRegion Handler, int Continuation), int> _catchOriginDispatchIds = new();
-
         private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false, bool implicitException = false)
         {
             var key = (branch.Source.Ordinal, continuation, nullPath, implicitException);
@@ -332,7 +395,7 @@ internal static partial class ScopeWalker
                 exactType = false;
             }
 
-            var unwind = new List<ControlFlowRegion>();
+            var unwind = CollectFinallyRegions(branch.Source.EnclosingRegion);
             var candidates = new List<(ControlFlowRegion Handler, ControlFlowRegion? Filter,
                 ControlFlowRegion[] Unwind, int Continuation, bool Certain)>();
             for (var region = branch.Source.EnclosingRegion; region is not null; region = region.EnclosingRegion)
@@ -351,12 +414,10 @@ internal static partial class ScopeWalker
                             exactType, _systemException);
                         if (!possible)
                             continue;
-                        candidates.Add((handler, filter, unwind.ToArray(), CatchContinuation(handler, continuation), certain));
+                        candidates.Add((handler, filter, CollectFinallyRegions(branch.Source.EnclosingRegion, region).ToArray(),
+                            CatchContinuation(handler, continuation), certain));
                     }
                 }
-                if (region.Kind == ControlFlowRegionKind.Try
-                    && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
-                    unwind.Add(region.EnclosingRegion.NestedRegions.Last());
             }
 
             var next = 0;
@@ -378,17 +439,19 @@ internal static partial class ScopeWalker
 
         private bool MayThrow(IOperation operation)
         {
-            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation)
-                return false;
-            if (operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
+            if (_throwingOperations.TryGetValue(operation, out var cached))
+                return cached;
+            var throwing = operation is IInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
                 or IDynamicInvocationOperation or IArrayElementReferenceOperation
+                || operation is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } receiver }
+                    && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
                 || operation is IConversionOperation conversion
-                && (conversion.OperatorMethod is not null || !conversion.IsImplicit
-                    && !conversion.Conversion.IsIdentity && !conversion.ConstantValue.HasValue))
-                return true;
-            if (operation is IObjectCreationOperation)
-                return ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
-            return operation.ChildOperations.Any(MayThrow);
+                    && (conversion.OperatorMethod is not null || !conversion.IsImplicit
+                        && !conversion.Conversion.IsIdentity && !conversion.ConstantValue.HasValue)
+                || operation is IObjectCreationOperation
+                    && ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, operation) is null;
+            _throwingOperations.Add(operation, throwing);
+            return throwing;
         }
 
         private static IOperation? UnwrapException(IOperation? operation)

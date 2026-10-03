@@ -7,6 +7,92 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InstanceFieldExceptionCanBypassCleanup(bool cleanupInCatch)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field = 1; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    try { _ = holder.Field; result.Dispose(); }
+                    catch (NullReferenceException) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Field = 1; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = holder.Field; await batch.SendAsync(); }
+                    catch (NullReferenceException) { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    Console.WriteLine({{(cleanupInCatch ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("MayThrow(); choice = false;", false)]
+    [Arguments("choice = false; MayThrow();", true)]
+    [Arguments("choice = MayThrow();", false)]
+    [Arguments("Consume(MayThrow(), choice = false);", true)]
+    [Arguments("Consume(choice = false, MayThrow());", true)]
+    public async Task ExceptionalPredicatesReflectOnlyCompletedWrites(string operations, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                bool MayThrow() => throw new Exception();
+                void Consume(bool first, bool second) { }
+                async Task Run(RespireClient client, RespireResult existing, bool choice)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    try { {{operations}} result.Dispose(); }
+                    catch (Exception) { if (choice) result.Dispose(); }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                bool MayThrow() => throw new Exception();
+                void Consume(bool first, bool second) { }
+                async Task Run(RespireClient client, RespirePending<string> existing, bool choice)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = choice ? batch.GetStringAsync("a") : existing;
+                    try { {{operations}} await batch.SendAsync(); }
+                    catch (Exception)
+                    {
+                        if (choice) await batch.SendAsync();
+                    }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("MayThrow()")]
     [Arguments("Property")]
     public async Task ThrowingConditionCanBypassBothFlushBranches(string condition) => await Pending.VerifyAsync($$"""

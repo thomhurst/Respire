@@ -10,6 +10,8 @@ namespace Respire.Analyzers;
 /// Syntax helpers shared by the rules. Both rules are deliberately intra-scope: they reason about
 /// one method body (or one lambda body) and stay silent the moment a value crosses that boundary,
 /// because ownership is then someone else's to prove.
+/// Graph reachability enters through this type; its traversal uses FlowConditions for
+/// predicate evidence and ScopeExitAnalysis for exception-type evidence.
 /// </summary>
 internal static partial class ScopeWalker
 {

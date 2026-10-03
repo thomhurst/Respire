@@ -88,16 +88,12 @@ internal sealed class FlowConditions
             Inspect(child, nested);
     }
 
-    internal void ForgetWrites(IOperation operation, ref ulong known, ref ulong values)
+    internal void ForgetOwnWrite(IOperation operation, ref ulong known, ref ulong values)
     {
-        if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation)
-            return;
         if (operation is IAssignmentOperation assignment)
             Forget(assignment.Target, ref known, ref values);
         else if (operation is IIncrementOrDecrementOperation increment)
             Forget(increment.Target, ref known, ref values);
-        foreach (var child in operation.ChildOperations)
-            ForgetWrites(child, ref known, ref values);
     }
 
     private void Forget(IOperation target, ref ulong known, ref ulong values)
