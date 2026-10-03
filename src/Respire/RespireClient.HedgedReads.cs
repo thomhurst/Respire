@@ -31,7 +31,8 @@ public sealed partial class RespireClient
             // Either leg may outlive its caller. Own the argument bytes before dispatching either
             // request, including when admission/backpressure delays serialization of the loser.
             var snapshot = SnapshotCommand.Create(in command);
-            var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken);
+            var originalRoute = cluster is null ? null : new HedgeOriginalRoute(connection);
+            var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken, originalRoute);
             if (pending.IsCompletedSuccessfully) return pending.Result;
             var original = pending.AsTask();
             race.Original = original;
@@ -44,12 +45,13 @@ public sealed partial class RespireClient
                 }
                 finally { timer.Cancel(); }
 
-                if (!original.IsCompleted && !cancellationToken.IsCancellationRequested && budget.HasCredit)
+                if (!original.IsCompleted && !cancellationToken.IsCancellationRequested && budget.HasCredit
+                    && (originalRoute is null ? connection : originalRoute.Connection) is { } currentOriginal)
                 {
                     using var selectionStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     var selection = cluster is null
                         ? _core.ReadRouter.GetHedgeConnectionAsync(_readFrom, connection, selectionStop.Token).AsTask()
-                        : cluster.GetHedgeConnectionAsync(slot!.Value, _readFrom, connection, selectionStop.Token).AsTask();
+                        : cluster.GetHedgeConnectionAsync(slot!.Value, _readFrom, currentOriginal, selectionStop.Token).AsTask();
                     if (await Task.WhenAny(original, selection).ConfigureAwait(false) == selection)
                     {
                         try { race.Alternative = await selection.ConfigureAwait(false); }
@@ -62,13 +64,15 @@ public sealed partial class RespireClient
                         _ = ObserveHedgeSelectionAsync(selection);
                     }
                     if (race.Alternative is { } alternative && !original.IsCompleted
+                        && (originalRoute is null || originalRoute.CanHedge(alternative))
                         && !cancellationToken.IsCancellationRequested && budget.TrySpend())
                     {
                         sent = true;
                         RespireTelemetry.RecordHedgeSent(alternative);
                         try
                         {
-                            race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken).AsTask();
+                            race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken,
+                                originalRoute, isHedge: true).AsTask();
                         }
                         catch (Exception error) when (!IsFatalHedgeFailure(error))
                         {
@@ -91,12 +95,36 @@ public sealed partial class RespireClient
     }
 
     private ValueTask<RespValue> SendHedgedReadLegAsync<TCommand>(string operation, TCommand command,
-        RespireConnection connection, RespireCommandFlags flags, CancellationToken cancellationToken)
+        RespireConnection connection, RespireCommandFlags flags, CancellationToken cancellationToken,
+        HedgeOriginalRoute? originalRoute = null, bool isHedge = false)
         where TCommand : struct, IRespCommand
         => _core.Cluster is { } cluster
             ? SendClusterAsync(operation, cluster, command, cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect), initialConnection: connection, allowReadFrom: true)
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect), initialConnection: connection, allowReadFrom: true,
+                hedgeOriginalRoute: originalRoute, isHedge: isHedge)
             : SendOnConnectionAsync(operation, connection, command, cancellationToken);
+
+    private sealed class HedgeOriginalRoute(RespireConnection connection)
+    {
+        private RespireConnection? _connection = connection;
+        private int _completed;
+
+        // Null means the original is discovering its next route. Optional
+        // work must not guess which peer that attempt will use while discovery is pending.
+        internal RespireConnection? Connection
+        {
+            get => Volatile.Read(ref _connection);
+            set => Volatile.Write(ref _connection, value);
+        }
+
+        internal bool CanHedge(RespireConnection candidate)
+            => Volatile.Read(ref _completed) != 0
+                || Connection is { } current && HedgedReadPolicy.IsDifferentPeer(current, candidate);
+
+        // An already-issued hedge may still recover after the original fails. There is no
+        // competing attempt to exclude once that original has finished.
+        internal void Complete() => Volatile.Write(ref _completed, 1);
+    }
 
     private static bool IsFatalHedgeFailure(Exception error)
         // This classifies exceptions delivered to a catch filter; it does not make

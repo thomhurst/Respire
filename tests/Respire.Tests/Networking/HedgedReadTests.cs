@@ -251,6 +251,39 @@ public class HedgedReadTests
     }
 
     [Test]
+    [Arguments("MOVED")]
+    [Arguments("ASK")]
+    public async Task OriginalClusterRedirectCannotHedgeOntoItsCurrentPeer(string redirect)
+    {
+        await using var replacement = new FakeRespServer(16, FakeRespServer.OkReply);
+        replacement.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(replacement.Port) : NodeReply(command, "primary");
+        replacement.SuppressReply = command => command == "GET key";
+        await using var replica = Replica();
+        var slot = ClusterHash.GetSlot("key");
+        replica.ReplyOverride = (_, command) => command == "GET key"
+            ? Encoding.ASCII.GetBytes($"-{redirect} {slot} 127.0.0.1:{replacement.Port}\r\n")
+            : NodeReply(command, "replica");
+        await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, replica.Port) : NodeReply(command, "primary");
+        await using var client = RespireClient.Create(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(200), MaximumExtraLoadPercent = 100 },
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var read = client.GetStringAsync("key", deadline.Token).AsTask();
+        await WaitForCommandAsync(replacement, "GET key", deadline.Token);
+        // Keep the redirected original pending beyond hedge selection. Both requests would
+        // otherwise enter the same FIFO connection, with no possibility of a faster response.
+        await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
+        await Assert.That(replacement.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await replacement.SendRawAsync(Bulk("replacement"));
+        await Assert.That(await read).IsEqualTo("replacement");
+    }
+
+    [Test]
     public async Task HedgedClusterLegFollowsMovedWithoutStartingAnotherHedge()
     {
         await using var replica = Replica(holdReads: true);
