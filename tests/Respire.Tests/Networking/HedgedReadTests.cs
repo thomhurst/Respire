@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Respire.Internal;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -348,6 +349,54 @@ public class HedgedReadTests
         var extra = primary.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal));
         await Assert.That(extra).IsGreaterThan(0);
         await Assert.That(extra).IsLessThanOrEqualTo(count * 5 / 100);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SingleReplicaDoesNotSnapshotBeforeAdmission(bool cluster)
+    {
+        await using var replica = Replica(holdReads: true);
+        await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, replica.Port) : NodeReply(command, "primary");
+        await using var client = RespireClient.Create(Options(primary, replica) with
+        {
+            ReadFrom = RespireReadFrom.Replica, UseCluster = cluster,
+            ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ClusterTopologyRefreshInterval = null, MaxInflightCommands = 1,
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var blocker = client.GetStringAsync("blocker", deadline.Token).AsTask();
+        await WaitForCommandAsync(replica, "GET blocker", deadline.Token);
+        var serializations = new SerializationCount();
+        var pending = client.SendAsync("GET", new SerializationProbe(serializations), deadline.Token).AsTask();
+        await Task.Delay(20, deadline.Token);
+        var writesBeforeAdmission = Volatile.Read(ref serializations.Value);
+        await replica.SendRawAsync(Bulk("blocker"));
+        await blocker;
+        await WaitForCommandAsync(replica, "GET probe", deadline.Token);
+        await replica.SendRawAsync(Bulk("value"));
+        using var reply = await pending;
+        await Assert.That(writesBeforeAdmission).IsEqualTo(0);
+        await Assert.That(serializations.Value).IsEqualTo(1);
+    }
+
+    private sealed class SerializationCount { internal int Value; }
+
+    private readonly struct SerializationProbe(SerializationCount count) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.Read;
+        public bool TryGetClusterSlot(out int slot)
+        {
+            slot = ClusterHash.GetSlot("probe");
+            return true;
+        }
+        public void Write(ref RespWriter writer)
+        {
+            Interlocked.Increment(ref count.Value);
+            writer.WriteRaw("*2\r\n$3\r\nGET\r\n$5\r\nprobe\r\n"u8);
+        }
     }
 
     [Test]

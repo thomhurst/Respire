@@ -4,6 +4,15 @@ namespace Respire.Internal;
 
 internal sealed partial class ClusterRouter
 {
+    internal bool HasPotentialHedgePeer(int slot, RespireReadFrom readFrom, RespireConnection original)
+    {
+        if (readFrom != RespireReadFrom.Replica) return true;
+        if (RoutingSnapshot[slot].Replicas is not { } replicas) return false;
+        foreach (var node in replicas.Nodes)
+            if (!node.IsRetired && !ReferenceEquals(node, original.Multiplexer)) return true;
+        return false;
+    }
+
     internal async ValueTask<RespireConnection?> GetHedgeConnectionAsync(int slot, RespireReadFrom readFrom,
         RespireConnection original, CancellationToken cancellationToken)
     {

@@ -24,7 +24,11 @@ public sealed partial class RespireClient
         RespireConnection? alternative = null;
         try
         {
-            if (!budget.HasCredit)
+            // Advisory cached-topology check only: do not establish optional connections before
+            // starting the original request. A newly discovered peer can serve a later read.
+            if (!budget.HasCredit || !(cluster is null
+                ? _core.ReadRouter.HasPotentialHedgePeer(_readFrom, connection)
+                : cluster.HasPotentialHedgePeer(slot!.Value, _readFrom, connection)))
                 return await SendHedgedReadLegAsync(operation, command, connection, flags, cancellationToken).ConfigureAwait(false);
 
             // Either leg may outlive its caller. Own the argument bytes before dispatching either

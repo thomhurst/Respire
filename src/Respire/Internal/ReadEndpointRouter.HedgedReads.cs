@@ -4,6 +4,14 @@ namespace Respire.Internal;
 
 internal sealed partial class ReadEndpointRouter
 {
+    internal bool HasPotentialHedgePeer(RespireReadFrom readFrom, RespireConnection original)
+    {
+        if (readFrom != RespireReadFrom.Replica) return true;
+        foreach (var endpoint in Volatile.Read(ref _replicas))
+            if (!HedgedReadPolicy.IsOriginalEndpoint(endpoint, original)) return true;
+        return false;
+    }
+
     internal async ValueTask<RespireConnection?> GetHedgeConnectionAsync(RespireReadFrom readFrom,
         RespireConnection original, CancellationToken cancellationToken)
     {
