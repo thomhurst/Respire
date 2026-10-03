@@ -435,6 +435,9 @@ internal static partial class ScopeWalker
                                 implicitExceptionType: "System.DivideByZeroException"), started, known, values);
                     }
                     else Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                        implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
+                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
+                            ? "System.TypeInitializationException" : null,
                         nullPath: transferFailure == TransferFailure.NullReceiver
                             || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false }
                             || IsFrameworkLength(exceptionSource),
@@ -450,6 +453,10 @@ internal static partial class ScopeWalker
                         started, known, values);
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                    if (transferFailure == TransferFailure.Allocation
+                        && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } })
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                            implicitExceptionType: "System.TypeInitializationException"), started, known, values);
                     if (exceptionSource is IArrayCreationOperation arrayCreation
                         && arrayCreation.DimensionSizes.Any(size => !IsNonNegativeLength(size)))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
@@ -465,7 +472,7 @@ internal static partial class ScopeWalker
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
         }
 
-        private enum TransferFailure { None, NullReceiver, Allocation, Unknown }
+        private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
 
         private void VisitDeconstructionLocations(IOperation target, BasicBlock block, int entryPosition, int firstBarrier,
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
@@ -517,7 +524,8 @@ internal static partial class ScopeWalker
                 IPropertyReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IFieldReferenceOperation { Instance: { } receiver } when CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
                 IPropertyReferenceOperation { Property: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
-                    or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } } => TransferFailure.Unknown,
+                    or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
+                    or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } } => TransferFailure.TypeInitialization,
                 _ => TransferFailure.None,
             };
         }

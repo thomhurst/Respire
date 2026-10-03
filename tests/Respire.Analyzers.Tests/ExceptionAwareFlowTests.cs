@@ -7,6 +7,101 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("TypeInitializationException", true)]
+    [Arguments("InvalidOperationException", false)]
+    public async Task StaticInitializationPrecedesBatchEscape(string catchType, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using Respire;
+        class Holder
+        {
+            static Holder() { throw new InvalidOperationException(); }
+            public static void Take(RespireBatch batch) => batch.SendAsync().AsTask().GetAwaiter().GetResult();
+        }
+        class Caller
+        {
+            void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { Holder.Take(batch); }
+                catch ({{catchType}}) { }
+                Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("TypeInitializationException", true)]
+    [Arguments("InvalidOperationException", false)]
+    [Arguments("Exception", true)]
+    public async Task StaticFieldInitializationUsesWrappedException(string catchType, bool warning)
+    {
+        const string declaration = "class Holder { static Holder() { throw new InvalidOperationException(); } public static int Value; }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = Holder.Value; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = Holder.Value; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("Holder.Take(result);", "TypeInitializationException", true)]
+    [Arguments("Holder.Take(result);", "InvalidOperationException", false)]
+    [Arguments("Holder.Value = result;", "TypeInitializationException", true)]
+    [Arguments("Holder.Field = result;", "InvalidOperationException", false)]
+    [Arguments("_ = new Holder(result);", "TypeInitializationException", true)]
+    [Arguments("_ = new Holder(result);", "InvalidOperationException", false)]
+    public async Task StaticInitializationPrecedesTransfer(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder
+        {
+            static Holder() { throw new InvalidOperationException(); }
+            public Holder(RespireResult result) { result.Dispose(); }
+            public static void Take(RespireResult result) => result.Dispose();
+            public static RespireResult Value { set { value.Dispose(); } }
+            public static RespireResult Field;
+        }
+        class Caller
+        {
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{transfer}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("(holder.Value, _) = (result, Throws());", "Exception", true)]
     [Arguments("(holder.Value, _) = (result, 0);", "InvalidOperationException", false)]
     [Arguments("(holder.Value, _) = (result, 0);", "NullReferenceException", true)]
