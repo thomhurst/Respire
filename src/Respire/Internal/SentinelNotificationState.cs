@@ -64,13 +64,14 @@ internal readonly partial record struct SentinelNotificationState
                 Pending = independent with
                 {
                     Reporters = UnionEndpoints(independent.Reporters, hint.Reporters),
+                    Ledger = independent.Ledger.Union(hint.Ledger),
                     MustRediscover = true,
                 },
             };
         }
         // Even confirmation of Current remains pending: in-flight discovery can publish
         // another generation before that confirmation has been reconciled.
-        var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint);
+        var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint) || HasNewObservation(in hint);
         if (duplicate && !needsAnotherPass && (Pending is null || Pending.Value.Key == hint.Key)) return state;
         var pending = Merge(Pending ?? (duplicate ? Active : null), in hint);
         if (duplicate && needsAnotherPass) pending = pending with { MustRediscover = true };
@@ -87,6 +88,14 @@ internal readonly partial record struct SentinelNotificationState
     {
         foreach (var reporter in hint.Reporters)
             if (!ContainsReporter(Active, reporter) && !ContainsReporter(Pending, reporter)) return true;
+        return false;
+    }
+
+    private bool HasNewObservation(in SentinelHint hint)
+    {
+        foreach (var observation in hint.Ledger.Observations)
+            if (Active?.Ledger.ContainsObservation(observation) != true
+                && Pending?.Ledger.ContainsObservation(observation) != true) return true;
         return false;
     }
 
@@ -201,35 +210,10 @@ internal readonly partial record struct SentinelNotificationState
             // An independent wake-up remains independent even when its key duplicates an
             // active reconciliation pass. Only two reconciliation-only hints retain a bound.
             DownKey = previous.DownKey == hint.DownKey ? hint.DownKey : null,
-            DownReports = previous.DownReports.Length > 0 && hint.DownReports.Length > 0
-                ? UnionDownReports(previous.DownReports, hint.DownReports) : [],
+            Ledger = previous.Ledger.Union(hint.Ledger),
             ReconciliationPrimary = sources.Length == 0 && previous.ReconciliationPrimary is not null
                 ? hint.ReconciliationPrimary : null,
         };
-    }
-
-    private static ImmutableArray<SentinelDownReport> UnionDownReports(
-        ImmutableArray<SentinelDownReport> first, ImmutableArray<SentinelDownReport> second)
-    {
-        List<SentinelDownReport>? result = null;
-        var comparer = SentinelEndpointIdentity.EndpointComparer.Instance;
-        foreach (var report in second)
-        {
-            var found = false;
-            var count = result?.Count ?? first.Length;
-            for (var index = 0; index < count; index++)
-            {
-                var known = result is null ? first[index] : result[index];
-                if (comparer.Equals(known.Primary, report.Primary) && comparer.Equals(known.Reporter, report.Reporter)
-                    && known.OwnerAtObservation == report.OwnerAtObservation)
-                {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) (result ??= [.. first]).Add(report);
-        }
-        return result?.ToImmutableArray() ?? first;
     }
 
     private static bool HasTargetSourceOverlap(ImmutableArray<RespireEndpoint> targets, ImmutableArray<SentinelSwitchSource> sources)

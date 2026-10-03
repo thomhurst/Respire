@@ -105,6 +105,27 @@ internal readonly record struct SentinelAddressEvidence
         return true;
     }
 
+    internal bool HasSameSnapshot(SentinelAddressEvidence other)
+    {
+        if (IsDefault || other.IsDefault) return IsDefault && other.IsDefault;
+        if (!_identity.Equals(other._identity)
+            || Addresses.IsDefault != other.Addresses.IsDefault) return false;
+        if (Addresses.IsDefault) return true;
+        return ContainsAll(Addresses, other.Addresses) && ContainsAll(other.Addresses, Addresses);
+
+        static bool ContainsAll(ImmutableArray<string> known, ImmutableArray<string> candidates)
+        {
+            foreach (var candidate in candidates)
+            {
+                var found = false;
+                foreach (var address in known)
+                    if (StringComparer.OrdinalIgnoreCase.Equals(address, candidate)) { found = true; break; }
+                if (!found) return false;
+            }
+            return true;
+        }
+    }
+
     internal string? SingleAddress
     {
         get

@@ -67,6 +67,19 @@ Hints retain immutable source, target, reporter, and down-report collections.
 records use an immutable dictionary keyed by lookup lifetime, so later offers and lookup
 completion cannot change an earlier state snapshot.
 
+Each hint also carries a `SentinelReporterLedger`. It retains the original switch,
+down, or gap observations with their reporter, source/target, validated owner at receipt,
+observed and accepted epoch facts, and completed source DNS evidence. Context is captured
+once under the router gate. A later publication or DNS-triggered requeue cannot replace
+an observation's owner or fill in an owner that was absent at receipt.
+
+The ledger's cached down-report projection supplies reporter-specific outage reconciliation.
+Mixing an independent gap or switch suppresses that projection on the effective hint,
+while retaining the original observations in the ledger. Consuming a source fence after
+validation likewise leaves its original observation intact. Unique owner, epoch, or DNS
+evidence from an existing reporter remains pending; identical evidence reuses immutable
+storage. Neither ledger order nor DNS completion order establishes failover chronology.
+
 `SentinelValidatedPrimary` keeps the advertised endpoint separate from the physical peer
 accepted by ROLE. Discovery retains provisional DNS evidence separately from its accepted
 peer. At an observed epoch, a numeric alias can confirm that peer even when DNS is unavailable;

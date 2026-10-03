@@ -42,6 +42,8 @@ internal sealed partial class SentinelRouter
                 lock (_gate)
                 {
                     var arrivedDuring = Current;
+                    hint = hint.CaptureObservationContext(arrivedDuring is null ? null
+                        : new(arrivedDuring.Endpoint, arrivedDuring.ValidatedPeer), _discovery.EpochEvidence);
                     if (hint.OldPrimary is { } announcedSource && arrivedDuring?.ValidatedPeer is { } peer
                         && SameEndpoint(arrivedDuring.Endpoint, announcedSource))
                         hint = hint.WithSourceAddresses(announcedSource, [SentinelEndpointIdentity.NormalizeHost(peer.Host)]);
@@ -181,14 +183,16 @@ internal sealed partial class SentinelRouter
         {
             if (_disposed) return;
             var current = Current;
-            var targetIsCurrent = hint.Target is { } target && current is { IsRetired: false }
+            var observed = hint.CaptureObservationContext(current is null ? null
+                : new(current.Endpoint, current.ValidatedPeer), _discovery.EpochEvidence);
+            var targetIsCurrent = observed.Target is { } target && current is { IsRetired: false }
                 && IsConfirmedTarget(current, target);
-            var startWorker = _coalescer.Offer(in hint, targetIsCurrent);
+            var startWorker = _coalescer.Offer(in observed, targetIsCurrent);
             if (_coalescer.Pending is not null) _pendingNotification.TrySetResult();
             // Compare the switch source with Current under the gate, immediately before retirement.
             // This also covers hints that wait behind an active discovery, so a direct endpoint
             // match never waits for that attempt or for DNS.
-            RetireIfSwitchSourceLocked(current, in hint);
+            RetireIfSwitchSourceLocked(current, in observed);
             if (startWorker) _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
         }
     }
