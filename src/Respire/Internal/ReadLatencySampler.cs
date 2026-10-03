@@ -102,6 +102,8 @@ internal sealed class ReadLatencySampler<TConnection>(
         }
         lock (_gate)
         {
+            // Failure deliberately invalidates even a young estimate: do not retain a known-fast
+            // ranking after contrary probe evidence. Recovery starts a new, unsmoothed estimate.
             Volatile.Write(ref sample.Measurement, latency == Unknown ? null : new Measurement(latency, Now));
             probe.Result.TrySetResult(latency);
         }
