@@ -7,6 +7,43 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("static Holder() { throw new System.Exception(); }", true)]
+    [Arguments("", false)]
+    public async Task StaticFieldAccessCanTriggerTypeInitializer(string constructor, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public static int Value; {{constructor}} }
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = Holder.Value; result.Dispose(); }
+                    catch { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public static int Value; {{constructor}} }
+            class Caller
+            {
+                async Task Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = Holder.Value; await batch.SendAsync(); }
+                    catch { }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("value is not null", "value is not null", "", false)]
     [Arguments("value is not null", "value != null", "", false)]
     [Arguments("value is not null", "value is null", "", true)]
@@ -48,6 +85,11 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments("value.Missing", false)]
     [Arguments("value[0]", false)]
+    [Arguments("value + value", false)]
+    [Arguments("-value", false)]
+    [Arguments("!value", false)]
+    [Arguments("value++", false)]
+    [Arguments("value += 1", false)]
     [Arguments("value.Missing", true)]
     public async Task DynamicAccessCanBypassCleanup(string access, bool cleanupInCatch)
     {
@@ -141,10 +183,14 @@ public class ExceptionAwareFlowTests
     [Arguments("target[0] = (flag = false);", true)]
     [Arguments("target.Value = Throws(); flag = false;", false)]
     [Arguments("target.Value &= (flag = false);", true)]
+    [Arguments("Text ??= (flag = false) ? null : \"value\";", true)]
+    [Arguments("Text ??= \"value\"; flag = false;", false)]
+    [Arguments("target.Value ??= (flag = false) ? null : \"value\";", true)]
     public async Task SetterExceptionsFollowRhsWrites(string assignment, bool warning)
     {
         const string members = """
             bool Property { get => true; set => throw new System.Exception(); }
+            string Text { get => null; set => throw new System.Exception(); }
             bool this[int index] { get => true; set => throw new System.Exception(); }
             bool Throws() => throw new System.Exception();
             """;

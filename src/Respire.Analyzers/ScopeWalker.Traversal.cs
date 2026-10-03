@@ -270,6 +270,10 @@ internal static partial class ScopeWalker
                 foreach (var child in operation.ChildOperations)
                     if (child != initializer)
                         Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                // Roslyn lowers conditional stores (including ??=) to assignments
+                // through captured targets. Their setters still run after the RHS.
+                if (operation is ISimpleAssignmentOperation { Target: IFlowCaptureReferenceOperation target })
+                    exceptionSource = _conditions.ResolveCapturedTarget(target);
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             if (operation.Syntax.SpanStart > entryPosition
@@ -489,6 +493,13 @@ internal static partial class ScopeWalker
                 or IUnaryOperation { OperatorMethod: not null }
                 or ICompoundAssignmentOperation { OperatorMethod: not null }
                 or IIncrementOrDecrementOperation { OperatorMethod: not null }
+                or IBinaryOperation { LeftOperand.Type.TypeKind: TypeKind.Dynamic }
+                or IBinaryOperation { RightOperand.Type.TypeKind: TypeKind.Dynamic }
+                or IUnaryOperation { Operand.Type.TypeKind: TypeKind.Dynamic }
+                or ICompoundAssignmentOperation { Target.Type.TypeKind: TypeKind.Dynamic }
+                or ICompoundAssignmentOperation { Value.Type.TypeKind: TypeKind.Dynamic }
+                or IIncrementOrDecrementOperation { Target.Type.TypeKind: TypeKind.Dynamic }
+                or ICoalesceAssignmentOperation { Target: IPropertyReferenceOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
                 or ICompoundAssignmentOperation { Target: IPropertyReferenceOperation }
                 or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
                 or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
@@ -507,6 +518,8 @@ internal static partial class ScopeWalker
                     && !_conditions.IsConstructedReceiver(receiver)
                     // A member binding is evaluated only on the non-null conditional-access path.
                     && operation.Syntax is not MemberBindingExpressionSyntax
+                || operation is IFieldReferenceOperation { Field: { IsStatic: true, IsConst: false } field }
+                    && field.ContainingType.StaticConstructors.Length != 0
                 || operation is IConversionOperation conversion
                     && ConversionMayThrow(conversion)
                 || operation is IObjectCreationOperation
