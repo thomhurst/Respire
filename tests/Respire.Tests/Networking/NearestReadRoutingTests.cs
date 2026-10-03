@@ -93,6 +93,45 @@ public class NearestReadRoutingTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task PrimarySiblingSocketsAreCheckedBeforeExcludingThePrimary(bool cluster)
+    {
+        await using var primary = Server("primary");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
+        var options = Options(primary) with { Connections = 3, CommandTimeout = null, ConnectionIdleReadTimeout = null };
+        if (cluster) options = options with { UseCluster = true, ClusterTopologyRefreshInterval = null };
+        await using var client = await RespireClient.ConnectAsync(options);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var slot = ClusterHash.GetSlot("key");
+        var multiplexer = cluster ? client.Core.Cluster!.GetKnownSlotOwner(slot)! : client.Core.Multiplexer;
+        var sockets = Enumerable.Range(0, 3).Select(multiplexer.GetConnection).Distinct().ToArray();
+        await Assert.That(sockets.Length).IsEqualTo(3);
+        // Cluster reads always start from the slot-affinity socket; standalone reads rotate.
+        var healthy = cluster ? sockets.First(socket => !ReferenceEquals(socket, multiplexer.GetConnection(slot))) : sockets[2];
+        var stall = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
+            ReferenceEquals(connection, healthy) ? ValueTask.FromResult(10L) : new(stall.Task));
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        foreach (var socket in sockets.Where(socket => !ReferenceEquals(socket, healthy)))
+            await Assert.That(await sampler.GetLatencyAsync(socket, deadline.Token)).IsEqualTo(ReadLatencyResult.Pending);
+        try
+        {
+            // Two selection passes can each land on a pending socket; the healthy sibling must still win.
+            for (var index = 0; index < 6; index++)
+            {
+                var selected = cluster
+                    ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Nearest, deadline.Token)
+                    : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Nearest, deadline.Token);
+                await Assert.That(selected).IsSameReferenceAs(healthy);
+            }
+        }
+        finally { stall.SetResult(10); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task AllPendingProbesFailWithoutQueuingARead(bool cluster)
     {
         await using var primary = Server("primary");

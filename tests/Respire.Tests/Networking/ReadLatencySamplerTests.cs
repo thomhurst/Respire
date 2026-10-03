@@ -165,28 +165,29 @@ public class ReadLatencySamplerTests
     }
 
     [Test]
-    public async Task ExpiredBudgetKeepsSelfStartedProbesEligibleButExcludesOutstandingOnes()
+    public async Task ExpiredBudgetStartsNoProbeAndExcludesOnlyOutstandingOnes()
     {
         var outstanding = new object();
         var discovered = new object();
         var replies = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var sampler = new ReadLatencySampler<object>((_, _) => new ValueTask<long>(replies.Task));
         // Another selection's probe is already outstanding on this connection.
-        _ = sampler.GetLatencyAsync(outstanding, default, out var startedEarlier);
-        await Assert.That(startedEarlier).IsTrue();
+        _ = sampler.GetLatencyAsync(outstanding, default);
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
 
         // Acquisition consumed the shared budget before these samples were taken.
-        await Assert.That(NearestReadSelection.CreateWaitCancellation(Environment.TickCount64 - 1, default)).IsNull();
+        var deadline = Environment.TickCount64 - 1;
+        await Assert.That(NearestReadSelection.CanStartProbe(deadline)).IsFalse();
+        await Assert.That(NearestReadSelection.CreateWaitCancellation(deadline, default)).IsNull();
         var selection = new NearestReadSelection<object>();
-        selection.QueueSample(outstanding, sampler.GetLatencyAsync(outstanding, default, out var joined), started: joined);
-        selection.QueueSample(discovered, sampler.GetLatencyAsync(discovered, default, out var started), started: started);
-        await Assert.That(joined).IsFalse();
-        await Assert.That(started).IsTrue();
+        selection.QueueSample(outstanding, sampler.GetLatencyAsync(outstanding, default, startProbe: false));
+        selection.QueueSample(discovered, sampler.GetLatencyAsync(discovered, default, startProbe: false));
+        // No PING is queued ahead of a read on the late-discovered connection.
+        await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
+        await Assert.That(sampler.HasPendingProbe(discovered)).IsFalse();
         while (selection.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, wait: null, default, pending.Started);
-            await Assert.That(latency).IsEqualTo(ReferenceEquals(pending.Candidate, outstanding)
-                ? ReadLatencyResult.Pending : ReadLatencyResult.Unknown);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, wait: null, default);
             selection.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
         }
         await Assert.That(selection.TryGet(out var selected)).IsTrue();

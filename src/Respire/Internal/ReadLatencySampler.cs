@@ -73,15 +73,11 @@ internal sealed class ReadLatencySampler<TConnection>(
         if (_connectionFailures.TryGetValue(candidate, out _)) _connectionFailures.Remove(candidate);
     }
 
-    internal ValueTask<ReadLatencyResult> GetLatencyAsync(TConnection connection, CancellationToken cancellationToken)
-        => GetLatencyAsync(connection, cancellationToken, out _);
-
-    // started: true when this call published a new probe. An expired selection budget is not
-    // evidence against a probe the same selection started itself.
+    // startProbe: false once selection's shared budget has expired. The call then reports only
+    // existing evidence; an outstanding probe is still returned so its connection stays excluded.
     internal ValueTask<ReadLatencyResult> GetLatencyAsync(TConnection connection, CancellationToken cancellationToken,
-        out bool started)
+        bool startProbe = true)
     {
-        started = false;
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var sample = _samples.GetValue(connection, static _ => new Sample());
@@ -113,7 +109,7 @@ internal sealed class ReadLatencySampler<TConnection>(
             pending = sample.Pending;
             // No queue of health checks: callers without a sample can still select a
             // healthy connection without latency evidence when all four slots are busy.
-            if (pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
+            if (startProbe && pending is null && now >= sample.NextAttempt && _running.Count < MaximumConcurrentProbes)
             {
                 start = new();
                 _running.Add(start.Finished.Task);
@@ -130,11 +126,7 @@ internal sealed class ReadLatencySampler<TConnection>(
                     ? ReadLatencyResult.Measured(measurement.Latency) : ReadLatencyResult.Unknown);
             }
         }
-        if (start is not null)
-        {
-            started = true;
-            _ = MeasureAsync(connection, sample, start);
-        }
+        if (start is not null) _ = MeasureAsync(connection, sample, start);
         // A fresh estimate cannot bypass an outstanding command in this connection's FIFO.
         return new ValueTask<ReadLatencyResult>(pending.WaitAsync(cancellationToken));
     }

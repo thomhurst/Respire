@@ -51,7 +51,10 @@ internal sealed partial class ReadEndpointRouter
             if (index == 0)
             {
                 if (primary is not { } selectedPrimary) continue;
-                selection = selectedPrimary;
+                // The round-robin primary socket can have a pending probe while a sibling is idle. With no
+                // idle sibling, keep that socket so its probe can still answer within the budget.
+                selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler)
+                    is { } idle ? selectedPrimary with { Connection = idle } : selectedPrimary;
             }
             else
             {
@@ -72,9 +75,9 @@ internal sealed partial class ReadEndpointRouter
                 }
             }
             if (!selection.Connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(selection.Connection, default, out var started);
+            var latency = sampler.GetLatencyAsync(selection.Connection, default, NearestReadSelection.CanStartProbe(deadline));
             if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
-                best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true, started);
+                best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
         }
         // Start every eligible probe before waiting so a fast later candidate is visible even
         // when the first sample consumes the entire shared wait budget.
@@ -82,8 +85,8 @@ internal sealed partial class ReadEndpointRouter
             ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken,
-                pending.Started).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken)
+                .ConfigureAwait(false);
             var candidate = pending.Candidate;
             if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
                 best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);

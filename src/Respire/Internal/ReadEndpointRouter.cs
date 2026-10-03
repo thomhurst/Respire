@@ -749,24 +749,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             finally { if (entered) _gate.Release(); }
         }
 
-        /// <summary>
-        /// Returns the round-robin socket, or with Nearest sampling the first socket without an
-        /// unanswered probe. A pending probe excludes only its own socket, so siblings are checked
-        /// in a fixed order (independent of concurrent cursor movement) before the replica is skipped.
-        /// </summary>
         private static RespireConnection? SelectSocket(RespireConnectionMultiplexer multiplexer, string? preferredZone,
             ReadLatencySampler<RespireConnection>? sampler)
-        {
-            var selected = preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
-            if (sampler is null || !sampler.HasPendingProbe(selected)) return selected;
-            for (var index = 0; index < multiplexer.ConnectionCount; index++)
-            {
-                var sibling = preferredZone is null ? multiplexer.GetConnection(index)
-                    : multiplexer.GetConnectionForZone(preferredZone, index);
-                if (!ReferenceEquals(sibling, selected) && !sampler.HasPendingProbe(sibling)) return sibling;
-            }
-            return null;
-        }
+            => NearestReadSelection.AvoidPendingProbe(multiplexer,
+                preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
+                sampler, preferredZone);
 
         /// <summary>Stops new reads, then drains accepted work before the entry is disposed.</summary>
         internal async Task RetireAsync(CancellationToken cancellationToken)

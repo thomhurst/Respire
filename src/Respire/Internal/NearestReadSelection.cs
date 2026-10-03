@@ -1,9 +1,36 @@
+using Respire.Infrastructure;
+using Respire.Networking;
+
 namespace Respire.Internal;
 
 /// <summary>One sampling wait budget shared by every candidate and topology retry.</summary>
 internal static class NearestReadSelection
 {
     internal static long CreateDeadline() => Environment.TickCount64 + ReadLatencySampler.SamplingWaitMilliseconds;
+
+    /// <summary>
+    /// Once the shared budget has expired, a newly started probe could not answer before the read
+    /// is queued behind it. Selection then reuses existing evidence and starts no new probe.
+    /// </summary>
+    internal static bool CanStartProbe(long deadline) => deadline - Environment.TickCount64 > 0;
+
+    /// <summary>
+    /// Returns <paramref name="selected"/>, or with Nearest sampling the first socket without an
+    /// unanswered probe. A pending probe excludes only its own socket, so siblings are checked in a
+    /// fixed order (independent of concurrent cursor movement) before the endpoint is skipped.
+    /// </summary>
+    internal static RespireConnection? AvoidPendingProbe(RespireConnectionMultiplexer multiplexer, RespireConnection selected,
+        ReadLatencySampler<RespireConnection>? sampler, string? preferredZone = null)
+    {
+        if (sampler is null || !sampler.HasPendingProbe(selected)) return selected;
+        for (var index = 0; index < multiplexer.ConnectionCount; index++)
+        {
+            var sibling = preferredZone is null ? multiplexer.GetConnection(index)
+                : multiplexer.GetConnectionForZone(preferredZone, index);
+            if (!ReferenceEquals(sibling, selected) && !sampler.HasPendingProbe(sibling)) return sibling;
+        }
+        return null;
+    }
 
     internal static CancellationTokenSource? CreateWaitCancellation(long deadline, CancellationToken cancellationToken)
     {
@@ -16,15 +43,15 @@ internal static class NearestReadSelection
     }
 
     internal static ValueTask<ReadLatencyResult> GetLatencyAsync(ValueTask<ReadLatencyResult> latency, CancellationTokenSource? wait,
-        CancellationToken cancellationToken, bool started = false)
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (latency.IsCompletedSuccessfully) return latency;
         if (wait is not null) return WaitAsync(latency, wait.Token, cancellationToken);
-        // Connection acquisition or discovery consumed the shared budget. A probe this selection
-        // just started is not stall evidence, so its candidate stays eligible with unknown latency.
-        // A probe already outstanding before this selection still excludes its connection.
-        return ValueTask.FromResult(started ? ReadLatencyResult.Unknown : ReadLatencyResult.Pending);
+        // The shared budget has expired. An unanswered probe still occupies its connection's FIFO,
+        // so a read sent there would queue behind it. Candidates without a probe remain eligible
+        // because selection starts no new probe after the budget expires.
+        return ValueTask.FromResult(ReadLatencyResult.Pending);
     }
 
     private static async ValueTask<ReadLatencyResult> WaitAsync(ValueTask<ReadLatencyResult> latency, CancellationToken waitToken,
@@ -53,8 +80,8 @@ internal static class NearestReadSelection
 /// <item><term>Pending samples</term><description>
 /// Wait under the original shared sampling deadline, then recheck connection and role eligibility.
 /// An unanswered probe excludes its connection until the FIFO reply completes. Unsampled
-/// candidates and completed probes without latency evidence remain eligible, as does a
-/// candidate whose probe this selection started after the shared budget had already expired.
+/// candidates and completed probes without latency evidence remain eligible. After the shared
+/// budget expires, selection starts no new probe, so a late-discovered candidate stays eligible.
 /// </description></item>
 /// <item><term>Current winner</term><description>
 /// Revalidate its owner/membership and return. A usable candidate need not await background discovery.
@@ -94,16 +121,15 @@ internal struct NearestReadSelection<T>
     private int _sampleOrder;
     private int _selectedOrder;
 
-    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order,
-        bool Started = false);
+    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order);
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
 
-    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, bool started = false)
+    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true)
     {
         var order = _sampleOrder++;
         if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order);
         // Only cold/expired samples allocate. Warm selections retain the allocation-free path.
-        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order, started));
+        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order));
     }
 
     internal bool TryNextSample(out PendingSample sample)
