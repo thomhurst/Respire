@@ -378,7 +378,9 @@ function Get-UnansweredClaudeReviewReason {
     [CmdletBinding()]
     param(
         [AllowNull()][object[]]$Comments,
-        [AllowNull()][string[]]$AuthorizedLogins
+        [AllowNull()][string[]]$AuthorizedLogins,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$HeadSha,
+        [switch]$RequireReview
     )
 
     $present = @($Comments | Where-Object { $null -ne $_ })
@@ -396,8 +398,16 @@ function Get-UnansweredClaudeReviewReason {
             Sort-Object { Get-CommentCreatedAt $_ }
     )
 
-    $latestReview = $ordered | Where-Object { Test-IsClaudeReviewComment $_ } | Select-Object -Last 1
+    $reviews = @($ordered | Where-Object { Test-IsClaudeReviewComment $_ })
+    $headPattern = '(?im)^\s*<!--\s*REVIEW_HEAD_SHA:\s*([0-9a-f]{40})\s*-->\s*$'
+    $matchesHead = {
+        param($Comment)
+        $heads = [regex]::Matches([string]$Comment.body, $headPattern)
+        return $heads.Count -eq 1 -and $heads[0].Groups[1].Value -eq $HeadSha
+    }
+    $latestReview = $reviews | Where-Object { & $matchesHead $_ } | Select-Object -Last 1
     if ($null -eq $latestReview) {
+        if ($RequireReview -or $reviews.Count -gt 0) { return "no Claude review matches current head $HeadSha" }
         return $null
     }
 
@@ -422,7 +432,8 @@ function Get-UnansweredClaudeReviewReason {
     }
     $reviewedAt = Get-CommentCreatedAt $latestReview
     $reply = $ordered | Where-Object {
-        ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
+        ((Get-CommentCreatedAt $_) -gt $reviewedAt) -and (& $matchesHead $_) -and
+            (Test-IsReviewDispositionComment -Comment $_ -AuthorizedLogins $AuthorizedLogins)
     } | Select-Object -First 1
     if ($null -ne $reply) {
         return $null

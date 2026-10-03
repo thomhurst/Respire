@@ -42,7 +42,7 @@ $repoArgs = @()
 if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 # Re-fetch fresh — survey output goes stale within seconds.
-$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits 2>$null
+$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid 2>$null
 if ($LASTEXITCODE -ne 0) { Deny "gh pr view failed (exit $LASTEXITCODE)" }
 try {
     $view = $raw | ConvertFrom-Json
@@ -200,7 +200,9 @@ foreach ($login in $candidateLogins) {
     }
 }
 
-$claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins
+$requiresClaude = @($checks | Where-Object { $_.name -eq 'claude-review' }).Count -gt 0
+$claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments -AuthorizedLogins $authorizedLogins `
+    -HeadSha $view.headRefOid -RequireReview:$requiresClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }
 
 Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."

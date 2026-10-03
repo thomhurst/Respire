@@ -46,13 +46,14 @@ jobs:
     steps:
       # Trusted base ref at the workspace root - this is what Claude runs in.
       - name: Checkout base repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       # Untrusted PR head, kept in a subdirectory and exposed read-only via --add-dir.
       - name: Checkout pull request head
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr_number) }}
           path: pr-head
@@ -67,9 +68,12 @@ jobs:
           # pr-head/, this opt-in must be removed.
           allow-unsafe-pr-checkout: true
 
+      - name: Record reviewed commit
+        run: echo "REVIEW_HEAD_SHA=$(git -C pr-head rev-parse HEAD)" >> "$GITHUB_ENV"
+
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           GH_REPO: ${{ github.repository }}
@@ -117,4 +121,4 @@ jobs:
 
             Use the code review skill to run this review: /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}
           claude_args: |
-            --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"

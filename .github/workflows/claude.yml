@@ -26,13 +26,28 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check requesting actor permission
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUEST_ACTOR: ${{ github.actor }}
+        run: |
+          permission=$(gh api "repos/$GH_REPO/collaborators/$REQUEST_ACTOR/permission" --jq .permission)
+          case "$permission" in
+            admin|maintain|write) echo 'authorized=true' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'authorized=false' >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@v1
+        if: steps.permission.outputs.authorized == 'true'
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 

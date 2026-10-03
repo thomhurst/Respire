@@ -1148,7 +1148,9 @@ foreach ($case in $staleReviewCases) {
     }
 }
 
-function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body) {
+$reviewHead = 'a' * 40
+function New-TestComment([string]$Login, [string]$CreatedAt, [string]$Body, [string]$Head = $reviewHead) {
+    if ($Head) { $Body += "`n<!-- REVIEW_HEAD_SHA: $Head -->" }
     [pscustomobject]@{ login = $Login; createdAt = $CreatedAt; body = $Body }
 }
 
@@ -1316,11 +1318,41 @@ $claudeCommentCases = @(
 
 foreach ($case in $claudeCommentCases) {
     $authorized = if ($case.ContainsKey('Authorized')) { $case.Authorized } else { @('thomhurst') }
-    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins $authorized
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins $authorized -HeadSha $reviewHead
     $blocks = [bool]$reason
     if ($blocks -ne $case.Blocks) {
         throw "Case '$($case.Name)' expected Blocks=$($case.Blocks), got Blocks=$blocks (reason: $reason)"
     }
+}
+
+$staleHead = 'b' * 40
+$headCases = @(
+    @{ Name = 'missing review'; Comments = @(); Blocks = $true },
+    @{ Name = 'unstamped clearance'; Comments = @((New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview '')); Blocks = $true },
+    @{ Name = 'stale clearance'; Comments = @((New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview $staleHead)); Blocks = $true },
+    @{ Name = 'stale review with current disposition'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview $staleHead),
+        (New-TestComment 'thomhurst' '2026-10-01T10:05:00Z' '<!-- REVIEW_DISPOSITION -->')
+    ); Blocks = $true },
+    @{ Name = 'stale disposition'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+        (New-TestComment 'thomhurst' '2026-10-01T10:05:00Z' '<!-- REVIEW_DISPOSITION -->' $staleHead)
+    ); Blocks = $true },
+    @{ Name = 'late stale clearance cannot hide current blocking review'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $blockingReview),
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $clearReview $staleHead)
+    ); Blocks = $true },
+    @{ Name = 'late stale blocking review cannot replace current clearance'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' $clearReview),
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:05:00Z' $blockingReview $staleHead)
+    ); Blocks = $false },
+    @{ Name = 'duplicate head markers'; Comments = @(
+        (New-TestComment 'github-actions[bot]' '2026-10-01T10:00:00Z' "$clearReview`n<!-- REVIEW_HEAD_SHA: $staleHead -->")
+    ); Blocks = $true }
+)
+foreach ($case in $headCases) {
+    $reason = Get-UnansweredClaudeReviewReason -Comments $case.Comments -AuthorizedLogins @('thomhurst') -HeadSha $reviewHead -RequireReview
+    if ([bool]$reason -ne $case.Blocks) { throw "Head case '$($case.Name)' failed: $reason" }
 }
 
 Write-Host "OK review heuristic tests passed ($($cases.Count) body cases, $($staleReviewCases.Count) stale review cases, $($claudeCommentCases.Count) Claude comment cases)."
