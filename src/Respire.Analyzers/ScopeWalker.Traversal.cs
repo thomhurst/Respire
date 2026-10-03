@@ -582,7 +582,10 @@ internal static partial class ScopeWalker
         }
 
         private bool IsBoxing(IConversionOperation operation)
-            => operation.Operand.Type is { } source && operation.Type is { } destination
+            => operation.Operand.ConstantValue is not { HasValue: true, Value: null }
+                && operation.Operand is not IDefaultValueOperation
+                    { Type: INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
+                && operation.Operand.Type is { } source && operation.Type is { } destination
                 && ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination).IsBoxing;
 
         private bool ConversionMayThrow(IConversionOperation operation)
