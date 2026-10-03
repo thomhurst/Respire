@@ -411,6 +411,7 @@ internal static partial class ScopeWalker
                         nullPath: transferFailure == TransferFailure.NullReceiver
                             || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false },
                         allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
+                            || exceptionSource is IArrayCreationOperation
                             || exceptionSource is IAnonymousObjectCreationOperation
                             || exceptionSource is IConversionOperation boxing && IsBoxing(boxing)
                             || IsStringOnlyConcatenation(exceptionSource)
@@ -420,6 +421,11 @@ internal static partial class ScopeWalker
                         started, known, values);
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                    if (exceptionSource is IArrayCreationOperation arrayCreation
+                        && arrayCreation.DimensionSizes.Any(static size => size.ConstantValue is not { HasValue: true,
+                            Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0 }))
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                            implicitExceptionType: "System.OverflowException"), started, known, values);
                 }
             }
             // Construction/allocation can fail before any initializer runs.

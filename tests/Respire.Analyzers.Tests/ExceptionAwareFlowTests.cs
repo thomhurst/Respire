@@ -7,10 +7,64 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("new int[1]", "InvalidOperationException", false)]
+    [Arguments("new int[1]", "OverflowException", false)]
+    [Arguments("new int[1]", "OutOfMemoryException", true)]
+    [Arguments("new int[length]", "OverflowException", true)]
+    [Arguments("new int[length]", "InvalidOperationException", false)]
+    [Arguments("new int[1, 2]", "OverflowException", false)]
+    [Arguments("new int[1, length]", "OverflowException", true)]
+    [Arguments("new int[Length()]", "InvalidOperationException", true)]
+    [Arguments("new[] { Length() }", "InvalidOperationException", true)]
+    public async Task ArrayCreationUsesAllocationAndLengthExceptions(string expression, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Length() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int length)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{expression}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int Length() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int length)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{expression}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("int", "left == right", "left == right", "", false)]
     [Arguments("int", "left != right", "!(left == right)", "", false)]
     [Arguments("int", "left <= right", "!(left > right)", "", false)]
     [Arguments("bool", "left == right", "left == right", "", false)]
+    [Arguments("bool", "left & right", "left & right", "", false)]
+    [Arguments("bool", "left | right", "left | right", "", false)]
+    [Arguments("bool", "left ^ right", "left ^ right", "", false)]
+    [Arguments("bool", "left ^ right", "left ^ right", "left = !left;", true)]
+    [Arguments("bool", "left & right", "left & right", "right = !right;", true)]
+    [Arguments("bool", "left ^ true", "!left", "", false)]
+    [Arguments("bool", "left & true", "left", "", false)]
+    [Arguments("bool", "false | left", "left", "", false)]
     [Arguments("string", "left == right", "left == right", "", false)]
     [Arguments("DayOfWeek", "left == right", "left == right", "", false)]
     [Arguments("double", "left < right", "left < right", "", false)]

@@ -304,6 +304,29 @@ internal sealed class FlowConditions
             operand = isNull.Operand;
             comparison = null;
         }
+        else if (condition is IBinaryOperation { OperatorMethod: null,
+                     LeftOperand.Type.SpecialType: SpecialType.System_Boolean,
+                     RightOperand.Type.SpecialType: SpecialType.System_Boolean } boolean
+                 && boolean.OperatorKind is BinaryOperatorKind.And or BinaryOperatorKind.Or or BinaryOperatorKind.ExclusiveOr)
+        {
+            var left = Unwrap(boolean.LeftOperand);
+            var right = Unwrap(boolean.RightOperand);
+            var booleanConstant = left.ConstantValue is { HasValue: true, Value: bool leftValue } ? leftValue
+                : right.ConstantValue is { HasValue: true, Value: bool rightValue } ? rightValue : (bool?)null;
+            if (booleanConstant is { } constantValue)
+            {
+                var constantOnLeft = left.ConstantValue.HasValue;
+                if (boolean.OperatorKind == BinaryOperatorKind.And && !constantValue) return !expected;
+                if (boolean.OperatorKind == BinaryOperatorKind.Or && constantValue) return expected;
+                return Constrain(constantOnLeft ? right : left,
+                    boolean.OperatorKind == BinaryOperatorKind.ExclusiveOr ? expected != constantValue : expected,
+                    ref known, ref values);
+            }
+            if (Symbol(right) is not { } rightSymbol || !CanTrackSymbol(rightSymbol)) return true;
+            operand = left;
+            comparison = rightSymbol;
+            comparisonOperator = boolean.OperatorKind;
+        }
         else if (condition is IBinaryOperation { OperatorMethod: null } binary
             && binary.OperatorKind is BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals
                 or BinaryOperatorKind.LessThan or BinaryOperatorKind.LessThanOrEqual
