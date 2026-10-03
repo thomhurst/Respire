@@ -146,7 +146,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
                 forceDiscovery ? previous?.Endpoint : null,
-                notificationHint?.Target, notificationHint, HostResolver).ConfigureAwait(false);
+                notificationHint?.Target, notificationHint, HostResolver,
+                getValidatedPeer: static generation => generation.ValidatedPeer,
+                rejectPrimaryAsync: RejectGenerationAsync).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
@@ -219,14 +221,15 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             if (await HasPrimaryRoleAsync(generation, cancellationToken).ConfigureAwait(false)) return;
         }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested && generation.IsRetired)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && generation.IsRetired
+            && SentinelExceptionPolicy.IsRecoverable(error))
         {
             // Every failure on a generation that was retired while ROLE was in flight means "not the
             // current primary". A ROLE mismatch seen by application traffic retires the generation
             // before this resumes, and a socket or timeout fault on a retired generation needs the same
             // rediscovery. A failed rediscovery below becomes the probe error, so keep this cause in the log.
-            try { core.Logger?.LogDebug(error, "Sentinel primary probe failed on a retired generation; rediscovering"); }
-            catch { /* Logging must not stop health probes. */ }
+            SafeLog(error, static (logger, error)
+                => logger.LogDebug(error, "Sentinel primary probe failed on a retired generation; rediscovering"));
         }
 
         // Application traffic may already have published a replacement; never retire that one.
@@ -314,6 +317,19 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
+    private async ValueTask RejectGenerationAsync(Generation generation)
+    {
+        if (ReferenceEquals(generation, Current))
+        {
+            // Revalidation can reject a published generation. Preserve its in-flight work
+            // through normal retirement; unpublished candidates can be disposed immediately.
+            Invalidate(generation);
+            return;
+        }
+        await generation.DisposeAsync().ConfigureAwait(false);
+        lock (_gate) RemoveOwnedLocked(generation);
+    }
+
     private void RemoveOwnedLocked(Generation generation)
     {
         if (!_owned.Remove(generation) || !generation.CountedAsRetired) return;
@@ -334,10 +350,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 await previous.ConfigureAwait(false);
                 if (!suppressAfterDisposal || !core.Disposed) notification();
             }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
-                try { core.Logger?.LogWarning(error, "Sentinel state observer failed"); }
-                catch (Exception) { /* Keep later notifications independent of a user logger failure. */ }
+                SafeLog(error, static (logger, error) => logger.LogWarning(error, "Sentinel state observer failed"));
             }
         });
     }
@@ -349,10 +364,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         try
         {
             try { await generation.Multiplexer.RetireAsync().ConfigureAwait(false); }
-            catch (Exception error) when (generation.Multiplexer.RetirementDrained && !_lifetime.IsCancellationRequested)
+            catch (Exception error) when (generation.Multiplexer.RetirementDrained && !_lifetime.IsCancellationRequested
+                && SentinelExceptionPolicy.IsRecoverable(error))
             {
-                try { core.Logger?.LogDebug(error, "Sentinel transport retirement reported an error after draining at {Endpoint}", generation.Endpoint); }
-                catch (Exception) { /* Diagnostics must not abandon correction-fence cleanup. */ }
+                SafeLog((error, generation.Endpoint), static (logger, state)
+                    => logger.LogDebug(state.error, "Sentinel transport retirement reported an error after draining at {Endpoint}", state.Endpoint));
             }
             var delay = 1;
             long? lastWarning = null;
@@ -362,14 +378,14 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 {
                     await generation.Multiplexer.FenceRetiredConnectionsAsync(_lifetime.Token).ConfigureAwait(false);
                 }
-                catch (Exception error) when (!_lifetime.IsCancellationRequested)
+                catch (Exception error) when (!_lifetime.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
                 {
                     var now = Clock.GetTimestamp();
                     if (lastWarning is null || Clock.GetElapsedTime(lastWarning.Value, now) >= TimeSpan.FromMinutes(5))
                     {
                         lastWarning = now;
-                        try { core.Logger?.LogWarning(error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", generation.Endpoint); }
-                        catch (Exception) { /* Logging must not abandon an owed fence. */ }
+                        SafeLog((error, generation.Endpoint), static (logger, state)
+                            => logger.LogWarning(state.error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", state.Endpoint));
                     }
                     await Task.Delay(TimeSpan.FromSeconds(delay), Clock, _lifetime.Token).ConfigureAwait(false);
                     delay = Math.Min(delay * 2, 30);
@@ -379,14 +395,14 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             await connectionsDrained.ConfigureAwait(false);
             lock (_gate) RemoveOwnedLocked(generation);
         }
-        catch (Exception error)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             try { await Task.WhenAll(poolDrain, connectionsDrained).ConfigureAwait(false); }
-            catch (Exception poolError) { error = new AggregateException(error, poolError); }
+            catch (Exception poolError) when (SentinelExceptionPolicy.IsRecoverable(poolError)) { error = new AggregateException(error, poolError); }
             if (!_lifetime.IsCancellationRequested)
             {
-                try { core.Logger?.LogWarning(error, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal", generation.Endpoint); }
-                catch (Exception) { /* Ownership remains available to disposal even when logging fails. */ }
+                SafeLog((error, generation.Endpoint), static (logger, state)
+                    => logger.LogWarning(state.error, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal", state.Endpoint));
             }
         }
     }
@@ -547,10 +563,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             {
                 await _pools.RetireAsync(pool).ConfigureAwait(false);
             }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
-                try { _core.Logger?.LogWarning(error, "Sentinel upload pool cleanup after MOVING failed"); }
-                catch { /* Keep failed cleanup owned even if logging fails. */ }
+                _owner.SafeLog(error, static (logger, error) => logger.LogWarning(error, "Sentinel upload pool cleanup after MOVING failed"));
             }
         }
 

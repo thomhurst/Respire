@@ -136,6 +136,77 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task SameEpochNumericFallbackRetainsTheValidatedPeerOfAMultiAddressHostname()
+    {
+        await using var primary = Primary(maxConnections: 32);
+        await using var first = Sentinel(() => primary.Port, () => 6);
+        await using var second = Sentinel(() => primary.Port, () => 6);
+        // Isolate transport recovery from initial subscription-gap rediscovery.
+        first.SuppressReply = second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+        var firstReply = first.ReplyOverride!;
+        first.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? AddressReply("localhost", primary.Port)
+            : command == "SENTINEL MASTER mymaster"
+                ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primary.Port, 6)).Replace("127.0.0.1", "localhost"))
+                : firstReply(id, command);
+        await using var client = RespireClient.Create(Options(first.Port) with
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+        });
+        var router = client.Core.Sentinel!;
+        router.HostResolver = static (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse("127.0.0.2")]);
+        await client.PingAsync().AsTask().WaitAsync(Limit);
+        var original = router.Current!;
+        var validatedPeer = original.ValidatedPeer;
+        first.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR")
+            ? "-ERR hostname reporter unavailable\r\n"u8.ToArray() : firstReply(id, command);
+        router.HostResolver = static (_, _) => throw new System.Net.Sockets.SocketException();
+        await original.Multiplexer.GetConnection().DisposeAsync();
+        var replacement = await router.GetGenerationAsync(CancellationToken.None).AsTask().WaitAsync(Limit);
+        await Assert.That(replacement).IsNotSameReferenceAs(original);
+        await Assert.That(replacement.ValidatedPeer).IsEqualTo(validatedPeer);
+        await Assert.That(replacement.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", primary.Port));
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task RejectedValidatedPeerIsCleanedUpBeforeSameEpochFallback(bool missingEpoch, bool newerEpoch)
+    {
+        const int primaryPort = 7001;
+        var hostname = new RespireEndpoint("owner.test", primaryPort);
+        var originalPeer = new RespireEndpoint("127.0.0.1", primaryPort);
+        var otherPeer = new RespireEndpoint("127.0.0.2", primaryPort);
+        await using var first = HostnameSentinel(primaryPort);
+        await using var second = Sentinel(() => primaryPort, () => 6);
+        var firstReply = first.ReplyOverride!;
+        first.ReplyOverride = (id, command) =>
+        {
+            if (command != "SENTINEL MASTER mymaster") return firstReply(id, command);
+            if (missingEpoch) return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+            return Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primaryPort, newerEpoch ? 7 : 6)).Replace("127.0.0.1", hostname.Host));
+        };
+        var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
+        var state = new SentinelDiscoveryState(endpoints);
+        state.AcceptConfiguration(hostname, 6, [originalPeer.Host, otherPeer.Host], originalPeer);
+        var rejected = new List<RespireEndpoint>();
+        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port) with { Endpoints = [.. endpoints] },
+            (options, _, _) =>
+            {
+                if (options.PrimaryEndpoint == hostname) return ValueTask.FromResult(otherPeer);
+                // The rejected result must be released before another candidate connects.
+                if (!rejected.SequenceEqual([otherPeer])) throw new InvalidOperationException("Rejected candidate still owned.");
+                return ValueTask.FromResult(originalPeer);
+            }, CancellationToken.None, state,
+            hostResolver: (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse(otherPeer.Host)]),
+            getValidatedPeer: static peer => peer,
+            rejectPrimaryAsync: peer => { rejected.Add(peer); return ValueTask.CompletedTask; });
+        await Assert.That(result).IsEqualTo(newerEpoch ? otherPeer : originalPeer);
+        await Assert.That(rejected).IsEquivalentTo(newerEpoch ? [] : new[] { otherPeer });
+    }
+
+    [Test]
     public async Task OwnerAliasLookupUsesThePrimaryConnectDeadline()
     {
         const int primaryPort = 7001;

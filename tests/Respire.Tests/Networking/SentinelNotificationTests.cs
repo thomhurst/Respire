@@ -65,6 +65,60 @@ public class SentinelNotificationTests
     }
 
     [Test]
+    [Arguments("192.0.2.2")]
+    [Arguments("::ffff:192.0.2.2")]
+    public async Task ValidatedEpochOwnerNarrowsDnsEvidenceToItsPhysicalPeer(string peerHost)
+    {
+        var state = new SentinelDiscoveryState([]);
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        var peer = new RespireEndpoint(peerHost, 6379);
+        state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"], peer);
+        // A later observation without new peer proof must not expand the accepted owner.
+        state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"]);
+        foreach (long? epoch in new long?[] { 6, null })
+        {
+            await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6379), epoch)).IsTrue();
+            await Assert.That(state.IsCurrentConfiguration(new("192.0.2.1", 6379), epoch)).IsFalse();
+            await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6380), epoch)).IsFalse();
+        }
+    }
+
+    [Test]
+    [Arguments(6L)]
+    [Arguments(null)]
+    public async Task SameEpochHostnameCannotReplaceItsValidatedPhysicalPeer(long? epoch)
+    {
+        var state = new SentinelDiscoveryState([]);
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"], new("192.0.2.1", 6379));
+        await Assert.That(() => state.AcceptConfiguration(hostname, epoch, ["192.0.2.1", "192.0.2.2"],
+            new("192.0.2.2", 6379))).Throws<RespireConnectionException>();
+        await Assert.That(state.IsCurrentConfiguration(new("192.0.2.1", 6379), 6)).IsTrue();
+        await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6379), 6)).IsFalse();
+    }
+
+    [Test]
+    public async Task NewerEpochCanValidateAnotherPeerUnderTheSameHostname()
+    {
+        var state = new SentinelDiscoveryState([]);
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"], new("192.0.2.1", 6379));
+        state.AcceptConfiguration(hostname, 7, ["192.0.2.1", "192.0.2.2"], new("192.0.2.2", 6379));
+        await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6379), 7)).IsTrue();
+        await Assert.That(state.IsCurrentConfiguration(new("192.0.2.1", 6379), 7)).IsFalse();
+    }
+
+    [Test]
+    public async Task MissingEpochsDoNotCreateAPermanentValidatedPeerFence()
+    {
+        var state = new SentinelDiscoveryState([]);
+        var hostname = new RespireEndpoint("primary.test", 6379);
+        state.AcceptConfiguration(hostname, null, ["192.0.2.1", "192.0.2.2"], new("192.0.2.1", 6379));
+        state.AcceptConfiguration(hostname, null, ["192.0.2.1", "192.0.2.2"], new("192.0.2.2", 6379));
+        await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6379), null)).IsTrue();
+    }
+
+    [Test]
     public async Task RandomMergeOrdersPreserveSourceAddressesAndEveryReporter()
     {
         var random = new Random(678);

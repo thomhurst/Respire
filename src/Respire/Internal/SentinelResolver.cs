@@ -38,14 +38,14 @@ internal static class SentinelResolver
                     new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
                 if (TryParseReplicaList(in reply, out var replicas)) return replicas;
                 try { logger?.LogDebug("Sentinel {Endpoint} returned a malformed SENTINEL REPLICAS reply", sentinel); }
-                catch (Exception) { }
+                catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error)) { }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { continue; }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 try { logger?.LogDebug(error, "Optional Sentinel replica discovery failed at {Endpoint}", sentinel); }
-                catch (Exception) { }
+                catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError)) { }
             }
         }
         throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint.");
@@ -101,7 +101,9 @@ internal static class SentinelResolver
         RespireEndpoint? previouslyValidatedPrimary = null,
         RespireEndpoint? preferredTarget = null,
         SentinelHint? notificationHint = null,
-        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null)
+        Func<string, CancellationToken, Task<IPAddress[]>>? hostResolver = null,
+        Func<TResult, RespireEndpoint?>? getValidatedPeer = null,
+        Func<TResult, ValueTask>? rejectPrimaryAsync = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -215,7 +217,17 @@ internal static class SentinelResolver
                         SentinelPrimaryName = null,
                     };
                     var result = await connectPrimaryAsync(primaryOptions, primaryAddresses, connectTimeoutSource.Token).ConfigureAwait(false);
-                    discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses);
+                    try
+                    {
+                        discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses, getValidatedPeer?.Invoke(result));
+                    }
+                    catch
+                    {
+                        // A connected candidate is still owned until its epoch/peer is accepted.
+                        // Release rejected results before consulting another Sentinel.
+                        if (rejectPrimaryAsync is not null) await rejectPrimaryAsync(result).ConfigureAwait(false);
+                        throw;
+                    }
                     return result;
                 }
                 catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -243,7 +255,7 @@ internal static class SentinelResolver
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (SentinelExceptionPolicy.IsRecoverable(ex))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 // The discovery deadline usually equals the caller's command timeout. When it
@@ -363,7 +375,7 @@ internal static class SentinelResolver
             if (addPeer is not null)
             {
                 try { await DiscoverPeersAsync(connection, serviceName, addPeer, logger, cancellationToken).ConfigureAwait(false); }
-                catch (Exception error)
+                catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
                 {
                     callerCancellationToken.ThrowIfCancellationRequested();
                     // Keep the completed primary reply even if optional peer discovery times
@@ -388,7 +400,7 @@ internal static class SentinelResolver
                     configurationEpoch = epoch;
                 }
             }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 callerCancellationToken.ThrowIfCancellationRequested();
                 LogOptionalDiscoveryFailure(logger, error, "configuration", sentinel);
@@ -493,7 +505,7 @@ internal static class SentinelResolver
     private static void LogOptionalDiscoveryFailure(ILogger? logger, Exception error, string stage, RespireEndpoint sentinel)
     {
         try { logger?.LogDebug(error, "Optional Sentinel {Stage} discovery failed at {Sentinel}", stage, sentinel); }
-        catch (Exception logError) when (logError is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError))
         {
             // Diagnostic callbacks must not discard the already completed primary reply.
             RespireTelemetry.RecordSentinelGuardedLoggingFailure();
@@ -569,7 +581,7 @@ internal static class SentinelResolver
                     .WaitAsync(aliasTimeout.Token).ConfigureAwait(false);
                 return resolved.Length > 0 && current.Matches(primary, Array.ConvertAll(resolved, NormalizeAddress));
             }
-            catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 // Unknown advisory identity retains the fence; caller cancellation is checked above.
                 return false;

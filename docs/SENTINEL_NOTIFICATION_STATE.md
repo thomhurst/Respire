@@ -33,6 +33,21 @@ non-fatal counter-listener exceptions; fatal exceptions still propagate. The cou
 these wrappers only. Other Sentinel logging paths are outside its coverage,
 and this is not a general guarantee that throwing loggers cannot interrupt discovery.
 
+Recovery, retry, and guarded diagnostics use `SentinelExceptionPolicy.IsRecoverable`.
+Resource cleanup and task joining still collect all failures before propagating the result;
+those ownership boundaries intentionally do not discard errors through a recovery filter.
+
+## Background work ownership
+
+| Work | Owner and shutdown contract |
+| --- | --- |
+| Monitor supervisor, endpoint monitors, notification rediscovery, and switch-source DNS tasks | Registered under the router gate. Disposal sets `_disposed`, cancels `_lifetime`, then snapshots and joins this work with the shared ten-second notification shutdown bound. A straggler must recheck the disposed gate before publication or retirement. |
+| Generation retirement and correction-fence drainage | Each owned generation retains its retirement task. Disposal starts cleanup for every owned connection/pool, then joins retirement tasks and propagates aggregated failures. Failed cleanup stays owned until disposal. |
+| State/health observer callbacks | Serialized in `_notifications`, outside publication locks. Pending application callbacks are suppressed after disposal; explicitly retained telemetry callbacks may still run. This chain is not joined because an active observer can synchronously dispose the client itself. |
+
+The dedicated background-work owner and pure reducer are the next architectural change in
+#727. That extraction must preserve these different joining and reentrancy contracts.
+
 ## State transitions
 
 | State/event | Transition |
@@ -41,6 +56,7 @@ and this is not a general guarantee that throwing loggers cannot interrupt disco
 | Active, notification arrives | Retain new evidence in the pending hint. Arrival order does not establish failover order. |
 | Active+pending, duplicate of active switch | Retain the duplicate's reporter without adding the active switch's source to the independent pending switch. |
 | Discovery succeeds | Reconcile unqueried reporters, retaining demotion evidence for other primaries. Consume source evidence for the validated endpoint or its actual ROLE-validated socket peer only in reconciliation of that completed evidence; independent pending switches keep their fences. Source DNS aliases must be unambiguous. |
+| ROLE accepts one peer from a multi-address hostname | Narrow the epoch owner's DNS candidates to the physical peer that answered ROLE. A numeric fallback may confirm that peer at the same or missing epoch after the hostname socket closes. Another peer under the same hostname requires a newer epoch; rejected connected candidates are released before fallback. Deployments that have never exposed an epoch retain metadata-free recovery. |
 | Discovery succeeds without remaining source evidence | Bind reporter-only reconciliation to the validated owner and socket peer. A different owner requires a strictly newer configuration epoch. |
 | Discovery succeeds with another report of the same master-down outage pending | Bind reconciliation to the validated owner; the affected endpoint identifies the outage independently of reporter, channel and quorum count. Normalize numeric addresses and fold hostname case while retaining the port. |
 | A parsed down report arrives after its outage worker completed | Retain each affected endpoint together with its reporter through coalescing. Capture the current validated owner after acquiring discovery ownership. Each reporting Sentinel uses only its own down evidence: reports about superseded owners and unreported fallback Sentinels reconcile the current owner unless a newer epoch authorizes movement. Current-owner reports remain independent, including after failback. Check numeric evidence first, then resolve hostname reports concurrently within one separate alias deadline and require unambiguous validated-peer identity. Cancel and join losing lookups. Unknown aliases retain the fence without consuming the candidate's DNS/connection/ROLE deadline; caller cancellation still wins. |

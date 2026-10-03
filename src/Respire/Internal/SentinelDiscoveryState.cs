@@ -18,6 +18,7 @@ internal sealed partial class SentinelDiscoveryState
     private RespireEndpoint? _observedPrimary;
     private long? _observedEpoch;
     private string[]? _observedAddresses;
+    private RespireEndpoint? _observedValidatedPeer;
     private int _missingEpochWarning;
 
     internal bool IsNewerConfiguration(long? epoch)
@@ -69,6 +70,7 @@ internal sealed partial class SentinelDiscoveryState
             _observedEpoch = candidate;
             _observedPrimary = primary;
             _observedAddresses = addresses;
+            _observedValidatedPeer = null;
         }
         return true;
     }
@@ -80,18 +82,32 @@ internal sealed partial class SentinelDiscoveryState
         {
             LogMissingEpoch(logger, sentinel);
         }
-        catch { /* Diagnostic providers must not prevent failover. */ }
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
+        { /* Diagnostic providers must not prevent failover. */ }
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.")]
     private static partial void LogMissingEpoch(ILogger logger, RespireEndpoint sentinel);
 
-    internal void AcceptConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
+    internal void AcceptConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null,
+        RespireEndpoint? validatedPeer = null)
     {
         lock (_gate)
         {
             if (!TryObserveConfigurationLocked(primary, epoch, addresses))
                 throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
+            if (_observedEpoch is not null && validatedPeer is { } peer)
+            {
+                if (_observedValidatedPeer is { } acceptedPeer && !EndpointComparer.Instance.Equals(peer, acceptedPeer))
+                    throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.");
+                // DNS only proposed candidates. ROLE established this physical owner, which
+                // a numeric fallback can confirm even when the original DNS set was ambiguous.
+                if (_observedValidatedPeer is null)
+                {
+                    _observedValidatedPeer = peer;
+                    _observedAddresses = [SentinelResolver.NormalizeHost(peer.Host)];
+                }
+            }
             _acceptedEpoch = epoch ?? _observedEpoch;
         }
     }

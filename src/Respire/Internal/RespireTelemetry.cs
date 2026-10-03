@@ -33,7 +33,7 @@ internal static class RespireTelemetry
     internal static void RecordSentinelGuardedLoggingFailure()
     {
         try { SentinelGuardedLoggingFailures.Add(1); }
-        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             // A failing metrics listener must not replace the logger failure or stop recovery.
         }

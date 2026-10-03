@@ -103,7 +103,7 @@ internal sealed partial class SentinelRouter
                         == RespireSubscriptionEndReason.ReconnectExhausted;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 SafeLog((error, endpoint), static (logger, state)
                     => logger.LogWarning(state.error, "Sentinel event monitor failed at {Endpoint}", state.endpoint));
@@ -161,7 +161,7 @@ internal sealed partial class SentinelRouter
     {
         if (resource is null) return;
         try { await resource.DisposeAsync().ConfigureAwait(false); }
-        catch (Exception error)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             SafeLog((error, endpoint), static (logger, state)
                 => logger.LogDebug(state.error, "Sentinel event monitor cleanup failed at {Endpoint}", state.endpoint));
@@ -323,7 +323,7 @@ internal sealed partial class SentinelRouter
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception error)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             SafeLog(error, static (logger, error)
                 => logger.LogDebug(error, "Could not retire the primary named by a Sentinel switch event"));
@@ -366,7 +366,7 @@ internal sealed partial class SentinelRouter
             var addresses = await HostResolver(host, timeout.Token).ConfigureAwait(false);
             return Array.ConvertAll(addresses, SentinelResolver.NormalizeAddress);
         }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
         {
             SafeLog((error, host), static (logger, state)
                 => logger.LogDebug(state.error, "Could not resolve Sentinel switch source {Host}", state.host));
@@ -379,7 +379,7 @@ internal sealed partial class SentinelRouter
     {
         if (core.Logger is not { } logger) return;
         try { log(logger, state); }
-        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             RespireTelemetry.RecordSentinelGuardedLoggingFailure();
         }
@@ -393,7 +393,7 @@ internal sealed partial class SentinelRouter
                 core.Logger.Log(level, "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}",
                     message.Channel.ToString(), core.Options.SentinelPrimaryName, sentinel, message.Text);
         }
-        catch (Exception error) when (error is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             RespireTelemetry.RecordSentinelGuardedLoggingFailure();
         }
@@ -480,7 +480,7 @@ internal sealed partial class SentinelRouter
                 consecutiveFailures = 0;
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
-            catch (Exception error)
+            catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 SafeLog((error, attempt: ++consecutiveFailures), static (logger, state) => logger.Log(
                     state.attempt == 1 ? LogLevel.Warning : LogLevel.Debug, state.error,
