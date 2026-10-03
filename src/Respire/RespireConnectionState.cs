@@ -13,6 +13,8 @@ public enum RespireReconnectSource
     PubSub,
     /// <summary>A Redis Cluster topology or endpoint discovery fallback.</summary>
     ClusterDiscovery,
+    /// <summary>A reconnect episode owned by a Sentinel event monitor.</summary>
+    SentinelMonitor,
 }
 
 /// <summary>The coarse health of a client's connections, surfaced via <see cref="RespireClient.ConnectionStateChanged"/>.</summary>

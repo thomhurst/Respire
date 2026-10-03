@@ -322,7 +322,9 @@ public class ClusterNotificationRoutingTests
         var firstRemoved = first.ReceivedCommands.ToList().FindIndex(command => command == $"UNSUBSCRIBE {firstChannel}");
         var secondAdded = second.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {firstChannel}");
         var secondRemoved = second.ReceivedCommands.ToList().FindIndex(command => command == $"UNSUBSCRIBE {secondChannel}");
-        await Assert.That(firstAdded < firstRemoved && secondAdded < secondRemoved).IsTrue();
+        await Assert.That(firstAdded < firstRemoved && secondAdded < secondRemoved).IsTrue()
+            .Because($"Each endpoint must add its new route before removing its old route. "
+                + $"First: {string.Join("; ", first.ReceivedCommands)}. Second: {string.Join("; ", second.ReceivedCommands)}");
     }
 
     [Test]

@@ -66,6 +66,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly RespirePushHandler? _pushHandler;
     private readonly RespirePushFilter? _subscriptionPushFilter;
     private readonly RespirePushHandler? _subscriptionConfirmationHandler;
+    private readonly Action<RespireConnection>? _unexpectedConnectionClosed;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
@@ -198,6 +199,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _pushHandler = options.PushHandler;
         _subscriptionPushFilter = options.SubscriptionPushFilter;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
+        _unexpectedConnectionClosed = options.UnexpectedConnectionClosed;
         _maintenanceOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled ? null : options;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
@@ -2307,11 +2309,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var closeError = Volatile.Read(ref _abortReason)
                 ?? fault
                 ?? new RespireConnectionException($"Connection to {Host}:{Port} closed.");
+            var unexpectedClose = Volatile.Read(ref _disposeCompletion) is null && !Volatile.Read(ref _retired);
+            if (unexpectedClose)
+            {
+                try { _unexpectedConnectionClosed?.Invoke(this); }
+                catch (Exception ex)
+                {
+                    try { _logger?.LogWarning(ex, "Connection close observer threw for {Host}:{Port}", Host, Port); }
+                    catch { /* Diagnostics must not prevent connection cleanup. */ }
+                }
+            }
             Abort(closeError);
             try
             {
-                _generation?.ConnectionClosed(this,
-                    Volatile.Read(ref _disposeCompletion) is null && !Volatile.Read(ref _retired));
+                _generation?.ConnectionClosed(this, unexpectedClose);
                 PendingCommandsFailing?.Invoke();
             }
             catch (Exception ex)
@@ -3241,6 +3252,7 @@ internal sealed record RespireConnectionOptions
     internal ArrayPool<byte>? StreamPayloadPool { get; init; }
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
+    internal Action<RespireConnection>? UnexpectedConnectionClosed { get; init; }
     internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
     internal TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
     internal TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);

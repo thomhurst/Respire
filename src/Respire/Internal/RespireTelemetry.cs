@@ -175,6 +175,7 @@ internal static class RespireTelemetry
         ReconnectDelays.Record(delay.TotalSeconds, address, endpointPort, sourceTag);
     }
 
+    // ClusterDiscovery and SentinelMonitor use RecordDiscoveryReconnect's scope tag instead.
     private static string ReconnectSourceName(RespireReconnectSource source) => source switch
     {
         RespireReconnectSource.Command => "command",
@@ -204,7 +205,9 @@ internal static class RespireTelemetry
         catch (Exception error)
         {
             // Meter listeners are user code and must not change discovery or its budget.
-            logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope);
+            try { logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope); }
+            catch (Exception logError) when (logError is not OutOfMemoryException)
+            { /* User loggers must not interrupt discovery or recovery notifications. */ }
         }
     }
 

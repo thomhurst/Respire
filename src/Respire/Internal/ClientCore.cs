@@ -614,7 +614,8 @@ internal sealed class ClientCore : IAsyncDisposable
                 // Recovery can have been queued before disposal started while an earlier
                 // observer held the dispatcher. The terminal client event has no recovery source.
                 if (Disposed && change.ReconnectSource is RespireReconnectSource.Dedicated
-                    or RespireReconnectSource.PubSub or RespireReconnectSource.ClusterDiscovery) continue;
+                    or RespireReconnectSource.PubSub or RespireReconnectSource.ClusterDiscovery
+                    or RespireReconnectSource.SentinelMonitor) continue;
 
                 handlers = ConnectionStateChanged;
             }
