@@ -569,12 +569,25 @@ internal static class ScopeWalker
             }
 
             var exceptionType = exception?.Type;
-            var certain = catchesAll || HasBaseType(exceptionType, catchType);
-            // Unknown/rethrown/dynamic values and type parameters intentionally retain possible
-            // handlers. A known simple construction has an exact type; other values may be derived.
-            var possible = certain || exceptionType is null or ITypeParameterSymbol or IDynamicTypeSymbol
+            // A type parameter's runtime type derives from its class constraint. Without
+            // one, the value stays unknown and every handler remains possible.
+            if (exceptionType is ITypeParameterSymbol typeParameter)
+            {
+                exceptionType = typeParameter.ConstraintTypes.FirstOrDefault(static constraint => constraint.TypeKind == TypeKind.Class);
+            }
+
+            // Throwing an existing value that is null raises NullReferenceException instead.
+            var nullReference = exception is null or IObjectCreationOperation or ITypeParameterObjectCreationOperation
+                ? null
+                : compilation.GetTypeByMetadataName("System.NullReferenceException");
+            var certain = catchesAll || HasBaseType(exceptionType, catchType)
+                && (exception is IObjectCreationOperation or ITypeParameterObjectCreationOperation || HasBaseType(nullReference, catchType));
+            // Unknown/rethrown/dynamic values intentionally retain possible handlers. A known
+            // simple construction has an exact type; other values may be derived or null.
+            var possible = certain || exceptionType is null or IDynamicTypeSymbol
                 || catchType is ITypeParameterSymbol
-                || exception is not IObjectCreationOperation && HasBaseType(catchType, exceptionType);
+                || exception is not IObjectCreationOperation
+                   && (HasBaseType(catchType, exceptionType) || HasBaseType(nullReference, catchType));
             return (possible, certain);
         }
 

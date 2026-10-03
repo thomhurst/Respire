@@ -12,6 +12,11 @@ internal static class ScopeExitAnalysis
 {
     internal enum ExitMode { Disposal, FlushProof }
     private enum CatchMatch { None, Possible, Guaranteed }
+    private readonly struct ThrownType(ITypeSymbol? type, bool exact)
+    {
+        internal ITypeSymbol? Type { get; } = type;
+        internal bool Exact { get; } = exact;
+    }
     private static readonly string[] SimpleExceptionTypes =
         ["System.Exception", "System.InvalidOperationException", "System.ArgumentException"];
     private static readonly ConditionalWeakTable<Compilation, INamedTypeSymbol?[]> SimpleExceptionSymbols = new();
@@ -36,7 +41,7 @@ internal static class ScopeExitAnalysis
             // Handler exits are visited separately below. A throw guaranteed to be
             // caught inside this statement does not itself bypass its successor.
             if (node is ThrowStatementSyntax caughtThrow
-                && IsCaughtInsideStatement(semanticModel, caughtThrow, statement))
+                && ThrowCannotBypassStatement(semanticModel, caughtThrow, statement, mode, read))
             {
                 continue;
             }
@@ -101,10 +106,17 @@ internal static class ScopeExitAnalysis
         }
 
         if (node is not ThrowStatementSyntax thrown) return true;
-        var thrownType = GetKnownThrownType(semanticModel, thrown);
+        return GetThrownTypes(semanticModel, thrown).All(type => ThrowExitsBeforeRead(semanticModel, thrown, type, read));
+    }
+
+    private static bool ThrowExitsBeforeRead(
+        SemanticModel semanticModel, ThrowStatementSyntax thrown, ThrownType thrownType, SyntaxNode read)
+    {
+        var enclosingTries = thrown.Ancestors().OfType<TryStatementSyntax>().ToArray();
+        if (enclosingTries.Any(enclosingTry => enclosingTry.Finally?.Span.Contains(read.Span) == true)) return false;
         foreach (var enclosingTry in enclosingTries)
         {
-            if (!enclosingTry.Block.Span.Contains(node.Span)) continue;
+            if (!enclosingTry.Block.Span.Contains(thrown.Span)) continue;
             foreach (var handler in enclosingTry.Catches)
             {
                 var match = MatchCatch(semanticModel, thrownType, handler);
@@ -131,29 +143,38 @@ internal static class ScopeExitAnalysis
         return flow.ExitPoints.All(exit => ExitsBeforeRead(semanticModel, exit, read));
     }
 
-    private static bool IsCaughtInsideStatement(
-        SemanticModel semanticModel, ThrowStatementSyntax thrown, StatementSyntax statement)
+    private static bool ThrowCannotBypassStatement(
+        SemanticModel semanticModel, ThrowStatementSyntax thrown, StatementSyntax statement,
+        ExitMode mode, SyntaxNode? read)
     {
-        var thrownType = GetKnownThrownType(semanticModel, thrown);
-        foreach (var enclosingTry in thrown.Ancestors().OfType<TryStatementSyntax>())
+        return GetThrownTypes(semanticModel, thrown).All(CannotBypass);
+
+        bool CannotBypass(ThrownType thrownType)
         {
-            if (!statement.Span.Contains(enclosingTry.Span))
+            foreach (var enclosingTry in thrown.Ancestors().OfType<TryStatementSyntax>())
             {
-                break;
+                if (read is not null && enclosingTry.Finally?.Span.Contains(read.Span) == true) return false;
+
+                if (!enclosingTry.Block.Span.Contains(thrown.Span))
+                {
+                    continue;
+                }
+
+                foreach (var handler in enclosingTry.Catches)
+                {
+                    var match = MatchCatch(semanticModel, thrownType, handler);
+                    if (match == CatchMatch.None) continue;
+                    // Exits in a local handler are checked by the surrounding syntax walk.
+                    // An outer handler must terminate before the read; otherwise it skips the flush.
+                    if (!statement.Span.Contains(handler.Span)
+                        && (mode == ExitMode.Disposal || !CatchExitsBeforeRead(semanticModel, handler, read!))) return false;
+                    if (match == CatchMatch.Guaranteed) return true;
+                }
             }
 
-            if (!enclosingTry.Block.Span.Contains(thrown.Span))
-            {
-                continue;
-            }
-
-            if (enclosingTry.Catches.Any(handler => MatchCatch(semanticModel, thrownType, handler) == CatchMatch.Guaranteed))
-            {
-                return true;
-            }
+            // An uncaught exception cannot reach a later read, but still requires disposal.
+            return mode == ExitMode.FlushProof;
         }
-
-        return false;
     }
 
     /// <summary>
@@ -197,18 +218,24 @@ internal static class ScopeExitAnalysis
         }
 
         var precedingHandlers = tryStatement.Catches.TakeWhile(candidate => candidate != handler).ToArray();
-        return throws.Any(thrown =>
-        {
-            var thrownType = GetKnownThrownType(semanticModel, thrown);
-            return precedingHandlers.All(previous => MatchCatch(semanticModel, thrownType, previous) != CatchMatch.Guaranteed)
-                   && MatchCatch(semanticModel, thrownType, handler) != CatchMatch.None;
-        });
+        return throws.Any(thrown => GetThrownTypes(semanticModel, thrown).Any(thrownType =>
+            precedingHandlers.All(previous => MatchCatch(semanticModel, thrownType, previous) != CatchMatch.Guaranteed)
+            && MatchCatch(semanticModel, thrownType, handler) != CatchMatch.None));
     }
 
-    private static ITypeSymbol? GetKnownThrownType(SemanticModel semanticModel, ThrowStatementSyntax thrown)
-        => thrown.Expression is { } expression
-            ? GetKnownExactExceptionType(semanticModel.Compilation, semanticModel.GetOperation(ScopeWalker.Unwrap(expression)))
-            : null;
+    private static ThrownType[] GetThrownTypes(SemanticModel semanticModel, ThrowStatementSyntax thrown)
+    {
+        var operation = thrown.Expression is { } expression
+            ? semanticModel.GetOperation(ScopeWalker.Unwrap(expression)) : null;
+        if (operation is ILocalReferenceOperation or IParameterReferenceOperation
+            && operation.Type is { TypeKind: not TypeKind.Dynamic } type)
+        {
+            // Reading a local/parameter cannot throw during evaluation. Its non-null
+            // value may be derived; throwing null instead raises NullReferenceException.
+            return [new(type, false), new(semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException"), true)];
+        }
+        return [new(GetKnownExactExceptionType(semanticModel.Compilation, operation), true)];
+    }
 
     /// <summary>
     /// The exact type of a fresh exception whose construction cannot itself raise a different
@@ -234,7 +261,7 @@ internal static class ScopeExitAnalysis
     }
 
     private static CatchMatch MatchCatch(
-        SemanticModel semanticModel, ITypeSymbol? thrownType, CatchClauseSyntax handler)
+        SemanticModel semanticModel, ThrownType thrownType, CatchClauseSyntax handler)
     {
         // The graph walker models normal/finally successors. Keep catch dispatch
         // explicit until its exception-region traversal also models these paths.
@@ -253,10 +280,19 @@ internal static class ScopeExitAnalysis
             if (SymbolEqualityComparer.Default.Equals(caughtType,
                     semanticModel.Compilation.GetTypeByMetadataName("System.Exception")))
                 return filterIsGuaranteed ? CatchMatch.Guaranteed : CatchMatch.Possible;
-            if (thrownType is null) return CatchMatch.Possible;
-            if (semanticModel.Compilation.ClassifyConversion(thrownType, caughtType) is not
+            if (thrownType.Type is null) return CatchMatch.Possible;
+            if (semanticModel.Compilation.ClassifyConversion(thrownType.Type, caughtType) is not
                 ({ IsImplicit: true, IsReference: true } or { IsIdentity: true }))
-                return CatchMatch.None;
+            {
+                // A derived runtime value can still match a more specific handler. A type
+                // parameter's runtime type derives from each of its class constraints.
+                IEnumerable<ITypeSymbol> runtimeBases = thrownType.Type is ITypeParameterSymbol typeParameter
+                    ? typeParameter.ConstraintTypes.Where(constraint => constraint.TypeKind == TypeKind.Class)
+                    : [thrownType.Type];
+                return !thrownType.Exact && runtimeBases.All(runtimeBase =>
+                    semanticModel.Compilation.ClassifyConversion(caughtType, runtimeBase).IsImplicit)
+                    ? CatchMatch.Possible : CatchMatch.None;
+            }
         }
 
         return filterIsGuaranteed ? CatchMatch.Guaranteed : CatchMatch.Possible;

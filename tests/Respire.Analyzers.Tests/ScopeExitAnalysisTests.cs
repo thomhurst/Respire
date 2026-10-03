@@ -8,6 +8,72 @@ namespace Respire.Analyzers.Tests;
 public class ScopeExitAnalysisTests
 {
     [Test]
+    [Arguments("InvalidOperationException", "catch (Exception) { throw; }", false)]
+    [Arguments("T", "catch (Exception) { throw; }", false)]
+    [Arguments("Exception", "catch (Exception) { throw; }", false)]
+    [Arguments("InvalidOperationException", "catch (NullReferenceException) { }", true)]
+    [Arguments("InvalidOperationException", "catch (NullReferenceException) { return; }", false)]
+    [Arguments("Exception", "catch (ArgumentException) { }", true)]
+    [Arguments("T", "catch (NullReferenceException) { }", true)]
+    [Arguments("T", "catch (ArgumentException) { }", false)]
+    public async Task ExistingThrownValuePreservesDeclaredTypeAndNullPath(string type, string outerHandler, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync<T>(RespireClient client, bool choice, bool skip, {{type}} error)
+                    where T : InvalidOperationException
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    try
+                    {
+                        if (choice)
+                        {
+                            try { if (skip) throw error; }
+                            catch (InvalidOperationException) { }
+                            await first.SendAsync();
+                        }
+                        else await second.SendAsync();
+                    }
+                    {{outerHandler}}
+                    Console.WriteLine({{read}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExistingThrownValueRequiresReleaseOnNullPath(bool catchNull)
+    {
+        var result = catchNull ? "result" : "{|RESP001:result|}";
+        await VerifyDisposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip,
+                    InvalidOperationException error)
+                {
+                    var {{result}} = choice switch { 0 => await client.ExecuteAsync("PING"), _ => existing };
+                    try { if (skip) throw error; }
+                    catch (InvalidOperationException) { }
+                    {{(catchNull ? "catch (NullReferenceException) { }" : "")}}
+                    if (choice == 0) result.Dispose();
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("break", false)]
     [Arguments("break", true)]
     [Arguments("continue", false)]
