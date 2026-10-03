@@ -155,7 +155,11 @@ internal static partial class ScopeWalker
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
                         if (ContainsCall(operation, call))
-                            return (block, call.Span.End - 1);
+                            return (block, call switch
+                            {
+                                BaseObjectCreationExpressionSyntax { ArgumentList: { } constructorArguments } => constructorArguments.CloseParenToken.SpanStart,
+                                _ => call.Span.End - 1,
+                            });
             }
             return (FindBlock(graph, barrier), barrier.SpanStart);
 
@@ -543,6 +547,7 @@ internal static partial class ScopeWalker
                 or IDynamicObjectCreationOperation
                 or IWithOperation { CloneMethod: not null }
                 or IRecursivePatternOperation { DeconstructSymbol: not null }
+                or IInterpolatedStringOperation { ConstantValue.HasValue: false }
                 or IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String, ConstantValue.HasValue: false }
                 or ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String }
                 or IBinaryOperation { OperatorMethod: not null }

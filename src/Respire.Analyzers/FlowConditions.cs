@@ -245,6 +245,8 @@ internal sealed class FlowConditions
             comparisonOperator = binary.OperatorKind;
             var left = Unwrap(binary.LeftOperand);
             var right = Unwrap(binary.RightOperand);
+            if (left.Type?.TypeKind == TypeKind.Dynamic || right.Type?.TypeKind == TypeKind.Dynamic)
+                return true;
             if (right.ConstantValue.HasValue)
                 (operand, comparison) = (left, right.ConstantValue.Value);
             else if (left.ConstantValue.HasValue)

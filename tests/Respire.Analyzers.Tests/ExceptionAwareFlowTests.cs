@@ -7,18 +7,56 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("value == null", true)]
+    [Arguments("value != null", true)]
+    [Arguments("value > 0", true)]
+    [Arguments("value is null", false)]
+    public async Task DynamicComparisonsCannotProveRepeatedSelection(string condition, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespireResult existing, dynamic value)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{condition}} ? await client.ExecuteAsync("PING") : existing;
+                    if ({{condition}}) result.Dispose();
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, RespirePending<string> existing, dynamic value)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = {{condition}} ? batch.GetStringAsync("key") : existing;
+                    if ({{condition}}) await batch.SendAsync();
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Take(result, Throws());", false)]
     [Arguments("Take(result, choice ? Throws() : 0);", false)]
     [Arguments("_ = new Owner(result, Throws());", false)]
     [Arguments("Take(result, Throws());", true)]
     [Arguments("Take(result, 0);", false, false)]
+    [Arguments("_ = new Owner(result, 0) { Property = Throws() };", false, false)]
+    [Arguments("Owner owner = new(result, 0) { Property = Throws() };", false, false)]
+    [Arguments("_ = new Owner(result, Throws()) { Property = 0 };", false)]
     public async Task OwnershipTransferWaitsForArguments(string transfer, bool cleanupInCatch, bool warning = true)
     {
         await Disposal.VerifyAsync($$"""
             using System;
             using System.Threading.Tasks;
             using Respire;
-            class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } }
+            class Owner { public Owner(RespireResult result, int value) { result.Dispose(); } public int Property { get; set; } }
             class Caller
             {
                 int Throws() => throw new InvalidOperationException();
@@ -36,6 +74,8 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments("_ = \"prefix\" + holder;", true)]
     [Arguments("text += holder;", true)]
+    [Arguments("_ = $\"{holder}\";", true)]
+    [Arguments("_ = $\"prefix{holder,10}\";", true)]
     [Arguments("_ = text + text;", false)]
     [Arguments("text += text;", false)]
     [Arguments("_ = \"prefix\" + \"suffix\";", false)]
