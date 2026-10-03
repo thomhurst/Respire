@@ -2,19 +2,25 @@
 title: Coordination leases and fencing-token locks
 ---
 
-`Respire.Extensions.Coordination` adds fencing locks and named hash-field leases to an existing
+`Respire.Coordination` adds fencing locks and named hash-field leases to an existing
 client. A fencing lock carries a random `RespireLockToken` for ownership and a positive
 64-bit fencing token for a cooperating protected resource. Install the optional package:
 
 ```bash
-dotnet add package Respire.Extensions.Coordination
+dotnet add package Respire.Coordination
 ```
 
+With C# 14 or later, import `Respire.Coordination` and use `client.Coordination`
+on `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+including its `RateLimiters` factory, and performs no network I/O. Key-prefixed views receive
+their own wrapper. The caller retains ownership of the underlying client.
+The existing `RespireCoordination` constructor remains available.
+
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 await using var attempt = await coordination.TryAcquireFencedLockAsync(
     "{invoice:42}:lease", "{invoice:42}:fence", TimeSpan.FromSeconds(30));
 if (!attempt.Acquired) return;
@@ -39,7 +45,7 @@ Enable RESP3 client-side caching when creating the client. No `notify-keyspace-e
 need to be enabled on Redis; client tracking sends invalidations for tracked reads.
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var waitingClient = await RespireClient.ConnectAsync(new RespireOptions
 {
@@ -47,7 +53,7 @@ await using var waitingClient = await RespireClient.ConnectAsync(new RespireOpti
     Protocol = RespProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
-var waitingCoordination = new RespireCoordination(waitingClient);
+var waitingCoordination = waitingClient.Coordination;
 await using var lease = await waitingCoordination.AcquireFencedLockAsync(
     "{invoice:42}:lease", "{invoice:42}:fence", TimeSpan.FromSeconds(30), CancellationToken.None);
 ```
@@ -100,9 +106,9 @@ only its current token count and last server refill time.
 
 ```csharp
 using System.Threading.RateLimiting;
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 await using var limiter = coordination.RateLimiters.FixedWindow(
     "limits:checkout", permitLimit: 100, window: TimeSpan.FromMinutes(1), queueLimit: 20,
     queueProcessingOrder: QueueProcessingOrder.OldestFirst);
@@ -136,10 +142,10 @@ consumed even when the caller does not receive an acquired lease.
 ### Fixed window
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.FixedWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1));
 ```
@@ -151,10 +157,10 @@ forward to its end, so permits never expire early; this can delay availability b
 segment duration. More segments reduce that extra delay.
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.SlidingWindow(
     "limits:api", permitLimit: 500, window: TimeSpan.FromMinutes(1), segments: 10);
 ```
@@ -162,10 +168,10 @@ using var limiter = coordination.RateLimiters.SlidingWindow(
 ### Token bucket
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(client);
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.TokenBucket(
     "limits:api", tokenLimit: 100, tokensPerPeriod: 10,
     replenishmentPeriod: TimeSpan.FromSeconds(1));
@@ -196,7 +202,7 @@ cleanup after an acquisition whose result is uncertain. Other `IRespireClient` i
 their own command-ordering behavior.
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var leaseClient = await RespireClient.ConnectAsync(new RespireOptions
 {
@@ -204,7 +210,7 @@ await using var leaseClient = await RespireClient.ConnectAsync(new RespireOption
     Protocol = RespProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
-var leaseCoordination = new RespireCoordination(leaseClient);
+var leaseCoordination = leaseClient.Coordination;
 await using var lease = await leaseCoordination.AcquireLeaseAsync(
     "coordination:leases", "worker:42", TimeSpan.FromSeconds(30));
 ```
@@ -290,9 +296,9 @@ handle only after Redis reports that this owner no longer holds the lease.
 The same package provides immediate shared-read and exclusive-write leases:
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 await using var read = await coordination.TryAcquireReadLockAsync(
     "{account:42}:rw", TimeSpan.FromSeconds(30));
 if (!read.Acquired) return;
@@ -323,9 +329,9 @@ Readers keep being admitted while any reader is live, so a steady stream of over
 can starve writers. Bound writer retries with backoff:
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
-var coordination = new RespireCoordination(redis);
+var coordination = redis.Coordination;
 for (var delay = TimeSpan.FromMilliseconds(50); ; delay *= 2)
 {
     await using var write = await coordination.TryAcquireWriteLockAsync(
@@ -350,7 +356,7 @@ validity after elapsed time and drift allowance. Failed attempts release that to
 reachable node. Node operations have a bounded timeout, configurable with `NodeTimeout`.
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var first = await RespireClient.ConnectAsync("redis://node-a:6379");
 await using var second = await RespireClient.ConnectAsync("redis://node-b:6379");
@@ -391,10 +397,10 @@ waiters complete at zero. Reset replaces the generation, wakes old waiters, and 
 already completed generation fails rather than underflowing.
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var latchClient = await RespireClient.ConnectAsync("localhost:6379");
-var coordination = new RespireCoordination(latchClient);
+var coordination = latchClient.Coordination;
 var latch = await coordination.CreateCountdownLatchAsync("{batch:42}:latch", count: 3);
 var completed = latch.WaitAsync();
 
@@ -432,10 +438,10 @@ independent Redis histories.
 Use `RespireSemaphore` for immediate permit acquisition:
 
 ```csharp
-using Respire.Extensions.Coordination;
+using Respire.Coordination;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var semaphore = new RespireSemaphore(client, "{batch:42}:permits", capacity: 4);
+var semaphore = client.Coordination.CreateSemaphore("{batch:42}:permits", capacity: 4);
 await using var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
 if (!attempt.Acquired) return;
 // Run work while holding attempt.Permit.

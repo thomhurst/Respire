@@ -6,6 +6,312 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    public async Task RethrowCaughtBeforeFinallyFlush_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    try { throw new InvalidOperationException(); }
+                    catch (InvalidOperationException) { throw; }
+                }
+                catch (Exception) { await batch.SendAsync(); }
+                finally { Console.WriteLine(pending.Result); }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task DerivedCatchBeforeFinallyRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, Exception error)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { throw error; }
+                catch (InvalidOperationException) { Console.WriteLine("unflushed"); }
+                catch (Exception) { await batch.SendAsync(); }
+                finally { Console.WriteLine({|RESP002:pending.Result|}); }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task FilterInsideFinally_DoesNotResumeBeforeCatchFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool handle)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { Console.WriteLine("work"); }
+                finally
+                {
+                    try { throw new InvalidOperationException(); }
+                    catch (Exception) when (handle) { await batch.SendAsync(); }
+                    catch (Exception) { await batch.SendAsync(); }
+                }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CaughtThrowInsideFinally_PreservesContinuation_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using Respire;
+        public class Caller
+        {
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { Console.WriteLine("work"); }
+                finally
+                {
+                    try { throw new InvalidOperationException(); }
+                    catch (InvalidOperationException) { Console.WriteLine("caught"); }
+                }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReturnThroughFinally_DoesNotResumeAtFollowingRead() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    if (skip) return;
+                    await batch.SendAsync();
+                }
+                finally { Console.WriteLine("cleanup"); }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task PendingCreatedInFinally_ReadAfterFinally_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using Respire;
+        public class Caller
+        {
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                RespirePending<string> pending;
+                try { Console.WriteLine("work"); }
+                finally { pending = batch.GetStringAsync("key"); }
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CaughtThrow_FlushBeforeFinallyRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { throw new InvalidOperationException(); }
+                catch (InvalidOperationException) { await batch.SendAsync(); }
+                finally { Console.WriteLine(pending.Result); }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CorrelatedFlush_ReadInFinally_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice) await first.SendAsync();
+                    else await second.SendAsync();
+                }
+                finally { Console.WriteLine(pending.Result); }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task EarlyExitBeforeFlush_ReadInFinally_IsFlagged(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    if (skip) { {{{exit}}} }
+                    await batch.SendAsync();
+                }
+                finally
+                {
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task CorrelatedFlushBypassed_ReadInFinally_IsFlagged(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool choice, bool skip)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                try
+                {
+                    if (choice)
+                    {
+                        if (skip) { {{{exit}}} }
+                        await first.SendAsync();
+                    }
+                    else await second.SendAsync();
+                }
+                finally
+                {
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task FlushBeforeEarlyExit_ReadInFinally_IsNotFlagged(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    await batch.SendAsync();
+                    if (skip) { {{{exit}}} }
+                }
+                finally
+                {
+                    Console.WriteLine(pending.Result);
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task FinallyFlush_BeforeFollowingRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { if (skip) return; }
+                finally { await batch.SendAsync(); }
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("return;")]
+    [Arguments("throw new InvalidOperationException();")]
+    public async Task InnerFinallyFlush_BeforeOuterFinallyRead_IsNotFlagged(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool skip)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    try { if (skip) { {{{exit}}} } }
+                    finally { await batch.SendAsync(); }
+                }
+                finally { Console.WriteLine(pending.Result); }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("ExecuteAsync", "")]
     [Arguments("TryExecuteAsync", "")]
     [Arguments("ExecuteAndWaitForReplicationAsync", "1, TimeSpan.Zero")]

@@ -175,7 +175,7 @@ public class ClientCacheInvalidationWireTests
                 CoalesceConcurrentMisses = coalesce,
                 ReuseHashFields = reuseHashFields,
                 TrackingMode = mode,
-                BroadcastPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["tenant:"] : [],
+                KeyPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["tenant:"] : [],
             },
         });
 }

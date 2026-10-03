@@ -14,12 +14,12 @@
     <PackageReference Include="Respire.Compression.Zstd" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Testing" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Testing.Containers" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.Caching" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.Coordination" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.Aws" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Respire.Extensions.Azure" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Caching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Coordination" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Aws" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Caching.Hybrid" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.DependencyInjection" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Azure" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
@@ -34,5 +34,14 @@
   <ItemGroup>
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
   </ItemGroup>
+
+  <Target Name="RecordExpectedRuntimeAssemblies" BeforeTargets="GetAssemblyAttributes">
+    <!-- Package and runtime assembly names intentionally match. Derive the expected
+         set from references so adding a package cannot silently omit its audit. -->
+    <ItemGroup>
+      <AssemblyMetadata Include="ExpectedRuntimeAssembly" Value="%(PackageReference.Identity)"
+                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.'))" />
+    </ItemGroup>
+  </Target>
 
 </Project>

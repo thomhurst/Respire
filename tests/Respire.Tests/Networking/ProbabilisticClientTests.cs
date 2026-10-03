@@ -1,5 +1,5 @@
 using System.Text;
-using Respire.Extensions.Probabilistic;
+using Respire.Probabilistic;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,7 +15,7 @@ public class ProbabilisticClientTests
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
-        var probabilistic = new RespireProbabilisticClient(client.WithKeyPrefix("tenant:"));
+        var probabilistic = client.WithKeyPrefix("tenant:").Probabilistic;
 
         await probabilistic.BloomAddAsync("filter", "item");
 

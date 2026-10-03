@@ -8,7 +8,18 @@ on:
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
+      - scripts/Assert-PrGreen.ps1
+      - scripts/Merge-Pr.ps1
+      - scripts/Test-PrMergeHead.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - .github/scripts/pr-review-comment.sh
+      - .github/scripts/test-pr-review-comment.sh
+      - .github/scripts/claude-request-permission.sh
+      - .github/scripts/test-claude-request-permission.sh
+      - .github/scripts/claude-request-revision.sh
+      - .github/scripts/test-claude-request-revision.sh
+      - .github/workflows/claude.yml
+      - .github/workflows/claude-code-review.yml
       - .github/workflows/agent-guard.yml
   push:
     branches: [main]
@@ -17,7 +28,18 @@ on:
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
+      - scripts/Assert-PrGreen.ps1
+      - scripts/Merge-Pr.ps1
+      - scripts/Test-PrMergeHead.ps1
       - scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - .github/scripts/pr-review-comment.sh
+      - .github/scripts/test-pr-review-comment.sh
+      - .github/scripts/claude-request-permission.sh
+      - .github/scripts/test-claude-request-permission.sh
+      - .github/scripts/claude-request-revision.sh
+      - .github/scripts/test-claude-request-revision.sh
+      - .github/workflows/claude.yml
+      - .github/workflows/claude-code-review.yml
       - .github/workflows/agent-guard.yml
 
 permissions:
@@ -51,3 +73,18 @@ jobs:
       - name: Verify PR review gate heuristics
         shell: pwsh
         run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1
+      - name: Verify merge head binding
+        shell: pwsh
+        run: ./scripts/Test-PrMergeHead.ps1
+      - name: Verify review comment helper
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-pr-review-comment.sh
+      - name: Verify Claude request authorization
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-claude-request-permission.sh
+      - name: Verify Claude request revision
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash .github/scripts/test-claude-request-revision.sh

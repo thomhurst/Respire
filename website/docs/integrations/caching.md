@@ -9,7 +9,7 @@ Respire integrates with Microsoft caching abstractions through two companion pro
 
 ## Distributed cache
 
-`Respire.Extensions.Caching` provides `IDistributedCache` and `IBufferDistributedCache`:
+`Respire.Caching` provides `IDistributedCache` and `IBufferDistributedCache`:
 
 ```csharp
 builder.Services.AddRespireDistributedCache(
@@ -40,6 +40,25 @@ enable it on a separately registered `IRespireClient` used for direct eligible r
 The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
 is set, it uses a separately registered `IRespireClient` without taking ownership.
 
+To adapt an existing client directly, use `AsDistributedCache`:
+
+```csharp
+using Respire.Caching;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost");
+await using var cache = client.AsDistributedCache(new RespireCacheOptions
+{
+    InstanceName = "myapp:",
+});
+var cachedBytes = await cache.GetAsync("product:42");
+```
+
+Each call creates a new adapter without network I/O. `InstanceName` adds to any existing
+client key prefix, and `ValueCodec` configures the adapter's payload encoding. The caller
+retains ownership of the client; disposing the adapter does not dispose it. `ConnectionString`
+and `ClientOptions` are ignored by this method because it uses the supplied client.
+The existing `RespireDistributedCache` constructor remains available.
+
 Inject the framework abstraction into application code:
 
 <!-- doc-test-declaration -->
@@ -53,7 +72,7 @@ public sealed class ProductCache(IDistributedCache cache)
 
 ## HybridCache
 
-`Respire.Extensions.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:
+`Respire.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:
 
 ```csharp
 builder.Services.AddRespireHybridCache(

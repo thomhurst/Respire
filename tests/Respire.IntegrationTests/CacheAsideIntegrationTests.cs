@@ -184,7 +184,7 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
             ClientSideCache = new()
             {
                 CoalesceConcurrentMisses = true, TrackingMode = mode,
-                BroadcastPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["cache-aside:"] : [],
+                KeyPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["cache-aside:"] : [],
             },
         });
     private static async Task WaitUntilAsync(Func<bool> condition)

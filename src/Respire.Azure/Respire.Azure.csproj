@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Azure</PackageId>
+    <Title>Respire.Azure</Title>
+    <Description>Azure Managed Redis Microsoft Entra credential provider for Respire.</Description>
+    <PackageTags>$(PackageTags);azure;managed-redis;entra;credentials</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <PackageReference Include="Azure.Core" />
+  </ItemGroup>
+</Project>

@@ -60,7 +60,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         ? Encoding.UTF8.GetByteCount(_string)
         : _bytes.Length;
 
-    internal bool StartsWithAny(Internal.BroadcastPrefixSet prefixes)
+    internal bool StartsWithAny(Internal.ClientCachePrefixSet prefixes)
     {
         if (_string is null) return prefixes.Matches(_bytes.Span);
         var length = Encoding.UTF8.GetByteCount(_string);

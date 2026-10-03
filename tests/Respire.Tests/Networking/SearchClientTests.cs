@@ -1,4 +1,4 @@
-using Redis.Search;
+using Respire.Search;
 using Respire.Internal;
 using Respire.Protocol;
 using System.Text;
@@ -52,7 +52,7 @@ public class SearchClientTests
             },
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
-        var search = new RespireSearchClient(client);
+        var search = client.Search;
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
         {
@@ -534,7 +534,7 @@ public class SearchClientTests
     [Test]
     public async Task SearchQueryCommandsDeclareReadOnlyCacheMutation()
     {
-        var commands = typeof(RespireSearchClient).Assembly.GetType("Redis.Search.IRespireSearchCommands", throwOnError: true)!;
+        var commands = typeof(RespireSearchClient).Assembly.GetType("Respire.Search.IRespireSearchCommands", throwOnError: true)!;
         foreach (var methodName in new[] { "InfoAsync", "SearchAsync", "AggregateAsync", "HybridAsync", "ExplainAsync", "ExplainCliAsync" })
         {
             var command = commands.GetMethod(methodName)!.GetCustomAttribute<RespireCommandAttribute>()!;

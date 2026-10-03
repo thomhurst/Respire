@@ -316,8 +316,8 @@ public sealed record RespireOptions
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
 
     /// <summary>
-    /// Enables bounded RESP3 server-assisted client-side caching. Null (default) has no cache,
-    /// tracking commands, invalidation processing, or cache storage overhead.
+    /// Enables RESP3 server-assisted client-side caching. Assign <c>new()</c> for bounded defaults.
+    /// Null (default) disables caching with no tracking commands, invalidation processing, or storage overhead.
     /// </summary>
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
@@ -469,12 +469,6 @@ public sealed record RespireOptions
                 MaxInflightCommands >= requiredInflightCommands,
                 nameof(MaxInflightCommands),
                 requirement);
-            Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
-            Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
-            Require(
-                cache.TimeToLive is null || cache.TimeToLive >= TimeSpan.FromMilliseconds(1),
-                nameof(ClientSideCache),
-                "must have a null TimeToLive or at least one millisecond");
         }
 
         if (TcpKeepAliveTime is null
@@ -505,7 +499,7 @@ public sealed record RespireOptions
             Endpoints = new List<RespireEndpoint>(Endpoints),
             ReplicaEndpoints = new List<RespireEndpoint>(ReplicaEndpoints),
             Protocol = effectiveProtocol,
-            ClientSideCache = ClientSideCache?.SnapshotTracking(),
+            ClientSideCache = ClientSideCache?.ValidateAndSnapshot(),
         };
     }
 
@@ -555,7 +549,7 @@ public sealed record RespireOptions
             PushHandler = pushHandler,
             EnableClientTracking = enableClientTracking,
             ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
-                ? new(cache.TrackingMode, cache.BroadcastPrefixes) : default,
+                ? new(cache.TrackingMode, cache.KeyPrefixes) : default,
         };
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 
@@ -9,7 +10,7 @@ internal readonly record struct RespDirectFillRequest(RespDataType Type, int Pay
 /// Reusable connection parser that retains completed aggregate children and decoded bulk
 /// headers across receives. Consumed bytes may be compacted immediately by the caller.
 /// </summary>
-internal sealed class RespParseState(int directFillThreshold) : IDisposable
+internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttributes = false) : IDisposable
 {
     private AggregateFrame[] _frames = new AggregateFrame[4];
     private int _depth;
@@ -18,6 +19,10 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
     private int _pendingBulkLength;
 
     internal bool IsIdle => _depth == 0 && !_hasPendingBulk;
+
+    // Only top-level attributes yield to the connection's bulk fast path;
+    // attributes inside an unfinished aggregate remain part of that aggregate.
+    private bool ShouldYieldAfterAttribute => stopAfterAttributes && IsIdle;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public RespParseStatus TryParse(
@@ -51,7 +56,10 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
             }
         }
 
-        return TryParseResumable(buffer, ref pos, out value, out directFill);
+        var status = TryParseResumable(buffer, ref pos, out value, out directFill);
+        Debug.Assert(stopAfterAttributes || status != RespParseStatus.SkippedAttribute,
+            "Only parsers that opt in may yield after an attribute.");
+        return status;
     }
 
     internal RespParseStatus TryParseResumable(
@@ -78,6 +86,11 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                     return RespParseStatus.Done;
                 }
 
+                if (ShouldYieldAfterAttribute)
+                {
+                    return RespParseStatus.SkippedAttribute;
+                }
+
                 continue;
             }
 
@@ -95,6 +108,11 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                     if (AcceptValue(in immediate, out value))
                     {
                         return RespParseStatus.Done;
+                    }
+
+                    if (ShouldYieldAfterAttribute)
+                    {
+                        return RespParseStatus.SkippedAttribute;
                     }
 
                     continue;
@@ -119,12 +137,22 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
                 if (discard)
                 {
                     immediate.Dispose();
+                    if (ShouldYieldAfterAttribute)
+                    {
+                        return RespParseStatus.SkippedAttribute;
+                    }
+
                     continue;
                 }
 
                 if (immediate.Type != default && AcceptValue(in immediate, out value))
                 {
                     return RespParseStatus.Done;
+                }
+
+                if (ShouldYieldAfterAttribute)
+                {
+                    return RespParseStatus.SkippedAttribute;
                 }
 
                 continue;
@@ -141,6 +169,11 @@ internal sealed class RespParseState(int directFillThreshold) : IDisposable
             if (AcceptValue(in scalar, out value))
             {
                 return RespParseStatus.Done;
+            }
+
+            if (ShouldYieldAfterAttribute)
+            {
+                return RespParseStatus.SkippedAttribute;
             }
         }
     }

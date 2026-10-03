@@ -219,7 +219,7 @@ public class HashMultiReadCacheTests
             {
                 ReuseHashFields = true,
                 TrackingMode = RespireClientTrackingMode.Broadcast,
-                BroadcastPrefixes = [covered ? "hash" : "other:"],
+                KeyPrefixes = [covered ? "hash" : "other:"],
             },
         });
         for (var read = 0; read < 2; read++)

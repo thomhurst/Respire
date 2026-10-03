@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Respire.Commands;
-using Respire.Extensions.TimeSeries;
+using Respire.TimeSeries;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -22,7 +22,7 @@ public class TimeSeriesClientTests
     public async Task CommandsDeclareCacheMutationBehavior()
     {
         var commands = typeof(RespireTimeSeriesClient).Assembly
-            .GetType("Respire.Extensions.TimeSeries.IRespireTimeSeriesCommands", throwOnError: true)!;
+            .GetType("Respire.TimeSeries.IRespireTimeSeriesCommands", throwOnError: true)!;
         var expected = new Dictionary<string, RespireCacheMutation>
         {
             ["CreateAsync"] = RespireCacheMutation.SingleKey,
@@ -310,7 +310,7 @@ public class TimeSeriesClientTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var prefixed = client.WithKeyPrefix("tenant:");
-        var timeSeries = new RespireTimeSeriesClient(prefixed);
+        var timeSeries = prefixed.TimeSeries;
         var labelQuery = new RespireTimeSeriesRangeOptions { Filters = ["room=1"] };
 
         Func<Task> typed = command switch

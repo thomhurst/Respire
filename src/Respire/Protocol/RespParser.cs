@@ -22,10 +22,18 @@ internal enum RespParseStatus : byte
     NeedMoreData,
     InvalidData,
     NeedDirectFill,
+    /// <summary>
+    /// A top-level attribute was consumed; resume at the following reply.
+    /// Only the resumable parser with stopAfterAttributes enabled returns this status.
+    /// </summary>
+    SkippedAttribute,
 }
 
 internal static class RespParser
 {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool IsAttributeStart(byte value) => value == (byte)'|';
+
     /// <summary>
     /// Attempts to parse one complete RESP value starting at <paramref name="pos"/>.
     /// On <see cref="RespParseStatus.Done"/>, <paramref name="pos"/> is advanced past the value.
@@ -44,7 +52,7 @@ internal static class RespParser
                 return RespParseStatus.NeedMoreData;
             }
 
-            if (buffer[cursor] != (byte)'|')
+            if (!IsAttributeStart(buffer[cursor]))
             {
                 break;
             }

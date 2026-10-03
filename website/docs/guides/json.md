@@ -1,19 +1,25 @@
 ---
-title: RedisJSON
+title: Redis JSON
 ---
 
-`Respire.Json` adds typed RedisJSON commands to an existing Respire client. Use Redis Stack or Redis 8 with the JSON module enabled.
+`Respire.Json` provides typed Redis JSON commands. JSON is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisJSON module. The package, assembly, and root namespace are all `Respire.Json`.
 
 ```bash
 dotnet add package Respire.Json
 ```
+
+With C# 14 or later, import the namespace shown below and use `client.Json` on
+`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
+performs no network I/O, and leaves ownership of the underlying client with you.
+Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
+The existing `new RespireJsonClient(client)` constructor remains available.
 
 `RespireJsonClient` uses `System.Text.Json` metadata supplied by the caller. This avoids reflection and supports Native AOT:
 
 <!-- doc-test-declaration: split-before=await using var client -->
 ```csharp
 using System.Text.Json.Serialization;
-using Respire.Extensions.Json;
+using Respire.Json;
 
 [JsonSerializable(typeof(Customer))]
 internal partial class CustomerJsonContext : JsonSerializerContext;
@@ -21,7 +27,7 @@ internal partial class CustomerJsonContext : JsonSerializerContext;
 internal sealed record Customer(string Name, string Email);
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
-var json = new RespireJsonClient(client);
+var json = client.Json;
 var key = (RespireKey)"customer:42";
 var customer = new Customer("Ada", "ada@example.test");
 

@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Respire;
 using Respire.Commands;
-using Respire.Extensions.Json;
+using Respire.Json;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -37,7 +37,7 @@ public partial class RespireJsonClientTests
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ThreadPoolMonitoring = false,
         });
-        var json = new RespireJsonClient(client.WithKeyPrefix("tenant:"));
+        var json = client.WithKeyPrefix("tenant:").Json;
 
         var result = await json.GetAsync("profile", JsonTestContext.Default.Profile);
 
@@ -349,7 +349,7 @@ public partial class RespireJsonClientTests
                     operations.Add(command.Name);
             }
         }
-        var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Extensions.Json.IRespireJsonModifierCommands")!;
+        var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Json.IRespireJsonModifierCommands")!;
         foreach (var type in new[] { typeof(IRespireJsonCommands), modifierCommands })
         {
             foreach (var method in type.GetMethods())
