@@ -45,7 +45,7 @@ public class ClusterRoutingSnapshotTests
             var published = router.RoutingSnapshot;
             var rebuilt = ClusterRoutingSnapshot.Empty.Publish(owners, routes, ulong.MaxValue,
                 published.Masters, published.ReplicaNodes, published.Replicas,
-                published.MasterSlotCounts, published.IsComplete);
+                published.MasterSlotCounts.ToArray(), published.IsComplete);
             for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
                 if (published[slot] != rebuilt[slot])
                     throw new InvalidOperationException($"Incremental publication differs from staging at slot {slot}.");
@@ -59,7 +59,7 @@ public class ClusterRoutingSnapshotTests
         var router = client.Core.Cluster!;
         router.ApplyTopology(Topology(6379, 6380), 0, 1);
         var before = router.RoutingSnapshot;
-        var counts = (int[])before.MasterSlotCounts.Clone();
+        var counts = before.MasterSlotCounts.ToArray();
         var unchanged = before.Publish([], [], 0, before.Masters, before.ReplicaNodes, before.Replicas, counts, true);
         await Assert.That(unchanged).IsSameReferenceAs(before);
 
@@ -70,7 +70,7 @@ public class ClusterRoutingSnapshotTests
         counts[0]--;
         await Assert.That(changed.MasterSlotCounts[0]).IsEqualTo(16383);
         var incomplete = changed.Publish([], [], 0, changed.Masters, changed.ReplicaNodes,
-            changed.Replicas, changed.MasterSlotCounts, false);
+            changed.Replicas, changed.MasterSlotCounts.ToArray(), false);
         await Assert.That(incomplete.IsComplete).IsFalse();
         await Assert.That(changed.IsComplete).IsTrue();
     }

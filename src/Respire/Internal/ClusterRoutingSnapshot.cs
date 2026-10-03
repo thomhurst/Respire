@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using Respire.Infrastructure;
 
 namespace Respire.Internal;
@@ -17,9 +19,9 @@ internal sealed class ClusterRoutingSnapshot
 
     internal readonly record struct SlotRoute(RespireConnectionMultiplexer? Primary, ClusterReplicaSet? Replicas);
 
-    private ClusterRoutingSnapshot(SlotRoute[][] pages, RespireConnectionMultiplexer[] masters,
-        RespireConnectionMultiplexer[] replicaNodes, ClusterTopologyReplica[] replicas,
-        int[] masterSlotCounts, bool complete)
+    private ClusterRoutingSnapshot(SlotRoute[][] pages, ImmutableArray<RespireConnectionMultiplexer> masters,
+        ImmutableArray<RespireConnectionMultiplexer> replicaNodes, ImmutableArray<ClusterTopologyReplica> replicas,
+        ImmutableArray<int> masterSlotCounts, bool complete)
     {
         _pages = pages;
         Masters = masters;
@@ -30,11 +32,10 @@ internal sealed class ClusterRoutingSnapshot
     }
 
     internal static ClusterRoutingSnapshot Empty { get; } = CreateEmpty();
-    // These arrays are publication-owned; callers may enumerate them but must not mutate them.
-    internal RespireConnectionMultiplexer[] Masters { get; }
-    internal RespireConnectionMultiplexer[] ReplicaNodes { get; }
-    internal ClusterTopologyReplica[] Replicas { get; }
-    internal int[] MasterSlotCounts { get; }
+    internal ImmutableArray<RespireConnectionMultiplexer> Masters { get; }
+    internal ImmutableArray<RespireConnectionMultiplexer> ReplicaNodes { get; }
+    internal ImmutableArray<ClusterTopologyReplica> Replicas { get; }
+    internal ImmutableArray<int> MasterSlotCounts { get; }
     internal bool IsComplete { get; }
     internal SlotRoute this[int slot] => _pages[slot >> PageShift][slot & (PageSize - 1)];
 
@@ -49,13 +50,13 @@ internal sealed class ClusterRoutingSnapshot
     // The router holds its writer gate. Dirty pages include primary and replica changes, so
     // no reader can observe a new primary paired with replicas from the previous publication.
     internal ClusterRoutingSnapshot Publish(RespireConnectionMultiplexer?[] owners,
-        ClusterReplicaSet?[] routes, ulong dirtyPages, RespireConnectionMultiplexer[] masters,
-        RespireConnectionMultiplexer[] replicaNodes, ClusterTopologyReplica[] replicas,
+        ClusterReplicaSet?[] routes, ulong dirtyPages, ImmutableArray<RespireConnectionMultiplexer> masters,
+        ImmutableArray<RespireConnectionMultiplexer> replicaNodes, ImmutableArray<ClusterTopologyReplica> replicas,
         int[] masterSlotCounts, bool complete)
     {
         if (dirtyPages == 0 && complete == IsComplete
-            && ReferenceEquals(masters, Masters) && ReferenceEquals(replicaNodes, ReplicaNodes)
-            && ReferenceEquals(replicas, Replicas) && masterSlotCounts.AsSpan().SequenceEqual(MasterSlotCounts))
+            && masters == Masters && replicaNodes == ReplicaNodes && replicas == Replicas
+            && masterSlotCounts.AsSpan().SequenceEqual(MasterSlotCounts.AsSpan()))
             return this;
         var pages = dirtyPages == 0 ? _pages : (SlotRoute[][])_pages.Clone();
         while (dirtyPages != 0)
@@ -68,6 +69,7 @@ internal sealed class ClusterRoutingSnapshot
                 page[offset] = new(owners[start + offset], routes[start + offset]);
             pages[pageIndex] = page;
         }
-        return new(pages, masters, replicaNodes, replicas, (int[])masterSlotCounts.Clone(), complete);
+        return new(pages, masters, replicaNodes, replicas,
+            ImmutableCollectionsMarshal.AsImmutableArray((int[])masterSlotCounts.Clone()), complete);
     }
 }

@@ -307,7 +307,7 @@ internal sealed partial class ClusterRouter
     {
         List<RespireConnectionMultiplexer>? retired = null;
         foreach (var node in previous.ReplicaNodes)
-            if (Array.IndexOf(current.ReplicaNodes, node) < 0) (retired ??= []).Add(node);
+            if (current.ReplicaNodes.IndexOf(node) < 0) (retired ??= []).Add(node);
         return retired;
     }
 

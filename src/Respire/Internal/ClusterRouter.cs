@@ -1,4 +1,7 @@
+using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -29,11 +32,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     // Every slot in a range shares one replica set, including its cursor and refresh throttle.
     private readonly ClusterReplicaSet?[] _replicasBySlot = new ClusterReplicaSet?[ClusterHash.SlotCount];
-    // Node summaries are staged alongside routes and published in the same snapshot.
+    // Node summary arrays are replaced, never mutated in place: publication shares their
+    // storage through ImmutableArray and uses storage identity for unchanged-publication checks.
     private RespireConnectionMultiplexer[] _replicaNodes = [];
     private RespireConnectionMultiplexer[] _masters = [];
     // Advertised replicas retained as topology-refresh fallbacks.
     private ClusterTopologyReplica[] _replicas = [];
+    // Counts are mutable staging, so every changed publication copies their contents.
     private int[] _masterSlotCounts = [];
     private readonly SemaphoreSlim _seedGate = new(1, 1);
     private RespireConnectionMultiplexer? _seed;
@@ -213,7 +218,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal bool IsReplicaNode(RespireConnectionMultiplexer node)
-        => Array.IndexOf(RoutingSnapshot.ReplicaNodes, node) >= 0;
+        => RoutingSnapshot.ReplicaNodes.IndexOf(node) >= 0;
 
     internal bool IsSlotConnected(int slot)
         => RoutingSnapshot[slot].Primary?.IsConnected == true;
@@ -244,7 +249,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    internal ClusterTopologyReplica[] GetReplicas()
+    internal ImmutableArray<ClusterTopologyReplica> GetReplicas()
         => RoutingSnapshot.Replicas;
 
     internal async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, DiscoveryRound? discovery)
@@ -1300,7 +1305,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return connections;
     }
 
-    internal ValueTask<RespireConnectionMultiplexer[]> GetKnownMastersAsync(
+    internal ValueTask<ImmutableArray<RespireConnectionMultiplexer>> GetKnownMastersAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         var snapshot = RoutingSnapshot;
@@ -1318,11 +1323,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
         }
 
-        return new ValueTask<RespireConnectionMultiplexer[]>(masters);
+        return new ValueTask<ImmutableArray<RespireConnectionMultiplexer>>(masters);
     }
 
-    private async ValueTask<RespireConnectionMultiplexer[]> ConnectKnownMastersAsync(
-        RespireConnectionMultiplexer[] masters,
+    private async ValueTask<ImmutableArray<RespireConnectionMultiplexer>> ConnectKnownMastersAsync(
+        ImmutableArray<RespireConnectionMultiplexer> masters,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
@@ -1344,7 +1349,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         catch (Exception error) { scope.SetTerminalError(error); throw; }
     }
 
-    private async ValueTask<RespireConnectionMultiplexer[]> RefreshKnownMastersAsync(
+    private async ValueTask<ImmutableArray<RespireConnectionMultiplexer>> RefreshKnownMastersAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         _ = await GetMasterConnectionsAsync(cancellationToken, discovery).ConfigureAwait(false);
@@ -1787,7 +1792,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Once a forced refresh is queued, skip the master scan for the rest of the burst.
             if (change.State == RespireConnectionState.Disconnected
                 && !_topologyRefresh.HasPendingForcedRequest
-                && Array.IndexOf(RoutingSnapshot.Masters, node) >= 0) SignalPrimaryDisconnectRefresh();
+                && RoutingSnapshot.Masters.IndexOf(node) >= 0) SignalPrimaryDisconnectRefresh();
         };
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
@@ -1908,8 +1913,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // The only reader-visible topology publication. The staging arrays remain writer-owned.
     private void PublishTopologyLocked()
     {
+        Debug.Assert(Monitor.IsEntered(_nodesGate), "Topology publication requires the writer gate.");
         var snapshot = _topology.Publish(_slots, _replicasBySlot, _dirtyTopologyPages,
-            _masters, _replicaNodes, _replicas, _masterSlotCounts, _hasCompleteTopology != 0);
+            ImmutableCollectionsMarshal.AsImmutableArray(_masters), ImmutableCollectionsMarshal.AsImmutableArray(_replicaNodes),
+            ImmutableCollectionsMarshal.AsImmutableArray(_replicas), _masterSlotCounts, _hasCompleteTopology != 0);
         _dirtyTopologyPages = 0;
         Volatile.Write(ref _topology, snapshot);
     }

@@ -30,9 +30,11 @@ Readers allocate nothing to capture a snapshot or select a slot.
 
 ## Membership versus coordination
 
-Snapshot pages and their membership arrays are immutable after publication. Internal node
-summary arrays are publication-owned and must only be enumerated. Primary slot counts are
-copied because the writer updates those counts in place.
+Snapshot pages and their membership arrays are immutable after publication. Node summaries
+and primary slot counts are exposed as `ImmutableArray` values. Writer staging replaces node
+summary arrays instead of mutating them, so publication can wrap their storage without copying.
+Primary slot counts are copied because the writer updates those counts in place. Debug builds
+assert that publication holds the node gate.
 
 Transport connection state, identity maps, correction fences, dedicated leases, and retirement
 tasks remain outside the snapshot. A reference in a historical snapshot does not grant new
