@@ -22,7 +22,7 @@ internal sealed class FlowConditions
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
     private readonly List<(ISymbol Symbol, object? Constant, BinaryOperatorKind Operator)> _predicates = [];
 
-    internal FlowConditions(ControlFlowGraph graph, int originPosition, CancellationToken cancellationToken)
+    internal FlowConditions(ControlFlowGraph graph, BasicBlock originBlock, CancellationToken cancellationToken)
     {
         _cancellationToken = cancellationToken;
         _scope = graph.OriginalOperation.Syntax;
@@ -36,9 +36,42 @@ internal sealed class FlowConditions
         }
         // Earlier selections only matter when a later branch can use them in the proof.
         // Forgetting unrelated predicates merges equivalent pre-origin search states.
-        foreach (var block in graph.Blocks)
-            if (block.BranchValue is { } condition && condition.Syntax.Span.End >= originPosition)
+        CollectReachablePredicates(graph, originBlock);
+    }
+
+    private void CollectReachablePredicates(ControlFlowGraph graph, BasicBlock originBlock)
+    {
+        var pending = new Stack<BasicBlock>();
+        var visited = new HashSet<int>();
+        pending.Push(originBlock);
+        while (pending.Count != 0)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            var block = pending.Pop();
+            if (!visited.Add(block.Ordinal))
+                continue;
+            if (block.BranchValue is { } condition)
                 CollectRelevant(condition);
+            AddBranch(block.FallThroughSuccessor);
+            AddBranch(block.ConditionalSuccessor);
+            // Exceptional successors are implicit in Roslyn's CFG. Include their
+            // predicates as well as loop back-edges and normal continuations.
+            for (var region = block.EnclosingRegion; region is not null; region = region.EnclosingRegion)
+                if (region.Kind == ControlFlowRegionKind.Try
+                    && region.EnclosingRegion is { Kind: ControlFlowRegionKind.TryAndCatch or ControlFlowRegionKind.TryAndFinally } owner)
+                    foreach (var handler in owner.NestedRegions)
+                        if (handler != region)
+                            pending.Push(graph.Blocks[handler.FirstBlockOrdinal]);
+        }
+
+        void AddBranch(ControlFlowBranch? branch)
+        {
+            if (branch?.Destination is { } destination)
+                pending.Push(destination);
+            if (branch is not null)
+                foreach (var finalizer in branch.FinallyRegions)
+                    pending.Push(graph.Blocks[finalizer.FirstBlockOrdinal]);
+        }
     }
 
     private void CollectRelevant(IOperation operation)
@@ -161,6 +194,20 @@ internal sealed class FlowConditions
         condition = Unwrap(condition);
         if (condition.ConstantValue is { HasValue: true, Value: bool constant })
             return constant == expected;
+        // Do not prove cleanup by making a loop's exit impossible. Repeated
+        // acquisitions can overwrite owned values even when the guard is stable.
+        foreach (var ancestor in condition.Syntax.AncestorsAndSelf())
+        {
+            var loopCondition = ancestor switch
+            {
+                WhileStatementSyntax loop => loop.Condition,
+                DoStatementSyntax loop => loop.Condition,
+                ForStatementSyntax loop => loop.Condition,
+                _ => null,
+            };
+            if (loopCondition?.Span.Contains(condition.Syntax.Span) == true)
+                return true;
+        }
         if (condition is IIsPatternOperation { Pattern: IDiscardPatternOperation })
             return expected;
         if (condition is IUnaryOperation { OperatorKind: UnaryOperatorKind.Not, OperatorMethod: null } not)

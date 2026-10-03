@@ -22,7 +22,7 @@ internal static partial class ScopeWalker
     {
         private const int MaxProcessedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
-        private readonly FlowConditions _conditions = new(graph, startPosition, cancellationToken);
+        private readonly FlowConditions _conditions = new(graph, startBlock, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
@@ -506,6 +506,11 @@ internal static partial class ScopeWalker
                 or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
                 or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
                 or IIncrementOrDecrementOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
+                || operation is IDelegateCreationOperation
+                    { Target: IMethodReferenceOperation { Method.IsStatic: false, Instance: { } methodReceiver } }
+                    && methodReceiver.Type?.IsReferenceType == true
+                    && methodReceiver is not IInstanceReferenceOperation
+                    && !_conditions.IsConstructedReceiver(methodReceiver)
                 || !operation.ConstantValue.HasValue && (operation switch
                 {
                     IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),

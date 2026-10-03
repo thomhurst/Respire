@@ -9,6 +9,77 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task LoopCarriedPendingRetainsStableSelection(bool wrongBatch)
+    {
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, bool choice, RespirePending<string> existing)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = existing;
+                    while (true)
+                    {
+                        if (choice) await {{(wrongBatch ? "second" : "first")}}.SendAsync();
+                        else await second.SendAsync();
+                        System.Console.WriteLine({{(wrongBatch ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                        pending = choice ? first.GetStringAsync("a") : second.GetStringAsync("b");
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("holder.Method", false, true)]
+    [Arguments("holder.Method", true, false)]
+    [Arguments("Holder.StaticMethod", false, false)]
+    [Arguments("this.Method", false, false)]
+    public async Task MethodGroupCreationCanBypassCleanup(string methodGroup, bool cleanupInCatch, bool warning)
+    {
+        const string holder = "class Holder { public void Method() { } public static void StaticMethod() { } }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                void Method() { }
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { Action action = {{methodGroup}}; result.Dispose(); }
+                    catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                void Method() { }
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { Action action = {{methodGroup}}; await batch.SendAsync(); }
+                    catch { {{(cleanupInCatch ? "await batch.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task RecordCopyCanBypassCleanup(bool cleanupInCatch)
     {
         const string record = """
