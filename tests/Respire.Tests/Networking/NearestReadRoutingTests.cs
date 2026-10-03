@@ -39,7 +39,8 @@ public class NearestReadRoutingTests
         // Warm every transport through ordinary replica reads, leaving latency samples cold.
         await using var replicas = client.WithReadFrom(RespireReadFrom.Replica);
         var warmed = new HashSet<string?>();
-        for (var index = 0; index < 3; index++) warmed.Add(await replicas.GetStringAsync("warmup"));
+        for (var attempt = 0; attempt < 30 && warmed.Count < 3; attempt++)
+            warmed.Add(await replicas.GetStringAsync("warmup"));
         await Assert.That(warmed).IsEquivalentTo(new string?[] { "first", "second", "third" });
         await Assert.That(cluster ? client.Core.Cluster!.NearestLatency : client.Core.ReadRouter.NearestLatency).IsNull();
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
