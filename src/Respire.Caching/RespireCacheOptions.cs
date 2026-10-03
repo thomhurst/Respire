@@ -1,24 +1,18 @@
-using Microsoft.Extensions.Options;
 using Respire.Compression;
 
 namespace Respire.Caching;
 
-/// <summary>Configuration for <see cref="RespireDistributedCache"/>.</summary>
-public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
+/// <summary>
+/// Cache behaviour for <see cref="RespireDistributedCache"/>. Used where a client is already
+/// supplied; see <see cref="RespireCacheRegistrationOptions"/> for DI registrations that can
+/// create their own client.
+/// </summary>
+/// <remarks>
+/// Inheritance supports <see cref="RespireCacheRegistrationOptions"/>; this type is not intended
+/// as an extension point for external subclasses.
+/// </remarks>
+public class RespireCacheOptions
 {
-    /// <summary>
-    /// Creates options for a cache-owned client. When set, this takes precedence over
-    /// <see cref="ConnectionString"/> and receives the resolving service provider.
-    /// </summary>
-    public Func<IServiceProvider, RespireOptions>? ClientOptions { get; set; }
-
-    /// <summary>
-    /// Connection string for a cache-owned client ("host:port", see
-    /// <see cref="RespireOptions.Parse"/>). Ignored when <see cref="ClientOptions"/> is set.
-    /// Leave null to use the container's registered <see cref="IRespireClient"/> instead.
-    /// </summary>
-    public string? ConnectionString { get; set; }
-
     /// <summary>
     /// Prefix prepended to every cache key, so several apps (or caches) can share one Redis
     /// without colliding. Same semantics as the Microsoft Redis cache's InstanceName.
@@ -37,6 +31,4 @@ public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
     /// Custom decoders control their own partial-output behavior; the cache cannot roll back writer changes.
     /// </remarks>
     public IRespireValueCodec? ValueCodec { get; set; }
-
-    RespireCacheOptions IOptions<RespireCacheOptions>.Value => this;
 }
