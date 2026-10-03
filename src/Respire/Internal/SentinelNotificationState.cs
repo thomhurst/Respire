@@ -131,7 +131,7 @@ internal readonly record struct SentinelNotificationState
             {
                 var unqueriedReporters = next.Reporters
                     .Where(reporter => activeHint.ReportingSentinel is not { } activeReporter
-                        || !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToArray();
+                        || !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToImmutableArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
                 if (unqueriedReporters.Length > 0)
                     next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters, activeHint.ReportingSentinel) };
@@ -146,7 +146,7 @@ internal readonly record struct SentinelNotificationState
                 // A completed switch cannot fence the target of an independent failback.
                 if (next.Target is { } pendingTarget)
                     unqueried = unqueried with { Sources = unqueried.Sources.Where(source =>
-                        !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToArray() };
+                        !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToImmutableArray() };
                 next = Merge(unqueried, in next);
                 next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
@@ -168,7 +168,7 @@ internal readonly record struct SentinelNotificationState
         RespireEndpoint? validatedPeer)
     {
         var sources = validatedPrimary is { } primary ? hint.Sources.Where(source =>
-            !MatchesValidatedSource(primary, validatedPeer, source)).ToArray() : hint.Sources;
+            !MatchesValidatedSource(primary, validatedPeer, source)).ToImmutableArray() : hint.Sources;
         return hint with
         {
             MustRediscover = true,
@@ -211,17 +211,18 @@ internal readonly record struct SentinelNotificationState
         };
     }
 
-    private static SentinelDownReport[] UnionDownReports(SentinelDownReport[] first, SentinelDownReport[] second)
+    private static ImmutableArray<SentinelDownReport> UnionDownReports(
+        ImmutableArray<SentinelDownReport> first, ImmutableArray<SentinelDownReport> second)
     {
         List<SentinelDownReport>? result = null;
         var comparer = SentinelEndpointIdentity.EndpointComparer.Instance;
         foreach (var report in second)
         {
             var found = false;
-            IReadOnlyList<SentinelDownReport> reports = result ?? (IReadOnlyList<SentinelDownReport>)first;
-            for (var index = 0; index < reports.Count; index++)
+            var count = result?.Count ?? first.Length;
+            for (var index = 0; index < count; index++)
             {
-                var known = reports[index];
+                var known = result is null ? first[index] : result[index];
                 if (comparer.Equals(known.Primary, report.Primary) && comparer.Equals(known.Reporter, report.Reporter)
                     && known.OwnerAtObservation == report.OwnerAtObservation)
                 {
@@ -231,10 +232,10 @@ internal readonly record struct SentinelNotificationState
             }
             if (!found) (result ??= [.. first]).Add(report);
         }
-        return result?.ToArray() ?? first;
+        return result?.ToImmutableArray() ?? first;
     }
 
-    private static bool HasTargetSourceOverlap(RespireEndpoint[] targets, SentinelSwitchSource[] sources)
+    private static bool HasTargetSourceOverlap(ImmutableArray<RespireEndpoint> targets, ImmutableArray<SentinelSwitchSource> sources)
     {
         foreach (var target in targets)
             foreach (var source in sources)
@@ -242,23 +243,25 @@ internal readonly record struct SentinelNotificationState
         return false;
     }
 
-    private static SentinelSwitchSource[] UnionSources(SentinelSwitchSource[] first, SentinelSwitchSource[] second)
+    private static ImmutableArray<SentinelSwitchSource> UnionSources(
+        ImmutableArray<SentinelSwitchSource> first, ImmutableArray<SentinelSwitchSource> second)
     {
         if (first.Length == 0) return second;
-        if (second.Length == 0 || ReferenceEquals(first, second)) return first;
-        var sources = new Dictionary<RespireEndpoint, string[]?>(SentinelEndpointIdentity.EndpointComparer.Instance);
+        if (second.Length == 0 || first == second) return first;
+        var sources = new Dictionary<RespireEndpoint, ImmutableArray<string>>(SentinelEndpointIdentity.EndpointComparer.Instance);
         foreach (var source in first.Concat(second))
         {
             if (!sources.TryGetValue(source.Endpoint, out var known)) sources.Add(source.Endpoint, source.Addresses);
-            else if (source.Addresses is { } addresses)
-                sources[source.Endpoint] = (known ?? []).Union(addresses, SentinelEndpointIdentity.AddressComparer.Instance).ToArray();
+            else if (!source.Addresses.IsDefault)
+                sources[source.Endpoint] = (known.IsDefault ? [] : known)
+                    .Union(source.Addresses, SentinelEndpointIdentity.AddressComparer.Instance).ToImmutableArray();
         }
-        return sources.Select(pair => new SentinelSwitchSource(pair.Key, pair.Value)).ToArray();
+        return sources.Select(pair => SentinelSwitchSource.FromSnapshot(pair.Key, pair.Value)).ToImmutableArray();
     }
 
     // Set union preserves first-seen reporter order without assigning event chronology.
-    private static RespireEndpoint[] UnionEndpoints(
-        RespireEndpoint[] first, RespireEndpoint[] second, RespireEndpoint? excluded = null)
+    private static ImmutableArray<RespireEndpoint> UnionEndpoints(
+        ImmutableArray<RespireEndpoint> first, ImmutableArray<RespireEndpoint> second, RespireEndpoint? excluded = null)
     {
         if (excluded is null)
         {
@@ -270,16 +273,16 @@ internal readonly record struct SentinelNotificationState
         var result = new List<RespireEndpoint>();
         Add(first);
         Add(second);
-        return result.ToArray();
+        return result.ToImmutableArray();
 
-        void Add(IEnumerable<RespireEndpoint> endpoints)
+        void Add(ImmutableArray<RespireEndpoint> endpoints)
         {
             foreach (var value in endpoints)
                 if (seen.Add(value)) result.Add(value);
         }
     }
 
-    private static bool ContainsAll(RespireEndpoint[] first, RespireEndpoint[] second)
+    private static bool ContainsAll(ImmutableArray<RespireEndpoint> first, ImmutableArray<RespireEndpoint> second)
     {
         foreach (var candidate in second)
         {

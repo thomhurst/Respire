@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Respire.Internal;
 
 // Endpoint identity uses SentinelEndpointIdentity; Addresses are DNS evidence for this
@@ -6,18 +8,23 @@ internal readonly record struct SentinelSwitchSource
 {
     internal SentinelAddressEvidence Evidence { get; }
     internal RespireEndpoint Endpoint => Evidence.Endpoint;
-    internal string[]? Addresses => Evidence.Addresses;
+    internal ImmutableArray<string> Addresses => Evidence.Addresses;
 
     internal SentinelSwitchSource(RespireEndpoint endpoint, string[]? addresses)
         => Evidence = new(endpoint, addresses);
+
+    private SentinelSwitchSource(SentinelAddressEvidence evidence) => Evidence = evidence;
+
+    internal static SentinelSwitchSource FromSnapshot(RespireEndpoint endpoint, ImmutableArray<string> addresses)
+        => new(SentinelAddressEvidence.FromSnapshot(endpoint, addresses));
 }
 internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
     SentinelValidatedPrimary? OwnerAtObservation = null);
 
 /// <summary>Advisory event evidence. Collection order never establishes failover chronology.</summary>
 internal readonly record struct SentinelHint(
-    SentinelHintKey Key, RespireEndpoint[] Targets, SentinelSwitchSource[] Sources,
-    RespireEndpoint[] Reporters, bool MustRediscover)
+    SentinelHintKey Key, ImmutableArray<RespireEndpoint> Targets, ImmutableArray<SentinelSwitchSource> Sources,
+    ImmutableArray<RespireEndpoint> Reporters, bool MustRediscover)
 {
     // Positive only for first-subscription gaps. Mixing any independent event clears
     // this marker so an earlier successful discovery can never swallow real evidence.
@@ -30,7 +37,7 @@ internal readonly record struct SentinelHint(
     internal SentinelHintKey? DownKey { get; init; }
     // Nonempty only when all merged evidence consists of parsed master-down reports.
     // Keep reporter association: a current-owner outage cannot release a stale reporter's fence.
-    internal SentinelDownReport[] DownReports { get; init; } = [];
+    internal ImmutableArray<SentinelDownReport> DownReports { get; init; } = [];
     internal SentinelValidatedPrimary? DownReportPrimary { get; init; }
 
     internal SentinelHint BindDownReportsToCurrentPrimary(SentinelValidatedPrimary current)
@@ -84,9 +91,7 @@ internal readonly record struct SentinelHint(
             var source = Sources[index];
             if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
             if (source.Evidence.HasSameAddresses(addresses)) return this;
-            var sources = (SentinelSwitchSource[])Sources.Clone();
-            sources[index] = new(source.Endpoint, addresses);
-            return this with { Sources = sources };
+            return this with { Sources = Sources.SetItem(index, new(source.Endpoint, addresses)) };
         }
         return this;
     }

@@ -49,9 +49,9 @@ example). IPv6 scope IDs remain part of identity: identical link-local addresses
 different interfaces are distinct peers. Interface-name syntax follows the runtime parser;
 identity comparison performs no additional interface lookup.
 
-`SentinelAddressEvidence` normalizes and retains the candidates from one observation or
-lookup lifetime. It reuses already canonical arrays and copies only when normalization
-changes an address. Repeated matching compares retained canonical strings without parsing
+`SentinelAddressEvidence` normalizes and retains immutable candidates from one observation or
+lookup lifetime. It copies caller-owned arrays and reuses already canonical immutable
+snapshots. Repeated matching compares retained canonical strings without parsing
 IPs in the address-pair loop. Switch sources retain this evidence across matching calls.
 Evidence provides typed value equality so comparing or hashing switch sources does not
 box its fields. Equality retains array-snapshot identity; ownership and alias matching
@@ -59,7 +59,12 @@ still use the explicit operations below. Default evidence never matches an obser
 Its conservative `CouldMatch` operation can fence a possible demoted source, but ownership
 confirmation uses `ConfirmsPeer` and requires one unambiguous address. Overlapping sets of
 several addresses cannot confirm an owner or consume its demotion fence. Duplicate evidence
-keeps existing arrays; unions produce a new snapshot without assigning chronology.
+keeps existing immutable storage; unions produce a new snapshot without assigning chronology.
+
+Hints retain immutable source, target, reporter, and down-report collections.
+`SentinelNotificationState` returns a new value for each coalescing operation. Lookup
+records use an immutable dictionary keyed by lookup lifetime, so later offers and lookup
+completion cannot change an earlier state snapshot.
 
 `SentinelValidatedPrimary` keeps the advertised endpoint separate from the physical peer
 accepted by ROLE. Discovery retains provisional DNS evidence separately from its accepted

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
@@ -349,7 +350,7 @@ internal sealed partial class SentinelRouter
         if (current is not { IsRetired: false }) return false;
         foreach (var endpoint in hint.Targets)
         {
-            if (IsCurrentPeer(current, endpoint, null, allowHostnameIdentity: false)) return true;
+            if (IsCurrentPeer(current, endpoint, default, allowHostnameIdentity: false)) return true;
             // In a cycle the same hostname can be both source and target. Its resolved
             // addresses must protect a target just as they identify a demoted source.
             foreach (var source in hint.Sources)
@@ -365,7 +366,7 @@ internal sealed partial class SentinelRouter
         => IPAddress.TryParse(endpoint.Host, out var address)
             && current.Multiplexer.AllCurrentPeersMatch(SentinelEndpointIdentity.NormalizeAddress(address), endpoint.Port);
 
-    private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, string[]? addresses,
+    private static bool IsCurrentPeer(Generation current, RespireEndpoint endpoint, ImmutableArray<string> addresses,
         bool allowHostnameIdentity = true)
     {
         var numeric = IPAddress.TryParse(endpoint.Host, out var literal);
@@ -373,7 +374,7 @@ internal sealed partial class SentinelRouter
         // cycle protection allow textual identity; target shortcuts require peer evidence.
         if ((allowHostnameIdentity || numeric) && SameEndpoint(current.Endpoint, endpoint)) return true;
         if (numeric && current.Multiplexer.HasCurrentPeer(SentinelEndpointIdentity.NormalizeAddress(literal!), endpoint.Port)) return true;
-        if (addresses is not null)
+        if (!addresses.IsDefaultOrEmpty)
             foreach (var address in addresses)
                 if (current.Multiplexer.HasCurrentPeer(address, endpoint.Port)) return true;
         return false;

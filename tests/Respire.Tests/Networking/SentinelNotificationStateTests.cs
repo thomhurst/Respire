@@ -13,6 +13,28 @@ public class SentinelNotificationStateTests
     private static readonly RespireEndpoint Second = new("second", 26379);
 
     [Test]
+    public async Task CallerArrayMutationsCannotChangeRetainedEvidence()
+    {
+        string[] addresses = ["192.0.2.1"];
+        RespireEndpoint[] targets = [B];
+        SentinelSwitchSource[] sources = [new(A, addresses)];
+        RespireEndpoint[] reporters = [First];
+        var hint = SentinelHintBuilder.Create("switch", targets, sources, reporters, false);
+        var state = new SentinelNotificationState().Offer(hint, false, out _);
+
+        addresses[0] = "192.0.2.2";
+        targets[0] = A;
+        sources[0] = new(B, null);
+        reporters[0] = Second;
+
+        var retained = state.Active!.Value;
+        await Assert.That(retained.Targets).IsEquivalentTo([B]);
+        await Assert.That(retained.Reporters).IsEquivalentTo([First]);
+        await Assert.That(retained.Sources[0].Endpoint).IsEqualTo(A);
+        await Assert.That(retained.Sources[0].Addresses).IsEquivalentTo(["192.0.2.1"]);
+    }
+
+    [Test]
     public async Task OfferAndTakePendingPreserveEarlierStateSnapshots()
     {
         var idle = default(SentinelNotificationState);
