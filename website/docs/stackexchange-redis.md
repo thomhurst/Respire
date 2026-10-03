@@ -171,7 +171,7 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `ListLeftPushAsync`, `ListRightPopAsync` | `Lists.LeftPushAsync`, `Lists.RightPopAsync` |
 | `SetAddAsync`, `SetMembersAsync` | `Sets.AddAsync`, `Sets.MembersAsync` |
 | `SortedSetAddAsync`, `SortedSetRangeByScoreAsync` | `SortedSets.AddAsync`, `SortedSets.RangeByScoreAsync` |
-| `StreamAddAsync`, `StreamReadGroupAsync` | `Streams.AddAsync`, `Streams.ReadGroupAsync` (`IAsyncEnumerable`) |
+| `StreamAddAsync`, `StreamReadGroupAsync` | `Streams.AddAsync`; `Streams.ReadGroupAsync` reads continuously (raw `XREADGROUP` for one batch) |
 | `server.KeysAsync(pattern)` | `Keys.ScanAsync(pattern)` (`IAsyncEnumerable`; scans every primary in Cluster mode) |
 | `StringGetLeaseAsync` | `Strings.GetLeaseAsync` |
 | `ExecuteAsync("CMD", args)` | `ExecuteAsync("CMD", args)` or the generated `RespireCommands` catalog |
@@ -183,7 +183,13 @@ sets, sorted sets, and `Keys.ScanAsync`. For binary data, use `GetBytesAsync` or
 `<byte[]>` overloads, such as `GetAsync<byte[]>`, `Hashes.GetAllAsync<byte[]>`,
 `Lists.RangeAsync<byte[]>`, `Sets.MembersAsync<byte[]>`, and `SortedSets.RangeAsync<byte[]>`.
 Hash field names, stream field names, and scanned keys are always strings. Use raw `HGETALL`,
-`XADD`, stream read, or `SCAN` commands when field names or keys are binary.
+`XADD`, stream read, or `SCAN` commands when field names or keys are binary. In Cluster mode, a
+raw `SCAN` reaches one node only, so it does not enumerate keys on every primary.
+
+`StreamReadGroupAsync` returns one batch. `Streams.ReadGroupAsync` is a continuous consumer: it
+keeps issuing blocking `XREADGROUP` calls on a dedicated connection and ends only when its
+cancellation token is canceled. Use a raw `XREADGROUP` for a single batch, or for options such as
+`NOACK`.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
