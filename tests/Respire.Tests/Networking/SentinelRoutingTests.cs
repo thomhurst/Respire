@@ -1379,15 +1379,23 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    public async Task MonitorResumesWhenAPublicationLandedDuringItsFinalRetry()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MonitorResumesWhenAPublicationLandedDuringItsFinalRetry(bool closesBeforeSubscriptionAck)
     {
         await using var original = Primary();
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
-        var unreachable = new FakeRespServer();
+        await using var unreachable = new FakeRespServer(64, FakeRespServer.OkReply);
         var deadPort = unreachable.Port;
-        await unreachable.DisposeAsync();
+        if (closesBeforeSubscriptionAck)
+            unreachable.ReplyOverride = (id, command) =>
+            {
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) unreachable.CloseConnection(id);
+                return FakeRespServer.OkReply;
+            };
+        else await unreachable.DisposeAsync();
         var logger = new MonitorExhaustionLogger(deadPort);
         // A distinctive delay identifies the dead monitor's retry timer on the gated clock.
         var retryDelay = TimeSpan.FromSeconds(7);
@@ -1777,14 +1785,16 @@ public class SentinelRoutingTests
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         await ((Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!).WaitAsync(Limit);
-        var shouldRetire = literalSource || !targetIsCurrent;
-        await Assert.That(current.IsRetired).IsEqualTo(shouldRetire);
+        // The established peer is the old owner even when both fresh DNS names alias it.
+        // Their overlap must not erase evidence against this known physical connection.
+        await Assert.That(current.IsRetired).IsTrue();
         await Assert.That(router.Current).IsSameReferenceAs(current);
-        if (!shouldRetire) await client.PingAsync().AsTask().WaitAsync(Limit);
     }
 
     [Test]
-    public async Task TargetConnectionCannotPublishDemotedPeerAfterDnsChanges()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TargetConnectionCannotPublishDemotedPeerAfterDnsChanges(bool reachesDemotedPeer)
     {
         await using var primary = Primary();
         var announceHostname = false;
@@ -1802,10 +1812,16 @@ public class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         var original = router.Current!;
         announceHostname = true;
+        var demotedAddress = reachesDemotedPeer ? "127.0.0.1" : "192.0.2.1";
+        if (!reachesDemotedPeer)
+            typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic)!.SetValue(original.Multiplexer.GetConnection(), demotedAddress);
         // Discovery sees the promoted address; the actual localhost connection still reaches
         // the former primary, which continues to answer ROLE master during split brain.
-        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Parse("192.0.2.2")]);
-        var hint = SentinelHint.FromSwitchMaster("switch", original.Endpoint, new("localhost", primary.Port),
+        router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>(reachesDemotedPeer
+            ? [IPAddress.Parse("192.0.2.2")]
+            : [IPAddress.Parse(demotedAddress), IPAddress.Loopback]);
+        var hint = SentinelHint.FromSwitchMaster("switch", new(demotedAddress, primary.Port), new("localhost", primary.Port),
             new("127.0.0.1", sentinel.Port));
         var accepted = false;
         try
@@ -1814,8 +1830,9 @@ public class SentinelRoutingTests
             accepted = true;
         }
         catch (RespireConnectionException) { }
-        await Assert.That(accepted).IsFalse();
-        await Assert.That(router.Current).IsSameReferenceAs(original);
+        await Assert.That(accepted).IsEqualTo(!reachesDemotedPeer);
+        if (reachesDemotedPeer) await Assert.That(router.Current).IsSameReferenceAs(original);
+        else await Assert.That(router.Current!.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
     }
 
     [Test]

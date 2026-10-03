@@ -9,11 +9,15 @@ namespace Respire.Tests.Networking;
 public class SentinelConfigurationTests
 {
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    public async Task AnnouncedHostnameCannotResolveBackToDemotedSource(bool newerEpoch, bool capturedHostnameSource)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    public async Task AnnouncedHostnameCannotResolveBackToDemotedSource(bool newerEpoch, bool capturedHostnameSource, bool mixedAddresses)
     {
         var source = new RespireEndpoint("127.0.0.1", 6379);
         var target = new RespireEndpoint("primary.example", 6379);
@@ -45,12 +49,16 @@ public class SentinelConfigurationTests
                 return ValueTask.FromResult(candidate.PrimaryEndpoint);
             }, CancellationToken.None, state, previouslyValidatedPrimary: source, preferredTarget: target,
                 notificationHint: hint,
-                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>([System.Net.IPAddress.Loopback]));
+                hostResolver: (_, _) => Task.FromResult<System.Net.IPAddress[]>(mixedAddresses
+                    ? [System.Net.IPAddress.Loopback, System.Net.IPAddress.Parse("192.0.2.2")]
+                    : [System.Net.IPAddress.Loopback]));
             accepted = true;
         }
         catch (RespireConnectionException) { }
-        await Assert.That(accepted).IsFalse();
-        await Assert.That(validations).IsEqualTo(0);
+        // Mixed DNS evidence must reach socket/ROLE validation. A single demoted address
+        // can be rejected before connecting; the router separately fences the actual peer.
+        await Assert.That(accepted).IsEqualTo(mixedAddresses);
+        await Assert.That(validations).IsEqualTo(mixedAddresses ? 1 : 0);
     }
 
     [Test]

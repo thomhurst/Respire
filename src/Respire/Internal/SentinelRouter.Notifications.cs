@@ -77,10 +77,16 @@ internal sealed partial class SentinelRouter
             try
             {
                 client = RespireClient.Create(CreateSentinelMonitorOptions(core.Options, endpoint,
-                    () => Volatile.Write(ref rearm, CurrentMonitorRearm())));
+                    () =>
+                    {
+                        // Temporary clients that close before SUBSCRIBE succeeds belong to
+                        // the same outer retry episode. Preserve any publication it captured.
+                        if (Volatile.Read(ref attempt) == 0)
+                            Volatile.Write(ref rearm, CurrentMonitorRearm());
+                    }));
                 subscription = await client.SubscribeAsync(
                     ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false);
-                attempt = 0;
+                Volatile.Write(ref attempt, 0);
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
                 // may already have completed that captured epoch before this continuation runs.
@@ -282,7 +288,12 @@ internal sealed partial class SentinelRouter
                 }
                 if (resolvedTargets.Count > 0)
                 {
-                    addresses = Array.FindAll(addresses, address => !resolvedTargets.Contains(address));
+                    // Fresh DNS overlap cannot erase the peer known when the event arrived.
+                    // Both names may still alias that demoted socket while it answers ROLE master.
+                    var knownPeer = arrivedDuring.ValidatedPeer;
+                    addresses = Array.FindAll(addresses, address => !resolvedTargets.Contains(address)
+                        || knownPeer is { } peer && peer.Port == oldPrimary.Port
+                            && StringComparer.OrdinalIgnoreCase.Equals(address, SentinelResolver.NormalizeHost(peer.Host)));
                     if (addresses.Length == 0) return;
                 }
             }

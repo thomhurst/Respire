@@ -73,14 +73,16 @@ the record. DNS evidence remains paired with its endpoint and port.
 - An unchanged target hostname cannot suppress a switch notification: DNS may now resolve
   to a different server. The target-is-current shortcut requires numeric peer identity.
   Conflicting-cycle source evidence still protects an explicitly announced failback target.
-- A target hostname that resolves or connects to a differently named demoted source is
-  rejected, even with a newer configuration epoch. Epochs order Sentinel's announced owner;
+- A target hostname whose entire DNS answer set identifies demoted sources is rejected
+  before connecting, even with a newer configuration epoch. Mixed answers proceed to
+  socket validation; connecting to a demoted source is still rejected. Epochs order Sentinel's announced owner;
   they do not prove that the client's DNS or connected socket reaches that owner. The router
   checks the actual ROLE-validated peer before accepting the configuration or publishing it.
 - A source hostname may already resolve to the promoted peer. Fresh source addresses that
   also identify an unambiguous announced hostname target are not retained as demotion
-  evidence, before or after target publication. A literal source or the connected source
-  hostname still retires its generation; target DNS cannot override that direct source identity.
+  evidence, before or after target publication, unless they identify the peer validated when
+  the event arrived. A literal source, the connected source hostname, and that known peer
+  still retire the generation; target DNS cannot erase this source identity.
 - When a switch names the current primary's hostname, its actual validated peer is captured
   before queuing discovery. A metadata-denied numeric alias cannot republish the demoted
   server while DNS resolution is unavailable. In a conflicting cycle, source address
@@ -100,6 +102,8 @@ the record. DNS evidence remains paired with its endpoint and port.
   does not replay accepted work or force disposal of a draining generation.
 - A monitor captures its publication signal at the start of a reconnect episode. Failed
   replacement sockets remain in that episode and cannot overwrite an already granted budget.
+  Temporary clients that close before all subscription acknowledgements arrive also share
+  the outer retry episode; only a successful subscription resets that retry state.
   A close after successful recovery captures the signal for a new episode.
 
 ## Executable coverage

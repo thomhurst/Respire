@@ -25,7 +25,7 @@ public class SentinelTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespProtocol.Resp2,
-            UnexpectedConnectionClosed = () =>
+            UnexpectedConnectionClosed = _ =>
             {
                 capturedEpoch = currentEpoch.Task;
                 captured.TrySetResult();
