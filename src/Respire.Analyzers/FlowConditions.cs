@@ -146,6 +146,9 @@ internal sealed class FlowConditions
         _ => null,
     };
 
+    internal bool IsConstructedReceiver(IOperation operation)
+        => Unwrap(operation) is IObjectCreationOperation or IArrayCreationOperation;
+
     internal bool Constrain(IOperation? condition, bool expected, ref ulong known, ref ulong values)
     {
         if (condition is null)

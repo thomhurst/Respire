@@ -245,6 +245,13 @@ internal static partial class ScopeWalker
             // Evaluate children before their parent's write. Each exception sees only writes
             // that have already executed, including writes in earlier call arguments.
             var exceptionSource = operation;
+            IOperation? initializer = operation switch
+            {
+                IObjectCreationOperation creation => creation.Initializer,
+                ITypeParameterObjectCreationOperation creation => creation.Initializer,
+                IArrayCreationOperation creation => creation.Initializer,
+                _ => null,
+            };
             if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
                 && assignment.Target is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
                     or IFieldReferenceOperation or IArrayElementReferenceOperation)
@@ -259,7 +266,8 @@ internal static partial class ScopeWalker
             else
             {
                 foreach (var child in operation.ChildOperations)
-                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                    if (child != initializer)
+                        Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             if (operation.Syntax.SpanStart > entryPosition
@@ -273,6 +281,9 @@ internal static partial class ScopeWalker
                 else if (block.FallThroughSuccessor is { } successor)
                     Dispatch(GetDispatch(successor, continuation, implicitException: true), started, known, values);
             }
+            // Construction/allocation can fail before any initializer runs.
+            if (initializer is not null)
+                Visit(initializer, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
         }
 
@@ -487,6 +498,7 @@ internal static partial class ScopeWalker
                 })
                 || operation is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } receiver }
                     && receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
+                    && !_conditions.IsConstructedReceiver(receiver)
                     // A member binding is evaluated only on the non-null conditional-access path.
                     && operation.Syntax is not MemberBindingExpressionSyntax
                 || operation is IConversionOperation conversion

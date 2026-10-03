@@ -7,6 +7,57 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("new Holder { Value = (flag = false) }", false)]
+    [Arguments("new Holder { Property = (flag = false) }", true)]
+    [Arguments("new Holder(flag = false) { Value = true }", true)]
+    [Arguments("new bool[] { flag = false }", false)]
+    [Arguments("new bool[] { flag = false, Throws() }", true)]
+    public async Task ConstructionExceptionsPrecedeInitializers(string creation, bool warning)
+    {
+        const string holder = """
+            class Holder
+            {
+                public Holder() { }
+                public Holder(bool value) { }
+                public bool Value;
+                public bool Property { set => throw new System.Exception(); }
+            }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                bool Throws() => throw new System.Exception();
+                async Task Run(RespireClient client, RespireResult existing, bool flag)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    try { _ = {{creation}}; result.Dispose(); }
+                    catch { if (flag) result.Dispose(); }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            {{holder}}
+            class Caller
+            {
+                bool Throws() => throw new System.Exception();
+                async Task Run(RespireClient client, RespirePending<string> existing, bool flag)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = flag ? batch.GetStringAsync("key") : existing;
+                    try { _ = {{creation}}; await batch.SendAsync(); }
+                    catch { if (flag) await batch.SendAsync(); }
+                    System.Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Property = (flag = false);", true)]
     [Arguments("this[0] = (flag = false);", true)]
     [Arguments("Property = Throws(); flag = false;", false)]
