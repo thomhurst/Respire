@@ -51,7 +51,10 @@ internal sealed partial class ReadEndpointRouter
             if (index == 0)
             {
                 if (primary is not { } selectedPrimary) continue;
-                selection = selectedPrimary;
+                // The round-robin primary socket can have a pending probe while a sibling is idle. With no
+                // idle sibling, keep that socket so its probe can still answer within the budget.
+                selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler)
+                    is { } idle ? selectedPrimary with { Connection = idle } : selectedPrimary;
             }
             else
             {
@@ -60,7 +63,9 @@ internal sealed partial class ReadEndpointRouter
                 if (entry is null || entry.IsCoolingDown) continue;
                 try
                 {
-                    selection = new(await entry.GetConnectionAsync(cancellationToken).ConfigureAwait(false), entry, null);
+                    var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken).ConfigureAwait(false);
+                    if (connection is null) continue;
+                    selection = new(connection, entry, null);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
@@ -70,7 +75,7 @@ internal sealed partial class ReadEndpointRouter
                 }
             }
             if (!selection.Connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(selection.Connection, default);
+            var latency = sampler.GetLatencyAsync(selection.Connection, default, probeDeadline: deadline);
             if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
                 best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
         }
@@ -80,7 +85,8 @@ internal sealed partial class ReadEndpointRouter
             ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken)
+                .ConfigureAwait(false);
             var candidate = pending.Candidate;
             if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
                 best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);

@@ -246,7 +246,8 @@ internal static partial class ScopeWalker
         SyntaxNode scope,
         SyntaxNode before,
         IEnumerable<SyntaxNode> barriers,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var barrierArray = barriers.ToArray();
         if (barrierArray.Length == 0)
@@ -273,7 +274,7 @@ internal static partial class ScopeWalker
             before.SpanStart,
             graph.Blocks[graph.Blocks.Length - 1],
             int.MaxValue,
-            barrierArray, cancellationToken: cancellationToken);
+            barrierArray, startPolicy, cancellationToken);
     }
 
     private static INamedTypeSymbol? GetSystemException(SemanticModel semanticModel)

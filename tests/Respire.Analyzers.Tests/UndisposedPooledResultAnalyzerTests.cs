@@ -8,6 +8,50 @@ namespace Respire.Analyzers.Tests;
 public class UndisposedPooledResultAnalyzerTests
 {
     [Test]
+    [Arguments("System.Exception")]
+    [Arguments("System.InvalidOperationException")]
+    public async Task GenericExceptionCaughtByItsBaseDoesNotBypassRelease(string constraint) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync<T>(RespireClient client, RespireResult existing, int choice, bool skip)
+                where T : {{{constraint}}}, new()
+            {
+                var result = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+                try { if (skip) throw new T(); }
+                catch (System.Exception) { }
+                if (choice == 0) result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task LocalGotoConservativelyInvalidatesCorrelatedRelease() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+            {
+                var {|RESP001:result|} = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+                if (skip) { goto Resume; Resume:; }
+                if (choice == 0) result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("return;")]
     [Arguments("throw new InvalidOperationException();")]
     public async Task FinallyDispose_CoversEarlyExit(string exit) => await Verify.VerifyAsync(
@@ -41,6 +85,107 @@ public class UndisposedPooledResultAnalyzerTests
                 var {|RESP001:result|} = await client.ExecuteAsync("PING");
                 try { if (skip) { {{{exit}}} } }
                 finally { if (dispose) result.Dispose(); }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("new System.InvalidOperationException()", "catch (System.ArgumentException) { }")]
+    [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) when (skip) { }")]
+    [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) { return; }")]
+    [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) { throw; }")]
+    [Arguments("(System.InvalidOperationException)null", "catch (System.InvalidOperationException) { }")]
+    public async Task CatchDoesNotGuaranteeCorrelatedRelease(string exception, string handler) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+            {
+                var {|RESP001:result|} = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+                try { if (skip) throw {{{exception}}}; }
+                {{{handler}}}
+                if (choice == 0) result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("catch (System.InvalidOperationException) { }")]
+    [Arguments("catch (System.Exception) { }")]
+    [Arguments("catch { }")]
+    public async Task LocallyCaughtThrowStillReachesCorrelatedRelease(string handler) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+            {
+                var result = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+                try { if (skip) throw new System.InvalidOperationException(); }
+                {{{handler}}}
+                if (choice == 0) result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("for (var index = 0; index < 2; index++) { if (skip) break; }")]
+    [Arguments("for (var index = 0; index < 2; index++) { if (skip) continue; }")]
+    [Arguments("while (skip) { break; }")]
+    [Arguments("do { if (skip) continue; } while (false);")]
+    [Arguments("foreach (var index in new[] { 1, 2 }) { if (skip) break; }")]
+    [Arguments("switch (skip) { case true: break; default: break; }")]
+    public async Task NestedExitDoesNotBypassCorrelatedSwitchRelease(string nested) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+            {
+                var result = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+                {{{nested}}}
+                if (choice == 0) result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("break")]
+    [Arguments("continue")]
+    public async Task LoopExitCanBypassCorrelatedSwitchRelease(string exit) => await Verify.VerifyAsync(
+        $$$"""
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
+            {
+                for (var index = 0; index < 2; index++)
+                {
+                    var {|RESP001:result|} = choice switch
+                    {
+                        0 => await client.ExecuteAsync("PING"),
+                        _ => existing,
+                    };
+                    if (skip) {{{exit}}};
+                    if (choice == 0) result.Dispose();
+                }
             }
         }
         """);

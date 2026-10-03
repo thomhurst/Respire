@@ -8,6 +8,7 @@ namespace Respire.Analyzers.Tests;
 internal static class RespireApiStub
 {
     public const string Source = """
+        #nullable enable annotations
         using System;
         using System.Runtime.CompilerServices;
         using System.Threading.Tasks;
