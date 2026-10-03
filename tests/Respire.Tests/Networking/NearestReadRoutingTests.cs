@@ -81,7 +81,12 @@ public class NearestReadRoutingTests
         await Assert.That(await sampler.GetLatencyAsync(blocked, deadline.Token)).IsEqualTo(ReadLatencyResult.Pending);
 
         await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(healthy);
-        // The next selection reaches the blocked socket and excludes that exact socket.
+        // The next selection reaches the blocked socket, excludes that exact socket, and uses its sibling.
+        await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(healthy);
+        await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsSameReferenceAs(healthy);
+        // Only when every physical socket has an unanswered probe is the replica excluded.
+        await Assert.That(await sampler.GetLatencyAsync(healthy, deadline.Token)).IsEqualTo(ReadLatencyResult.Pending);
+        await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsNull();
         await Assert.That(await entry.GetNearestConnectionAsync(sampler, deadline.Token)).IsNull();
     }
 

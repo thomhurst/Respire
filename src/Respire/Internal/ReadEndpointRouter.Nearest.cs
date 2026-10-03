@@ -72,9 +72,9 @@ internal sealed partial class ReadEndpointRouter
                 }
             }
             if (!selection.Connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(selection.Connection, default);
+            var latency = sampler.GetLatencyAsync(selection.Connection, default, out var started);
             if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
-                best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
+                best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true, started);
         }
         // Start every eligible probe before waiting so a fast later candidate is visible even
         // when the first sample consumes the entire shared wait budget.
@@ -82,7 +82,8 @@ internal sealed partial class ReadEndpointRouter
             ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken,
+                pending.Started).ConfigureAwait(false);
             var candidate = pending.Candidate;
             if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
                 best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);

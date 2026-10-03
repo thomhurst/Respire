@@ -16,12 +16,15 @@ internal static class NearestReadSelection
     }
 
     internal static ValueTask<ReadLatencyResult> GetLatencyAsync(ValueTask<ReadLatencyResult> latency, CancellationTokenSource? wait,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool started = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (latency.IsCompletedSuccessfully) return latency;
-        return wait is not null ? WaitAsync(latency, wait.Token, cancellationToken)
-            : ValueTask.FromResult(ReadLatencyResult.Pending);
+        if (wait is not null) return WaitAsync(latency, wait.Token, cancellationToken);
+        // Connection acquisition or discovery consumed the shared budget. A probe this selection
+        // just started is not stall evidence, so its candidate stays eligible with unknown latency.
+        // A probe already outstanding before this selection still excludes its connection.
+        return ValueTask.FromResult(started ? ReadLatencyResult.Unknown : ReadLatencyResult.Pending);
     }
 
     private static async ValueTask<ReadLatencyResult> WaitAsync(ValueTask<ReadLatencyResult> latency, CancellationToken waitToken,
@@ -50,7 +53,8 @@ internal static class NearestReadSelection
 /// <item><term>Pending samples</term><description>
 /// Wait under the original shared sampling deadline, then recheck connection and role eligibility.
 /// An unanswered probe excludes its connection until the FIFO reply completes. Unsampled
-/// candidates and completed probes without latency evidence remain eligible.
+/// candidates and completed probes without latency evidence remain eligible, as does a
+/// candidate whose probe this selection started after the shared budget had already expired.
 /// </description></item>
 /// <item><term>Current winner</term><description>
 /// Revalidate its owner/membership and return. A usable candidate need not await background discovery.
@@ -90,15 +94,16 @@ internal struct NearestReadSelection<T>
     private int _sampleOrder;
     private int _selectedOrder;
 
-    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order);
+    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order,
+        bool Started = false);
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
 
-    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true)
+    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, bool started = false)
     {
         var order = _sampleOrder++;
         if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order);
         // Only cold/expired samples allocate. Warm selections retain the allocation-free path.
-        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order));
+        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order, started));
     }
 
     internal bool TryNextSample(out PendingSample sample)

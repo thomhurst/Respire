@@ -1115,6 +1115,42 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TopologyQueryReportsTheSocketThatAnsweredAfterMoving(bool withOwner)
+    {
+        await using var source = Server(maxConnections: 2);
+        await using var target = Server(maxConnections: 2);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+        var selected = multiplexer.GetConnection();
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForRetirement(selected);
+        await WaitForPort(multiplexer, target.Port);
+
+        if (withOwner)
+        {
+            // The empty-host fallback reads the responder's host, so a retired selection must
+            // be replaced explicitly rather than rerouted behind the caller's back.
+            var (responder, reply) = await ClusterRouter.SendTopologyQueryAsync(selected, multiplexer, default);
+            using (reply)
+            {
+                await Assert.That(ReferenceEquals(responder, selected)).IsFalse();
+                await Assert.That(responder.Port).IsEqualTo(target.Port);
+            }
+            await Assert.That(target.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
+        }
+        else
+        {
+            // A caller-owned query socket has no replacement; it fails instead of moving.
+            await Assert.That(async () => await ClusterRouter.SendTopologyQueryAsync(selected, null, default))
+                .Throws<RespireConnectionRetiredException>();
+            await Assert.That(target.ReceivedCommands.Contains("CLUSTER SLOTS")).IsFalse();
+        }
+        await Assert.That(source.ReceivedCommands.Contains("CLUSTER SLOTS")).IsFalse();
+    }
+
+    [Test]
     public async Task LaterMovingStartsWhileEarlierSocketsStillDrain()
     {
         await using var source = Server(maxConnections: 2);

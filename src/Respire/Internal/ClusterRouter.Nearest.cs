@@ -94,14 +94,15 @@ internal sealed partial class ClusterRouter
                 }
             }
             if (!connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(connection, default);
-            if (connection.IsAcceptingCommands) best.QueueSample(connection, latency);
+            var latency = sampler.GetLatencyAsync(connection, default, out var started);
+            if (connection.IsAcceptingCommands) best.QueueSample(connection, latency, started: started);
         }
         using var samplingWait = best.HasPendingSamples
             ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
         while (best.TryNextSample(out var pending))
         {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken).ConfigureAwait(false);
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken,
+                pending.Started).ConfigureAwait(false);
             if (pending.Candidate.IsAcceptingCommands) best.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
         }
         if (best.TryGet(out var selected))

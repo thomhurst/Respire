@@ -165,6 +165,36 @@ public class ReadLatencySamplerTests
     }
 
     [Test]
+    public async Task ExpiredBudgetKeepsSelfStartedProbesEligibleButExcludesOutstandingOnes()
+    {
+        var outstanding = new object();
+        var discovered = new object();
+        var replies = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sampler = new ReadLatencySampler<object>((_, _) => new ValueTask<long>(replies.Task));
+        // Another selection's probe is already outstanding on this connection.
+        _ = sampler.GetLatencyAsync(outstanding, default, out var startedEarlier);
+        await Assert.That(startedEarlier).IsTrue();
+
+        // Acquisition consumed the shared budget before these samples were taken.
+        await Assert.That(NearestReadSelection.CreateWaitCancellation(Environment.TickCount64 - 1, default)).IsNull();
+        var selection = new NearestReadSelection<object>();
+        selection.QueueSample(outstanding, sampler.GetLatencyAsync(outstanding, default, out var joined), started: joined);
+        selection.QueueSample(discovered, sampler.GetLatencyAsync(discovered, default, out var started), started: started);
+        await Assert.That(joined).IsFalse();
+        await Assert.That(started).IsTrue();
+        while (selection.TryNextSample(out var pending))
+        {
+            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, wait: null, default, pending.Started);
+            await Assert.That(latency).IsEqualTo(ReferenceEquals(pending.Candidate, outstanding)
+                ? ReadLatencyResult.Pending : ReadLatencyResult.Unknown);
+            selection.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
+        }
+        await Assert.That(selection.TryGet(out var selected)).IsTrue();
+        await Assert.That(selected).IsSameReferenceAs(discovered);
+        replies.SetResult(10);
+    }
+
+    [Test]
     public async Task FailedRefreshDiscardsPreviousEstimateBeforeItsAgeLimit()
     {
         long now = 100;

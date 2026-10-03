@@ -74,12 +74,20 @@ internal sealed class ReadLatencySampler<TConnection>(
     }
 
     internal ValueTask<ReadLatencyResult> GetLatencyAsync(TConnection connection, CancellationToken cancellationToken)
+        => GetLatencyAsync(connection, cancellationToken, out _);
+
+    // started: true when this call published a new probe. An expired selection budget is not
+    // evidence against a probe the same selection started itself.
+    internal ValueTask<ReadLatencyResult> GetLatencyAsync(TConnection connection, CancellationToken cancellationToken,
+        out bool started)
     {
+        started = false;
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var sample = _samples.GetValue(connection, static _ => new Sample());
         // ROLE owns this socket until validation completes. Exclude it without starting
-        // a probe or publishing a cached estimate to a concurrent selection.
+        // a probe or publishing a cached estimate to a concurrent selection. This first read
+        // is only an early exit; the versioned snapshot and the locked path below re-check it.
         if (Volatile.Read(ref sample.Reservation) != 0) return ValueTask.FromResult(ReadLatencyResult.Pending);
         var version = Volatile.Read(ref sample.Version);
         var now = Now;
@@ -122,7 +130,11 @@ internal sealed class ReadLatencySampler<TConnection>(
                     ? ReadLatencyResult.Measured(measurement.Latency) : ReadLatencyResult.Unknown);
             }
         }
-        if (start is not null) _ = MeasureAsync(connection, sample, start);
+        if (start is not null)
+        {
+            started = true;
+            _ = MeasureAsync(connection, sample, start);
+        }
         // A fresh estimate cannot bypass an outstanding command in this connection's FIFO.
         return new ValueTask<ReadLatencyResult>(pending.WaitAsync(cancellationToken));
     }

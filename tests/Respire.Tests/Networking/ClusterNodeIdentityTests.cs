@@ -81,7 +81,15 @@ public class ClusterNodeIdentityTests
         try
         {
             var retirement = node.RetireAsync();
-            (await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5))).Fire();
+            var barrierTimer = await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Expire the deadline only after the barrier PING is parked behind the paused upload,
+            // so the timeout path under test is the unanswered barrier, not a pre-canceled send.
+            using (var parked = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (!connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, parked.Token);
+            await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+            barrierTimer.Fire();
+            using (var released = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, released.Token);
             await Task.Delay(300);
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(retirement.IsCompleted).IsFalse();

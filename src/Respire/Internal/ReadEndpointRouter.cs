@@ -659,11 +659,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             var interval = router.RoleRevalidationInterval;
             if (!_closed && Volatile.Read(ref _multiplexer) is { } current)
             {
-                selected = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
                 selectedFrom = current;
-                // Check the selected physical socket, without advancing round-robin twice.
-                // Exclusion lasts for this selection even if the pending probe completes next.
-                if (sampler?.HasPendingProbe(selected) == true) return null;
+                // Check and return the same physical socket. Exclusion lasts for this selection
+                // even if the pending probe completes next.
+                selected = SelectSocket(current, preferredZone, sampler);
+                if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
             }
@@ -720,10 +720,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     }
                 }
 
-                if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands)
-                    selected = preferredZone is null ? _multiplexer.GetConnection() : _multiplexer.GetConnectionForZone(preferredZone);
                 // The socket or its probe state may have changed while acquiring the gate.
-                if (sampler?.HasPendingProbe(selected) == true) return null;
+                if (!ReferenceEquals(selectedFrom, _multiplexer) || selected is null || !selected.IsAcceptingCommands
+                    || sampler?.HasPendingProbe(selected) == true)
+                    selected = SelectSocket(_multiplexer, preferredZone, sampler);
+                if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
                 ReadLatencySampler<RespireConnection>.ValidationReservation reservation = default;
@@ -746,6 +747,25 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 throw new ObjectDisposedException(nameof(ReadEndpointRouter));
             }
             finally { if (entered) _gate.Release(); }
+        }
+
+        /// <summary>
+        /// Returns the round-robin socket, or with Nearest sampling the first socket without an
+        /// unanswered probe. A pending probe excludes only its own socket, so siblings are checked
+        /// in a fixed order (independent of concurrent cursor movement) before the replica is skipped.
+        /// </summary>
+        private static RespireConnection? SelectSocket(RespireConnectionMultiplexer multiplexer, string? preferredZone,
+            ReadLatencySampler<RespireConnection>? sampler)
+        {
+            var selected = preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
+            if (sampler is null || !sampler.HasPendingProbe(selected)) return selected;
+            for (var index = 0; index < multiplexer.ConnectionCount; index++)
+            {
+                var sibling = preferredZone is null ? multiplexer.GetConnection(index)
+                    : multiplexer.GetConnectionForZone(preferredZone, index);
+                if (!ReferenceEquals(sibling, selected) && !sampler.HasPendingProbe(sibling)) return sibling;
+            }
+            return null;
         }
 
         /// <summary>Stops new reads, then drains accepted work before the entry is disposed.</summary>
