@@ -1293,11 +1293,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             foreach (var connection in connections) connection.StopAcceptingCommands();
             // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
             // loop before the connection retirement drain closes sockets with empty command rings.
-            await Task.WhenAll(connections.Select(DrainMaintenanceNotificationsBeforeRetirementAsync))
+            await CleanupTasks.WhenAllAsync(connections.Select(DrainMaintenanceNotificationsBeforeRetirementAsync))
                 .ConfigureAwait(false);
             lock (_maintenanceHandlersGate)
                 CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
-            await Task.WhenAll(connections.Select(connection => connection.RetireAsync())).ConfigureAwait(false);
+            await CleanupTasks.WhenAllAsync(connections.Select(connection => connection.RetireAsync())).ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
             Volatile.Write(ref _retirementDrained, true);
