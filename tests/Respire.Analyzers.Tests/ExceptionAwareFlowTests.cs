@@ -419,6 +419,15 @@ public class ExceptionAwareFlowTests
     [Arguments("byte?", "_ = checked(left + right);", false)]
     [Arguments("int", "_ = checked(left + right);", true)]
     [Arguments("byte", "checked { left += right; }", true)]
+    [Arguments("byte", "_ = left / -1;", false)]
+    [Arguments("sbyte", "_ = left / -1;", false)]
+    [Arguments("short", "_ = left % -1;", false)]
+    [Arguments("ushort", "_ = left / -1;", false)]
+    [Arguments("char", "_ = left / -1;", false)]
+    [Arguments("byte?", "_ = left / -1;", false)]
+    [Arguments("int", "_ = left / -1;", true)]
+    [Arguments("short", "checked { left /= -1; }", true)]
+    [Arguments("int", "_ = 1 / right;", false)]
     public async Task PromotedArithmeticRetainsOperandRanges(string type, string operation, bool warning)
     {
         await Disposal.VerifyAsync($$"""
@@ -447,6 +456,55 @@ public class ExceptionAwareFlowTests
                     var pending = batch.GetStringAsync("key");
                     try { {{operation}} await batch.SendAsync(); }
                     catch (OverflowException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("if (left is not null) return;", "_ = left / 0;", "DivideByZeroException", false)]
+    [Arguments("if (right is not null) return;", "_ = left / right;", "DivideByZeroException", false)]
+    [Arguments("if (left is not null) return;", "_ = checked(left * int.MaxValue);", "OverflowException", false)]
+    [Arguments("if (left is not null) return;", "_ = checked(-left);", "OverflowException", false)]
+    [Arguments("if (left is not null) return;", "checked { left++; }", "OverflowException", false)]
+    [Arguments("if (left is not null) return;", "left /= 0;", "DivideByZeroException", false)]
+    [Arguments("if (left is not null) return; left = 1;", "_ = left / 0;", "DivideByZeroException", true)]
+    [Arguments("", "_ = left / 0;", "DivideByZeroException", true)]
+    [Arguments("if (left is not null) return;", "_ = left / Throws();", "InvalidOperationException", true)]
+    [Arguments("if (left is not null) return;", "_ = left / (right = 0);", "DivideByZeroException", false)]
+    public async Task EmptyLiftedOperandsSkipArithmetic(string setup, string operation, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int? Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int? left, int? right)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static int? Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int? left, int? right)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
                     Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
                 }
             }

@@ -131,6 +131,9 @@ internal sealed class FlowConditions
     {
         _cancellationToken.ThrowIfCancellationRequested();
         if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation) return;
+        if (operation is IBinaryOperation { IsLifted: true } or ICompoundAssignmentOperation { IsLifted: true }
+            or IUnaryOperation { IsLifted: true } or IIncrementOrDecrementOperation { IsLifted: true })
+            foreach (var operand in operation.ChildOperations) CollectRelevant(operand);
         var receiver = operation switch
         {
             IInvocationOperation invocation => invocation.Instance,

@@ -191,7 +191,10 @@ internal sealed class ImplicitExceptionClassifier(
                         && operation is ICompoundAssignmentOperation { IsChecked: true, OutConversion.IsIdentity: false });
             var divisor = operation is IBinaryOperation binary ? binary.RightOperand
                 : ((ICompoundAssignmentOperation)operation).Value;
-            if (IsIntegral(type) && !IntegralDivisionCanOverflow(divisor)) overflow = false;
+            var dividend = operation is IBinaryOperation division ? division.LeftOperand
+                : ((ICompoundAssignmentOperation)operation).Target;
+            if (IsIntegral(type) && (!IntegralDivisionCanOverflow(divisor)
+                || !IntegralDividendCanOverflow(dividend, type))) overflow = false;
             var constantDivisor = UnwrapDivisor(divisor).ConstantValue;
             var divideByZero = !constantDivisor.HasValue || constantDivisor.Value is null
                 || (constantDivisor.Value is char character ? character == 0 : Convert.ToDouble(constantDivisor.Value) == 0);
@@ -232,6 +235,45 @@ internal sealed class ImplicitExceptionClassifier(
             SpecialType.System_UInt16 or SpecialType.System_Char => (ushort.MinValue, ushort.MaxValue),
             _ => null,
         };
+    }
+
+    private static bool IntegralDividendCanOverflow(IOperation dividend, ITypeSymbol? type)
+    {
+        decimal minimum = type?.SpecialType switch
+        {
+            SpecialType.System_SByte => sbyte.MinValue,
+            SpecialType.System_Int16 => short.MinValue,
+            SpecialType.System_Int32 or SpecialType.System_IntPtr => int.MinValue,
+            SpecialType.System_Int64 => long.MinValue,
+            _ => decimal.MinValue,
+        };
+        // Native integers may have either width in a portable compilation.
+        var alternateMinimum = type?.SpecialType == SpecialType.System_IntPtr ? long.MinValue : minimum;
+        if (SmallIntegralRange(dividend) is { } range)
+            return minimum >= range.Min && minimum <= range.Max
+                || alternateMinimum >= range.Min && alternateMinimum <= range.Max;
+        dividend = UnwrapDivisor(dividend);
+        if (dividend.ConstantValue is { HasValue: true, Value: { } value }
+            && value is sbyte or byte or short or ushort or int or uint or long or ulong or char)
+        {
+            var constant = value is char character ? character : Convert.ToDecimal(value);
+            return constant == minimum || constant == alternateMinimum;
+        }
+        return true;
+    }
+
+    internal bool HasEmptyLiftedOperand(IOperation operation, ulong known, ulong values)
+    {
+        return operation switch
+        {
+            IBinaryOperation { IsLifted: true } binary => IsEmpty(binary.LeftOperand) || IsEmpty(binary.RightOperand),
+            ICompoundAssignmentOperation { IsLifted: true } compound => IsEmpty(compound.Target) || IsEmpty(compound.Value),
+            IUnaryOperation { IsLifted: true } unary => IsEmpty(unary.Operand),
+            IIncrementOrDecrementOperation { IsLifted: true } increment => IsEmpty(increment.Target),
+            _ => false,
+        };
+
+        bool IsEmpty(IOperation operand) => conditions.IsKnownNull(UnwrapDivisor(operand), known, values);
     }
 
     private static bool IntegralDivisionCanOverflow(IOperation divisor)

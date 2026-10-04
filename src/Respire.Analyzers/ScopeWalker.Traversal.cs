@@ -538,6 +538,7 @@ internal static partial class ScopeWalker
                 && !(exceptionSource is IConversionOperation nullableBoxing
                     && Exceptions.IsBoxing(nullableBoxing)
                     && _conditions.IsKnownNull(nullableBoxing.Operand, known, values))
+                && !Exceptions.HasEmptyLiftedOperand(exceptionSource, known, values)
                 && ((operation.Syntax.Span.End <= firstBarrier || paramsAllocation)
                     && !completionOperation
                     && !collectionTransfer
