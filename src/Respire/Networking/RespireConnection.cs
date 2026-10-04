@@ -2989,21 +2989,36 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
                 }
 
-                if (_completions.RescueStalledRunner(now, StalledDeliveryMilliseconds))
-                {
-                    _logger?.LogWarning(
-                        "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
-                        + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
-                        + "inside continuations.",
-                        Host, Port, StalledDeliveryMilliseconds);
-                }
-
+                RescueStalledDelivery(now);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Normal connection teardown.
+        }
+
+        // Teardown cancels the sweep, but replies parsed before it may still be queued behind a
+        // continuation that blocks on one of them. Keep rescuing until the receive loop has
+        // published its final batch and nothing waits on the rescue.
+        while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
+        {
+            RescueStalledDelivery(Environment.TickCount64);
+            await Task.Delay(TeardownRescueInterval).ConfigureAwait(false);
+        }
+    }
+
+    private static readonly TimeSpan TeardownRescueInterval = TimeSpan.FromMilliseconds(50);
+
+    private void RescueStalledDelivery(long now)
+    {
+        if (_completions.RescueStalledRunner(now, StalledDeliveryMilliseconds))
+        {
+            _logger?.LogWarning(
+                "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
+                + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
+                + "inside continuations.",
+                Host, Port, StalledDeliveryMilliseconds);
         }
     }
 

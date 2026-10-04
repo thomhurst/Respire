@@ -238,17 +238,19 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     }
 
     /// <summary>
-    /// Hands delivery to a new runner when the executing one has made no progress for at
-    /// least <paramref name="stallMilliseconds"/> while replies wait behind it. Delivery is
-    /// serial, so a continuation that blocks on another reply from this connection
-    /// (sync-over-async, a blocking join) would otherwise wait on itself forever. Call
-    /// periodically from a single thread; a call is cheap while delivery is idle or moving.
+    /// Hands delivery to a new runner when replies have waited at least
+    /// <paramref name="stallMilliseconds"/> behind an executing runner that made no progress
+    /// meanwhile. Delivery is serial, so a continuation that blocks on another reply from this
+    /// connection (sync-over-async, a blocking join) would otherwise wait on itself forever.
+    /// Call periodically from a single thread; a call is cheap while delivery is idle or moving.
     /// </summary>
     /// <returns><see langword="true"/> when delivery was handed off.</returns>
     internal bool RescueStalledRunner(long nowMilliseconds, long stallMilliseconds)
     {
         var claim = Volatile.Read(ref _claim);
-        if (claim != _observedClaim || !Volatile.Read(ref _executing))
+        // The stall clock starts only once replies are waiting, so a slow continuation with
+        // nothing behind it is never handed off as soon as the next reply arrives.
+        if (claim != _observedClaim || !Volatile.Read(ref _executing) || !MayHaveWaitingReplies(claim))
         {
             _observedClaim = claim;
             _observedSince = nowMilliseconds;
@@ -273,6 +275,26 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         _observedSince = nowMilliseconds;
         return true;
     }
+
+    /// <summary>
+    /// Whether parsed replies are queued or unclaimed. Callers that keep rescuing during
+    /// teardown poll this until delivery no longer depends on the rescue.
+    /// </summary>
+    internal bool HasWaitingReplies
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _pendingCount > 0
+                    || (_activeItems is not null && (int)Volatile.Read(ref _claim) < _activeCount);
+            }
+        }
+    }
+
+    // Unsynchronized pre-filter for the stall clock; the handoff re-checks under the gate.
+    private bool MayHaveWaitingReplies(long claim)
+        => Volatile.Read(ref _pendingCount) > 0 || (int)claim < Volatile.Read(ref _activeCount);
 
     /// <summary>
     /// Transfers ownership from the executing runner to a newly queued one, moving the active

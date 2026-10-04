@@ -96,13 +96,44 @@ public class StalledDeliveryTests
                 using var first = awaiter.GetResult();
                 // Sync-over-async on the same connection: this reply is delivered behind the
                 // continuation that is waiting for it.
+                // Bounded so a regression fails the test instead of hanging connection teardown.
                 using var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
-                    .AsTask().GetAwaiter().GetResult();
+                    .AsTask().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
         });
 
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [Test]
+    public async Task TeardownKeepsRescuingRepliesParsedBeforeTheConnectionClosed()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                using var first = awaiter.GetResult();
+                var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+                blocked.TrySetResult();
+                using var second = pending.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                completed.TrySetResult();
+            }
+            catch (Exception error) { completed.TrySetException(error); }
+        });
+
+        await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Let the second PONG arrive and queue behind the blocked continuation, then close the
+        // connection well before the stall threshold: teardown must not abandon that reply.
+        await Task.Delay(100);
+        var disposed = connection.DisposeAsync().AsTask();
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await disposed.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
