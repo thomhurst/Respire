@@ -13,6 +13,9 @@ internal sealed class ImplicitExceptionClassifier(
 
     internal bool MayThrow(IOperation operation)
     {
+        // Nullable<T> construction only stores its value; argument evaluation is visited separately.
+        if (operation is IObjectCreationOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+            return false;
         if (operation is IInvocationOperation
             { TargetMethod: { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
             return false;

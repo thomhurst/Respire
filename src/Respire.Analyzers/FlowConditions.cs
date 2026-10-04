@@ -249,9 +249,14 @@ internal sealed class FlowConditions
     };
 
     internal bool IsConstructedReceiver(IOperation operation)
-        => Unwrap(operation) is IObjectCreationOperation or IArrayCreationOperation or IWithOperation { CloneMethod: not null }
+        => Unwrap(operation) switch
+        {
+            IObjectCreationOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, Arguments.Length: 0 } => false,
+            IObjectCreationOperation or IArrayCreationOperation or IWithOperation { CloneMethod: not null }
             // The CFG lowers a record copy to the compiler-generated clone method.
-            or IInvocationOperation { TargetMethod: { Name: "<Clone>$", ContainingType.IsRecord: true } };
+                or IInvocationOperation { TargetMethod: { Name: "<Clone>$", ContainingType.IsRecord: true } } => true,
+            _ => false,
+        };
 
     internal IOperation ResolveCapturedTarget(IOperation operation) => Unwrap(operation);
 
