@@ -17,7 +17,7 @@ namespace Respire.Networking;
 /// (see <c>RespireConnection.FlushLoopAsync</c>), and it never runs caller continuations
 /// itself, so a captured thread only ever executes connection-owned send code.
 /// </remarks>
-internal sealed class AsyncFlushSignal : IValueTaskSource
+internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
 {
     private const int Idle = 0;
     private const int Signaled = 1;
@@ -65,9 +65,14 @@ internal sealed class AsyncFlushSignal : IValueTaskSource
         }
         else
         {
-            ThreadPool.UnsafeQueueUserWorkItem(static signal => signal._core.SetResult(true), this, preferLocal: true);
+            // Queue this instance rather than a delegate and state: the state overload wraps
+            // them in a new work item on every wake. Only one wake can be outstanding, because
+            // the waiter cannot re-arm until this one has run.
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
         }
     }
+
+    void IThreadPoolWorkItem.Execute() => _core.SetResult(true);
 
     void IValueTaskSource.GetResult(short token)
     {
