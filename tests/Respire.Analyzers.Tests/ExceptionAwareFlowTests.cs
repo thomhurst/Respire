@@ -551,6 +551,50 @@ public class ExceptionAwareFlowTests
     }
 
     [Test]
+    [Arguments("decimal?", "if (value is not null) return;", "(int?)value", "OverflowException", false)]
+    [Arguments("long?", "if (value is not null) return;", "checked((int?)value)", "OverflowException", false)]
+    [Arguments("double?", "if (value is not null) return;", "(decimal?)value", "OverflowException", false)]
+    [Arguments("decimal?", "", "(int?)value", "OverflowException", true)]
+    [Arguments("decimal?", "if (value is not null) return; value = decimal.MaxValue;", "(int?)value", "OverflowException", true)]
+    [Arguments("decimal?", "if (value is not null) return;", "(int)value", "InvalidOperationException", true)]
+    [Arguments("decimal?", "if (value is not null) return;", "(int)value", "OverflowException", false)]
+    public async Task NullNumericConversionsSkipOverflow(string type, string setup, string conversion, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} value)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{conversion}}; result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} value)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{conversion}}; await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EmptyLiftedAssignmentStillInvokesSetter(bool cleanup) => await Pending.VerifyAsync($$"""

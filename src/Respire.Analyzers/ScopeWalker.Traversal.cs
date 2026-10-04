@@ -603,7 +603,8 @@ internal static partial class ScopeWalker
                         if (conversionExceptions.InvalidOperation && !_conditions.IsKnownNonNull(conversion.Operand, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidOperationException"), started, known, values);
-                        if (conversionExceptions.Overflow)
+                        // Null lifted conversions skip numeric work; unwrapping null fails before it.
+                        if (conversionExceptions.Overflow && !_conditions.IsKnownNull(conversion.Operand, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.OverflowException"), started, known, values);
                     }
