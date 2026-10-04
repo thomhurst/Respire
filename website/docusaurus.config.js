@@ -45,6 +45,33 @@ const config = {
   ],
   scripts: [{src: 'https://tluma.ai/widget.js', async: true}],
   clientModules: ['./src/client/resp-headings.js'],
+  plugins: [
+    [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        siteDescription:
+          'Respire is a high-performance, async-first Redis and Valkey client for modern .NET.',
+        depth: 3,
+        content: {
+          enableLlmsFullTxt: true,
+          relativePaths: false,
+          excludeRoutes: ['/Respire/search'],
+        },
+      },
+    ],
+  ],
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      /** @type {import('@easyops-cn/docusaurus-search-local').PluginOptions} */
+      ({
+        hashed: true,
+        indexBlog: false,
+        highlightSearchTermsOnTargetPage: true,
+        explicitSearchResultPath: true,
+      }),
+    ],
+  ],
   presets: [
     [
       'classic',
