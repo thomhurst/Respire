@@ -182,6 +182,10 @@ internal static partial class ScopeWalker
             }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
+            var operatorTransfer = expression?.Parent is { } operatorSyntax
+                && semanticModel.GetOperation(operatorSyntax, cancellationToken) is
+                    IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null };
+            if (operatorTransfer) call = expression!.Parent;
             var collectionTransfer = expression?.Parent is InitializerExpressionSyntax collectionElement
                 && (collectionElement.IsKind(SyntaxKind.ComplexElementInitializerExpression)
                     || collectionElement.IsKind(SyntaxKind.CollectionInitializerExpression));
@@ -214,7 +218,7 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer || collectionTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer || collectionTransfer || operatorTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
@@ -250,7 +254,8 @@ internal static partial class ScopeWalker
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
-                    or IPropertyReferenceOperation or IDynamicIndexerAccessOperation)
+                    or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
+                    or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
@@ -286,6 +291,9 @@ internal static partial class ScopeWalker
         private static int TransferPosition(SyntaxNode operation) => operation switch
         {
             BaseObjectCreationExpressionSyntax { ArgumentList: { } arguments } => arguments.CloseParenToken.SpanStart,
+            // Operators have no closing call token after the last operand. Include that
+            // operand's complete evaluation, then exclude the accepting operator body.
+            BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax => operation.Span.End,
             _ => operation.Span.End - 1,
         };
 
@@ -431,7 +439,10 @@ internal static partial class ScopeWalker
                 && !(IsFrameworkLength(exceptionSource)
                     && exceptionSource is IPropertyReferenceOperation { Instance: { } lengthReceiver }
                     && _conditions.IsKnownNonNull(lengthReceiver, known, values))
-                && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
+                && (operation.Syntax.Span.End <= firstBarrier
+                    && !(operation.Syntax.Span.End == firstBarrier
+                        && operation is IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
+                    && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
                     // The runtime treats a throwing filter as a rejected filter.
@@ -549,6 +560,8 @@ internal static partial class ScopeWalker
                 IFieldReferenceOperation { Field: { IsStatic: true, IsConst: false } field } => field.ContainingType,
                 IPropertyReferenceOperation { Property.IsStatic: true } property => property.Property.ContainingType,
                 IInvocationOperation { TargetMethod.IsStatic: true } invocation => invocation.TargetMethod.ContainingType,
+                IBinaryOperation { OperatorMethod: { } binaryOperator } => binaryOperator.ContainingType,
+                IUnaryOperation { OperatorMethod: { } unaryOperator } => unaryOperator.ContainingType,
                 IObjectCreationOperation { Type: INamedTypeSymbol createdType } => createdType,
                 _ => null,
             };
@@ -647,6 +660,8 @@ internal static partial class ScopeWalker
                 IPropertyReferenceOperation { Property: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IFieldReferenceOperation { Field: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
+                    or IBinaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
+                    or IUnaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
                     when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 _ => TransferFailure.None,
             };

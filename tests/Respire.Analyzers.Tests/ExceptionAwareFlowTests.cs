@@ -8,6 +8,37 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("result + ThrowsOwner()", "", "", "InvalidOperationException", true)]
+    [Arguments("result + existing", "", "", "InvalidOperationException", false)]
+    [Arguments("result + ThrowsOwner()", "result.Dispose();", "", "InvalidOperationException", false)]
+    [Arguments("(flag ? result : result) + ThrowsOwner()", "", "", "InvalidOperationException", true)]
+    [Arguments("(flag ? result : result) + existing", "", "", "InvalidOperationException", false)]
+    [Arguments("Take(result + existing, Throws())", "", "", "InvalidOperationException", false)]
+    [Arguments("result + existing", "", "static Owner() { throw new Exception(); }", "TypeInitializationException", true)]
+    public async Task OperatorTransferWaitsForOperands(string expression, string cleanup, string constructor, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner
+        {
+            {{constructor}}
+            public static Owner operator +(RespireResult value, Owner owner) { value.Dispose(); return owner; }
+        }
+        class Caller
+        {
+            static Owner ThrowsOwner() => throw new InvalidOperationException();
+            static int Throws() => throw new InvalidOperationException();
+            static Owner Take(Owner owner, int other) => owner;
+            async Task Run(RespireClient client, Owner existing, bool flag)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { _ = {{expression}}; }
+                catch ({{catchType}}) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("result ?? existing", "Throws()", "", true)]
     [Arguments("result ?? existing", "0", "", false)]
     [Arguments("result ?? existing", "Throws()", "result?.Dispose();", false)]
