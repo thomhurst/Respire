@@ -8,6 +8,98 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("await batch.ExecuteAsync(ThrowToken());", "", true)]
+    [Arguments("await batch.ExecuteAsync(default);", "", false)]
+    [Arguments("await batch.ExecuteAsync(ThrowToken());", "await batch.SendAsync();", false)]
+    [Arguments("await batch.ExecuteAsync(ThrowToken()).ConfigureAwait(false);", "", true)]
+    [Arguments("await batch.ExecuteAsync(default).ConfigureAwait(false);", "", false)]
+    [Arguments("await batch.ExecuteAsync(default).ConfigureAwait(ThrowFlag());", "", true)]
+    [Arguments("await batch.ExecuteAsync(ThrowToken()).AsTask();", "", true)]
+    [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask());", "", false)]
+    [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask(), ThrowTask());", "", true)]
+    public async Task AwaitedFlushWaitsForArguments(string operation, string cleanup, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static CancellationToken ThrowToken() => throw new InvalidOperationException();
+            static bool ThrowFlag() => throw new InvalidOperationException();
+            static Task ThrowTask() => throw new InvalidOperationException();
+            async Task Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { {{operation}} }
+                catch (InvalidOperationException) { {{cleanup}} }
+                Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("default(ValueTask)", false)]
+    [Arguments("default(ValueTask<int>)", false)]
+    [Arguments("new ValueTask()", false)]
+    [Arguments("new ValueTask<int>()", false)]
+    [Arguments("unknown", true)]
+    public async Task DefaultValueTaskCannotBypassCleanup(string expression, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, ValueTask unknown)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { await {{expression}}; result.Dispose(); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, ValueTask unknown)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { await {{expression}}; await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("Throws()", "", true)]
+    [Arguments("0", "", false)]
+    [Arguments("Throws()", "result.Dispose();", false)]
+    public async Task AsConversionWaitsForLaterArguments(string argument, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(object owner, int other) { }
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { Take(result as object, {{argument}}); }
+                catch (InvalidOperationException) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("byte", "_ = checked(left + right);", false)]
     [Arguments("byte", "_ = checked(left - right);", false)]
     [Arguments("byte", "_ = checked(left * right);", false)]

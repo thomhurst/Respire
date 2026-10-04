@@ -7,6 +7,12 @@ catch handlers. The search does not infer exception types across method calls or
 model failures of the disposal/flush operation itself. Uncaught implicit exceptions
 remain outside the proof.
 
+Awaited flush barriers include receiver and argument evaluation, including arguments
+to completion adapters such as `ConfigureAwait` and `Task.WhenAll`. Failures of the
+flush and completion operations themselves remain excluded. Awaiting a directly
+default-initialized `ValueTask` or `ValueTask<T>` has no exception edge; unknown
+awaitable values remain conservative.
+
 Passing an owned result or batch to another method or property setter transfers
 responsibility at callee entry. The search checks failures before entry, including
 argument evaluation, receiver checks, and type initialization. It does not inspect

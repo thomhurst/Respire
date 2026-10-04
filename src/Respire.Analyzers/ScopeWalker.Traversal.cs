@@ -28,6 +28,7 @@ internal static partial class ScopeWalker
         private readonly Dictionary<SyntaxNode, ulong> _transferTriggers = new();
         private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
         private readonly HashSet<(int Block, int Position)> _returnBarriers = [];
+        private readonly HashSet<SyntaxNode> _completionOperations = [];
         private ulong _transferFlags;
         private readonly Dictionary<INamedTypeSymbol, ulong> _initializedTypes = new(SymbolEqualityComparer.Default);
         // Interned continuations keep each finally's return destination in the search state.
@@ -157,6 +158,18 @@ internal static partial class ScopeWalker
 
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
         {
+            if (barrier is AwaitExpressionSyntax awaited)
+            {
+                var block = FindBlock(graph, awaited);
+                if (block is null) return (null, 0);
+                // Flush and await failures are outside the proof, but evaluating their
+                // receivers, arguments, and completion adapters must finish first.
+                _completionOperations.Add(awaited);
+                if (semanticModel.GetOperation(awaited.Expression, cancellationToken) is { } operand)
+                    RegisterCompletionCalls(operand);
+                _unconditionalBarriers.Add((block.Ordinal, awaited.Span.End));
+                return (block, awaited.Span.End);
+            }
             var scope = origin is null ? graph.OriginalOperation.Syntax : GetEnclosingScope(origin);
             var capture = barrier.Ancestors().TakeWhile(node => node != scope)
                 .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
@@ -182,6 +195,7 @@ internal static partial class ScopeWalker
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
                     BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) => coalesce,
+                    BinaryExpressionSyntax conversion when conversion.IsKind(SyntaxKind.AsExpression) => conversion,
                     SwitchExpressionArmSyntax { Parent: SwitchExpressionSyntax selection } arm when arm.Expression == expression => selection,
                     AssignmentExpressionSyntax discarded when discarded.IsKind(SyntaxKind.SimpleAssignmentExpression)
                         && discarded.Right == expression
@@ -278,6 +292,26 @@ internal static partial class ScopeWalker
             static bool ContainsReference(IOperation operation, SyntaxNode reference)
                 => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation
                     || operation.ChildOperations.Any(child => ContainsReference(child, reference));
+        }
+
+        private void RegisterCompletionCalls(IOperation operation)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation is IInvocationOperation invocation)
+            {
+                var method = invocation.TargetMethod;
+                var containingNamespace = method.ContainingNamespace.ToDisplayString();
+                var batchFlush = method.ContainingType.ToDisplayString() == PendingReadBeforeFlushAnalyzer.BatchTypeName
+                    && method.Name is "SendAsync" or "ExecuteAsync" or "TryExecuteAsync"
+                        or "ExecuteAndWaitForReplicationAsync" or "ExecuteAndWaitForAofAsync";
+                var transactionCommit = method.Name == "CommitAsync" && HasBaseType(method.ContainingType,
+                    semanticModel.Compilation.GetTypeByMetadataName(PendingReadBeforeFlushAnalyzer.TransactionBaseTypeName));
+                if (batchFlush || transactionCommit
+                    || containingNamespace == "System.Threading.Tasks" && method.Name is "ConfigureAwait" or "AsTask" or "WaitAsync" or "WhenAll")
+                    _completionOperations.Add(operation.Syntax);
+            }
+            foreach (var child in operation.ChildOperations)
+                RegisterCompletionCalls(child);
         }
 
         private static IDelegateCreationOperation? FindDelegateCreation(IOperation operation, SyntaxNode capture)
@@ -442,7 +476,8 @@ internal static partial class ScopeWalker
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks, allocation, type initialization and dynamic binding precede
             // callee entry, where responsibility transfers. Callee-body failures are excluded.
-            var transferFailure = TransferPosition(operation.Syntax) == firstBarrier
+            var completionOperation = _completionOperations.Contains(operation.Syntax);
+            var transferFailure = TransferPosition(operation.Syntax) == firstBarrier && !completionOperation
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
             if (!deconstructionStoresHandled && operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
@@ -458,6 +493,7 @@ internal static partial class ScopeWalker
                     { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullableReceiver }
                     && _conditions.IsKnownNonNull(nullableReceiver, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier
+                    && !completionOperation
                     && !(operation.Syntax.Span.End == firstBarrier
                         && operation is IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
                     && Exceptions.MayThrow(exceptionSource) || transferFailure != TransferFailure.None))

@@ -57,7 +57,7 @@ internal static class RespireApiStub
                 public RespirePending<string> GetStringAsync(string key) => new RespirePending<string>();
                 public RespirePending<long> IncrementAsync(string key) => new RespirePending<long>();
                 public ValueTask SendAsync() => default;
-                public ValueTask<RespireBatchResult> ExecuteAsync() => default;
+                public ValueTask<RespireBatchResult> ExecuteAsync(System.Threading.CancellationToken cancellationToken = default) => default;
                 public ValueTask<RespireBatchResult> TryExecuteAsync() => default;
                 public ValueTask<long> ExecuteAndWaitForReplicationAsync(int replicas, TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default) => default;
                 public ValueTask<RespireAofAcknowledgement> ExecuteAndWaitForAofAsync(bool requireLocal, int replicas, TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default) => default;

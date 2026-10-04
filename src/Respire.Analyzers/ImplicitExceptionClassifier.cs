@@ -13,6 +13,8 @@ internal sealed class ImplicitExceptionClassifier(
 
     internal bool MayThrow(IOperation operation)
     {
+        if (operation is IAwaitOperation awaited && IsDefaultValueTask(awaited.Operation))
+            return false;
         // Nullable<T> construction only stores its value; argument evaluation is visited separately.
         if (operation is IObjectCreationOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
             return false;
@@ -84,6 +86,11 @@ internal sealed class ImplicitExceptionClassifier(
         _throwingOperations.Add(operation, throwing);
         return throwing;
     }
+
+    private static bool IsDefaultValueTask(IOperation operation)
+        => operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 }
+            && operation.Type is INamedTypeSymbol { Name: "ValueTask", IsValueType: true } type
+            && type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
 
     private static bool ArithmeticMayThrow(BinaryOperatorKind kind, bool isChecked, ITypeSymbol? type)
     {
