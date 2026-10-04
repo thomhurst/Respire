@@ -11,6 +11,15 @@ public class ExceptionAwareFlowTests
     [Arguments("if (flag) Take(owner); else await owner.SendAsync();", false)]
     [Arguments("if (flag) Take(owner);", true)]
     [Arguments("if (flag) await owner.SendAsync();", true)]
+    [Arguments("if (flag) await owner.SendAsync(); else { bool seen = owner != null; }", true)]
+    [Arguments("if (flag) await owner.SendAsync(); else { bool seen = owner is not null; }", true)]
+    [Arguments("if (flag) await owner.SendAsync(); else { bool seen = (object)owner != null; }", true)]
+    [Arguments("if (flag) await owner.SendAsync(); else { bool seen = object.ReferenceEquals(owner, null); }", true)]
+    [Arguments("bool seen = owner != null;", true)]
+    [Arguments("if (flag) Take(owner); else { owner = client.CreateBatch(); Take(owner); }", true)]
+    [Arguments("owner = client.CreateBatch(); Take(owner);", true)]
+    [Arguments("if (flag) Take(owner); else { await owner.SendAsync(); owner = client.CreateBatch(); Take(owner); }", false)]
+    [Arguments("if (flag) Take(owner); else Take(owner);", false)]
     public async Task BatchTransferAndFlushCoverDifferentPaths(string operation, bool warning) => await Pending.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;

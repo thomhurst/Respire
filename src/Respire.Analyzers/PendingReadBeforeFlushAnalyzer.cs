@@ -193,7 +193,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     batch,
                     allowReassignment: true,
                     allowNamedFlushExtension: true,
-                    before: read)
+                    before: read,
+                    origin: origin)
                 || HasFlushBefore(context, scope, batch, origin, read))
             {
                 continue;
@@ -488,9 +489,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowReassignment = false,
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
-        SyntaxNode? before = null)
+        SyntaxNode? before = null,
+        InvocationExpressionSyntax? origin = null)
         => FindEscapes(context, scope, local, allowedAssignment, allowReassignment,
-                allowNamedFlushExtension, allowLocalAlias, before)
+                allowNamedFlushExtension, allowLocalAlias, before, origin)
             .Any(escape => DominatesRead(context, scope, escape, before));
 
     private static IEnumerable<SyntaxNode> FindEscapes(
@@ -501,7 +503,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowReassignment = false,
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
-        SyntaxNode? before = null)
+        SyntaxNode? before = null,
+        InvocationExpressionSyntax? origin = null)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
@@ -520,12 +523,19 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
+            if (origin is not null && IsReassignedBetween(context, scope, local, origin, reference))
+            {
+                continue;
+            }
+
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
                 yield return reference;
                 continue;
             }
 
+            if (IsInspection(context.SemanticModel.GetOperation(reference, context.CancellationToken)))
+                continue;
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
             switch (use.Parent)
@@ -583,6 +593,20 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
     }
 
+    private static bool IsInspection(IOperation? operation)
+    {
+        while (operation?.Parent is IConversionOperation { OperatorMethod: null }
+            or IParenthesizedOperation or ITupleOperation)
+            operation = operation.Parent;
+        return operation?.Parent is IIsPatternOperation or IIsTypeOperation
+                or ITupleBinaryOperation or IBinaryOperation { OperatorMethod: null }
+            || operation?.Parent is IMemberReferenceOperation and not IMethodReferenceOperation
+            || operation?.Parent is IInvocationOperation invocation && invocation.Instance == operation
+                && invocation.TargetMethod.ReducedFrom is null
+            || operation?.Parent is IArgumentOperation { Parent: IInvocationOperation
+                { TargetMethod: { ContainingType.SpecialType: SpecialType.System_Object, Name: "ReferenceEquals" or "Equals" } } };
+    }
+
     private static bool HasFlushBefore(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
@@ -593,7 +617,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         var completions = new List<SyntaxNode>();
         // Different paths can satisfy the obligation by transferring the batch or flushing it.
         completions.AddRange(FindEscapes(context, scope, batch, allowReassignment: true,
-            allowNamedFlushExtension: true, before: read));
+            allowNamedFlushExtension: true, before: read, origin: origin));
         foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             context.CancellationToken.ThrowIfCancellationRequested();
@@ -627,7 +651,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         ILocalSymbol batch,
         InvocationExpressionSyntax origin,
-        InvocationExpressionSyntax flush)
+        SyntaxNode flush)
         => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
             .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
                               && ScopeWalker.IsSame(assignment.Left, reference)
