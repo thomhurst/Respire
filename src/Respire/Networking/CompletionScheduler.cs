@@ -295,7 +295,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         // nothing behind it is never handed off as soon as the next reply arrives.
         if (claim != _observedClaim || !waiting)
         {
-            _observedClaim = claim;
+            // An observation without waiting replies must not seed the clock: forget the claim
+            // so the next check that finds replies waiting starts a fresh threshold.
+            _observedClaim = waiting ? claim : -1;
             _observedSince = nowMilliseconds;
             // Once replies wait, check again exactly at the threshold. Otherwise nothing can be
             // stuck until a reply is queued behind a runner, which wakes the watcher again.

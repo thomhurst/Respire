@@ -83,7 +83,8 @@ public class StalledDeliveryTests
             await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
             await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
             await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(order.ToArray()).IsEquivalentTo(new long[] { 1, 2, 3, 4 });
+            await Assert.That(order.ToArray()).IsEquivalentTo(
+                new long[] { 1, 2, 3, 4 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
         }
         finally
         {
@@ -207,12 +208,19 @@ public class StalledDeliveryTests
     }
 
     [Test]
-    public async Task TeardownKeepsRescuingRepliesParsedBeforeTheConnectionClosed()
+    [Arguments(1)]
+    [Arguments(200)]
+    public async Task TeardownKeepsRescuingRepliesParsedBeforeTheConnectionClosed(int drainBudgetMilliseconds)
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        // Disable the running rescue so only teardown can deliver the queued reply.
+        // The stall threshold is out of reach, so only teardown's drain budget can hand off the
+        // queued reply; a budget shorter than the teardown interval must still hand it off.
         var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { StalledDeliveryThreshold = TimeSpan.FromHours(1) });
+            new RespireConnectionOptions
+            {
+                StalledDeliveryThreshold = TimeSpan.FromHours(1),
+                RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(drainBudgetMilliseconds),
+            });
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();

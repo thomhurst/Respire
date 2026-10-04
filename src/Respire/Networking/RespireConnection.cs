@@ -72,7 +72,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Task? _watchdogTask;
     private readonly Task? _deadlineSweepTask;
     private readonly Task _stallWatchTask;
-    private readonly CancellationTokenSource? _watchdogCancellation;
+    private readonly CancellationTokenSource _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
     private readonly TimeSpan? _commandTimeout;
     private readonly long _stalledDeliveryMilliseconds;
@@ -3017,26 +3017,36 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         // Replies parsed before teardown may still be queued behind a continuation that blocks
-        // on one of them. Keep rescuing until the receive loop has published its final batch
-        // and nothing waits. The connection is going away, so this checks at a short interval
-        // and only for as long as such replies exist. The budget keeps disposal from waiting
-        // on a replacement runner that a starved pool never starts; that runner still owns the
-        // replies and delivers them whenever it runs.
+        // on one of them. Keep rescuing, with the normal threshold, until the receive loop has
+        // published its final batch and nothing waits. Checks run at a short interval and only
+        // while such replies exist.
         var teardownStarted = Environment.TickCount64;
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
             var now = Environment.TickCount64;
             if (now - teardownStarted >= _teardownRescueBudgetMilliseconds)
             {
-                _logger?.LogWarning(
-                    "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
-                    + "finishing disposal and leaving them to the queued delivery runner.",
-                    Host, Port, _teardownRescueBudgetMilliseconds);
+                // Out of budget: hand off whatever still waits behind an executing runner now, so
+                // retirement's wait for idle delivery cannot hang on a blocked continuation. A
+                // replacement runner that a starved pool has not started still owns its replies
+                // and delivers them when it runs.
+                RescueStalledDelivery(now, 0);
+                RescueStalledDelivery(now, 0);
+                if (_completions.HasWaitingReplies)
+                {
+                    _logger?.LogWarning(
+                        "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
+                        + "finishing disposal and leaving them to the queued delivery runner.",
+                        Host, Port, _teardownRescueBudgetMilliseconds);
+                }
+
                 break;
             }
 
-            RescueStalledDelivery(now, TeardownRescueMilliseconds);
-            await Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds)).ConfigureAwait(false);
+            RescueStalledDelivery(now, _stalledDeliveryMilliseconds);
+            // Wake as soon as the receive loop exits, so disposal gains no polling latency.
+            await Task.WhenAny(_receiveTask, Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds)))
+                .ConfigureAwait(false);
         }
     }
 
@@ -3112,7 +3122,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private void Abort(Exception? reason = null)
     {
         _credentialSession?.RequestStop();
-        _watchdogCancellation?.Cancel();
+        _watchdogCancellation.Cancel();
         _completions.WakeStallWatcher();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
@@ -3357,7 +3367,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
             _stream?.Dispose();
             _socket?.Dispose();
-            _watchdogCancellation?.Dispose();
+            _watchdogCancellation.Dispose();
             _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
             completion.TrySetResult();
         }
