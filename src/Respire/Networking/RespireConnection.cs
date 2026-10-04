@@ -2024,7 +2024,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// or awaiting replies the wake dispatches asynchronously — the flush loop is already
     /// cycling, and capturing producer threads would not deepen batches.
     /// </summary>
-    private void ScheduleFlush(bool startedBatch) => _flushSignal.Signal(preferInline: startedBatch);
+    /// <remarks>
+    /// Only thread-pool writers wake inline. A writer on its own thread (for example one
+    /// blocking on the result) would otherwise make the send while every pool worker sleeps,
+    /// so the reply's socket completion must wake a cold worker before the receive loop can
+    /// run. Dispatching the send keeps a worker spinning through the round trip, which
+    /// measured faster than the inline send on Linux.
+    /// </remarks>
+    private void ScheduleFlush(bool startedBatch)
+        => _flushSignal.Signal(preferInline: startedBatch && Thread.CurrentThread.IsThreadPoolThread);
 
     /// <summary>
     /// Caps how many consecutive batches the flush loop sends without ever suspending before
