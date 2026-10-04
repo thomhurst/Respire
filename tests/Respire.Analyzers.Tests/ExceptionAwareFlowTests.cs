@@ -8,6 +8,70 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (flag) Take(owner); else await owner.SendAsync();", false)]
+    [Arguments("if (flag) Take(owner);", true)]
+    [Arguments("if (flag) await owner.SendAsync();", true)]
+    public async Task BatchTransferAndFlushCoverDifferentPaths(string operation, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static void Take(RespireBatch batch) { }
+            async Task Run(RespireClient client, bool flag)
+            {
+                var owner = client.CreateBatch();
+                var pending = owner.GetStringAsync("key");
+                {{operation}}
+                Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("Take(owner);", "OutOfMemoryException", false, true)]
+    [Arguments("Take(owner, owner);", "OutOfMemoryException", false, true)]
+    [Arguments("Take(owner);", "OutOfMemoryException", true, false)]
+    [Arguments("Take(owner);", "InvalidOperationException", false, false)]
+    [Arguments("Take(owner);", "OverflowException", false, false)]
+    [Arguments("Take(new[] { owner });", "OutOfMemoryException", false, true)]
+    public async Task ExpandedParamsAllocateBeforeTransfer(string call, string catchType, bool cleanup, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Take(params RespireResult[] values) { }
+                async Task Run(RespireClient client)
+                {
+                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteAsync("PING");
+                    try { {{call}} }
+                    catch ({{catchType}}) { {{(cleanup ? "owner.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Take(params RespireBatch[] values) { }
+                async Task Run(RespireClient client)
+                {
+                    var owner = client.CreateBatch();
+                    var pending = owner.GetStringAsync("key");
+                    try { {{call}} }
+                    catch ({{catchType}}) { {{(cleanup ? "await owner.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("if (divisor == 0) return;", "_ = 1 / divisor;", "DivideByZeroException", false)]
     [Arguments("if (divisor == 0) return;", "_ = 1 % divisor;", "DivideByZeroException", false)]
     [Arguments("if (divisor == 0) return;", "int quotient = 1; quotient /= divisor;", "DivideByZeroException", false)]
@@ -190,7 +254,9 @@ public class ExceptionAwareFlowTests
     [Arguments("batch.ExecuteAsync(default).ConfigureAwait(false).GetAwaiter().GetResult();", "", false)]
     [Arguments("batch.ExecuteAsync(default).ConfigureAwait(ThrowFlag()).GetAwaiter().GetResult();", "", true)]
     [Arguments("batch.ExecuteAsync(ThrowToken()).GetAwaiter().GetResult();", "batch.SendAsync().GetAwaiter().GetResult();", false)]
-    public async Task AwaitedFlushWaitsForArguments(string operation, string cleanup, bool warning) => await Pending.VerifyAsync($$"""
+    [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask());", "", true, "OutOfMemoryException")]
+    [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask());", "await batch.SendAsync();", false, "OutOfMemoryException")]
+    public async Task AwaitedFlushWaitsForArguments(string operation, string cleanup, bool warning, string catchType = "InvalidOperationException") => await Pending.VerifyAsync($$"""
         using System;
         using System.Threading;
         using System.Threading.Tasks;
@@ -205,7 +271,7 @@ public class ExceptionAwareFlowTests
                 var batch = client.CreateBatch();
                 var pending = batch.GetStringAsync("key");
                 try { {{operation}} }
-                catch (InvalidOperationException) { {{cleanup}} }
+                catch ({{catchType}}) { {{cleanup}} }
                 Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
             }
         }
@@ -1269,6 +1335,8 @@ public class ExceptionAwareFlowTests
     [Arguments("Take(new Action(() => result.Dispose()), Throws());", "InvalidOperationException", true)]
     [Arguments("Take(result.Dispose, Throws());", "InvalidOperationException", true)]
     [Arguments("var owner = new { Callback = (Action)(() => result.Dispose()), Other = Throws() };", "InvalidOperationException", true)]
+    [Arguments("Take(() => result.Dispose(), flag ? 0 : 1);", "InvalidOperationException", false)]
+    [Arguments("Take(() => result.Dispose(), flag ? Throws() : 1);", "InvalidOperationException", true)]
     public async Task CapturedOwnerWaitsForDelegateAllocation(string capture, string catchType, bool warning, string cleanup = "") => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
@@ -1277,7 +1345,7 @@ public class ExceptionAwareFlowTests
         {
             static void Take(Action dispose, int other) { }
             static int Throws() => throw new InvalidOperationException();
-            async Task Run(RespireClient client)
+            async Task Run(RespireClient client, bool flag)
             {
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                 try { {{capture}} }

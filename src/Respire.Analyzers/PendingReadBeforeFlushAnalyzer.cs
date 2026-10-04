@@ -489,6 +489,19 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
         SyntaxNode? before = null)
+        => FindEscapes(context, scope, local, allowedAssignment, allowReassignment,
+                allowNamedFlushExtension, allowLocalAlias, before)
+            .Any(escape => DominatesRead(context, scope, escape, before));
+
+    private static IEnumerable<SyntaxNode> FindEscapes(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol local,
+        AssignmentExpressionSyntax? allowedAssignment = null,
+        bool allowReassignment = false,
+        bool allowNamedFlushExtension = false,
+        bool allowLocalAlias = false,
+        SyntaxNode? before = null)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
@@ -509,11 +522,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
-                if (DominatesRead(context, scope, reference, before))
-                {
-                    return true;
-                }
-
+                yield return reference;
                 continue;
             }
 
@@ -523,10 +532,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             {
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
                     if (member.Parent is not InvocationExpressionSyntax
-                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol
-                        && DominatesRead(context, scope, member, before))
+                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol)
                     {
-                        return true;
+                        yield return member;
                     }
 
                     if (member.Parent is InvocationExpressionSyntax invocation
@@ -534,10 +542,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                             is IMethodSymbol { ReducedFrom: not null }
                         && (!allowNamedFlushExtension
                             || (member.Name.Identifier.ValueText != CommitAsync
-                                && !IsBatchFlushMethodName(member.Name.Identifier.ValueText)))
-                        && DominatesRead(context, scope, invocation, before))
+                                && !IsBatchFlushMethodName(member.Name.Identifier.ValueText))))
                     {
-                        return true;
+                        yield return invocation;
                     }
 
                     break;
@@ -569,16 +576,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 default:
-                    if (DominatesRead(context, scope, use, before))
-                    {
-                        return true;
-                    }
-
+                    yield return use;
                     break;
             }
         }
 
-        return false;
     }
 
     private static bool HasFlushBefore(
@@ -589,6 +591,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ExpressionSyntax read)
     {
         var completions = new List<SyntaxNode>();
+        // Different paths can satisfy the obligation by transferring the batch or flushing it.
+        completions.AddRange(FindEscapes(context, scope, batch, allowReassignment: true,
+            allowNamedFlushExtension: true, before: read));
         foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             context.CancellationToken.ThrowIfCancellationRequested();

@@ -437,7 +437,7 @@ internal static partial class ScopeWalker
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
                 || operation.Syntax.SpanStart >= firstBarrier)
                 return;
-            if (operation is ILocalReferenceOperation or IParameterReferenceOperation
+            if (operation is ILocalReferenceOperation or IParameterReferenceOperation or IDelegateCreationOperation
                 && _transferTriggers.TryGetValue(operation.Syntax, out var transferFlag))
             {
                 known |= transferFlag;
@@ -513,7 +513,11 @@ internal static partial class ScopeWalker
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks, allocation, type initialization and dynamic binding precede
             // callee entry, where responsibility transfers. Callee-body failures are excluded.
-            var completionOperation = _completionOperations.Contains(operation.Syntax);
+            var completionOperation = operation is IInvocationOperation or IAwaitOperation
+                && _completionOperations.Contains(operation.Syntax);
+            // Expanded params arrays inherit the whole call's syntax, but allocate before entry.
+            var paramsAllocation = operation is IArrayCreationOperation
+                { IsImplicit: true, Parent: IArgumentOperation { ArgumentKind: ArgumentKind.ParamArray } };
             var collectionTransfer = operation is IInvocationOperation { IsImplicit: true }
                 && _collectionTransfers.Contains(operation.Syntax) && operation.Syntax.Span.End == firstBarrier;
             var transferFailure = (TransferPosition(operation.Syntax) == firstBarrier || collectionTransfer) && !completionOperation
@@ -534,7 +538,7 @@ internal static partial class ScopeWalker
                 && !(exceptionSource is IConversionOperation nullableBoxing
                     && Exceptions.IsBoxing(nullableBoxing)
                     && _conditions.IsKnownNull(nullableBoxing.Operand, known, values))
-                && (operation.Syntax.Span.End <= firstBarrier
+                && ((operation.Syntax.Span.End <= firstBarrier || paramsAllocation)
                     && !completionOperation
                     && !collectionTransfer
                     && !(operation.Syntax.Span.End == firstBarrier
