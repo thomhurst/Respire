@@ -32,6 +32,7 @@ internal static partial class ScopeWalker
         private readonly HashSet<SyntaxNode> _collectionTransfers = [];
         private ulong _transferFlags;
         private readonly Dictionary<INamedTypeSymbol, ulong> _initializedTypes = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ILocalSymbol, ITypeSymbol?> _exactThrownLocalTypes = new(SymbolEqualityComparer.Default);
         // Interned continuations keep each finally's return destination in the search state.
         private readonly List<(int Block, int Next, ControlFlowRegion? Finally)> _continuations = [(-1, 0, null)];
         private readonly Dictionary<(int Block, int Next, ControlFlowRegion Finally), int> _continuationIds = new();
@@ -901,7 +902,7 @@ internal static partial class ScopeWalker
                 {
                     if (exception is ILocalReferenceOperation or IParameterReferenceOperation
                         && !_conditions.IsKnownNonNull(exception, known, values)
-                        && ScopeExitAnalysis.GetExactThrownType(semanticModel, exception) is null)
+                        && GetExactThrownType(exception) is null)
                         Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
                 }
                 return;
@@ -924,6 +925,21 @@ internal static partial class ScopeWalker
             internal bool Certain { get; } = certain;
         }
 
+        private ITypeSymbol? GetExactThrownType(IOperation? exception)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (exception is not ILocalReferenceOperation reference)
+                return ScopeExitAnalysis.GetExactThrownType(semanticModel, exception, cancellationToken);
+
+            // Exact local types depend on the whole scope, not the current path state.
+            if (!_exactThrownLocalTypes.TryGetValue(reference.Local, out var type))
+            {
+                type = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception, cancellationToken);
+                _exactThrownLocalTypes.Add(reference.Local, type);
+            }
+            return type;
+        }
+
         private int GetDispatch(ControlFlowBranch branch, int continuation, bool nullPath = false,
             bool implicitException = false, bool allocationOnly = false, string? implicitExceptionType = null)
         {
@@ -932,7 +948,7 @@ internal static partial class ScopeWalker
                 return existing;
 
             var exception = UnwrapException(branch.Source.BranchValue);
-            ITypeSymbol? exceptionType = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception);
+            ITypeSymbol? exceptionType = GetExactThrownType(exception);
             var exactType = exceptionType is not null;
             var possiblyNull = !exactType && exception is ILocalReferenceOperation or IParameterReferenceOperation;
             exceptionType ??= possiblyNull ? exception?.Type : null;

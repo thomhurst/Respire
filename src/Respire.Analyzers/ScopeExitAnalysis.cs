@@ -19,15 +19,17 @@ internal static class ScopeExitAnalysis
     /// is unknown: NullReferenceException for a compile-time null, the type of a simple fresh
     /// construction, or the type a never-reassigned local was initialized with.
     /// </summary>
-    internal static ITypeSymbol? GetExactThrownType(SemanticModel semanticModel, IOperation? operation)
+    internal static ITypeSymbol? GetExactThrownType(
+        SemanticModel semanticModel, IOperation? operation, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (operation?.ConstantValue is { HasValue: true, Value: null })
         {
             return semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException");
         }
 
         return GetKnownExactExceptionType(semanticModel.Compilation, operation)
-               ?? GetUnreassignedCreationType(semanticModel, operation);
+               ?? GetUnreassignedCreationType(semanticModel, operation, cancellationToken);
     }
 
     /// <summary>
@@ -35,13 +37,14 @@ internal static class ScopeExitAnalysis
     /// so every read is that exact non-null instance. A construction exception happens at the
     /// initializer, before any read. Any possible write or by-reference use returns null.
     /// </summary>
-    private static ITypeSymbol? GetUnreassignedCreationType(SemanticModel semanticModel, IOperation? operation)
+    private static ITypeSymbol? GetUnreassignedCreationType(
+        SemanticModel semanticModel, IOperation? operation, CancellationToken cancellationToken)
     {
         if (operation is not ILocalReferenceOperation { Local: { IsRef: false, IsConst: false } local }
             || local.DeclaringSyntaxReferences.Length != 1
-            || local.DeclaringSyntaxReferences[0].GetSyntax() is not VariableDeclaratorSyntax { Initializer.Value: { } value } declarator
+            || local.DeclaringSyntaxReferences[0].GetSyntax(cancellationToken) is not VariableDeclaratorSyntax { Initializer.Value: { } value } declarator
             || declarator.SyntaxTree != semanticModel.SyntaxTree
-            || semanticModel.GetOperation(ScopeWalker.Unwrap(value)) is not IObjectCreationOperation { Type: { } createdType }
+            || semanticModel.GetOperation(ScopeWalker.Unwrap(value), cancellationToken) is not IObjectCreationOperation { Type: { } createdType }
             // A switch section's locals are scoped to the whole switch block.
             || declarator.Ancestors().FirstOrDefault(static ancestor =>
                 ancestor is BlockSyntax or SwitchStatementSyntax or CompilationUnitSyntax) is not { } scope)
@@ -49,11 +52,9 @@ internal static class ScopeExitAnalysis
             return null;
         }
 
-        foreach (var identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>())
+        foreach (var identifier in ScopeWalker.FindReferences(scope, local, semanticModel, cancellationToken))
         {
-            if (identifier.Identifier.ValueText == local.Name
-                && SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(identifier).Symbol, local)
-                && IsPotentialWrite(identifier))
+            if (IsPotentialWrite(identifier))
             {
                 return null;
             }
