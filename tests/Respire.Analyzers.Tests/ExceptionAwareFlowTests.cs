@@ -8,6 +8,58 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (divisor == 0) return;", "_ = 1 / divisor;", "DivideByZeroException", false)]
+    [Arguments("if (divisor == 0) return;", "_ = 1 % divisor;", "DivideByZeroException", false)]
+    [Arguments("if (divisor == 0) return;", "int quotient = 1; quotient /= divisor;", "DivideByZeroException", false)]
+    [Arguments("if (divisor <= 0) return;", "_ = 1 / divisor;", "DivideByZeroException", false)]
+    [Arguments("if (divisor == 0) return; divisor = 0;", "_ = 1 / divisor;", "DivideByZeroException", true)]
+    [Arguments("", "_ = 1 / divisor;", "DivideByZeroException", true)]
+    [Arguments("if (divisor == 0) return;", "_ = int.MinValue / divisor;", "OverflowException", true)]
+    [Arguments("if (value is not string) return;", "_ = (string)value;", "InvalidCastException", false)]
+    [Arguments("if (!(value is string)) return;", "_ = (string)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not string) return; value = new object();", "_ = (string)value;", "InvalidCastException", true)]
+    [Arguments("if (value is not string) return;", "_ = (int)value;", "InvalidCastException", true)]
+    [Arguments("", "_ = (string)value;", "InvalidCastException", true)]
+    [Arguments("if (value is not int) return;", "_ = (int)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not string) return;", "_ = (IComparable)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not int) return;", "_ = (long)value;", "InvalidCastException", true)]
+    public async Task GuardsExcludeImpossibleArithmeticAndCastFailures(string setup, string operation, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int divisor, object value)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int divisor, object value)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     public async Task DecimalNegationHasSymmetricRange()
     {
         var minimum = decimal.MinValue;

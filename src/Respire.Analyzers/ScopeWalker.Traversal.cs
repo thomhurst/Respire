@@ -530,13 +530,20 @@ internal static partial class ScopeWalker
                         if (arithmetic.Overflow)
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.OverflowException"), started, known, values);
-                        if (arithmetic.DivideByZero)
+                        var divisor = exceptionSource switch
+                        {
+                            IBinaryOperation binary => binary.RightOperand,
+                            ICompoundAssignmentOperation compound => compound.Value,
+                            _ => null,
+                        };
+                        if (arithmetic.DivideByZero && (divisor is null || !_conditions.IsKnownNonZero(divisor, known, values)))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.DivideByZeroException"), started, known, values);
                     }
                     else if (exceptionSource is IConversionOperation conversion && Exceptions.ConversionExceptions(conversion) is { } conversionExceptions)
                     {
-                        if (conversionExceptions.InvalidCast)
+                        if (conversionExceptions.InvalidCast
+                            && !_conditions.IsKnownType(conversion.Operand, conversion.Type, semanticModel.Compilation, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidCastException"), started, known, values);
                         if (conversionExceptions.NullReference && !_conditions.IsKnownNonNull(conversion.Operand, known, values))

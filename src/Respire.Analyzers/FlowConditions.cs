@@ -109,6 +109,8 @@ internal sealed class FlowConditions
             IInvocationOperation invocation => invocation.Instance,
             IMemberReferenceOperation member => member.Instance,
             IArrayElementReferenceOperation array => array.ArrayReference,
+            IBinaryOperation { OperatorKind: BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder } binary => binary.RightOperand,
+            ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder } compound => compound.Value,
             IConversionOperation { Operand.Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } conversion => conversion.Operand,
             IConversionOperation { Operand.Type.IsReferenceType: true } conversion => conversion.Operand,
             _ => null,
@@ -261,6 +263,44 @@ internal sealed class FlowConditions
         };
 
     internal IOperation ResolveCapturedTarget(IOperation operation) => Unwrap(operation);
+
+    internal bool IsKnownNonZero(IOperation operation, ulong known, ulong values)
+    {
+        while (operation is IConversionOperation { Conversion.IsIdentity: true } conversion)
+            operation = conversion.Operand;
+        if (operation is IFlowCaptureReferenceOperation
+            || Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
+        for (var index = 0; index < _predicates.Count; index++)
+        {
+            var predicate = _predicates[index];
+            var mask = 1UL << index;
+            if ((known & mask) == 0 || !SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
+                || predicate.Constant is not (sbyte or byte or short or ushort or int or uint or long or ulong or decimal)
+                || Convert.ToDecimal(predicate.Constant) != 0) continue;
+            if (predicate.Operator == BinaryOperatorKind.Equals && (values & mask) == 0
+                || predicate.Operator is BinaryOperatorKind.LessThan or BinaryOperatorKind.GreaterThan && (values & mask) != 0)
+                return true;
+        }
+        return false;
+    }
+
+    internal bool IsKnownType(IOperation operation, ITypeSymbol? destination, Compilation compilation, ulong known, ulong values)
+    {
+        while (operation is IConversionOperation { OperatorMethod: null } conversion
+            && (conversion.Conversion.IsIdentity || conversion.Conversion.IsReference))
+            operation = conversion.Operand;
+        if (destination is null || operation is IFlowCaptureReferenceOperation
+            || Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
+        for (var index = 0; index < _predicates.Count; index++)
+        {
+            if (_predicates[index] is not { Constant: ITypeSymbol type, Operator: BinaryOperatorKind.None } predicate
+                || !SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
+                || (known & values & (1UL << index)) == 0) continue;
+            var conversion = compilation.ClassifyCommonConversion(type, destination);
+            if (conversion.IsIdentity || conversion.IsImplicit && conversion.IsReference) return true;
+        }
+        return false;
+    }
 
     internal bool IsKnownNull(IOperation operation, ulong known, ulong values)
     {
