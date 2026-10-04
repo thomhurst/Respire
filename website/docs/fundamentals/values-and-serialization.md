@@ -71,6 +71,77 @@ Objects, enums, and other types use the configured serializer. Custom serializer
 
 Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, textual characters, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
 
+## NativeAOT and trimming
+
+Typed values use reflection-based System.Text.Json metadata by default. For a trimmed or NativeAOT
+application, generate metadata for every stored type and pass that context to Respire:
+
+<!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
+```csharp
+using System.Text.Json.Serialization;
+using Respire;
+using Respire.Serialization;
+
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
+};
+
+await using var redis = await RespireClient.ConnectAsync(options);
+
+// The generic APIs are conservatively annotated because IRespireSerializer can be
+// reflection-based. This configured context makes these two calls AOT-safe.
+#pragma warning disable IL2026, IL3050
+await redis.SetAsync("user:1", new User("Ada", 36));
+User? user = await redis.GetAsync<User>("user:1");
+#pragma warning restore IL2026, IL3050
+
+[JsonSerializable(typeof(User))]
+internal partial class AppJsonContext : JsonSerializerContext
+{
+}
+```
+
+Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
+and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
+serializers must implement all four `IRespireSerializer` members, including both `Type`-based
+methods. Forward the supplied declared type instead of substituting `object` or `value.GetType()`.
+For example, a serializer decorator preserves each overload:
+
+<!-- doc-test-declaration -->
+```csharp
+using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
+using Respire.Serialization;
+
+public sealed class ForwardingSerializer(IRespireSerializer inner) : IRespireSerializer
+{
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public void Serialize<T>(IBufferWriter<byte> destination, T value)
+        => inner.Serialize(destination, value);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+        => inner.Deserialize<T>(payload);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
+        => inner.Serialize(destination, type, value);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
+        => inner.Deserialize(type, payload);
+}
+```
+
+These annotations preserve the interface's conservative trimming and NativeAOT warnings.
+Use a source-generated serializer, as shown above, when the application requires AOT safety.
+
 ## Zero-copy leased reads
 
 Normal reads prioritize convenient managed values. Large or hot-path payloads can opt into pooled memory:

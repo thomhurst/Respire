@@ -1,60 +1,109 @@
 # Respire
 
-Respire is a fast, modern RESP client for .NET. It works with Redis, Valkey, KeyDB, and other
-RESP-compatible servers while keeping the API familiar to C# developers.
+**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and more built in.**
 
-[Read the documentation](https://thomhurst.github.io/Respire/)
+Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
-Packages, assemblies, and root namespaces share the `Respire.*` naming convention.
-Use `Respire.Json`, `Respire.Search`, `Respire.TimeSeries`, and `Respire.Probabilistic`
-for Redis features; `Extensions` is reserved for custom Redis modules.
-See [Packages and namespaces](https://thomhurst.github.io/Respire/docs/packages)
-for all packages and how to update existing references.
+[Documentation](https://thomhurst.github.io/Respire/) ·
+[Getting started](https://thomhurst.github.io/Respire/docs/getting-started) ·
+[Benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks) ·
+[Coming from StackExchange.Redis?](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
+
+```bash
+dotnet add package Respire
+```
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
-await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
-string? greeting = await redis.GetStringAsync("greeting");
-
-await redis.SetAsync("user:1", new User("Ada", 36));
+await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes(5));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
 > **Status:** Respire is pre-release, so its API may still change. See the
-> [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1) for remaining work.
+> [roadmap](https://thomhurst.github.io/Respire/docs/roadmap).
 
 ## Why Respire?
 
-- **Natural .NET APIs.** Get `string?`, `long`, `bool`, `TimeSpan?`, or `T?` directly—no
-  protocol wrapper to unpack. Nullability tells you when a result can be missing.
-- **Fast by default.** Respire coalesces commands from concurrent callers into fewer socket
-  writes, parses replies from pooled buffers, and spreads work across multiplexed connections.
-  No batching switch is required.
-- **Hot reads without a network round trip.** Optional RESP3 client-side caching stores eligible
-  reads in bounded process memory while Redis pushes invalidations when keys change. Existing APIs
-  become cache-aware without application-managed keys, subscriptions, or refresh code.
-- **Blocking commands that do not block everything else.** Commands such as `BLPOP` use a
-  dedicated pooled connection, leaving normal traffic free to flow.
-- **An API that is easy to explore.** Commands are grouped by data type (`redis.Hashes`,
-  `redis.Streams`, `redis.SortedSets`, and more), while common string operations remain on the
-  client itself. Module packages add `redis.Json`, `redis.Search`, `redis.TimeSeries`, and
-  `redis.Probabilistic` extension properties with C# 14 and the module namespace imported.
-- **Modern async patterns.** Pub/sub, stream consumer groups, and the `SCAN` family use
-  `IAsyncEnumerable`. Expiries use `TimeSpan` and `DateTimeOffset`.
-- **Safer failure modes.** Early batch awaits fail immediately instead of deadlocking.
-  Cancellation abandons the wait without leaving a partial RESP frame on the connection.
-- **Production-friendly.** Built-in reconnection, resubscribing pub/sub, OpenTelemetry,
-  dependency injection, typed serialization, and testable interfaces.
+- **Plain .NET types.** Get `string?`, `long`, `bool`, or your own `T?`, not protocol wrappers.
+- **Fast by default.** Concurrent calls are pipelined automatically. Blocking commands get their
+  own connection, so they never stall other calls.
+- **Hot reads from memory.** Turn on client-side caching and Redis tells Respire when to evict.
+- **Every command.** Typed APIs for each data type, and a generated catalog of every Redis 8.10
+  and Valkey 9.1 command.
+- **Ready for production.** Cluster, Sentinel, reconnection, OpenTelemetry, and dependency
+  injection are built in.
 
-Coming from StackExchange.Redis? See the
-[comparison and migration guide](https://thomhurst.github.io/Respire/docs/stackexchange-redis).
+## Batteries included
 
-## Everyday patterns
+| You need | With Respire |
+| --- | --- |
+| [A distributed lock](https://thomhurst.github.io/Respire/docs/guides/distributed-locks) | `redis.Locks.AcquireAsync(key, expiry)` |
+| [A shared rate limit](https://thomhurst.github.io/Respire/docs/guides/coordination#redis-backed-rate-limits) | `redis.Coordination.RateLimiters.SlidingWindow(...)` |
+| [A cross-process semaphore](https://thomhurst.github.io/Respire/docs/guides/coordination#distributed-semaphores) | `redis.Coordination.CreateSemaphore(key, capacity)` |
+| [A work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
+| [Pub/sub](https://thomhurst.github.io/Respire/docs/guides/pub-sub) | `await foreach` over `redis.SubscribeAsync(channel)` |
+| [Stream consumer groups](https://thomhurst.github.io/Respire/docs/commands/collections#consumer-groups) | `await foreach` over `redis.Streams.ReadGroupAsync(...)` |
+| [Hot reads without a round trip](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching) | `ClientSideCache = new()` |
+| [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(connectionString)` |
+| [Tests without Docker](https://thomhurst.github.io/Respire/docs/guides/in-memory-testing) | `new RespireFakeServer()` |
 
-### Server-assisted client-side caching
+### Distributed locks
 
-Turn on one option and keep using the same typed APIs:
+Run a job on one instance only. Disposing the attempt releases the lock:
+
+```csharp
+await using var attempt = await redis.Locks.AcquireAsync("locks:nightly-report", TimeSpan.FromSeconds(30));
+if (attempt.Acquired)
+{
+    await RunReportAsync();
+}
+```
+
+Waiting and keep-alive renewal are one call each. See the
+[locks guide](https://thomhurst.github.io/Respire/docs/guides/distributed-locks).
+
+### Rate limiting
+
+`Respire.Coordination` returns standard .NET `RateLimiter` instances, shared by every process
+that uses the same key. They also work with the ASP.NET Core rate-limiting middleware.
+
+```csharp
+using System.Threading.RateLimiting;
+using Respire.Coordination;
+
+await using var limiter = redis.Coordination.RateLimiters.SlidingWindow(
+    $"limits:api:{userId}", permitLimit: 100, window: TimeSpan.FromMinutes(1), segments: 6);
+
+using var lease = await limiter.AcquireAsync(1, cancellationToken);
+if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
+{
+    Console.WriteLine($"Slow down. Try again in {retryAfter}.");
+}
+```
+
+### Semaphores and more
+
+Allow at most four exports at once, across all your servers:
+
+```csharp
+using Respire.Coordination;
+
+var exports = redis.Coordination.CreateSemaphore("permits:exports", capacity: 4);
+await using var attempt = await exports.TryAcquireAsync(TimeSpan.FromSeconds(30));
+if (attempt.Acquired)
+{
+    await RunReportAsync();
+}
+```
+
+The same package has read-write locks, countdown latches, leases, and Redlock. See the
+[coordination guide](https://thomhurst.github.io/Respire/docs/guides/coordination).
+
+### Client-side caching
+
+Set one option. Repeated reads then come from local memory, and Redis sends an invalidation
+when the key changes:
 
 ```csharp
 await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOptions
@@ -63,407 +112,73 @@ await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOption
     ClientSideCache = new(),
 });
 
-// First call reads Redis. Repeated calls use the in-process cache.
-string? name = await cachedRedis.GetStringAsync("user:42:name");
+string? name = await cachedRedis.GetStringAsync("user:42:name"); // Cached after the first read.
 ```
 
-Redis tracks only reads Respire opts into. When any client changes a tracked key, Redis pushes an
-invalidation and Respire evicts the local entry; the next read refreshes it lazily. Missing keys,
-`MGET`, hashes, collections, JSON, vector sets, and other deterministic keyed reads participate.
+A cache hit takes hundreds of nanoseconds instead of a network round trip.
 
-StackExchange.Redis 3.1.13 does not provide an equivalent built-in server-assisted local cache.
-Its keyspace-notification APIs can be used to build application-owned invalidation, but storage,
-bounds, command eligibility, and race handling remain application concerns. A cache hit takes
-hundreds of nanoseconds instead of a network round trip. Uncached reads perform about the same
-in both clients.
+### Tests without Docker
 
-[Learn how client-side caching works](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching)
-or see the [latest benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks).
-
-### Blocking list reads
-
-Set `waitFor` and Respire automatically uses a dedicated connection:
+`Respire.Testing` runs your real client code against an in-memory server with a fake clock:
 
 ```csharp
-string? job = await redis.Lists.LeftPopAsync(
-    "jobs",
-    waitFor: TimeSpan.FromSeconds(30));
+using Respire.Testing;
+
+var clock = new RespireFakeClock();
+await using var server = new RespireFakeServer(clock);
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+
+await client.SetAsync("session", "abc", expiry: TimeSpan.FromMinutes(20));
+clock.Advance(TimeSpan.FromMinutes(21));
+string? expired = await client.GetStringAsync("session"); // null
 ```
 
-### Pub/sub
+### Batches and Cluster
 
-Subscriptions are async streams. Leaving the loop and disposing the subscription handles
-cleanup—no delegate bookkeeping required. `Gap` items mark possible message loss after a
-reconnect or buffer overflow. `SubscribeAsync` returns once the server has
-acknowledged the SUBSCRIBE, so the next publish is guaranteed to reach it.
-
-```csharp
-await using var subscription = await redis.SubscribeAsync("orders", token);
-
-await foreach (var message in subscription.WithCancellation(token))
-{
-    if (message.Kind == RespireMessageKind.Gap)
-    {
-        // Messages may have been lost. Reload authoritative state before continuing.
-        Console.Error.WriteLine($"Delivery gap: {message.Gap}");
-        continue;
-    }
-
-    Console.WriteLine($"{message.Channel}: {message.Text}");
-}
-```
-
-Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate consumer:
-
-```csharp
-await using var shard = await redis.SubscribeShardedAsync("orders:europe", token);
-
-await redis.PublishShardedAsync("orders:europe", "ready", token);
-
-await foreach (var message in shard.WithCancellation(token))
-{
-    if (message.Kind == RespireMessageKind.Gap)
-    {
-        continue; // Messages may have been lost. Reload authoritative state here.
-    }
-
-    Console.WriteLine(message.Text);
-    break;
-}
-```
-
-### Batches and transactions
-
-Batch commands share one flush. Transactions use one connection and return typed pending
-results. Both carry the same facets as the client — `batch.Lists.RightPush` mirrors
-`redis.Lists.RightPushAsync` — but return a `RespirePending<T>` instead of awaiting.
+Queue commands, send them in one flush, and read typed results:
 
 ```csharp
 using var batch = redis.CreateBatch();
 var name = batch.GetString("name");
 var visits = batch.Increment("visits");
-var profile = batch.Hashes.GetAll("user:1");
 await batch.ExecuteAsync();
 
-Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
-
-await using var transaction = redis.CreateTransaction();
-var balance = transaction.Increment("balance", -100);
-transaction.Lists.RightPush("audit", "withdraw:100");
-await transaction.CommitAsync();
+Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-`ExecuteAsync` throws the first command failure after every pending completes. Use
-`TryExecuteAsync` to inspect a `RespireBatchResult` without rethrowing execution failures.
+For Redis Cluster, add `?cluster=true` to the connection string. Respire handles slot routing
+and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
+and [connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections).
 
-Always declare batches with `using var`. See [batch disposal guarantees](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
-for pending commands, completed results, and repeated disposal.
+### ASP.NET Core
 
-Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
-are released. `await using` protects early-return and command-queuing failure paths; disposal is
-a no-op after a successful commit.
-
-`CreateTransaction()` returns `RespireTransaction`, whose `CommitAsync` completes without a
-result because an unwatched `EXEC` cannot abort. Use `CreateTransactionAsync(["balance"])` for
-optimistic concurrency with `WATCH`; it returns `RespireWatchedTransaction`, whose commit result
-must be checked. Read the current value through the client—not a deferred transaction read—then
-queue the conditional update,
-then recreate and retry the whole attempt when `CommitAsync` returns `false`:
-
-```csharp
-bool applied;
-do
-{
-    await using var watched = await redis.CreateTransactionAsync(["balance"]);
-    long current = long.Parse((await redis.GetStringAsync("balance"))!);
-    watched.Set("balance", current - 100);
-    applied = await watched.CommitAsync();
-}
-while (!applied);
-```
-
-### Distributed locks
-
-`AcquireAsync` generates the owner token and returns a non-null attempt. Check `Acquired`, then use
-the `Lock` handle; disposing the attempt also releases an acquired lock.
-
-```csharp
-await using var attempt = await redis.Locks.AcquireAsync("locks:report", TimeSpan.FromSeconds(30));
-if (!attempt.Acquired)
-{
-    return; // someone else holds it
-}
-
-var mutex = attempt.Lock;
-await RunReportAsync();
-```
-
-A lock is a lease, not a mutex: it disappears on its own when its `Duration` elapses, even
-mid-work. `RemainingEstimate` and `ExpiresAtEstimate` provide local best-effort deadlines. For
-longer work, start a keep-alive and pass its cancellation token into the protected operation;
-renewal failure cancels the token immediately:
-
-```csharp
-await using var keepAlive = await mutex.KeepAliveAsync(cancellationToken);
-await RunReportAsync(keepAlive.CancellationToken);
-if (keepAlive.OwnershipLost)
-{
-    // Do not publish protected output; another owner may be active.
-}
-```
-
-You can instead call `mutex.ResetExpiryAsync(...)` directly and stop protected writes when it returns
-`false`. `ReleaseAsync` returns `LockReleaseOutcome`, distinguishing `Released`,
-`AlreadyReleased`, and `NotOwned`. Every operation compares the token on the server, so an expired
-handle never extends or deletes the next owner's lock.
-
-When contention is exceptional, `AcquireOrThrowAsync` returns the handle directly and throws
-`RespireLockNotAcquiredException` after the optional wait budget:
-
-```csharp
-await using var mutex = await redis.Locks.AcquireOrThrowAsync(
-    "locks:report",
-    TimeSpan.FromSeconds(30),
-    wait: TimeSpan.FromSeconds(5)); // retries every 50 ms by default
-```
-
-`TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` are the raw-token APIs for
-callers that must share ownership between processes or outlive the acquiring process:
-
-```csharp
-RespireLockToken token = Guid.NewGuid().ToString("N");
-
-if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
-{
-    try
-    {
-        await RunReportAsync();
-    }
-    finally
-    {
-        await redis.Locks.ReleaseAsync("locks:report", token);
-    }
-}
-```
-
-### Redis Cluster
-
-Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows
-`MOVED`/`ASK` redirects, and caches learned routes. Batches may span nodes; transactions must keep
-all keys in one slot, so use Redis hash tags for related keys. Watched transactions use a dedicated
-connection to that slot owner; a redirect requires a new WATCH attempt and fresh reads. See the
-[Cluster WATCH guide](website/docs/guides/batches-and-transactions.md#cluster-watch-transactions).
-Sharded pub/sub (Redis 7+) routes each channel to its slot's primary using one dedicated
-subscription connection per primary. Subscriptions follow slot moves automatically; delivery-gap
-markers report handoffs, because Redis pub/sub cannot replay messages lost during migration.
-
-```csharp
-await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
-{
-    UseCluster = true,
-    Endpoints =
-    {
-        new("redis-1", 6379),
-        new("redis-2", 6379),
-    },
-});
-
-await cluster.SetAsync("{account:42}:name", "Ada");
-await cluster.SetAsync("{account:42}:balance", 100);
-```
-
-A single seed can also be enabled with `redis://redis-1?cluster=true`.
-
-Cluster `Keys.ScanAsync` validates slot progress during resharding. For durable checkpoints,
-use `Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start)` and serialize the returned
-cursor after processing each page. See [resumable Cluster scans](website/docs/commands/strings-and-keys.md#resumable-cluster-scans)
-for permissions, topology validation, duplicate handling, and resume semantics.
-
-### Zero-copy reads and custom commands
-
-Normal reads favor convenient .NET values. For large payloads, opt into a disposable lease:
-
-```csharp
-using RespireLease blob = await redis.Strings.GetLeaseAsync("blob:4mb");
-Process(blob.Span);
-```
-
-Every command in the Redis 8.10 and Valkey 9.1 references is available through the generated,
-discoverable `RespireCommands` catalog. It also includes Redis's integrated JSON, Search,
-probabilistic, time-series, and vector commands, Valkey modules, and documented KeyDB and
-Dragonfly extensions. Command words are pre-encoded once; only arguments are written per call:
-
-```csharp
-using var document = await redis.ExecuteAsync(
-    RespireCommands.Json.JSON_SET, "user:1", "$", payload);
-using var encoding = await redis.ExecuteAsync(
-    RespireCommands.Key.OBJECT_ENCODING, "user:1");
-```
-
-Catalog descriptors do not encode key positions, so catalog execution is rejected on
-`WithKeyPrefix` views; use the typed facets there to preserve key isolation.
-
-Strings convert implicitly to `RespireCommand` for experimental or server-specific commands.
-Interpolated values are encoded as single arguments, so spaces stay safe. Format strings and
-alignment are honored with invariant culture; holes use `IFormattable` or `ToString()` and do not
-pass through a Respire serializer.
-
-## App integration
-
-### Dependency injection
-
-<!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
-
-// Named clients are supported too.
-builder.Services.AddKeyedRespire("sessions", "redis://sessions-host");
-public sealed class CartService(
-    [FromKeyedServices("sessions")] IRespireClient redis);
+builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp:");
 ```
 
-Registration is lazy, so Redis availability never blocks application startup. `ConnectTimeout`
-bounds socket and TLS setup; the Redis handshake and non-blocking commands use `CommandTimeout`.
-Blocking commands use their explicit wait timeout, and caller cancellation applies throughout.
-Standalone clients surface setup exceptions directly, while cluster clients wrap seed failures in
-`RespireConnectionException`. The next command starts a new connection attempt.
+The client connects lazily, so startup never waits for Redis. The cache uses the same layout as
+`Microsoft.Extensions.Caching.StackExchangeRedis`, so existing entries keep working.
 
-### NativeAOT and trimming
+## Packages
 
-Typed values use reflection-based System.Text.Json metadata by default. For a trimmed or NativeAOT
-application, generate metadata for every stored type and pass that context to Respire:
+| Package | Adds |
+| --- | --- |
+| `Respire` | The client, locks, pub/sub, streams, batches, Cluster, and Sentinel |
+| `Respire.Coordination` | Rate limiters, semaphores, read-write locks, latches, and Redlock |
+| `Respire.DependencyInjection` | `AddRespire` and keyed clients |
+| `Respire.Caching`, `Respire.Caching.Hybrid` | `IDistributedCache` and `HybridCache` |
+| `Respire.Json`, `.Search`, `.TimeSeries`, `.Probabilistic` | Typed module APIs such as `redis.Json` |
+| `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 
-<!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
-```csharp
-using System.Text.Json.Serialization;
-using Respire;
-using Respire.Serialization;
+See [all packages](https://thomhurst.github.io/Respire/docs/packages).
 
-var options = new RespireOptions
-{
-    Endpoints = { new RespireEndpoint("localhost") },
-    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
-};
+## Learn more
 
-await using var redis = await RespireClient.ConnectAsync(options);
-
-// The generic APIs are conservatively annotated because IRespireSerializer can be
-// reflection-based. This configured context makes these two calls AOT-safe.
-#pragma warning disable IL2026, IL3050
-await redis.SetAsync("user:1", new User("Ada", 36));
-User? user = await redis.GetAsync<User>("user:1");
-#pragma warning restore IL2026, IL3050
-
-[JsonSerializable(typeof(User))]
-internal partial class AppJsonContext : JsonSerializerContext
-{
-}
-```
-
-Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
-and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
-serializers must implement all four `IRespireSerializer` members, including both `Type`-based
-methods. Forward the supplied declared type instead of substituting `object` or `value.GetType()`.
-For example, a serializer decorator preserves each overload:
-
-<!-- doc-test-declaration -->
-```csharp
-using System.Buffers;
-using System.Diagnostics.CodeAnalysis;
-using Respire.Serialization;
-
-public sealed class ForwardingSerializer(IRespireSerializer inner) : IRespireSerializer
-{
-    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
-    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
-    public void Serialize<T>(IBufferWriter<byte> destination, T value)
-        => inner.Serialize(destination, value);
-
-    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
-    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
-    public T? Deserialize<T>(ReadOnlySpan<byte> payload)
-        => inner.Deserialize<T>(payload);
-
-    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
-    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
-    public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
-        => inner.Serialize(destination, type, value);
-
-    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
-    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
-    public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
-        => inner.Deserialize(type, payload);
-}
-```
-
-These annotations preserve the interface's conservative trimming and NativeAOT warnings.
-Use a source-generated serializer, as shown above, when the application requires AOT safety.
-
-### IDistributedCache and HybridCache
-
-`Respire.Caching` provides `IDistributedCache` and `IBufferDistributedCache`.
-`Respire.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`.
-
-```csharp
-builder.Services.AddRespireDistributedCache(
-    "redis://localhost",
-    instanceName: "myapp:");
-
-// L1 memory + L2 Redis
-builder.Services.AddRespireHybridCache(
-    "redis://localhost",
-    instanceName: "myapp:");
-```
-
-Cache entries use the same layout as `Microsoft.Extensions.Caching.StackExchangeRedis`, so you
-can switch without flushing existing entries. Sliding-expiration reads also refresh their TTL
-atomically in the same round trip.
-
-> **Redis ACL note:** Cache users need `EVALSHA`, `EVAL`, `SET`, `UNLINK`, `HSET`, `HMGET`,
-> `PTTL`, `PEXPIRE`, `PERSIST`, and `EXISTS`. Timeout- or cancellation-safe calls also require
-> `CLIENT ID` and `CLIENT KILL`.
-
-## More capabilities
-
-- [Lua scripts](docs/SCRIPTING.md) with automatic `EVALSHA` to `EVAL` fallback, read-only execution, and typed script cache commands
-- Streams and consumer groups with per-entry acknowledgement
-- Key-prefixed client views for multi-tenant applications
-- Lazy/eager Redis Sentinel discovery and reactive primary handoff after disconnect or READONLY
-- Role-validated read routing to configured standalone replicas or Sentinel-discovered replicas
-- Sharded pub/sub for Redis 7
-- Automatic reconnect and pub/sub resubscribe
-- OpenTelemetry spans and metrics through `ActivitySource` and `Meter`, both named `Respire`
-- Custom `IRespireSerializer` support with a System.Text.Json default
-- `IRespireClient` and per-feature interfaces for straightforward testing
-
-Redis telemetry follows OpenTelemetry database semantic conventions. `db.namespace` reports
-the database index configured when the connection was established; raw `SELECT` commands are
-not tracked. Query text is not collected because arbitrary Redis command values cannot be
-reliably sanitized. Operation latency uses the stable `db.client.operation.duration` histogram
-in seconds; pipelines and transactions are recorded as single operations.
-
-See [command coverage](docs/COMMAND_COVERAGE.md) for audited sources and regeneration details,
-and [API design](docs/API_DESIGN.md) for design decisions, wire architecture, and roadmap.
-Reproducible comparisons with StackExchange.Redis—including server reads versus Respire
-client-cache hits—live in [`benchmarks/`](benchmarks/).
-
-## Documentation
-
-Read the [Respire documentation](https://thomhurst.github.io/Respire/) or run it locally:
-
-```bash
-cd website
-npm install
-npm start
-```
-
-## Build and test
-
-```bash
-dotnet build Respire.slnx
-dotnet test tests/Respire.Tests
-dotnet test tests/Respire.IntegrationTests # Requires Docker
-```
+- [Documentation](https://thomhurst.github.io/Respire/)
+- [Benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks)
+- [NativeAOT and custom serializers](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization#nativeaot-and-trimming)
+- [StackExchange.Redis comparison and migration](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
 
 ## License
 
