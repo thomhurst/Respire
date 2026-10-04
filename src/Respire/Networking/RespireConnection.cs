@@ -229,7 +229,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         _watchdogCancellation = new CancellationTokenSource();
 
-        _receiveTask = Task.Run(ReceiveLoopAsync);
+        // Not Task.Run: its proxy task only links to the loop's task once the delegate returns,
+        // and the loop can first suspend inside a reply continuation it delivers inline (see
+        // CompletionScheduler.RunWhileAwaiting). If that continuation blocks, for example by
+        // retiring this connection, the proxy would never complete and disposal would hang.
+        _receiveTask = ReceiveLoopAsync();
         _flushTask = Task.Run(FlushLoopAsync);
         if (_responseTimeout is { } responseTimeout)
         {
@@ -2173,6 +2177,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private async Task ReceiveLoopAsync()
     {
+        // Leave the constructor's thread before doing any work, as Task.Run did.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
         // Return to the bulk-header path after top-level RESP3 attributes, including
         // fragmented metadata, before the parser consumes a streamed payload.
