@@ -1,68 +1,222 @@
+/*
+ * Respire site identity.
+ *
+ * The palette comes from RESP itself: every frame starts with a one-byte type
+ * prefix, and each prefix owns a colour. The same colours mark frames on the
+ * home page, admonitions, and charts, so colour always means a RESP type.
+ *
+ *   +  simple string   --resp-simple
+ *   -  error           --resp-error
+ *   :  integer         --resp-integer
+ *   $  bulk string     --resp-bulk  (also the brand colour)
+ *   *  array           --resp-array
+ *   >  push            --resp-push
+ */
+
 :root {
-  --ifm-color-primary: #168d71;
-  --ifm-color-primary-dark: #137e65;
-  --ifm-color-primary-darker: #11765f;
-  --ifm-color-primary-darkest: #0e624e;
-  --ifm-color-primary-light: #199c7d;
-  --ifm-color-primary-lighter: #1ba483;
-  --ifm-color-primary-lightest: #24ba96;
-  --ifm-font-family-base: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  --ifm-font-family-monospace: 'Cascadia Code', 'SFMono-Regular', Consolas, ui-monospace, monospace;
-  --ifm-heading-font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  --ifm-heading-font-weight: 600;
-  --ifm-navbar-height: 4.25rem;
-  --ifm-code-font-size: 90%;
-  --respire-ink: #091b1a;
-  --respire-paper: #f5f1e8;
-  --respire-mint: #73e0c0;
-  --respire-coral: #ff876f;
-  --respire-line: rgba(9, 27, 26, 0.14);
+  --resp-paper: #f7f7f5;
+  --resp-surface: #ffffff;
+  --resp-sunken: #efefeb;
+  --resp-ink: #1a1c24;
+  --resp-ink-soft: #5a5e6b;
+  --resp-rule: #e1e1db;
+  --resp-field: 26, 28, 36;
+
+  --resp-simple: #3f7d5f;
+  --resp-error: #b0493b;
+  --resp-integer: #33788a;
+  --resp-bulk: #3f4c9a;
+  --resp-array: #96701f;
+  --resp-push: #9b4b72;
+
+  --ifm-color-primary: #3f4c9a;
+  --ifm-color-primary-dark: #39448b;
+  --ifm-color-primary-darker: #364083;
+  --ifm-color-primary-darkest: #2c356c;
+  --ifm-color-primary-light: #4654aa;
+  --ifm-color-primary-lighter: #4a58b0;
+  --ifm-color-primary-lightest: #6470bd;
+
+  --ifm-background-color: var(--resp-paper);
+  --ifm-background-surface-color: var(--resp-surface);
+  --ifm-font-color-base: var(--resp-ink);
+  --ifm-heading-color: var(--resp-ink);
+  --ifm-color-emphasis-300: var(--resp-rule);
+  --ifm-toc-border-color: var(--resp-rule);
+  --ifm-hr-background-color: var(--resp-rule);
+
+  --resp-font-display: 'Martian Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  --ifm-font-family-base: 'Schibsted Grotesk', system-ui, sans-serif;
+  --ifm-heading-font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'IBM Plex Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --ifm-heading-font-weight: 650;
+  --ifm-font-size-base: 17px;
+  --ifm-line-height-base: 1.65;
+  --ifm-code-font-size: 88%;
+  --ifm-code-background: var(--resp-sunken);
+  --ifm-code-border-radius: 3px;
+  --ifm-pre-background: var(--resp-surface);
+  --ifm-navbar-height: 3.75rem;
+  --ifm-navbar-background-color: var(--resp-paper);
+  --ifm-navbar-shadow: none;
+  --ifm-menu-color: var(--resp-ink-soft);
+  --ifm-menu-color-background-active: transparent;
+  --ifm-menu-color-background-hover: var(--resp-sunken);
+  --ifm-global-radius: 4px;
+  --docusaurus-highlighted-code-line-bg: rgba(63, 76, 154, 0.07);
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #73e0c0;
-  --ifm-color-primary-dark: #51d7b0;
-  --ifm-color-primary-darker: #40d2aa;
-  --ifm-color-primary-darkest: #29ad8a;
-  --ifm-color-primary-light: #95e9d1;
-  --ifm-color-primary-lighter: #a6edd8;
-  --ifm-color-primary-lightest: #d9f8ef;
-  --ifm-background-color: #0c1716;
-  --ifm-background-surface-color: #122220;
-  --ifm-navbar-background-color: rgba(9, 27, 26, 0.94);
-  --ifm-footer-background-color: #06100f;
-  --ifm-toc-border-color: rgba(115, 224, 192, 0.16);
-  --ifm-color-emphasis-300: rgba(115, 224, 192, 0.22);
-  --ifm-code-background: rgba(115, 224, 192, 0.09);
+  --resp-paper: #14161c;
+  --resp-surface: #1b1e26;
+  --resp-sunken: #232733;
+  --resp-ink: #e7e8ec;
+  --resp-ink-soft: #a3a7b3;
+  --resp-rule: #2c303b;
+  --resp-field: 231, 232, 236;
+
+  --resp-simple: #93cdb0;
+  --resp-error: #e59a8e;
+  --resp-integer: #8fc6d3;
+  --resp-bulk: #a3adf0;
+  --resp-array: #dcc085;
+  --resp-push: #dba3c1;
+
+  --ifm-color-primary: #a3adf0;
+  --ifm-color-primary-dark: #8794eb;
+  --ifm-color-primary-darker: #7987e8;
+  --ifm-color-primary-darkest: #4f60df;
+  --ifm-color-primary-light: #bfc6f5;
+  --ifm-color-primary-lighter: #cdd2f7;
+  --ifm-color-primary-lightest: #f5f6fe;
+  --docusaurus-highlighted-code-line-bg: rgba(163, 173, 240, 0.1);
 }
 
-html { scroll-behavior: smooth; }
-body { letter-spacing: -0.01em; }
-.navbar { border-bottom: 1px solid rgba(115, 224, 192, 0.12); box-shadow: none; backdrop-filter: blur(16px); }
-.navbar__brand { gap: .55rem; }
-.navbar__logo { height: 2rem; }
-.navbar__title { font-size: 1.05rem; letter-spacing: -.03em; }
-.navbar__link { font-size: .9rem; font-weight: 600; }
-.navbar-github-link::after { content: '↗'; margin-left: .35rem; font-size: .8em; }
-.footer { border-top: 1px solid rgba(115, 224, 192, 0.12); }
-.footer--dark { --ifm-footer-background-color: #06100f; }
-.footer__title { color: var(--respire-mint); font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; }
-.footer__copyright { color: rgba(245, 241, 232, .48); font-family: var(--ifm-font-family-monospace); font-size: .75rem; }
-.theme-doc-markdown h1 { font-size: clamp(2.4rem, 6vw, 4.4rem); letter-spacing: -.06em; line-height: .98; }
-.theme-doc-markdown h2 { letter-spacing: -.035em; margin-top: 2.75rem; }
-.theme-doc-markdown > p:first-of-type { font-size: 1.12rem; line-height: 1.8; }
-.theme-doc-sidebar-container { border-right-color: var(--ifm-toc-border-color) !important; }
-.menu__link { font-size: .88rem; }
-.menu__list-item-collapsible .menu__link { font-weight: 650; }
-.pagination-nav__link { border-color: var(--ifm-color-emphasis-300); }
-.pagination-nav__link:hover { border-color: var(--ifm-color-primary); }
-.alert { border: 1px solid var(--ifm-color-emphasis-300); border-left-width: 4px; }
+body {
+  background: var(--resp-paper);
+  font-feature-settings: 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Navbar: flat, ruled, wordmark-led. */
+.navbar {
+  border-bottom: 1px solid var(--resp-rule);
+}
+.navbar__logo { height: 1.75rem; }
+.navbar__title { font-family: var(--resp-font-display); font-size: 0.98rem; font-weight: 600; letter-spacing: -0.03em; }
+.navbar__link { font-size: 0.94rem; font-weight: 500; }
+.navbar__link--active { color: var(--ifm-color-primary); }
+
+/* Sidebar: active page gets a bulk-string rule, not a filled pill. */
+.theme-doc-sidebar-container { border-right-color: var(--resp-rule) !important; }
+.menu { font-size: 0.92rem; }
+.menu__link { border-radius: 0; border-left: 2px solid transparent; }
+.menu__link--active:not(.menu__link--sublist) {
+  border-left-color: var(--ifm-color-primary);
+  color: var(--resp-ink);
+  font-weight: 600;
+}
+.menu__list-item-collapsible { border-radius: 0; }
+.menu__list .menu__list { border-left: 1px solid var(--resp-rule); margin-left: 0.9rem; padding-left: 0; }
+.menu__caret::before, .menu__link--sublist-caret::after { opacity: 0.55; }
+
+/* Article typography. */
+.theme-doc-markdown { max-width: 46rem; }
+.theme-doc-markdown h1 {
+  font-family: var(--resp-font-display);
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-stretch: 87.5%;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+  margin-bottom: 1.25rem;
+}
+
+/* Each page title is shown as the RESP bulk string it would be on the wire. */
+.theme-doc-markdown h1[data-resp-length]::before {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--resp-bulk);
+  content: '$' attr(data-resp-length);
+  font-size: 0.42em;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.theme-doc-markdown h2 {
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--resp-rule);
+}
+.theme-doc-markdown h3 { font-size: 1.2rem; margin-top: 2rem; }
+.theme-doc-markdown > header + p,
+.theme-doc-markdown > p:first-of-type { color: var(--resp-ink-soft); font-size: 1.15rem; }
+.theme-doc-markdown a:not(.hash-link) { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.18em; }
+
+.breadcrumbs__item--active .breadcrumbs__link { background: transparent; color: var(--resp-ink-soft); padding-left: 0; }
+
+/* Code: paper-white panel with a hairline, no drop shadow. */
+.theme-code-block {
+  border: 1px solid var(--resp-rule);
+  box-shadow: none !important;
+}
+.theme-code-block pre { font-size: 0.86rem; line-height: 1.7; }
+code { border: 0; }
 pre code { font-family: var(--ifm-font-family-monospace); }
 
-@media (max-width: 996px) {
-  .navbar__items--right .navbar__item { display: none; }
+/*
+ * Admonitions borrow the RESP prefix for their meaning:
+ * note/info = simple string, tip = integer, warning = array, danger = error.
+ */
+.alert {
+  --resp-alert: var(--resp-simple);
+  border: 1px solid var(--resp-rule);
+  border-left: 3px solid var(--resp-alert);
+  border-radius: 0;
+  background: var(--resp-surface);
+  box-shadow: none;
+  color: var(--resp-ink);
 }
+.alert--info, .alert--secondary { --resp-alert: var(--resp-simple); }
+.alert--success { --resp-alert: var(--resp-integer); }
+.alert--warning { --resp-alert: var(--resp-array); }
+.alert--danger { --resp-alert: var(--resp-error); }
+.alert a { color: var(--ifm-color-primary); text-decoration-color: currentColor; }
+.theme-admonition [class*='admonitionHeading'] {
+  color: var(--resp-alert);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: none;
+}
+.theme-admonition [class*='admonitionIcon'] svg { fill: var(--resp-alert); }
 
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
+/* Tables read as data, not as cards. */
+.theme-doc-markdown table {
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+.theme-doc-markdown thead tr { border-bottom: 2px solid var(--resp-ink); }
+.theme-doc-markdown th { background: transparent; text-align: left; font-weight: 600; }
+.theme-doc-markdown tr { background: transparent !important; border-top: 0; border-bottom: 1px solid var(--resp-rule); }
+.theme-doc-markdown th, .theme-doc-markdown td { border: 0; padding: 0.6rem 0.75rem; }
+
+.table-of-contents__link--active { color: var(--resp-ink); font-weight: 600; }
+.table-of-contents { font-size: 0.85rem; }
+
+.pagination-nav__link { border-color: var(--resp-rule); border-radius: 0; background: var(--resp-surface); }
+.pagination-nav__link:hover { border-color: var(--ifm-color-primary); }
+
+.footer, .footer--dark { --ifm-footer-background-color: #1a1c24; border-top: 0; }
+[data-theme='dark'] .footer { --ifm-footer-background-color: #101116; border-top: 1px solid var(--resp-rule); }
+.footer__title { color: #ffffff; font-size: 0.95rem; }
+.footer__link-item { color: #b9bbc6; }
+.footer__link-item:hover { color: #ffffff; }
+.footer__copyright { color: #8d909c; font-size: 0.85rem; }
+
+:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
+
+@media (max-width: 996px) {
+  .navbar__items--right .navbar__item:not(.navbar__toggle) { display: none; }
 }
