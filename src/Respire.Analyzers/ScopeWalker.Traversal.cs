@@ -181,6 +181,12 @@ internal static partial class ScopeWalker
             }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
+            var collectionTransfer = expression?.Parent is InitializerExpressionSyntax collectionElement
+                && (collectionElement.IsKind(SyntaxKind.ComplexElementInitializerExpression)
+                    || collectionElement.IsKind(SyntaxKind.CollectionInitializerExpression));
+            if (expression?.Parent is InitializerExpressionSyntax complexElement
+                && complexElement.IsKind(SyntaxKind.ComplexElementInitializerExpression))
+                call = complexElement;
             var returnTransfer = expression?.Parent is ReturnStatementSyntax;
             var initializerTransfer = expression?.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax };
             if (initializerTransfer)
@@ -207,7 +213,7 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer || collectionTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)

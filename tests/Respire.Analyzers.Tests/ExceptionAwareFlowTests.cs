@@ -8,6 +8,37 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("new Owner { { result, Throws() } }", "", true)]
+    [Arguments("new Owner { { result, 0 } }", "", false)]
+    [Arguments("new Owner { result }", "", false)]
+    [Arguments("new Owner { { result, Throws() } }", "result.Dispose();", false)]
+    [Arguments("new Owner { { (result, 0), Throws() } }", "", true)]
+    [Arguments("new Owner { { (result, 0), 0 } }", "", false)]
+    public async Task CollectionInitializerWaitsForAddArguments(string creation, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Collections;
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner : IEnumerable
+        {
+            public void Add(RespireResult value) => value.Dispose();
+            public void Add(RespireResult value, int other) => value.Dispose();
+            public void Add((RespireResult, int) value, int other) => value.Item1.Dispose();
+            public IEnumerator GetEnumerator() => throw new NotImplementedException();
+        }
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { _ = {{creation}}; }
+                catch (InvalidOperationException) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments(2, false, false)]
     [Arguments(65, false, true)]
     [Arguments(2, true, true)]
