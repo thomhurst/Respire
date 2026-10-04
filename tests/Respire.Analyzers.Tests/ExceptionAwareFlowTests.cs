@@ -8,6 +8,37 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Take(new[] { result }, Throws());", "InvalidOperationException", "", true)]
+    [Arguments("Take(new RespireResult[] { result }, Throws());", "InvalidOperationException", "", true)]
+    [Arguments("Take(new[] { result, ThrowsResult() }, 0);", "InvalidOperationException", "", true)]
+    [Arguments("Take(new[] { result }, 0);", "InvalidOperationException", "", false)]
+    [Arguments("Take(new[] { result }, 0);", "OutOfMemoryException", "", true)]
+    [Arguments("Take(new[] { result }, Throws());", "InvalidOperationException", "result.Dispose();", false)]
+    [Arguments("Take(new[,] { { result } }, Throws());", "InvalidOperationException", "", true)]
+    [Arguments("Take(new[] { new[] { result } }, Throws());", "InvalidOperationException", "", true)]
+    [Arguments("_ = new[] { result };", "InvalidOperationException", "", true)]
+    [Arguments("var owners = new[] { result };", "InvalidOperationException", "", false)]
+    public async Task ArrayInitializerWaitsForOuterTransfer(string operation, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static RespireResult ThrowsResult() => throw new InvalidOperationException();
+            static void Take(RespireResult[] values, int other) { foreach (var value in values) value.Dispose(); }
+            static void Take(RespireResult[,] values, int other) { foreach (var value in values) value.Dispose(); }
+            static void Take(RespireResult[][] values, int other) { foreach (var row in values) Take(row, other); }
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} }
+                catch ({{catchType}}) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("result + ThrowsOwner()", "", "", "InvalidOperationException", true)]
     [Arguments("result + existing", "", "", "InvalidOperationException", false)]
     [Arguments("result + ThrowsOwner()", "result.Dispose();", "", "InvalidOperationException", false)]
