@@ -52,6 +52,17 @@ internal sealed class FlowConditions
         CollectReachablePredicates(graph, originBlock);
     }
 
+    /// <summary>
+    /// <paramref name="start"/> and its enclosing regions, stopping before <paramref name="graph"/>'s
+    /// root. A lambda or local-function graph's region chain continues into its containing graph,
+    /// whose block ordinals and handlers do not belong to <paramref name="graph"/>.
+    /// </summary>
+    internal static IEnumerable<ControlFlowRegion> EnumerateRegionsWithin(ControlFlowGraph graph, ControlFlowRegion? start)
+    {
+        for (var region = start; region is not null && region != graph.Root; region = region.EnclosingRegion)
+            yield return region;
+    }
+
     private void CollectReachablePredicates(ControlFlowGraph graph, BasicBlock originBlock)
     {
         var pending = new Stack<BasicBlock>();
@@ -74,7 +85,7 @@ internal sealed class FlowConditions
             AddBranch(block.ConditionalSuccessor);
             // Exceptional successors are implicit in Roslyn's CFG. Include their
             // predicates as well as loop back-edges and normal continuations.
-            for (var region = block.EnclosingRegion; region is not null; region = region.EnclosingRegion)
+            foreach (var region in EnumerateRegionsWithin(graph, block.EnclosingRegion))
                 if (region.Kind == ControlFlowRegionKind.Try
                     && region.EnclosingRegion is { Kind: ControlFlowRegionKind.TryAndCatch or ControlFlowRegionKind.TryAndFinally } owner)
                     foreach (var handler in owner.NestedRegions)
