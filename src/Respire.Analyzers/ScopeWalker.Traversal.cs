@@ -390,6 +390,9 @@ internal static partial class ScopeWalker
                     && _conditions.IsKnownNonNull(fieldReceiver, known, values))
                 && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
                     && IsTypeInitialized(exceptionSource, known, values))
+                && !(IsFrameworkLength(exceptionSource)
+                    && exceptionSource is IPropertyReferenceOperation { Instance: { } lengthReceiver }
+                    && _conditions.IsKnownNonNull(lengthReceiver, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier && MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
@@ -437,7 +440,7 @@ internal static partial class ScopeWalker
                     else Dispatch(GetDispatch(successor, continuation, implicitException: true,
                         implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
                             || exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
-                            ? "System.TypeInitializationException" : null,
+                            ? "System.TypeInitializationException" : KnownPropertyException(exceptionSource),
                         nullPath: transferFailure == TransferFailure.NullReceiver
                             || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false }
                             || IsFrameworkLength(exceptionSource),
@@ -521,26 +524,55 @@ internal static partial class ScopeWalker
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
             value = _conditions.ResolveCapturedTarget(value);
-            return target is not ITupleOperation targets
-                || value is ITupleOperation sources && targets.Elements.Length == sources.Elements.Length
+            if (target is not ITupleOperation targets) return true;
+            if (value is ITupleOperation sources)
+                return targets.Elements.Length == sources.Elements.Length
                     && targets.Elements.Select((element, index) => HasMatchingDeconstructionShape(element, sources.Elements[index])).All(static matches => matches);
+            // A tuple local already contains its elements. Identical tuple types need no
+            // element conversion or user-defined Deconstruct call before the stores.
+            if (value is IConversionOperation conversion)
+            {
+                if (conversion.Conversion.IsUserDefined) return false;
+                value = conversion.Operand;
+            }
+            return value.Type is INamedTypeSymbol { IsTupleType: true } tupleType
+                && MatchesTupleElementTypes(targets, tupleType);
         }
 
-        private bool VisitDeconstructionStores(IOperation target, IOperation value, BasicBlock block, int entryPosition, int firstBarrier,
+        private bool MatchesTupleElementTypes(ITupleOperation targets, INamedTypeSymbol source)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (targets.Elements.Length != source.TupleElements.Length) return false;
+            for (var index = 0; index < targets.Elements.Length; index++)
+            {
+                var target = _conditions.ResolveCapturedTarget(targets.Elements[index]);
+                var elementType = source.TupleElements[index].Type;
+                if (target is ITupleOperation nested)
+                {
+                    if (elementType is not INamedTypeSymbol { IsTupleType: true } nestedType
+                        || !MatchesTupleElementTypes(nested, nestedType)) return false;
+                }
+                else if (!SymbolEqualityComparer.Default.Equals(target.Type, elementType)) return false;
+            }
+            return true;
+        }
+
+        private bool VisitDeconstructionStores(IOperation target, IOperation? value, BasicBlock block, int entryPosition, int firstBarrier,
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
         {
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
-            value = _conditions.ResolveCapturedTarget(value);
-            if (target is ITupleOperation targets && value is ITupleOperation sources)
+            if (value is not null) value = _conditions.ResolveCapturedTarget(value);
+            if (target is ITupleOperation targets)
             {
+                var sources = value as ITupleOperation;
                 for (var index = 0; index < targets.Elements.Length; index++)
-                    if (VisitDeconstructionStores(targets.Elements[index], sources.Elements[index], block, entryPosition,
+                    if (VisitDeconstructionStores(targets.Elements[index], sources?.Elements[index], block, entryPosition,
                         firstBarrier, continuation, started, dispatch, ref known, ref values)) return true;
                 return false;
             }
             var activeTransfers = known & values;
-            var transferred = _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
+            var transferred = value is not null && _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
                 && (activeTransfers & trigger.Value) != 0);
             // Receivers and indexes were evaluated before the RHS; only the store runs now.
             // At the owning target, model pre-entry failures but not the accepting setter's body.
@@ -847,6 +879,11 @@ internal static partial class ScopeWalker
             => operation is IPropertyReferenceOperation { Property.Name: "Length" or "LongLength",
                 Property.ContainingType.SpecialType: SpecialType.System_Array }
                 or IPropertyReferenceOperation { Property.Name: "Length", Property.ContainingType.SpecialType: SpecialType.System_String };
+
+        private static string? KnownPropertyException(IOperation operation)
+            => operation is IPropertyReferenceOperation
+                { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
+                ? "System.InvalidOperationException" : null;
 
         private bool IsTrivialReferenceConstruction(IOperation operation)
         {

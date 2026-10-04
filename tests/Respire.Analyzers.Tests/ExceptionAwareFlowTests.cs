@@ -8,6 +8,60 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("var pair = (1, 2); int a, b;", "(a, b) = pair;", "Exception", false)]
+    [Arguments("var pair = (1, 2); object a, b;", "(a, b) = pair;", "OutOfMemoryException", true)]
+    [Arguments("var pair = (1, (2, 3)); int a, b, c;", "(a, (b, c)) = pair;", "Exception", false)]
+    [Arguments("var pair = (1, 2); int a; var holder = new Holder();", "(a, holder.Value) = pair;", "InvalidOperationException", true)]
+    [Arguments("if (text is null) return;", "_ = text.Length;", "NullReferenceException", false)]
+    [Arguments("if (values is null) return;", "_ = values.Length;", "NullReferenceException", false)]
+    [Arguments("if (values is null) return;", "_ = values.LongLength;", "NullReferenceException", false)]
+    [Arguments("if (text is null) return; text = null;", "_ = text.Length;", "NullReferenceException", true)]
+    [Arguments("", "_ = text.Length;", "NullReferenceException", true)]
+    [Arguments("", "_ = optional.Value;", "ArgumentException", false)]
+    [Arguments("", "_ = optional.Value;", "InvalidOperationException", true)]
+    [Arguments("", "_ = GetOptional().Value;", "ArgumentException", true)]
+    public async Task TupleAndFrameworkOperationsUsePreciseFailures(string setup, string operation, string catchType, bool warning)
+    {
+        const string declaration = "class Holder { public int Value { set { throw new InvalidOperationException(); } } }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                static int? GetOptional() => throw new ArgumentException();
+                async Task Run(RespireClient client, string text, int[] values, int? optional)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                static int? GetOptional() => throw new ArgumentException();
+                async Task Run(RespireClient client, string text, int[] values, int? optional)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("", "TypeInitializationException", true)]
     [Arguments("Owner.Initialize();", "TypeInitializationException", false)]
     [Arguments("", "InvalidOperationException", false)]
