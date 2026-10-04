@@ -802,6 +802,62 @@ public class ExceptionAwareFlowTests
         """);
 
     [Test]
+    [Arguments("(owner, Throws())", false, "", "InvalidOperationException", true)]
+    [Arguments("(owner, 0)", false, "", "InvalidOperationException", false)]
+    [Arguments("(owner, Throws())", true, "", "InvalidOperationException", false)]
+    [Arguments("(owner, flag ? Throws() : 0)", false, "", "InvalidOperationException", true)]
+    [Arguments("(flag ? owner : owner, 0)", false, "", "InvalidOperationException", false)]
+    [Arguments("(owner, 0)", false, "static Holder() { throw new Exception(); }", "TypeInitializationException", true)]
+    public async Task CompoundOperatorTransferWaitsForOperands(
+        string operand, bool cleanup, string constructor, string catchType, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder
+            {
+                {{constructor}}
+                public static Holder operator +(Holder holder, (RespireResult Value, int Other) item)
+                { item.Value.Dispose(); throw new InvalidOperationException(); }
+            }
+            class Caller
+            {
+                static int Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, Holder holder, bool flag)
+                {
+                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteAsync("PING");
+                    try { holder += {{operand}}; }
+                    catch ({{catchType}}) { {{(cleanup ? "owner.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder
+            {
+                {{constructor}}
+                public static Holder operator +(Holder holder, (RespireBatch Value, int Other) item)
+                { throw new InvalidOperationException(); }
+            }
+            class Caller
+            {
+                static int Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, Holder holder, bool flag)
+                {
+                    var owner = client.CreateBatch();
+                    var pending = owner.GetStringAsync("key");
+                    try { holder += {{operand}}; }
+                    catch ({{catchType}}) { {{(cleanup ? "await owner.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("result ?? existing", "Throws()", "", true)]
     [Arguments("result ?? existing", "0", "", false)]
     [Arguments("result ?? existing", "Throws()", "result?.Dispose();", false)]

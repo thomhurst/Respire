@@ -242,7 +242,8 @@ internal static partial class ScopeWalker
             if (constructionCompletion) call = expression!.Parent;
             var operatorTransfer = expression?.Parent is { } operatorSyntax
                 && semanticModel.GetOperation(operatorSyntax, cancellationToken) is
-                    IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null };
+                    IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
+                    or ICompoundAssignmentOperation { OperatorMethod: not null };
             if (operatorTransfer) call = expression!.Parent;
             var collectionTransfer = expression?.Parent is InitializerExpressionSyntax collectionElement
                 && (collectionElement.IsKind(SyntaxKind.ComplexElementInitializerExpression)
@@ -319,7 +320,8 @@ internal static partial class ScopeWalker
                     or IDelegateCreationOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
-                    or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
+                    or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
+                    or ICompoundAssignmentOperation { OperatorMethod: not null })
                     return true;
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
@@ -548,7 +550,8 @@ internal static partial class ScopeWalker
                     && !collectionTransfer
                     && !(operation.Syntax.Span.End == firstBarrier
                         && operation is ISimpleAssignmentOperation
-                            or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
+                            or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
+                            or ICompoundAssignmentOperation { OperatorMethod: not null })
                     && Exceptions.MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
@@ -703,6 +706,7 @@ internal static partial class ScopeWalker
                 IInvocationOperation { TargetMethod.IsStatic: true } invocation => invocation.TargetMethod.ContainingType,
                 IBinaryOperation { OperatorMethod: { } binaryOperator } => binaryOperator.ContainingType,
                 IUnaryOperation { OperatorMethod: { } unaryOperator } => unaryOperator.ContainingType,
+                ICompoundAssignmentOperation { OperatorMethod: { } compoundOperator } => compoundOperator.ContainingType,
                 IObjectCreationOperation { Type: INamedTypeSymbol createdType } => createdType,
                 _ => null,
             };
@@ -804,6 +808,7 @@ internal static partial class ScopeWalker
                     or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IBinaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
                     or IUnaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
+                    or ICompoundAssignmentOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
                     when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 _ => TransferFailure.None,
             };
