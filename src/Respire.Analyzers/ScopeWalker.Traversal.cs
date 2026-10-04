@@ -27,6 +27,7 @@ internal static partial class ScopeWalker
         private readonly Dictionary<(int Block, int Position), List<(int TriggerBlock, ulong Flag)>> _transferGuards = new();
         private readonly Dictionary<SyntaxNode, ulong> _transferTriggers = new();
         private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
+        private readonly HashSet<(int Block, int Position)> _returnBarriers = [];
         private ulong _transferFlags;
         private readonly Dictionary<INamedTypeSymbol, ulong> _initializedTypes = new(SymbolEqualityComparer.Default);
         // Interned continuations keep each finally's return destination in the search state.
@@ -137,6 +138,13 @@ internal static partial class ScopeWalker
 
                 if (firstBarrier != int.MaxValue)
                 {
+                    if (_returnBarriers.Contains((block.Ordinal, firstBarrier))
+                        && block.FallThroughSuccessor is { Semantics: ControlFlowBranchSemantics.Return } returning)
+                    {
+                        // The caller receives the value only if every finalizer completes.
+                        // A null continuation ends a successful transfer; exceptions still dispatch normally.
+                        Enqueue(null, returning.FinallyRegions, 0, started, known, values, 0);
+                    }
                     continue;
                 }
 
@@ -250,6 +258,7 @@ internal static partial class ScopeWalker
                                 guards.Add((triggerBlock.Ordinal, flag));
                             }
                             else _unconditionalBarriers.Add((block.Ordinal, position));
+                            if (returnTransfer) _returnBarriers.Add((block.Ordinal, position));
                             return (block, position);
                         }
             }

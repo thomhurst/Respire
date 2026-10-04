@@ -15,6 +15,10 @@ batch. A static method or accessor before a proof barrier still has its own opaq
 exception paths, even when its declaring type has a static constructor; those paths
 are not restricted to `TypeInitializationException`.
 
+Returning an owned value transfers responsibility only after enclosing finalizers
+complete. A finalizer that throws into a local handler can abandon the return value;
+that handler must still release or transfer it.
+
 Branch evidence is invalidated when a traversed assignment changes its local or
 parameter. Writes before selection or after the proof interval do not invalidate
 that interval. Captured writes, by-reference escapes, and address-taken locals remain

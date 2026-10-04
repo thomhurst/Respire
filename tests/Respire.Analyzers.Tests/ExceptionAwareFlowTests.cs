@@ -8,6 +8,52 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (fail) throw new InvalidOperationException();", "", true)]
+    [Arguments("if (fail) throw new InvalidOperationException();", "result.Dispose();", false)]
+    [Arguments("", "", false)]
+    [Arguments("result.Dispose(); if (fail) throw new InvalidOperationException();", "", false)]
+    [Arguments("Throws();", "", true)]
+    public async Task ReturnTransfersAfterFinallyCompletes(string finalizer, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static void Throws() => throw new InvalidOperationException();
+            async Task<RespireResult> Run(RespireClient client, bool fail)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try
+                {
+                    try { return result; }
+                    finally { {{finalizer}} }
+                }
+                catch (InvalidOperationException) { {{cleanup}} return default; }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("(new object[1])[0] = result;", "InvalidOperationException", false)]
+    [Arguments("(new object[1])[1] = result;", "IndexOutOfRangeException", true)]
+    [Arguments("values[0] = result;", "NullReferenceException", true)]
+    [Arguments("values[0] = result;", "ArrayTypeMismatchException", true)]
+    public async Task ArrayTransferUsesSpecificFailures(string operation, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client, object[] values)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} }
+                catch ({{catchType}}) { }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (skip) continue; result.Dispose();", true)]
     [Arguments("result.Dispose(); if (skip) continue;", false)]
     [Arguments("if (skip) { result.Dispose(); continue; } result.Dispose();", false)]
