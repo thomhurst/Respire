@@ -64,6 +64,7 @@
   --ifm-menu-color-background-hover: var(--resp-sunken);
   --ifm-global-radius: 4px;
   --docusaurus-highlighted-code-line-bg: rgba(63, 76, 154, 0.07);
+  --resp-mark: rgba(63, 76, 154, 0.14);
 }
 
 [data-theme='dark'] {
@@ -90,6 +91,14 @@
   --ifm-color-primary-lighter: #cdd2f7;
   --ifm-color-primary-lightest: #f5f6fe;
   --docusaurus-highlighted-code-line-bg: rgba(163, 173, 240, 0.1);
+  --resp-mark: rgba(163, 173, 240, 0.2);
+}
+
+/* Search matches on the results page and on the opened doc: a bulk-string tint, not browser yellow. */
+mark {
+  background: var(--resp-mark);
+  color: inherit;
+  border-radius: 2px;
 }
 
 body {
