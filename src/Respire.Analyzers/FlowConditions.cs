@@ -13,7 +13,8 @@ namespace Respire.Analyzers;
 internal sealed class FlowConditions
 {
     // Each predicate occupies one bit in the ulong known/value masks.
-    private const int MaxPredicates = 64;
+    private const int MaxPredicates = sizeof(ulong) * 8;
+    internal const ulong UnknownPathFlag = 0;
     private readonly CancellationToken _cancellationToken;
     private readonly SyntaxNode _scope;
     private readonly Dictionary<CaptureId, IOperation> _captures = new();
@@ -27,7 +28,7 @@ internal sealed class FlowConditions
 
     internal ulong ReservePathFlag()
     {
-        if (_predicates.Count == MaxPredicates) return 0;
+        if (_predicates.Count == MaxPredicates) return UnknownPathFlag;
         var flag = 1UL << _predicates.Count;
         // Non-variable facts share the bounded path-state masks without write invalidation.
         _predicates.Add((null, null, BinaryOperatorKind.None));
@@ -257,14 +258,14 @@ internal sealed class FlowConditions
     internal bool IsKnownNonNull(IOperation operation, ulong known, ulong values)
     {
         if (_locationReceivers.TryGetValue(operation, out var receiverFlag))
-            return receiverFlag != 0 && (known & values & receiverFlag) != 0;
+            return receiverFlag != UnknownPathFlag && (known & values & receiverFlag) != 0;
         while (operation is IConversionOperation { OperatorMethod: null } conversion
             && (conversion.Conversion.IsIdentity || conversion.Conversion.IsReference))
             operation = conversion.Operand;
         // A compiler temporary retains the receiver evaluated before later argument/RHS writes.
         if (operation is IFlowCaptureReferenceOperation capture)
             return _capturedReceivers.TryGetValue(capture.Id, out var flag)
-                && flag != 0 && (known & values & flag) != 0;
+                && flag != UnknownPathFlag && (known & values & flag) != 0;
         if (IsConstructedReceiver(operation)) return true;
         if (Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
         for (var index = 0; index < _predicates.Count; index++)
