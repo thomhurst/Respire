@@ -1263,12 +1263,20 @@ public class ExceptionAwareFlowTests
     [Arguments("Action owner = (Action)result.Dispose;", "OutOfMemoryException", true)]
     [Arguments("Action owner = result.Dispose;", "InvalidOperationException", false)]
     [Arguments("Action owner = result.Dispose;", "OutOfMemoryException", false, "result.Dispose();")]
+    [Arguments("Take(() => result.Dispose(), Throws());", "InvalidOperationException", true)]
+    [Arguments("Take(() => result.Dispose(), 0);", "InvalidOperationException", false)]
+    [Arguments("Take(() => result.Dispose(), Throws());", "InvalidOperationException", false, "result.Dispose();")]
+    [Arguments("Take(new Action(() => result.Dispose()), Throws());", "InvalidOperationException", true)]
+    [Arguments("Take(result.Dispose, Throws());", "InvalidOperationException", true)]
+    [Arguments("var owner = new { Callback = (Action)(() => result.Dispose()), Other = Throws() };", "InvalidOperationException", true)]
     public async Task CapturedOwnerWaitsForDelegateAllocation(string capture, string catchType, bool warning, string cleanup = "") => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
         using Respire;
         class Caller
         {
+            static void Take(Action dispose, int other) { }
+            static int Throws() => throw new InvalidOperationException();
             async Task Run(RespireClient client)
             {
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");

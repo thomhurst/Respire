@@ -182,15 +182,23 @@ internal static partial class ScopeWalker
                 .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
             if (capture is null && semanticModel.GetOperation(barrier, cancellationToken) is IMethodReferenceOperation)
                 capture = barrier;
+            SyntaxNode? delegateSyntax = null;
             if (capture is not null)
             {
                 foreach (var block in graph.Blocks)
+                {
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
                         if (FindDelegateCreation(operation, capture) is { } creation)
-                            return (block, creation.Syntax.Span.End);
+                        {
+                            delegateSyntax = creation.Syntax;
+                            break;
+                        }
+                    if (delegateSyntax is not null) break;
+                }
             }
+            if (delegateSyntax is not null) barrier = delegateSyntax;
             var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
-            var wrapped = false;
+            var wrapped = delegateSyntax is not null;
             while (expression is not null)
             {
                 ExpressionSyntax? wrapper = expression.Parent switch
@@ -268,7 +276,8 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || indexerTransfer || collectionTransfer || operatorTransfer
+            var delegateTransfer = delegateSyntax is not null && call == delegateSyntax;
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || delegateTransfer || indexerTransfer || collectionTransfer || operatorTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
@@ -277,7 +286,7 @@ internal static partial class ScopeWalker
                         {
                             // Returns and local initializers transfer ownership only after
                             // the complete expression, including its final conversion.
-                            var position = returnTransfer || initializerTransfer || constructionCompletion || collectionTransfer ? call.Span.End : TransferPosition(call);
+                            var position = returnTransfer || initializerTransfer || constructionCompletion || collectionTransfer || delegateTransfer ? call.Span.End : TransferPosition(call);
                             if (collectionTransfer) _collectionTransfers.Add(call);
                             if (wrapped)
                             {
@@ -306,6 +315,7 @@ internal static partial class ScopeWalker
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
                     or IExpressionStatementOperation
+                    or IDelegateCreationOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
                     or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
@@ -314,7 +324,7 @@ internal static partial class ScopeWalker
             }
 
             static bool ContainsReference(IOperation operation, SyntaxNode reference)
-                => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation
+                => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation or IDelegateCreationOperation
                     || operation.ChildOperations.Any(child => ContainsReference(child, reference));
         }
 
