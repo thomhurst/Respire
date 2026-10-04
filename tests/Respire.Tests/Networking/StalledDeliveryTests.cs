@@ -248,4 +248,59 @@ public class StalledDeliveryTests
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await disposed.WaitAsync(TimeSpan.FromSeconds(5));
     }
+
+    [Test]
+    public async Task TeardownDrainsAChainOfBlockingContinuations()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                StalledDeliveryThreshold = TimeSpan.FromHours(1),
+                RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(1),
+            });
+        var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                using var first = awaiter.GetResult();
+                var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+                var third = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+                // The second reply's continuation blocks on the third, so each rescue only
+                // unblocks one link of the chain.
+                second.UnsafeOnCompleted(() =>
+                {
+                    try
+                    {
+                        using var value = second.GetResult();
+                        using var last = third.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                    }
+                    catch (RespireConnectionException)
+                    {
+                        // A reply not yet parsed when the socket closed fails instead; the chain still ends.
+                    }
+                    finally
+                    {
+                        secondDone.TrySetResult();
+                    }
+                });
+                queued.TrySetResult();
+                secondDone.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                firstDone.TrySetResult();
+            }
+            catch (Exception error) { firstDone.TrySetException(error); }
+        });
+
+        await queued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!connection.HasUndeliveredReplies && DateTime.UtcNow < deadline)
+            await Task.Delay(5);
+        var disposed = connection.DisposeAsync().AsTask();
+        await firstDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await disposed.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 }

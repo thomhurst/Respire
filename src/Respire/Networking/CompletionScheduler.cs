@@ -336,6 +336,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// </summary>
     internal ValueTask WaitForPossibleStallAsync() => _stallWatch.WaitAsync();
 
+    /// <summary>Whether a runner is executing (not merely queued) right now.</summary>
+    internal bool IsDeliveryExecuting => Volatile.Read(ref _executing);
+
     /// <summary>Wakes the stall watcher, for example so it can observe connection teardown.</summary>
     internal void WakeStallWatcher() => _stallWatch.Signal();
 

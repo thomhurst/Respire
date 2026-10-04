@@ -3020,37 +3020,58 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // on one of them. Keep rescuing, with the normal threshold, until the receive loop has
         // published its final batch and nothing waits. Checks run at a short interval and only
         // while such replies exist.
+        //
+        // After the drain budget (RetirementDrainFallbackTimeout, reused because this wait is
+        // part of the same retirement drain) every tick hands off immediately instead, so a
+        // chain of blocking continuations still drains one handoff per tick. The loop only
+        // gives up when the replies that wait belong to a runner a starved pool has not
+        // started: nothing is stuck in caller code then, and that runner delivers them when it
+        // runs. A replacement runner is briefly queued after every handoff, so it must stay
+        // unstarted for a sustained period before the loop concludes the pool is starved.
         var teardownStarted = Environment.TickCount64;
+        long queuedRunnerSince = -1;
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
             var now = Environment.TickCount64;
-            if (now - teardownStarted >= _teardownRescueBudgetMilliseconds)
+            if (now - teardownStarted < _teardownRescueBudgetMilliseconds)
             {
-                // Out of budget: hand off whatever still waits behind an executing runner now, so
-                // retirement's wait for idle delivery cannot hang on a blocked continuation. A
-                // replacement runner that a starved pool has not started still owns its replies
-                // and delivers them when it runs.
+                RescueStalledDelivery(now, _stalledDeliveryMilliseconds);
+            }
+            else
+            {
+                // A zero threshold still needs two checks: the first records the claim, the
+                // second hands off if the runner has not moved.
                 RescueStalledDelivery(now, 0);
                 RescueStalledDelivery(now, 0);
-                if (_completions.HasWaitingReplies)
+                var waitingOnQueuedRunner = _receiveTask.IsCompleted
+                    && !_completions.IsDeliveryExecuting && _completions.HasWaitingReplies;
+                if (!waitingOnQueuedRunner)
+                {
+                    queuedRunnerSince = -1;
+                }
+                else if (queuedRunnerSince < 0)
+                {
+                    queuedRunnerSince = now;
+                }
+                else if (now - queuedRunnerSince >= StarvedRunnerMilliseconds)
                 {
                     _logger?.LogWarning(
                         "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
                         + "finishing disposal and leaving them to the queued delivery runner.",
                         Host, Port, _teardownRescueBudgetMilliseconds);
+                    break;
                 }
-
-                break;
             }
 
-            RescueStalledDelivery(now, _stalledDeliveryMilliseconds);
-            // Wake as soon as the receive loop exits, so disposal gains no polling latency.
-            await Task.WhenAny(_receiveTask, Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds)))
-                .ConfigureAwait(false);
+            var tick = Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds));
+            // Until the receive loop exits, wake as soon as it does so disposal gains no polling
+            // latency; afterwards just wait out the tick.
+            await (_receiveTask.IsCompleted ? tick : Task.WhenAny(_receiveTask, tick)).ConfigureAwait(false);
         }
     }
 
     private const long TeardownRescueMilliseconds = 50;
+    private const long StarvedRunnerMilliseconds = 1000;
 
     /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
     internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
