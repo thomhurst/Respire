@@ -2791,6 +2791,9 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Test]
     [Arguments("await using var transaction = client.CreateTransaction();", "")]
     [Arguments("try {", "} finally { Console.WriteLine(); }")]
+    [Arguments("try {", "} catch (Exception) { Console.WriteLine(); }")]
+    [Arguments("try {", "} catch (InvalidOperationException) when (client != null) { throw; } catch { Console.WriteLine(); }")]
+    [Arguments("try { try {", "} catch (Exception) { throw; } } finally { Console.WriteLine(); }")]
     public async Task LambdaReadInsideOuterProtectedRegion_DoesNotCrash(string open, string close)
         => await Verify.VerifyAsync($$"""
             using System;
@@ -2822,6 +2825,9 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Test]
     [Arguments("await using var transaction = client.CreateTransaction();", "")]
     [Arguments("try {", "} finally { Console.WriteLine(); }")]
+    [Arguments("try {", "} catch (Exception) { Console.WriteLine(); }")]
+    [Arguments("try {", "} catch (InvalidOperationException) when (client != null) { throw; } catch { Console.WriteLine(); }")]
+    [Arguments("try { try {", "} catch (Exception) { throw; } } finally { Console.WriteLine(); }")]
     public async Task LambdaUnflushedReadInsideOuterProtectedRegion_IsFlagged(string open, string close)
         => await Verify.VerifyAsync($$"""
             using System;
