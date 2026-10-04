@@ -98,6 +98,22 @@ internal sealed class ImplicitExceptionClassifier(
             or ICompoundAssignmentOperation { OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
                 OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract };
 
+    internal bool HasEmptyDelegateOperand(IOperation operation, ulong known, ulong values)
+        => IsDelegateCombination(operation) && operation switch
+        {
+            IBinaryOperation binary => conditions.IsKnownNull(binary.LeftOperand, known, values)
+                || conditions.IsKnownNull(binary.RightOperand, known, values),
+            ICompoundAssignmentOperation { Target: ILocalReferenceOperation or IParameterReferenceOperation } compound =>
+                conditions.IsKnownNull(compound.Target, known, values)
+                || conditions.IsKnownNull(compound.Value, known, values),
+            _ => false,
+        };
+
+    internal static bool DelegateTypesMayDiffer(IOperation operation)
+        => IsDelegateCombination(operation)
+            && operation.Type is INamedTypeSymbol type
+            && type.TypeParameters.Any(parameter => parameter.Variance != VarianceKind.None);
+
     private static bool IsDefaultValueTask(IOperation operation)
         => (operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 })
             && operation.Type is INamedTypeSymbol { Name: "ValueTask", IsValueType: true } type

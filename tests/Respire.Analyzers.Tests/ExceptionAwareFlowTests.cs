@@ -18,7 +18,19 @@ public class ExceptionAwareFlowTests
     [Arguments("left -= right;", "InvalidOperationException", false, false)]
     [Arguments("_ = left + right;", "ArgumentException", false, true)]
     [Arguments("left -= right;", "ArgumentException", false, true)]
-    public async Task DelegateCombinationCanAllocate(string operation, string catchType, bool cleanup, bool warning)
+    [Arguments("_ = left + (Func<object>)null;", "OutOfMemoryException", false, false)]
+    [Arguments("_ = left - (Func<object>)null;", "ArgumentException", false, false)]
+    [Arguments("_ = (Func<object>)null + right;", "ArgumentException", false, false)]
+    [Arguments("_ = (Func<object>)null - right;", "OutOfMemoryException", false, false)]
+    [Arguments("left += (Func<object>)null;", "OutOfMemoryException", false, false)]
+    [Arguments("left -= (Func<object>)null;", "ArgumentException", false, false)]
+    [Arguments("left = null; left += right;", "OutOfMemoryException", false, false)]
+    [Arguments("left = null; left -= right;", "ArgumentException", false, false)]
+    [Arguments("_ = left + right;", "ArgumentException", false, false, "Action")]
+    [Arguments("left -= right;", "ArgumentException", false, false, "Action")]
+    [Arguments("_ = left + right;", "OutOfMemoryException", false, true, "Action")]
+    [Arguments("left -= right;", "OutOfMemoryException", false, true, "Action")]
+    public async Task DelegateCombinationCanAllocate(string operation, string catchType, bool cleanup, bool warning, string delegateType = "Func<object>")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -26,7 +38,7 @@ public class ExceptionAwareFlowTests
             using Respire;
             class Caller
             {
-                async Task Run(RespireClient client, Func<object> left, Func<object> right)
+                async Task Run(RespireClient client, {{delegateType}} left, {{delegateType}} right)
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{operation}} result.Dispose(); }
@@ -40,7 +52,7 @@ public class ExceptionAwareFlowTests
             using Respire;
             class Caller
             {
-                async Task Run(RespireClient client, Func<object> left, Func<object> right)
+                async Task Run(RespireClient client, {{delegateType}} left, {{delegateType}} right)
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");

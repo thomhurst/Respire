@@ -582,6 +582,7 @@ internal static partial class ScopeWalker
                     && Exceptions.IsBoxing(nullableBoxing)
                     && _conditions.IsKnownNull(nullableBoxing.Operand, known, values))
                 && !Exceptions.HasEmptyLiftedOperand(exceptionSource, known, values)
+                && !Exceptions.HasEmptyDelegateOperand(exceptionSource, known, values)
                 && ((operation.Syntax.Span.End <= firstBarrier || paramsAllocation)
                     && !completionOperation
                     && !collectionTransfer
@@ -685,7 +686,7 @@ internal static partial class ScopeWalker
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && Exceptions.DelegateCanDereferenceNull(delegateCreation, known, values))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                     // Variant delegate operands can have different runtime delegate types.
-                    if (ImplicitExceptionClassifier.IsDelegateCombination(exceptionSource))
+                    if (ImplicitExceptionClassifier.DelegateTypesMayDiffer(exceptionSource))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.ArgumentException"), started, known, values);
                     if (transferFailure == TransferFailure.Allocation
