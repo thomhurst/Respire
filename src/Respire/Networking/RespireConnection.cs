@@ -2344,8 +2344,28 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
                 }
 
-                _completions.Flush();
-                var received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
+                // Start the receive before handing off completions: if it throws, the replies
+                // are still in the filling batch and the finally block flushes them.
+                var receive = ReceiveAsync(buffer.AsMemory(end));
+                int received;
+                if (!_completions.FlushDeferred())
+                {
+                    received = await receive.ConfigureAwait(false);
+                }
+                else if (receive.IsCompleted || !Thread.CurrentThread.IsThreadPoolThread)
+                {
+                    // More data is already here, or this is a socket engine thread (inline
+                    // socket completions) that must not run caller code: keep this thread on
+                    // the receive path and deliver the drained replies on the pool.
+                    _completions.ScheduleRunner();
+                    received = await receive.ConfigureAwait(false);
+                }
+                else
+                {
+                    // The socket is idle. Once this loop has suspended, deliver the drained
+                    // replies on the thread it frees instead of waking another pool thread.
+                    received = await new CompletionScheduler.RunWhileAwaiting<int>(receive, _completions);
+                }
                 if (received == 0)
                 {
                     fault = new RespireConnectionException($"Connection to {Host}:{Port} closed by remote peer.");

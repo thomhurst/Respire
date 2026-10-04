@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Protocol;
 
 namespace Respire.Networking;
@@ -92,9 +93,23 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// </summary>
     public void Flush()
     {
+        if (FlushDeferred())
+        {
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
+        }
+    }
+
+    /// <summary>
+    /// Hands deferred completions to the runner like <see cref="Flush"/>, but when that makes
+    /// a runner necessary it returns <see langword="true"/> instead of queueing one. The
+    /// caller then owns the runner and must call <see cref="Execute"/> or
+    /// <see cref="ScheduleRunner"/> exactly once.
+    /// </summary>
+    public bool FlushDeferred()
+    {
         if (_fillingCount == 0)
         {
-            return;
+            return false;
         }
 
         var batch = new Batch(_filling, _fillingCount);
@@ -121,11 +136,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
         _filling = replacement ?? new Entry[InitialBatchSize];
         _fillingCount = 0;
-        if (schedule)
-        {
-            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
-        }
+        return schedule;
     }
+
+    /// <summary>Queues the runner that <see cref="FlushDeferred"/> handed to the caller.</summary>
+    public void ScheduleRunner() => ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
 
     public void Execute()
     {
@@ -234,6 +249,38 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             return _running
                 ? (_idleWaiter ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task
                 : Task.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// Awaits <paramref name="operation"/> and, once the awaiting method has suspended, runs
+    /// the runner that <see cref="FlushDeferred"/> handed to the caller on the current thread.
+    /// The awaiting loop resumes independently on whichever thread completes the operation,
+    /// so a continuation that blocks here never stalls it.
+    /// </summary>
+    internal readonly struct RunWhileAwaiting<T>(ValueTask<T> operation, CompletionScheduler scheduler)
+        : ICriticalNotifyCompletion
+    {
+        private readonly ConfiguredValueTaskAwaitable<T>.ConfiguredValueTaskAwaiter _awaiter =
+            operation.ConfigureAwait(false).GetAwaiter();
+
+        public RunWhileAwaiting<T> GetAwaiter() => this;
+
+        // Always suspend: completing synchronously would skip OnCompleted and strand the runner.
+        public bool IsCompleted => false;
+
+        public T GetResult() => _awaiter.GetResult();
+
+        public void OnCompleted(Action continuation)
+        {
+            _awaiter.OnCompleted(continuation);
+            scheduler.Execute();
+        }
+
+        public void UnsafeOnCompleted(Action continuation)
+        {
+            _awaiter.UnsafeOnCompleted(continuation);
+            scheduler.Execute();
         }
     }
 

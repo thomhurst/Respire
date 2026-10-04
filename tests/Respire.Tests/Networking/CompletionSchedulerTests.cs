@@ -64,4 +64,71 @@ public class CompletionSchedulerTests
         var error = await Assert.That(async () => await pending).Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("asking rejected");
     }
+
+    [Test]
+    public async Task RunWhileAwaitingDeliversRepliesOnTheThreadTheSuspendedLoopFrees()
+    {
+        var source = new PendingResponsePool(1).Rent();
+        var awaiter = source.Task.ConfigureAwait(false).GetAwaiter();
+        var deliveredOn = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var value = awaiter.GetResult();
+            deliveredOn.TrySetResult(Environment.CurrentManagedThreadId);
+        });
+        var scheduler = new CompletionScheduler();
+        scheduler.Add(source, RespValue.Integer(42));
+        await Assert.That(scheduler.FlushDeferred()).IsTrue();
+        var receive = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var suspendedOn = 0;
+        var loop = Task.Run(async () =>
+        {
+            suspendedOn = Environment.CurrentManagedThreadId;
+            return await new CompletionScheduler.RunWhileAwaiting<int>(new ValueTask<int>(receive.Task), scheduler);
+        });
+
+        // Delivered before the awaited operation completes, on the thread the loop suspended on.
+        var deliveredThread = await deliveredOn.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(deliveredThread).IsEqualTo(suspendedOn);
+        await Assert.That(loop.IsCompleted).IsFalse();
+        receive.SetResult(7);
+        await Assert.That(await loop.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(7);
+    }
+
+    [Test]
+    public async Task RunWhileAwaitingResumesTheLoopWhileADeliveredContinuationBlocks()
+    {
+        var source = new PendingResponsePool(1).Rent();
+        var awaiter = source.Task.ConfigureAwait(false).GetAwaiter();
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var value = awaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(10));
+        });
+        var scheduler = new CompletionScheduler();
+        scheduler.Add(source, RespValue.Integer(42));
+        await Assert.That(scheduler.FlushDeferred()).IsTrue();
+        var receive = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Observe the resumption directly: Task.Run cannot link its proxy to the loop until
+        // the delegate returns, and the delegate's thread is the one held by the continuation.
+        var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Task.Run(async () => resumed.TrySetResult(
+            await new CompletionScheduler.RunWhileAwaiting<int>(new ValueTask<int>(receive.Task), scheduler)));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            receive.SetResult(7);
+            // The receive loop must not wait for the caller code it handed its thread to.
+            await Assert.That(await resumed.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(7);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    }
 }
