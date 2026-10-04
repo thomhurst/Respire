@@ -61,6 +61,9 @@ internal sealed class ImplicitExceptionClassifier(
             || operation is ISlicePatternOperation { SliceSymbol: not null } slicePattern
                 && slicePattern.InputType.TypeKind != TypeKind.Array
                 && slicePattern.InputType.SpecialType != SpecialType.System_String
+            || operation is ITupleBinaryOperation tupleBinary
+                && (TupleOperandMayThrow(tupleBinary.LeftOperand, tupleBinary.OperatorKind)
+                    || TupleOperandMayThrow(tupleBinary.RightOperand, tupleBinary.OperatorKind))
             || !operation.ConstantValue.HasValue && (operation switch
             {
                 IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
@@ -91,6 +94,28 @@ internal sealed class ImplicitExceptionClassifier(
         => (operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 })
             && operation.Type is INamedTypeSymbol { Name: "ValueTask", IsValueType: true } type
             && type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+
+    private bool TupleOperandMayThrow(IOperation operand, BinaryOperatorKind kind)
+        => operand is ITupleOperation tuple
+            ? tuple.Elements.Any(element => TupleOperandMayThrow(element, kind))
+            : EqualityMayThrow(operand.Type, kind);
+
+    private bool EqualityMayThrow(ITypeSymbol? type, BinaryOperatorKind kind)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (type is INamedTypeSymbol { IsTupleType: true } tuple)
+            return tuple.TupleElements.Any(element => EqualityMayThrow(element.Type, kind));
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            return EqualityMayThrow(nullable.TypeArguments[0], kind);
+        if (type?.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter) return true;
+        if (type is null || type.SpecialType != SpecialType.None || type.TypeKind == TypeKind.Enum)
+            return false;
+        // Tuple equality hides its element operator calls from ChildOperations.
+        var name = kind == BinaryOperatorKind.Equals ? "op_Equality" : "op_Inequality";
+        for (var current = type as INamedTypeSymbol; current is not null; current = current.BaseType)
+            if (current.GetMembers(name).Length != 0) return true;
+        return false;
+    }
 
     private static bool ArithmeticMayThrow(BinaryOperatorKind kind, bool isChecked, ITypeSymbol? type)
     {

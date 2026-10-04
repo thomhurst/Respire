@@ -177,6 +177,12 @@ public class ExceptionAwareFlowTests
     [Arguments("await batch.ExecuteAsync(ThrowToken()).AsTask();", "", true)]
     [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask());", "", false)]
     [Arguments("await Task.WhenAll(batch.ExecuteAsync(default).AsTask(), ThrowTask());", "", true)]
+    [Arguments("batch.SendAsync().AsTask().GetAwaiter().GetResult();", "", false)]
+    [Arguments("batch.ExecuteAsync(default).GetAwaiter().GetResult();", "", false)]
+    [Arguments("batch.ExecuteAsync(ThrowToken()).GetAwaiter().GetResult();", "", true)]
+    [Arguments("batch.ExecuteAsync(default).ConfigureAwait(false).GetAwaiter().GetResult();", "", false)]
+    [Arguments("batch.ExecuteAsync(default).ConfigureAwait(ThrowFlag()).GetAwaiter().GetResult();", "", true)]
+    [Arguments("batch.ExecuteAsync(ThrowToken()).GetAwaiter().GetResult();", "batch.SendAsync().GetAwaiter().GetResult();", false)]
     public async Task AwaitedFlushWaitsForArguments(string operation, string cleanup, bool warning) => await Pending.VerifyAsync($$"""
         using System;
         using System.Threading;
@@ -197,6 +203,63 @@ public class ExceptionAwareFlowTests
             }
         }
         """);
+
+    [Test]
+    [Arguments("(left, 0) == (right, 0)", true)]
+    [Arguments("(left, 0) != (right, 0)", true)]
+    [Arguments("((left, 0), 1) == ((right, 0), 1)", true)]
+    [Arguments("(converted, 0) == (1, 0)", true)]
+    [Arguments("(number, 0) == (1, 0)", false)]
+    [Arguments("(text, 0) == (\"value\", 0)", false)]
+    [Arguments("(optional, 0) == ((int?)1, 0)", false)]
+    [Arguments("pair == (left, 0)", true)]
+    [Arguments("(maybe, 0) == ((Element?)left, 0)", true)]
+    [Arguments("(plain, 0) == ((object)text, 0)", false)]
+    public async Task TupleEqualityIncludesElementOperators(string expression, bool warning)
+    {
+        const string types = """
+            struct Element
+            {
+                public static bool operator ==(Element left, Element right) => throw new InvalidOperationException();
+                public static bool operator !=(Element left, Element right) => throw new InvalidOperationException();
+                public override bool Equals(object other) => false;
+                public override int GetHashCode() => 0;
+            }
+            struct Converted { public static implicit operator int(Converted value) => throw new InvalidOperationException(); }
+            """;
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{types}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Element left, Element right, Converted converted, int number, string text, int? optional, (Element, int) pair, Element? maybe, object plain)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { _ = {{expression}}; result.Dispose(); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{types}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Element left, Element right, Converted converted, int number, string text, int? optional, (Element, int) pair, Element? maybe, object plain)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { _ = {{expression}}; await batch.SendAsync(); }
+                    catch (InvalidOperationException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
 
     [Test]
     [Arguments("default(ValueTask)", false)]

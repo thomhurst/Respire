@@ -170,6 +170,12 @@ internal static partial class ScopeWalker
                 _unconditionalBarriers.Add((block.Ordinal, awaited.Span.End));
                 return (block, awaited.Span.End);
             }
+            if (barrier is InvocationExpressionSyntax
+                && semanticModel.GetOperation(barrier, cancellationToken) is IInvocationOperation
+                    { TargetMethod.Name: "GetResult", Arguments.Length: 0,
+                        Instance: IInvocationOperation { TargetMethod.Name: "GetAwaiter", Arguments.Length: 0 } } synchronous
+                && synchronous.TargetMethod.ContainingNamespace.ToDisplayString() == "System.Runtime.CompilerServices")
+                RegisterCompletionCalls(synchronous);
             var scope = origin is null ? graph.OriginalOperation.Syntax : GetEnclosingScope(origin);
             SyntaxNode? capture = barrier.Ancestors().TakeWhile(node => node != scope)
                 .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
@@ -322,7 +328,8 @@ internal static partial class ScopeWalker
                 var transactionCommit = method.Name == "CommitAsync" && HasBaseType(method.ContainingType,
                     semanticModel.Compilation.GetTypeByMetadataName(PendingReadBeforeFlushAnalyzer.TransactionBaseTypeName));
                 if (batchFlush || transactionCommit
-                    || containingNamespace == "System.Threading.Tasks" && method.Name is "ConfigureAwait" or "AsTask" or "WaitAsync" or "WhenAll")
+                    || containingNamespace == "System.Threading.Tasks" && method.Name is "ConfigureAwait" or "AsTask" or "WaitAsync" or "WhenAll" or "GetAwaiter"
+                    || containingNamespace == "System.Runtime.CompilerServices" && method.Name is "GetAwaiter" or "GetResult")
                     _completionOperations.Add(operation.Syntax);
             }
             foreach (var child in operation.ChildOperations)
