@@ -195,7 +195,9 @@ public class ExceptionAwareFlowTests
     [Arguments("new ValueTask()", false)]
     [Arguments("new ValueTask<int>()", false)]
     [Arguments("unknown", true)]
-    public async Task DefaultValueTaskCannotBypassCleanup(string expression, bool warning)
+    [Arguments("default(Task)", true, "NullReferenceException")]
+    [Arguments("default(Task<int>)", true, "NullReferenceException")]
+    public async Task DefaultValueTaskCannotBypassCleanup(string expression, bool warning, string catchType = "InvalidOperationException")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -207,7 +209,7 @@ public class ExceptionAwareFlowTests
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { await {{expression}}; result.Dispose(); }
-                    catch (InvalidOperationException) { }
+                    catch ({{catchType}}) { }
                 }
             }
             """);
@@ -222,7 +224,7 @@ public class ExceptionAwareFlowTests
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");
                     try { await {{expression}}; await batch.SendAsync(); }
-                    catch (InvalidOperationException) { }
+                    catch ({{catchType}}) { }
                     Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
                 }
             }

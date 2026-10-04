@@ -88,7 +88,7 @@ internal sealed class ImplicitExceptionClassifier(
     }
 
     private static bool IsDefaultValueTask(IOperation operation)
-        => operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 }
+        => (operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 })
             && operation.Type is INamedTypeSymbol { Name: "ValueTask", IsValueType: true } type
             && type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
 
