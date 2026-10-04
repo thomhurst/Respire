@@ -218,6 +218,11 @@ internal static partial class ScopeWalker
             }
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
+            // The statement consumes the finished temporary after every initializer,
+            // including initializers lowered into separate conditional blocks.
+            var constructionCompletion = call is BaseObjectCreationExpressionSyntax { Initializer: { } initializer }
+                && initializer.Span.Contains(barrier.Span) && expression?.Parent is ExpressionStatementSyntax;
+            if (constructionCompletion) call = expression!.Parent;
             var operatorTransfer = expression?.Parent is { } operatorSyntax
                 && semanticModel.GetOperation(operatorSyntax, cancellationToken) is
                     IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null };
@@ -255,7 +260,7 @@ internal static partial class ScopeWalker
                 call = assignment;
                 assignmentTransfer = true;
             }
-            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || indexerTransfer || collectionTransfer || operatorTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || indexerTransfer || collectionTransfer || operatorTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
@@ -264,7 +269,7 @@ internal static partial class ScopeWalker
                         {
                             // Returns and local initializers transfer ownership only after
                             // the complete expression, including its final conversion.
-                            var position = returnTransfer || initializerTransfer ? call.Span.End : TransferPosition(call);
+                            var position = returnTransfer || initializerTransfer || constructionCompletion ? call.Span.End : TransferPosition(call);
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
@@ -291,6 +296,7 @@ internal static partial class ScopeWalker
             static bool ContainsCall(IOperation operation, SyntaxNode call)
             {
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
+                    or IExpressionStatementOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
                     or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })

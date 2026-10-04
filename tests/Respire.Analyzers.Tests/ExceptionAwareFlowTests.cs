@@ -345,6 +345,11 @@ public class ExceptionAwareFlowTests
     [Arguments("Take(new Holder { Owner = result, Other = 0 }, 0);", "", false)]
     [Arguments("var owner = existing with { Owner = result, Other = Throws() };", "", true)]
     [Arguments("var owner = existing with { Owner = result, Other = Throws() };", "result.Dispose();", false)]
+    [Arguments("new Holder() { Owner = result, Other = Throws() };", "", true)]
+    [Arguments("new Holder() { Owner = result, Other = 0 };", "", false)]
+    [Arguments("new Holder() { Owner = result, Other = Throws() };", "result.Dispose();", false)]
+    [Arguments("new Holder() { Owner = result, Other = flag ? Throws() : 0 };", "", true)]
+    [Arguments("new Holder() { Owner = result, Other = flag ? 1 : 0 };", "", false)]
     public async Task MemberInitializerWaitsForConstruction(string operation, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
@@ -355,7 +360,7 @@ public class ExceptionAwareFlowTests
         {
             static int Throws() => throw new InvalidOperationException();
             static void Take(object owner, int other) { }
-            async Task Run(RespireClient client, RecordHolder existing)
+            async Task Run(RespireClient client, RecordHolder existing, bool flag)
             {
                 Holder holder;
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
