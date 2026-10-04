@@ -8,6 +8,30 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("result ?? existing", "Throws()", "", true)]
+    [Arguments("result ?? existing", "0", "", false)]
+    [Arguments("result ?? existing", "Throws()", "result?.Dispose();", false)]
+    [Arguments("(result ?? existing)", "Throws()", "", true)]
+    [Arguments("optional ?? result ?? existing", "Throws()", "", true)]
+    [Arguments("optional ?? result ?? existing", "0", "result?.Dispose();", false)]
+    public async Task CoalescedOwnerWaitsForLaterArguments(string value, string laterArgument, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(RespireResult value, int other) => value.Dispose();
+            async Task Run(RespireClient client, RespireResult existing, RespireResult? optional)
+            {
+                RespireResult? {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { Take({{value}}, {{laterArgument}}); {{cleanup}} }
+                catch (InvalidOperationException) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("new Owner { { result, Throws() } }", "", true)]
     [Arguments("new Owner { { result, 0 } }", "", false)]
     [Arguments("new Owner { result }", "", false)]
@@ -263,6 +287,9 @@ public class ExceptionAwareFlowTests
     [Arguments("", "_ = optional.Value;", "ArgumentException", false)]
     [Arguments("", "_ = optional.Value;", "InvalidOperationException", true)]
     [Arguments("", "_ = GetOptional().Value;", "ArgumentException", true)]
+    [Arguments("", "_ = optional.GetValueOrDefault();", "ArgumentException", false)]
+    [Arguments("", "_ = GetOptional().GetValueOrDefault();", "ArgumentException", true)]
+    [Arguments("", "_ = optional.GetValueOrDefault(GetOptional().Value);", "ArgumentException", true)]
     public async Task TupleAndFrameworkOperationsUsePreciseFailures(string setup, string operation, string catchType, bool warning)
     {
         const string declaration = "class Holder { public int Value { set { throw new InvalidOperationException(); } } }";

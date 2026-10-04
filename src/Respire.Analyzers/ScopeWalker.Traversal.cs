@@ -167,6 +167,7 @@ internal static partial class ScopeWalker
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
+                    BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) => coalesce,
                     SwitchExpressionArmSyntax { Parent: SwitchExpressionSyntax selection } arm when arm.Expression == expression => selection,
                     AssignmentExpressionSyntax discarded when discarded.IsKind(SyntaxKind.SimpleAssignmentExpression)
                         && discarded.Right == expression
@@ -845,6 +846,9 @@ internal static partial class ScopeWalker
 
         private bool MayThrow(IOperation operation)
         {
+            if (operation is IInvocationOperation
+                { TargetMethod: { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+                return false;
             if (operation is IPropertyReferenceOperation
                 { Property: { Name: "HasValue", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
                 return false;
