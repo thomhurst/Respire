@@ -11,9 +11,21 @@ namespace Respire.Networking;
 /// <see cref="PendingResponse"/> cores no longer force asynchronous continuations.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Single producer: only the receive loop calls <see cref="Add"/> and <see cref="Flush"/>,
 /// so the filling buffer needs no synchronization; only the handoff does. Processed buffers
 /// return to a small spare list, so steady state allocates nothing.
+/// </para>
+/// <para>
+/// Serial delivery has one escape hatch. When replies have waited behind a runner that made
+/// no progress for the stall threshold, <see cref="RescueStalledRunner(long, long)"/> moves
+/// them to a new runner so a continuation blocking on another reply from this connection
+/// cannot deadlock it. Rescued replies are still delivered in wire order among themselves,
+/// but they then run concurrently with the continuation that stalled, so a continuation that
+/// is merely slow (not blocked) for longer than the threshold also loses its ordering
+/// relative to later replies. Callers must not block inside continuations; the rescue exists
+/// so that doing so degrades instead of hanging.
+/// </para>
 /// </remarks>
 internal sealed class CompletionScheduler : IThreadPoolWorkItem
 {
@@ -50,10 +62,16 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     // while the runner is inside a caller continuation.
     private long _claim;
 
-    // Touched only by the periodic stall check.
+    // Touched only by the stall watcher.
     private long _observedClaim = -1;
     private long _observedSince;
 
+    // Wakes the connection's stall watcher when replies may be waiting behind a runner, so
+    // idle connections pay nothing for the rescue.
+    private readonly AsyncFlushSignal _stallWatch = new();
+
+    // A runner thread keeps these after its delivery is handed off. That is safe: the stale
+    // generation no longer matches, so a later ReleaseCurrentRunner on this thread is a no-op.
     [ThreadStatic]
     private static CompletionScheduler? t_runnerScheduler;
 
@@ -135,6 +153,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
         }
+        else
+        {
+            // Queued behind a runner that is already delivering.
+            _stallWatch.Signal();
+        }
     }
 
     public void Execute()
@@ -156,6 +179,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         while (true)
         {
             Batch batch;
+            bool armStallWatch;
             lock (_gate)
             {
                 if (delivered is not null)
@@ -189,6 +213,13 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 _activeItems = batch.Items;
                 _activeCount = batch.Count;
                 Volatile.Write(ref _claim, (long)generation << 32);
+                // A reply can only wait behind this runner if more than one is due.
+                armStallWatch = batch.Count > 1 || _pendingCount > 0;
+            }
+
+            if (armStallWatch)
+            {
+                _stallWatch.Signal();
             }
 
             t_runnerScheduler = this;
@@ -252,8 +283,8 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// <param name="nowMilliseconds">The current monotonic time.</param>
     /// <param name="stallMilliseconds">How long replies may wait behind a runner that is not moving.</param>
     /// <param name="nextCheckMilliseconds">
-    /// How soon the caller should check again so a stall is handed off between one and one
-    /// and a half <paramref name="stallMilliseconds"/> after replies start waiting.
+    /// How soon the caller should check again while replies wait, or -1 when none do and the
+    /// caller can park on <see cref="WaitForPossibleStallAsync"/>.
     /// </param>
     internal bool RescueStalledRunner(long nowMilliseconds, long stallMilliseconds, out long nextCheckMilliseconds)
     {
@@ -266,10 +297,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             _observedClaim = claim;
             _observedSince = nowMilliseconds;
-            // Once replies wait, check again exactly at the threshold. Otherwise poll often
-            // enough that a runner which blocks just after this check, with replies queued
-            // behind it, is seen within half the threshold.
-            nextCheckMilliseconds = waiting ? stallMilliseconds : Math.Max(1, stallMilliseconds / 2);
+            // Once replies wait, check again exactly at the threshold. Otherwise nothing can be
+            // stuck until a reply is queued behind a runner, which wakes the watcher again.
+            nextCheckMilliseconds = waiting ? stallMilliseconds : -1;
             return false;
         }
 
@@ -280,7 +310,8 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             return false;
         }
 
-        nextCheckMilliseconds = Math.Max(1, stallMilliseconds / 2);
+        // Keep watching: the replacement runner may block as well.
+        nextCheckMilliseconds = stallMilliseconds;
 
         lock (_gate)
         {
@@ -295,6 +326,16 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         _observedSince = nowMilliseconds;
         return true;
     }
+
+    /// <summary>
+    /// Completes when replies may have started waiting behind a runner (single waiter). The
+    /// stall watcher then polls <see cref="RescueStalledRunner(long, long, out long)"/> until
+    /// nothing waits.
+    /// </summary>
+    internal ValueTask WaitForPossibleStallAsync() => _stallWatch.WaitAsync();
+
+    /// <summary>Wakes the stall watcher, for example so it can observe connection teardown.</summary>
+    internal void WakeStallWatcher() => _stallWatch.Signal();
 
     /// <summary>
     /// Whether parsed replies are queued or unclaimed. Callers that keep rescuing during

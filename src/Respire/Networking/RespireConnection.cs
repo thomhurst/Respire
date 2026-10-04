@@ -71,6 +71,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
     private readonly Task? _deadlineSweepTask;
+    private readonly Task _stallWatchTask;
     private readonly CancellationTokenSource? _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
     private readonly TimeSpan? _commandTimeout;
@@ -229,8 +230,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
         }
 
-        // Also runs without a command timeout: it rescues reply delivery from a blocked continuation.
-        _deadlineSweepTask = SweepCommandDeadlinesAsync(_commandTimeout, _watchdogCancellation.Token);
+        if (_commandTimeout is { } commandTimeout)
+        {
+            _deadlineSweepTask = SweepCommandDeadlinesAsync(commandTimeout, _watchdogCancellation.Token);
+        }
+
+        _stallWatchTask = WatchStalledDeliveryAsync(_watchdogCancellation.Token);
     }
 
     public static async Task<RespireConnection> ConnectAsync(
@@ -2958,39 +2963,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// from the wire when it arrives, so the RESP stream stays in sync. Sleep is capped at
     /// the granularity so a command armed while the ring looked idle (or a stale slot read
     /// from a recycled source) can delay a timeout by at most one granularity interval.
-    /// Each pass also rescues reply delivery stalled behind a blocking continuation, so the
-    /// loop runs even when no command timeout is configured.
     /// </summary>
-    private async Task SweepCommandDeadlinesAsync(TimeSpan? timeout, CancellationToken cancellationToken)
+    private async Task SweepCommandDeadlinesAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var granularityMilliseconds = timeout is { } configured
-            ? (long)Math.Clamp(configured.TotalMilliseconds / 4, 10, 1000)
-            : 1000;
+        var granularityMilliseconds = (long)Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
         var granularity = TimeSpan.FromMilliseconds(granularityMilliseconds);
         try
         {
             while (true)
             {
                 var now = Environment.TickCount64;
-                var delay = granularity;
-                if (timeout is { } commandTimeout)
-                {
-                    var effectiveTimeout = MaintenanceTimeout(commandTimeout, now, out _, out var maintenanceStarted);
-                    var next = _inflight.SweepExpired(now, commandTimeout, this,
-                        (long)(effectiveTimeout - commandTimeout).TotalMilliseconds, maintenanceStarted,
-                        _maintenanceOptions?.MaintenanceRelaxedTimeout);
-                    if (next >= 0 && next <= granularityMilliseconds)
-                    {
-                        delay = TimeSpan.FromMilliseconds(next);
-                    }
-                }
-
-                var nextRescueCheck = RescueStalledDelivery(now);
-                if (nextRescueCheck >= 0 && nextRescueCheck < delay.TotalMilliseconds)
-                {
-                    delay = TimeSpan.FromMilliseconds(nextRescueCheck);
-                }
-
+                var effectiveTimeout = MaintenanceTimeout(timeout, now, out _, out var maintenanceStarted);
+                var next = _inflight.SweepExpired(now, timeout, this,
+                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted,
+                    _maintenanceOptions?.MaintenanceRelaxedTimeout);
+                var delay = next < 0 || next > granularityMilliseconds
+                    ? granularity
+                    : TimeSpan.FromMilliseconds(next);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -2998,11 +2987,37 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             // Normal connection teardown.
         }
+    }
 
-        // Teardown cancels the sweep, but replies parsed before it may still be queued behind a
-        // continuation that blocks on one of them. Keep rescuing until the receive loop has
-        // published its final batch and nothing waits on the rescue. The connection is going
-        // away, so replies stuck behind a runner move on after one teardown interval.
+    /// <summary>
+    /// Rescues reply delivery stalled behind a blocking continuation. Parks on the completion
+    /// scheduler's signal, which fires only when replies queue behind a runner, so an idle
+    /// connection pays nothing; while replies wait it checks again at the stall threshold.
+    /// </summary>
+    private async Task WatchStalledDeliveryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await _completions.WaitForPossibleStallAsync().ConfigureAwait(false);
+                var next = RescueStalledDelivery(Environment.TickCount64, _stalledDeliveryMilliseconds);
+                while (next >= 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(next), cancellationToken).ConfigureAwait(false);
+                    next = RescueStalledDelivery(Environment.TickCount64, _stalledDeliveryMilliseconds);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal connection teardown.
+        }
+
+        // Replies parsed before teardown may still be queued behind a continuation that blocks
+        // on one of them. Keep rescuing until the receive loop has published its final batch
+        // and nothing waits. The connection is going away, so this checks at a short interval
+        // and only for as long as such replies exist.
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
             RescueStalledDelivery(Environment.TickCount64, TeardownRescueMilliseconds);
@@ -3015,9 +3030,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
     internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
 
-    /// <returns>Milliseconds until the rescue wants another check.</returns>
-    private long RescueStalledDelivery(long now) => RescueStalledDelivery(now, _stalledDeliveryMilliseconds);
-
+    /// <returns>Milliseconds until the rescue wants another check, or -1 when nothing waits.</returns>
     private long RescueStalledDelivery(long now, long stallMilliseconds)
     {
         var rescued = _completions.RescueStalledRunner(now, stallMilliseconds, out var nextCheck);
@@ -3085,6 +3098,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         _credentialSession?.RequestStop();
         _watchdogCancellation?.Cancel();
+        _completions.WakeStallWatcher();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
         lock (_writeGate)
@@ -3317,6 +3331,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await _watchdogTask.ConfigureAwait(false);
             if (_deadlineSweepTask is not null)
                 await _deadlineSweepTask.ConfigureAwait(false);
+            await _stallWatchTask.ConfigureAwait(false);
             if (_credentialSession is not null)
                 await _credentialSession.DisposeAsync().ConfigureAwait(false);
 

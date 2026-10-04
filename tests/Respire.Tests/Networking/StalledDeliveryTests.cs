@@ -53,6 +53,102 @@ public class StalledDeliveryTests
     }
 
     [Test]
+    public async Task HandedOffRepliesKeepWireOrder()
+    {
+        var first = new PendingResponsePool(1).Rent();
+        var sources = Enumerable.Range(0, 4).Select(_ => new PendingResponsePool(1).Rent()).ToArray();
+        var order = new System.Collections.Concurrent.ConcurrentQueue<long>();
+        var tasks = sources.Select(source => ConsumeAsync(source.Task)).ToArray();
+        var firstAwaiter = first.Task.ConfigureAwait(false).GetAwaiter();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        firstAwaiter.UnsafeOnCompleted(() =>
+        {
+            using var value = firstAwaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(10));
+        });
+        var scheduler = new CompletionScheduler();
+        scheduler.Add(first, RespValue.Integer(0));
+        scheduler.Add(sources[0], RespValue.Integer(1));
+        scheduler.Add(sources[1], RespValue.Integer(2));
+        scheduler.Flush();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // A later drain queues behind the blocked runner as well.
+        scheduler.Add(sources[2], RespValue.Integer(3));
+        scheduler.Add(sources[3], RespValue.Integer(4));
+        scheduler.Flush();
+        try
+        {
+            await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
+            await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
+            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(order.ToArray()).IsEquivalentTo(new long[] { 1, 2, 3, 4 });
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        async Task ConsumeAsync(ValueTask<RespValue> pending)
+        {
+            using var value = await pending;
+            order.Enqueue(value.AsInteger());
+        }
+    }
+
+    [Test]
+    public async Task StallWatcherWakesOnlyWhenRepliesQueueBehindARunner()
+    {
+        var scheduler = new CompletionScheduler();
+        var watch = scheduler.WaitForPossibleStallAsync().AsTask();
+
+        // One reply on an idle connection cannot wait behind anything.
+        var lone = new PendingResponsePool(1).Rent();
+        var loneTask = lone.Task.AsTask();
+        scheduler.Add(lone, RespValue.Integer(1));
+        scheduler.Flush();
+        using (await loneTask.WaitAsync(TimeSpan.FromSeconds(5))) { }
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(watch.IsCompleted).IsFalse();
+
+        // A reply queued behind a busy runner wakes the watcher.
+        var first = new PendingResponsePool(1).Rent();
+        var awaiter = first.Task.ConfigureAwait(false).GetAwaiter();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var value = awaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(10));
+        });
+        scheduler.Add(first, RespValue.Integer(2));
+        scheduler.Flush();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(watch.IsCompleted).IsFalse();
+            var behind = new PendingResponsePool(1).Rent();
+            scheduler.Add(behind, RespValue.Integer(3));
+            scheduler.Flush();
+            await watch.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(scheduler.RescueStalledRunner(0, 500, out var nextCheck)).IsFalse();
+            await Assert.That(nextCheck).IsEqualTo(500);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(scheduler.RescueStalledRunner(1_000, 500, out var idleCheck)).IsFalse();
+        await Assert.That(idleCheck).IsEqualTo(-1);
+    }
+
+    [Test]
     public async Task SlowContinuationWithNothingQueuedIsNotHandedOff()
     {
         var source = new PendingResponsePool(1).Rent();
