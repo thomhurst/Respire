@@ -894,6 +894,16 @@ blocking application work, Redis SLOWLOG, payload sizes, and network health befo
 timeouts or thread-pool settings. Intentional blocking commands retain their existing timeout
 and cancellation semantics.
 
+Do not block a thread on a Respire result inside a continuation of another Respire command
+(`.Result`, `.Wait()`, `GetAwaiter().GetResult()` on a pending command). Replies for one
+connection are delivered in order, one after another, so the reply you are waiting for can sit
+behind the continuation that is waiting for it. Respire detects this: when replies have waited
+about 500 ms behind a continuation that is not making progress, it delivers them on another
+thread and logs a warning ("Reply delivery ... was blocked by a continuation"). The caller
+recovers, but it has paid that delay, and replies delivered this way run concurrently with
+the blocked continuation instead of after it. If you see the warning, make the blocking code
+path `await` instead.
+
 Redis error replies throw `RespireServerException`. Its `Code` identifies the Redis error,
 `CommandName` identifies the originating command when available, and `IsTransient` classifies
 `LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, and `MASTERDOWN`. Use `RespireErrorCodes` instead of

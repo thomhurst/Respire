@@ -71,9 +71,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
     private readonly Task? _deadlineSweepTask;
-    private readonly CancellationTokenSource? _watchdogCancellation;
+    // Completes when disposal may stop waiting for the stall watcher. Teardown releases it
+    // early when a starved pool holds back delivery, while the watcher keeps rescuing.
+    private readonly TaskCompletionSource _stallWatchReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly CancellationTokenSource _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
     private readonly TimeSpan? _commandTimeout;
+    private readonly long _stalledDeliveryMilliseconds;
+    private readonly long _teardownRescueBudgetMilliseconds;
+    private readonly long _starvedRunnerMilliseconds;
     private readonly long _commandTimeoutMilliseconds;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
@@ -213,27 +219,30 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
         _commandTimeout = options.CommandTimeout;
+        _stalledDeliveryMilliseconds = Math.Max(1L, (long)options.StalledDeliveryThreshold.TotalMilliseconds);
+        _teardownRescueBudgetMilliseconds = Math.Max(1L, (long)options.RetirementDrainFallbackTimeout.TotalMilliseconds);
+        _starvedRunnerMilliseconds = Math.Max(1L, (long)options.StarvedDeliveryRunnerWindow.TotalMilliseconds);
         if (_commandTimeout is { } commandTimeoutValue)
         {
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
         }
 
-        if (_responseTimeout is not null || _commandTimeout is not null)
-        {
-            _watchdogCancellation = new CancellationTokenSource();
-        }
+        _watchdogCancellation = new CancellationTokenSource();
 
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
         if (_responseTimeout is { } responseTimeout)
         {
-            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
+            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
         }
 
         if (_commandTimeout is { } commandTimeout)
         {
-            _deadlineSweepTask = SweepCommandDeadlinesAsync(commandTimeout, _watchdogCancellation!.Token);
+            _deadlineSweepTask = SweepCommandDeadlinesAsync(commandTimeout, _watchdogCancellation.Token);
         }
+
+        // Disposal observes the watcher through _stallWatchReleased.
+        _ = WatchStalledDeliveryAsync(_watchdogCancellation.Token);
     }
 
     public static async Task<RespireConnection> ConnectAsync(
@@ -3034,6 +3043,151 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Rescues reply delivery stalled behind a blocking continuation. Parks on the completion
+    /// scheduler's signal, which fires only when replies queue behind a runner, so an idle
+    /// connection pays nothing; while replies wait it checks again at the stall threshold.
+    /// </summary>
+    private async Task WatchStalledDeliveryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WatchUntilTeardownAsync(cancellationToken).ConfigureAwait(false);
+            await RescueDuringTeardownAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Surface a watcher failure through disposal instead of losing it.
+            _stallWatchReleased.TrySetException(ex);
+        }
+        finally
+        {
+            _stallWatchReleased.TrySetResult();
+        }
+    }
+
+    private async Task WatchUntilTeardownAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await _completions.WaitForPossibleStallAsync().ConfigureAwait(false);
+                RescueStalledDelivery(Environment.TickCount64, _stalledDeliveryMilliseconds, out var next);
+                while (next >= 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(next), cancellationToken).ConfigureAwait(false);
+                    RescueStalledDelivery(Environment.TickCount64, _stalledDeliveryMilliseconds, out next);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal connection teardown.
+        }
+    }
+
+    /// <summary>
+    /// Replies parsed before teardown may still be queued behind a continuation that blocks on
+    /// one of them, and retirement waits for delivery to go idle. Runs until the receive loop
+    /// has published its final batch and nothing waits, checking every
+    /// <see cref="TeardownRescueMilliseconds"/>:
+    /// <list type="number">
+    /// <item><description>Within the drain budget (<c>RetirementDrainFallbackTimeout</c>, reused
+    /// because this wait is part of the same retirement drain), stalls are handed off at the
+    /// normal threshold.</description></item>
+    /// <item><description>After the budget, every tick hands off immediately, so a chain of
+    /// blocking continuations drains one link per tick.</description></item>
+    /// <item><description>When the waiting replies have sat behind a runner that never started,
+    /// with delivery making no progress, for <c>StarvedDeliveryRunnerWindow</c> (one second),
+    /// the pool is starved rather than blocked by caller code. Disposal then stops waiting, but
+    /// the loop keeps rescuing: once that runner starts, its continuations may still block on
+    /// one another. Any handoff or claim restarts the starvation clock, because a replacement
+    /// runner is briefly queued after every handoff.</description></item>
+    /// </list>
+    /// </summary>
+    private async Task RescueDuringTeardownAsync()
+    {
+        var teardownStarted = Environment.TickCount64;
+        long starvedSince = -1;
+        long starvedProgress = 0;
+        while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
+        {
+            var now = Environment.TickCount64;
+            if (now - teardownStarted < _teardownRescueBudgetMilliseconds)
+            {
+                RescueStalledDelivery(now, _stalledDeliveryMilliseconds, out _);
+            }
+            else
+            {
+                // A zero threshold still needs two checks: the first records the claim, the
+                // second hands off if the runner has not moved.
+                var rescued = RescueStalledDelivery(now, 0, out _) | RescueStalledDelivery(now, 0, out _);
+                var progress = _completions.DeliveryProgress;
+                var waitingOnQueuedRunner = _receiveTask.IsCompleted
+                    && !_completions.IsDeliveryExecuting && _completions.HasWaitingReplies;
+                if (!waitingOnQueuedRunner || rescued || (starvedSince >= 0 && progress != starvedProgress))
+                {
+                    starvedSince = waitingOnQueuedRunner ? now : -1;
+                    starvedProgress = progress;
+                }
+                else if (starvedSince < 0)
+                {
+                    starvedSince = now;
+                    starvedProgress = progress;
+                }
+                else if (now - starvedSince >= _starvedRunnerMilliseconds && !_stallWatchReleased.Task.IsCompleted)
+                {
+                    _logger?.LogWarning(
+                        "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
+                        + "finishing disposal while their delivery runner waits for a thread-pool thread.",
+                        Host, Port, now - teardownStarted);
+                    _stallWatchReleased.TrySetResult();
+                }
+            }
+
+            // Once disposal is released the remaining replies wait on a runner the pool has not
+            // started, which no rescue can change; poll at one second instead of every tick.
+            // Back off only while that runner is still unstarted; once it runs, a blocking
+            // continuation must be handed off promptly again.
+            var tick = Task.Delay(TimeSpan.FromMilliseconds(
+                _stallWatchReleased.Task.IsCompleted && !_completions.IsDeliveryExecuting
+                    ? ReleasedRescueMilliseconds
+                    : TeardownRescueMilliseconds));
+            // Until the receive loop exits, wake as soon as it does so disposal gains no polling
+            // latency; afterwards just wait out the tick.
+            await (_receiveTask.IsCompleted ? tick : Task.WhenAny(_receiveTask, tick)).ConfigureAwait(false);
+        }
+    }
+
+    private const long TeardownRescueMilliseconds = 50;
+    private const long ReleasedRescueMilliseconds = 1000;
+
+    /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
+    internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
+
+    /// <summary>Exposes how many parsed replies wait for delivery, for teardown tests.</summary>
+    internal int UndeliveredReplyCount => _completions.WaitingReplyCount;
+
+    /// <returns><see langword="true"/> when delivery was handed off.</returns>
+    /// <param name="now">The current monotonic time.</param>
+    /// <param name="stallMilliseconds">How long replies may wait behind a runner that is not moving.</param>
+    /// <param name="nextCheck">Milliseconds until the rescue wants another check, or -1 when nothing waits.</param>
+    private bool RescueStalledDelivery(long now, long stallMilliseconds, out long nextCheck)
+    {
+        var rescued = _completions.RescueStalledRunner(now, stallMilliseconds, out nextCheck);
+        if (rescued)
+        {
+            _logger?.LogWarning(
+                "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
+                + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
+                + "inside continuations.",
+                Host, Port, stallMilliseconds);
+        }
+
+        return rescued;
+    }
+
     private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
         => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
 
@@ -3085,7 +3239,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private void Abort(Exception? reason = null)
     {
         _credentialSession?.RequestStop();
-        _watchdogCancellation?.Cancel();
+        // A late Abort can race disposal of the source; the wake below must still happen.
+        try { _watchdogCancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
+        _completions.WakeStallWatcher();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
         lock (_writeGate)
@@ -3318,6 +3475,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await _watchdogTask.ConfigureAwait(false);
             if (_deadlineSweepTask is not null)
                 await _deadlineSweepTask.ConfigureAwait(false);
+            await _stallWatchReleased.Task.ConfigureAwait(false);
             if (_credentialSession is not null)
                 await _credentialSession.DisposeAsync().ConfigureAwait(false);
 
@@ -3328,7 +3486,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
             _stream?.Dispose();
             _socket?.Dispose();
-            _watchdogCancellation?.Dispose();
+            _watchdogCancellation.Dispose();
             _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
             completion.TrySetResult();
         }
@@ -3402,6 +3560,18 @@ internal sealed record RespireConnectionOptions
     /// timer. Null disables the cap.
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; }
+
+    /// <summary>
+    /// How long parsed replies may wait behind a continuation that has stopped making progress
+    /// before they are delivered on another thread. Internal: tests isolate rescue paths.
+    /// </summary>
+    internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// During teardown, how long replies may sit behind a delivery runner that never starts,
+    /// with no delivery progress, before disposal stops waiting for them. Internal: tests.
+    /// </summary>
+    internal TimeSpan StarvedDeliveryRunnerWindow { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
     public bool UseTls { get; init; }
