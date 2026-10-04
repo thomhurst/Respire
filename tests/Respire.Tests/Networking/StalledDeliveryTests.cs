@@ -347,4 +347,73 @@ public class StalledDeliveryTests
         await firstDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await disposed.WaitAsync(TimeSpan.FromSeconds(5));
     }
+
+    [Test]
+    public async Task RescueNeverSplitsASourceWhoseClaimedReplyIsStillCompleting()
+    {
+        // The runner claimed the source's first reply and was descheduled before completing it;
+        // its next reply is still unclaimed, so handing off would let two runners advance it.
+        var source = new SteppedSource();
+        source.PrepareForUse(receiveReferences: 2);
+        var scheduler = new CompletionScheduler();
+        scheduler.Add(source, RespValue.Integer(1));
+        scheduler.Add(source, RespValue.Integer(2));
+        scheduler.Flush();
+        await source.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
+            await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsFalse();
+            await Assert.That(scheduler.RescueStalledRunner(10_000, 500)).IsFalse();
+        }
+        finally
+        {
+            source.Release.Set();
+        }
+
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(source.Completions).IsEqualTo(2);
+        await Assert.That(source.MaxConcurrent).IsEqualTo(1);
+    }
+
+    /// <summary>A source whose first completion stalls, standing in for a descheduled runner.</summary>
+    private sealed class SteppedSource : PendingResponse
+    {
+        private int _active;
+        public readonly ManualResetEventSlim Release = new();
+        public readonly TaskCompletionSource FirstEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Completions;
+        public int MaxConcurrent;
+
+        internal override bool TryReserveResult() => true;
+
+        internal override bool CompleteReservedResult(in RespValue result)
+        {
+            var active = Interlocked.Increment(ref _active);
+            InterlockedMax(ref MaxConcurrent, active);
+            if (Interlocked.Increment(ref Completions) == 1)
+            {
+                FirstEntered.TrySetResult();
+                Release.Wait(TimeSpan.FromSeconds(10));
+            }
+
+            Interlocked.Decrement(ref _active);
+            return true;
+        }
+
+        protected override void SetResultCore(in RespValue result) { }
+
+        protected override void SetExceptionCore(Exception exception) { }
+
+        protected override void ResetAndReturn() { }
+
+        private static void InterlockedMax(ref int target, int value)
+        {
+            int current;
+            while ((current = Volatile.Read(ref target)) < value
+                && Interlocked.CompareExchange(ref target, value, current) != current)
+            {
+            }
+        }
+    }
 }

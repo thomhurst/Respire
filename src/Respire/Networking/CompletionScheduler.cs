@@ -256,7 +256,6 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 ref var entry = ref items[i];
                 var source = entry.Source;
                 var value = entry.Value;
-                entry = default;
                 if (!source.CompleteReservedResult(in value))
                 {
                     // Lost to cancellation or connection failure; the reply still had to be
@@ -265,6 +264,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 }
 
                 source.ReleaseRef();
+                // Cleared only once delivered: a rescue treats a claimed entry that is still
+                // populated as possibly mid-delivery (see TryRescueHandOffLocked).
+                entry = default;
             }
 
             delivered = items;
@@ -344,8 +346,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             // behind a starved pool must remain the single owner, or two would deliver.
             if (!_executing || Volatile.Read(ref _claim) != claim) return false;
             var stillWaiting = _pendingCount > 0 || (_activeItems is not null && (int)claim < _activeCount);
-            if (!stillWaiting) return false;
-            HandOffLocked();
+            if (!stillWaiting || !TryRescueHandOffLocked(claim)) return false;
         }
 
         _observedSince = nowMilliseconds;
@@ -418,7 +419,60 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         var generation = ++_generation;
         var claim = Interlocked.Exchange(ref _claim, (long)generation << 32);
+        TransferUnclaimedLocked((int)claim);
+    }
+
+    /// <summary>
+    /// Hands off from outside the runner, but only from exactly <paramref name="claim"/> and only
+    /// when that cannot split a multi-reply source. The runner may have claimed its latest reply
+    /// and been descheduled before completing it; if that reply's source still has replies among
+    /// the unclaimed ones, two runners would advance one transaction concurrently, so the rescue
+    /// waits for the next check instead. A runner blocked in caller code is always inside a
+    /// source's final reply, which has no later replies, so a real stall is never refused.
+    /// Caller holds the gate.
+    /// </summary>
+    private bool TryRescueHandOffLocked(long claim)
+    {
         var next = (int)claim;
+        if (_activeItems is { } items && next > 0 && items[next - 1].Source is { } inFlight
+            && HasUnclaimedReplyFor(inFlight, next))
+        {
+            return false;
+        }
+
+        var generation = _generation + 1;
+        if (Interlocked.CompareExchange(ref _claim, (long)generation << 32, claim) != claim)
+        {
+            // The runner moved on; the next check re-evaluates from its new claim.
+            return false;
+        }
+
+        _generation = generation;
+        TransferUnclaimedLocked(next);
+        return true;
+    }
+
+    private bool HasUnclaimedReplyFor(PendingResponse source, int next)
+    {
+        for (var i = next; i < _activeCount; i++)
+        {
+            if (ReferenceEquals(_activeItems![i].Source, source)) return true;
+        }
+
+        for (var b = 0; b < _pendingCount; b++)
+        {
+            var batch = _pending[(_pendingHead + b) % _pending.Length];
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (ReferenceEquals(batch.Items[i].Source, source)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void TransferUnclaimedLocked(int next)
+    {
         var remaining = _activeItems is null ? 0 : _activeCount - next;
         if (remaining > 0)
         {

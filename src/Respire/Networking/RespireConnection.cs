@@ -3148,8 +3148,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             // Once disposal is released the remaining replies wait on a runner the pool has not
             // started, which no rescue can change; poll at one second instead of every tick.
+            // Back off only while that runner is still unstarted; once it runs, a blocking
+            // continuation must be handed off promptly again.
             var tick = Task.Delay(TimeSpan.FromMilliseconds(
-                _stallWatchReleased.Task.IsCompleted ? ReleasedRescueMilliseconds : TeardownRescueMilliseconds));
+                _stallWatchReleased.Task.IsCompleted && !_completions.IsDeliveryExecuting
+                    ? ReleasedRescueMilliseconds
+                    : TeardownRescueMilliseconds));
             // Until the receive loop exits, wake as soon as it does so disposal gains no polling
             // latency; afterwards just wait out the tick.
             await (_receiveTask.IsCompleted ? tick : Task.WhenAny(_receiveTask, tick)).ConfigureAwait(false);
@@ -3235,7 +3239,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private void Abort(Exception? reason = null)
     {
         _credentialSession?.RequestStop();
-        _watchdogCancellation.Cancel();
+        // A late Abort can race disposal of the source; the wake below must still happen.
+        try { _watchdogCancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
         _completions.WakeStallWatcher();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
