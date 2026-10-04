@@ -236,6 +236,33 @@ public class ExceptionAwareFlowTests
     }
 
     [Test]
+    [Arguments("int")]
+    [Arguments("long")]
+    [Arguments("nint")]
+    public async Task SignedMinimumRemainderCanOverflowAtRuntime(string type)
+    {
+        var overflow = false;
+        try
+        {
+            _ = type switch
+            {
+                "int" => IntRemainder(int.MinValue, -1),
+                "long" => LongRemainder(long.MinValue, -1),
+                _ => NativeRemainder(nint.MinValue, -1),
+            };
+        }
+        catch (OverflowException) { overflow = true; }
+        await Assert.That(overflow).IsTrue();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static long IntRemainder(int value, int divisor) => value % divisor;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static long LongRemainder(long value, long divisor) => value % divisor;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static long NativeRemainder(nint value, nint divisor) => value % divisor;
+    }
+
+    [Test]
     [Arguments("checked((object)result)", "Throws()", "", true)]
     [Arguments("unchecked((object)result)", "Throws()", "", true)]
     [Arguments("checked((object)result)", "0", "", false)]
@@ -499,6 +526,12 @@ public class ExceptionAwareFlowTests
     [Arguments("byte", "_ = left / -1;", false)]
     [Arguments("sbyte", "_ = left / -1;", false)]
     [Arguments("short", "_ = left % -1;", false)]
+    [Arguments("int", "_ = left % -1;", true)]
+    [Arguments("long", "_ = left % -1;", true)]
+    [Arguments("nint", "_ = left % -1;", true)]
+    [Arguments("int", "_ = checked(left % -1);", true)]
+    [Arguments("long", "_ = unchecked(left % -1);", true)]
+    [Arguments("int", "_ = left % 1;", false)]
     [Arguments("ushort", "_ = left / -1;", false)]
     [Arguments("char", "_ = left / -1;", false)]
     [Arguments("byte?", "_ = left / -1;", false)]
