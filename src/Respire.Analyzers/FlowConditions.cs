@@ -74,7 +74,9 @@ internal sealed class FlowConditions
             AddBranch(block.ConditionalSuccessor);
             // Exceptional successors are implicit in Roslyn's CFG. Include their
             // predicates as well as loop back-edges and normal continuations.
-            for (var region = block.EnclosingRegion; region is not null; region = region.EnclosingRegion)
+            // A lambda or local-function graph's region chain continues into its containing
+            // graph; those outer handlers are not part of this graph, so stop at its root.
+            for (var region = block.EnclosingRegion; region is not null && region != graph.Root; region = region.EnclosingRegion)
                 if (region.Kind == ControlFlowRegionKind.Try
                     && region.EnclosingRegion is { Kind: ControlFlowRegionKind.TryAndCatch or ControlFlowRegionKind.TryAndFinally } owner)
                     foreach (var handler in owner.NestedRegions)

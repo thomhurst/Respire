@@ -2784,4 +2784,65 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    // A lambda's control-flow graph is nested in its containing graph, so the lambda's region
+    // chain continues into the containing method's try/finally regions. Their block ordinals
+    // belong to the containing graph and must not be looked up in the lambda's graph.
+    [Test]
+    [Arguments("await using var transaction = client.CreateTransaction();", "")]
+    [Arguments("try {", "} finally { Console.WriteLine(); }")]
+    public async Task LambdaReadInsideOuterProtectedRegion_DoesNotCrash(string open, string close)
+        => await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client)
+                {
+                    {{open}}
+                    await ExecuteAsync(client, async (queue, execute) =>
+                    {
+                        var pending = queue.GetStringAsync("key");
+                        await execute();
+                        Console.WriteLine(pending.Result);
+                    });
+                    {{close}}
+                }
+
+                private static async Task ExecuteAsync(RespireClient client, Func<RespireBatch, Func<Task>, Task> test)
+                {
+                    var batch = client.CreateBatch();
+                    await test(batch, async () => await batch.ExecuteAsync());
+                }
+            }
+            """);
+
+    [Test]
+    [Arguments("await using var transaction = client.CreateTransaction();", "")]
+    [Arguments("try {", "} finally { Console.WriteLine(); }")]
+    public async Task LambdaUnflushedReadInsideOuterProtectedRegion_IsFlagged(string open, string close)
+        => await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client)
+                {
+                    {{open}}
+                    Func<Task> run = async () =>
+                    {
+                        var batch = client.CreateBatch();
+                        var pending = batch.GetStringAsync("key");
+                        await Task.Yield();
+                        Console.WriteLine({|RESP002:pending.Result|});
+                    };
+                    await run();
+                    {{close}}
+                }
+            }
+            """);
 }
