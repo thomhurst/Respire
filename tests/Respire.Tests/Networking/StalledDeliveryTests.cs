@@ -150,6 +150,45 @@ public class StalledDeliveryTests
     }
 
     [Test]
+    public async Task HandoffKeepsAMultiReplySourceWhole()
+    {
+        var first = new PendingResponsePool(1).Rent();
+        var transaction = MultiReplyPendingResponseSource.Rent(3, 0, "MULTI/EXEC");
+        var transactionTask = transaction.Task.AsTask();
+        var firstAwaiter = first.Task.ConfigureAwait(false).GetAwaiter();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        firstAwaiter.UnsafeOnCompleted(() =>
+        {
+            using var value = firstAwaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(10));
+        });
+        var scheduler = new CompletionScheduler();
+        // The transaction's queued replies straddle the blocked runner's batch and a later drain.
+        scheduler.Add(first, RespValue.Integer(0));
+        scheduler.Add(transaction, RespValue.SimpleString("OK"u8.ToArray()));
+        scheduler.Flush();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        scheduler.Add(transaction, RespValue.SimpleString("QUEUED"u8.ToArray()));
+        scheduler.Add(transaction, RespValue.Integer(42));
+        scheduler.Flush();
+        try
+        {
+            await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
+            await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
+            using var reply = await transactionTask.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(reply.AsInteger()).IsEqualTo(42);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task SlowContinuationWithNothingQueuedIsNotHandedOff()
     {
         var source = new PendingResponsePool(1).Rent();
@@ -250,14 +289,19 @@ public class StalledDeliveryTests
     }
 
     [Test]
-    public async Task TeardownDrainsAChainOfBlockingContinuations()
+    [Arguments(1000)]
+    [Arguments(1)]
+    public async Task TeardownDrainsAChainOfBlockingContinuations(int starvationWindowMilliseconds)
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        // A tiny starvation window proves each handoff restarts the starvation clock: the
+        // replacement runner is briefly queued after every handoff without being starved.
         var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
                 StalledDeliveryThreshold = TimeSpan.FromHours(1),
                 RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(1),
+                StarvedDeliveryRunnerWindow = TimeSpan.FromMilliseconds(starvationWindowMilliseconds),
             });
         var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -278,15 +322,9 @@ public class StalledDeliveryTests
                     {
                         using var value = second.GetResult();
                         using var last = third.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
-                    }
-                    catch (RespireConnectionException)
-                    {
-                        // A reply not yet parsed when the socket closed fails instead; the chain still ends.
-                    }
-                    finally
-                    {
                         secondDone.TrySetResult();
                     }
+                    catch (Exception error) { secondDone.TrySetException(error); }
                 });
                 queued.TrySetResult();
                 secondDone.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
@@ -296,9 +334,12 @@ public class StalledDeliveryTests
         });
 
         await queued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Both later replies must be parsed and queued behind the blocked continuation, so only
+        // teardown handoffs can deliver them.
         var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!connection.HasUndeliveredReplies && DateTime.UtcNow < deadline)
+        while (connection.UndeliveredReplyCount < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(5);
+        await Assert.That(connection.UndeliveredReplyCount).IsEqualTo(2);
         var disposed = connection.DisposeAsync().AsTask();
         await firstDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await disposed.WaitAsync(TimeSpan.FromSeconds(5));

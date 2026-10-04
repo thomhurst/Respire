@@ -358,6 +358,30 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         }
     }
 
+    /// <summary>How many parsed replies are queued or unclaimed.</summary>
+    internal int WaitingReplyCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var count = _activeItems is null ? 0 : Math.Max(0, _activeCount - (int)Volatile.Read(ref _claim));
+                for (var i = 0; i < _pendingCount; i++)
+                {
+                    count += _pending[(_pendingHead + i) % _pending.Length].Count;
+                }
+
+                return count;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Changes whenever a reply is claimed, a batch starts or delivery is handed off. Teardown
+    /// uses it to tell a starved runner from a chain of runners that keep moving.
+    /// </summary>
+    internal long DeliveryProgress => Volatile.Read(ref _claim);
+
     // Unsynchronized pre-filter for the stall clock; the handoff re-checks under the gate.
     private bool MayHaveWaitingReplies(long claim)
         => Volatile.Read(ref _pendingCount) > 0 || (int)claim < Volatile.Read(ref _activeCount);
