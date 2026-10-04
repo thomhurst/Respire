@@ -8,6 +8,51 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = left + right;", "OutOfMemoryException", false, true)]
+    [Arguments("_ = left - right;", "OutOfMemoryException", false, true)]
+    [Arguments("left += right;", "OutOfMemoryException", false, true)]
+    [Arguments("left -= right;", "OutOfMemoryException", false, true)]
+    [Arguments("_ = left + right;", "OutOfMemoryException", true, false)]
+    [Arguments("left -= right;", "OutOfMemoryException", true, false)]
+    [Arguments("_ = left + right;", "InvalidOperationException", false, false)]
+    [Arguments("left -= right;", "InvalidOperationException", false, false)]
+    [Arguments("_ = left + right;", "ArgumentException", false, true)]
+    [Arguments("left -= right;", "ArgumentException", false, true)]
+    public async Task DelegateCombinationCanAllocate(string operation, string catchType, bool cleanup, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, Func<object> left, Func<object> right)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { {{(cleanup ? "result.Dispose();" : "")}} }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, Func<object> left, Func<object> right)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { {{(cleanup ? "await batch.SendAsync();" : "")}} }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("publisher.Changed -= result.Dispose;", "", "", true)]
     [Arguments("publisher.Changed -= () => result.Dispose();", "", "", true)]
     [Arguments("publisher.Changed -= new Action(result.Dispose);", "", "", true)]

@@ -52,6 +52,7 @@ internal sealed class ImplicitExceptionClassifier(
             or IIncrementOrDecrementOperation { Target: IPropertyReferenceOperation }
             or ICompoundAssignmentOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
             or IIncrementOrDecrementOperation { Target: IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation }
+            || IsDelegateCombination(operation)
             // Roslyn 4.8 exposes these syntax nodes without public operation interfaces.
             || operation.Syntax is CollectionExpressionSyntax or SpreadElementSyntax
             || operation is IListPatternOperation listPattern
@@ -90,6 +91,12 @@ internal sealed class ImplicitExceptionClassifier(
         _throwingOperations.Add(operation, throwing);
         return throwing;
     }
+
+    internal static bool IsDelegateCombination(IOperation operation)
+        => operation is IBinaryOperation { OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
+                OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract }
+            or ICompoundAssignmentOperation { OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
+                OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract };
 
     private static bool IsDefaultValueTask(IOperation operation)
         => (operation is IDefaultValueOperation or IObjectCreationOperation { Arguments.Length: 0 })

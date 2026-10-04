@@ -676,12 +676,18 @@ internal static partial class ScopeWalker
                                 || exceptionSource is IConversionOperation boxing && Exceptions.IsBoxing(boxing)
                                 || ImplicitExceptionClassifier.IsStringOnlyConcatenation(exceptionSource)
                                 || ImplicitExceptionClassifier.IsAllocationOnlyInterpolation(exceptionSource)
+                                || ImplicitExceptionClassifier.IsDelegateCombination(exceptionSource)
+                                    && exceptionSource is not ICompoundAssignmentOperation { Target: IPropertyReferenceOperation }
                                 || exceptionSource is IDelegateCreationOperation
                                 || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                             started, bodyKnown, bodyValues);
                     }
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && Exceptions.DelegateCanDereferenceNull(delegateCreation, known, values))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                    // Variant delegate operands can have different runtime delegate types.
+                    if (ImplicitExceptionClassifier.IsDelegateCombination(exceptionSource))
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                            implicitExceptionType: "System.ArgumentException"), started, known, values);
                     if (transferFailure == TransferFailure.Allocation
                         && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
                         && !IsTypeInitialized(exceptionSource, known, values))
