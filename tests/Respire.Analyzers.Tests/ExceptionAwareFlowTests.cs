@@ -8,6 +8,57 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (holder is null) return;", "Action action = holder.Method;", "NullReferenceException", false)]
+    [Arguments("if (holder is null) return;", "Action action = holder.Method;", "OutOfMemoryException", true)]
+    [Arguments("if (holder is null) return; holder = null;", "Action action = holder.Method;", "NullReferenceException", true)]
+    [Arguments("", "Action action = holder.Method;", "NullReferenceException", true)]
+    [Arguments("", "_ = (new int[1])[0];", "IndexOutOfRangeException", false)]
+    [Arguments("", "_ = (new int[1])[1];", "IndexOutOfRangeException", true)]
+    [Arguments("", "_ = (new int[1])[-1];", "IndexOutOfRangeException", true)]
+    [Arguments("", "_ = (new int[1])[index];", "IndexOutOfRangeException", true)]
+    [Arguments("", "_ = (new int[1])[0];", "OutOfMemoryException", true)]
+    [Arguments("", "_ = (new int[1, 2])[0, 1];", "IndexOutOfRangeException", false)]
+    [Arguments("", "_ = (new int[1, 2])[0, 2];", "IndexOutOfRangeException", true)]
+    public async Task DelegateAndArrayChecksUseProvenOperands(string setup, string operation, string catchType, bool warning)
+    {
+        const string declaration = "class Holder { public void Method() { } }";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int index)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch ({{catchType}}) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            {{declaration}}
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder, int index)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch ({{catchType}}) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("var pair = (1, 2); int a, b;", "(a, b) = pair;", "Exception", false)]
     [Arguments("var pair = (1, 2); object a, b;", "(a, b) = pair;", "OutOfMemoryException", true)]
     [Arguments("var pair = (1, (2, 3)); int a, b, c;", "(a, (b, c)) = pair;", "Exception", false)]

@@ -406,8 +406,9 @@ internal static partial class ScopeWalker
                     {
                         if (!_conditions.IsKnownNonNull(arrayAccess.ArrayReference, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
-                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
-                            implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
+                        if (!HasValidConstantIndexes(arrayAccess))
+                            Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
                         if (arrayAccess.Type?.IsValueType != true
                             && (deconstructionStore || operation is IAssignmentOperation
                                 || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
@@ -454,7 +455,7 @@ internal static partial class ScopeWalker
                             || exceptionSource is IDelegateCreationOperation
                             || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                         started, known, values);
-                    if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation))
+                    if (exceptionSource is IDelegateCreationOperation delegateCreation && DelegateCanDereferenceNull(delegateCreation, known, values))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                     if (transferFailure == TransferFailure.Allocation
                         && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
@@ -969,9 +970,28 @@ internal static partial class ScopeWalker
             return divisor;
         }
 
-        private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation)
+        private bool DelegateCanDereferenceNull(IDelegateCreationOperation operation, ulong known, ulong values)
             => operation.Target is IMethodReferenceOperation { Method.IsStatic: false, Instance: { } receiver }
-                && CanDereferenceNull(receiver);
+                && CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values);
+
+        private bool HasValidConstantIndexes(IArrayElementReferenceOperation operation)
+        {
+            if (_conditions.ResolveCapturedTarget(operation.ArrayReference) is not IArrayCreationOperation creation
+                || creation.DimensionSizes.Length != operation.Indices.Length) return false;
+            for (var dimension = 0; dimension < operation.Indices.Length; dimension++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (ConstantIntegral(operation.Indices[dimension]) is not { } index
+                    || ConstantIntegral(creation.DimensionSizes[dimension]) is not { } length
+                    || index < 0 || index >= length) return false;
+            }
+            return true;
+        }
+
+        private static decimal? ConstantIntegral(IOperation operation)
+            => operation.ConstantValue is { HasValue: true, Value: { } value }
+                && value is sbyte or byte or short or ushort or int or uint or long or ulong or char
+                    ? Convert.ToDecimal(value is char character ? (int)character : value) : null;
 
         private bool CanDereferenceNull(IOperation receiver)
             => receiver.Type?.IsReferenceType == true && receiver is not IInstanceReferenceOperation
