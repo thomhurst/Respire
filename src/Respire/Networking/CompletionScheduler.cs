@@ -318,8 +318,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             return false;
         }
 
-        // Keep watching: the replacement runner may block as well.
-        nextCheckMilliseconds = stallMilliseconds;
+        // Keep watching, and soon: the replacement runner may block as well, and its first
+        // claim should start the next clock promptly rather than a full threshold later.
+        nextCheckMilliseconds = Math.Max(1, stallMilliseconds / 5);
 
         lock (_gate)
         {

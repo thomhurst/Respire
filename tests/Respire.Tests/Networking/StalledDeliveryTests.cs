@@ -47,7 +47,9 @@ public class StalledDeliveryTests
         await Assert.That(scheduler.RescueStalledRunner(499, 500, out nextCheck)).IsFalse();
         await Assert.That(nextCheck).IsEqualTo(1);
         await Assert.That(secondTask.IsCompleted).IsFalse();
-        await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
+        await Assert.That(scheduler.RescueStalledRunner(500, 500, out nextCheck)).IsTrue();
+        // Recheck soon: the replacement runner's first claim should start the next clock promptly.
+        await Assert.That(nextCheck).IsEqualTo(100);
         await Assert.That(await completed.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(2);
         await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }

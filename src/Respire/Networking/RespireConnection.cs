@@ -3099,7 +3099,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
             }
 
-            var tick = Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds));
+            // Once disposal is released the remaining replies wait on a runner the pool has not
+            // started, which no rescue can change; poll at one second instead of every tick.
+            var tick = Task.Delay(TimeSpan.FromMilliseconds(
+                _stallWatchReleased.Task.IsCompleted ? ReleasedRescueMilliseconds : TeardownRescueMilliseconds));
             // Until the receive loop exits, wake as soon as it does so disposal gains no polling
             // latency; afterwards just wait out the tick.
             await (_receiveTask.IsCompleted ? tick : Task.WhenAny(_receiveTask, tick)).ConfigureAwait(false);
@@ -3107,6 +3110,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     private const long TeardownRescueMilliseconds = 50;
+    private const long ReleasedRescueMilliseconds = 1000;
 
     /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
     internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
