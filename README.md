@@ -1,6 +1,6 @@
 # Respire
 
-**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and more built in.**
+**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and even server assisted client cache.**
 
 Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
