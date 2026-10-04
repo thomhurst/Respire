@@ -218,22 +218,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
         }
 
-        if (_responseTimeout is not null || _commandTimeout is not null)
-        {
-            _watchdogCancellation = new CancellationTokenSource();
-        }
+        _watchdogCancellation = new CancellationTokenSource();
 
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
         if (_responseTimeout is { } responseTimeout)
         {
-            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
+            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
         }
 
-        if (_commandTimeout is { } commandTimeout)
-        {
-            _deadlineSweepTask = SweepCommandDeadlinesAsync(commandTimeout, _watchdogCancellation!.Token);
-        }
+        // Also runs without a command timeout: it rescues reply delivery from a blocked continuation.
+        _deadlineSweepTask = SweepCommandDeadlinesAsync(_commandTimeout, _watchdogCancellation.Token);
     }
 
     public static async Task<RespireConnection> ConnectAsync(
@@ -2955,29 +2950,54 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
+    /// How long reply delivery may sit behind one continuation, with other replies waiting,
+    /// before the remaining replies move to another thread.
+    /// </summary>
+    internal const long StalledDeliveryMilliseconds = 500;
+
+    /// <summary>
     /// Enforces <see cref="RespireConnectionOptions.CommandTimeout"/> without per-command
     /// timers: each command is stamped with a deadline at enqueue and this loop expires the
     /// oldest in-flight entries, completing only the caller — the reply is still consumed
     /// from the wire when it arrives, so the RESP stream stays in sync. Sleep is capped at
     /// the granularity so a command armed while the ring looked idle (or a stale slot read
     /// from a recycled source) can delay a timeout by at most one granularity interval.
+    /// Each pass also rescues reply delivery stalled behind a blocking continuation, so the
+    /// loop runs even when no command timeout is configured.
     /// </summary>
-    private async Task SweepCommandDeadlinesAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task SweepCommandDeadlinesAsync(TimeSpan? timeout, CancellationToken cancellationToken)
     {
-        var granularityMilliseconds = (long)Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
+        var granularityMilliseconds = timeout is { } configured
+            ? (long)Math.Clamp(configured.TotalMilliseconds / 4, 10, 1000)
+            : 1000;
         var granularity = TimeSpan.FromMilliseconds(granularityMilliseconds);
         try
         {
             while (true)
             {
                 var now = Environment.TickCount64;
-                var effectiveTimeout = MaintenanceTimeout(timeout, now, out _, out var maintenanceStarted);
-                var next = _inflight.SweepExpired(now, timeout, this,
-                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted,
-                    _maintenanceOptions?.MaintenanceRelaxedTimeout);
-                var delay = next < 0 || next > granularityMilliseconds
-                    ? granularity
-                    : TimeSpan.FromMilliseconds(next);
+                var delay = granularity;
+                if (timeout is { } commandTimeout)
+                {
+                    var effectiveTimeout = MaintenanceTimeout(commandTimeout, now, out _, out var maintenanceStarted);
+                    var next = _inflight.SweepExpired(now, commandTimeout, this,
+                        (long)(effectiveTimeout - commandTimeout).TotalMilliseconds, maintenanceStarted,
+                        _maintenanceOptions?.MaintenanceRelaxedTimeout);
+                    if (next >= 0 && next <= granularityMilliseconds)
+                    {
+                        delay = TimeSpan.FromMilliseconds(next);
+                    }
+                }
+
+                if (_completions.RescueStalledRunner(now, StalledDeliveryMilliseconds))
+                {
+                    _logger?.LogWarning(
+                        "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
+                        + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
+                        + "inside continuations.",
+                        Host, Port, StalledDeliveryMilliseconds);
+                }
+
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
