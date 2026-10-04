@@ -2355,8 +2355,44 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
                 }
 
-                _completions.Flush();
-                var received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
+                int received;
+                if (_inflight.Count != 0
+                    || !Thread.CurrentThread.IsThreadPoolThread
+                    || !_completions.FlushDeferred())
+                {
+                    // Busy connection (more replies due), a socket engine thread that must not
+                    // run caller code, or nothing to deliver: hand completions to the pool
+                    // before receiving, as before.
+                    _completions.Flush();
+                    received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Every reply is in and this loop owns the runner for the drained batch.
+                    ValueTask<int> receive;
+                    try
+                    {
+                        receive = ReceiveAsync(buffer.AsMemory(end));
+                    }
+                    catch
+                    {
+                        _completions.ScheduleRunner();
+                        throw;
+                    }
+
+                    if (receive.IsCompleted)
+                    {
+                        _completions.ScheduleRunner();
+                        received = await receive.ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // The socket is idle. Once this loop has suspended, deliver the drained
+                        // replies on the thread it frees instead of waking another pool thread.
+                        received = await new CompletionScheduler.RunWhileAwaiting<int>(receive, _completions);
+                    }
+                }
+
                 if (received == 0)
                 {
                     fault = new RespireConnectionException($"Connection to {Host}:{Port} closed by remote peer.");
