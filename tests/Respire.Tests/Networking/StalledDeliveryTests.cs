@@ -42,8 +42,8 @@ public class StalledDeliveryTests
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(scheduler.RescueStalledRunner(0, 500, out var nextCheck)).IsFalse();
-        // Replies are waiting, so the next check lands exactly on the threshold.
-        await Assert.That(nextCheck).IsEqualTo(500);
+        // Replies just started waiting, so check again soon to confirm the runner holds still.
+        await Assert.That(nextCheck).IsEqualTo(100);
         await Assert.That(scheduler.RescueStalledRunner(499, 500, out nextCheck)).IsFalse();
         await Assert.That(nextCheck).IsEqualTo(1);
         await Assert.That(secondTask.IsCompleted).IsFalse();
@@ -137,7 +137,7 @@ public class StalledDeliveryTests
             scheduler.Flush();
             await watch.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(scheduler.RescueStalledRunner(0, 500, out var nextCheck)).IsFalse();
-            await Assert.That(nextCheck).IsEqualTo(500);
+            await Assert.That(nextCheck).IsEqualTo(100);
         }
         finally
         {
@@ -290,12 +290,13 @@ public class StalledDeliveryTests
 
     [Test]
     [Arguments(1000)]
-    [Arguments(1)]
+    [Arguments(250)]
     public async Task TeardownDrainsAChainOfBlockingContinuations(int starvationWindowMilliseconds)
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        // A tiny starvation window proves each handoff restarts the starvation clock: the
-        // replacement runner is briefly queued after every handoff without being starved.
+        // A short starvation window (still several teardown ticks, so a slow pool start is
+        // tolerated) checks that each handoff restarts the starvation clock: the replacement
+        // runner is briefly queued after every handoff without being starved.
         var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {

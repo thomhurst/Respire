@@ -217,11 +217,6 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 armStallWatch = batch.Count > 1 || _pendingCount > 0;
             }
 
-            if (armStallWatch)
-            {
-                _stallWatch.Signal();
-            }
-
             t_runnerScheduler = this;
             t_runnerGeneration = generation;
             var items = batch.Items;
@@ -232,6 +227,14 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 {
                     // Handed off; the unclaimed tail moved to the replacement runner.
                     break;
+                }
+
+                if (armStallWatch)
+                {
+                    // Arm after the first claim, so the watcher's first observation already sees
+                    // the claim a blocking continuation would hold.
+                    armStallWatch = false;
+                    _stallWatch.Signal();
                 }
 
                 ref var entry = ref items[i];
@@ -299,9 +302,12 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             // so the next check that finds replies waiting starts a fresh threshold.
             _observedClaim = waiting ? claim : -1;
             _observedSince = nowMilliseconds;
-            // Once replies wait, check again exactly at the threshold. Otherwise nothing can be
-            // stuck until a reply is queued behind a runner, which wakes the watcher again.
-            nextCheckMilliseconds = waiting ? stallMilliseconds : -1;
+            // Delivery moved (or replies just started waiting) at some unknown point since the
+            // last check, so check again soon: once the claim holds still, the clock then
+            // starts at most a fifth of the threshold after the last progress. With nothing
+            // waiting, nothing can be stuck until a reply queues behind a runner and wakes the
+            // watcher again.
+            nextCheckMilliseconds = waiting ? Math.Max(1, stallMilliseconds / 5) : -1;
             return false;
         }
 
