@@ -8,6 +8,27 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (skip) continue; result.Dispose();", true)]
+    [Arguments("result.Dispose(); if (skip) continue;", false)]
+    [Arguments("if (skip) { result.Dispose(); continue; } result.Dispose();", false)]
+    [Arguments("if (skip) goto next; result.Dispose(); next:;", true)]
+    public async Task InfiniteLoopMustReleaseBeforeReacquisition(string body, bool warning) => await Disposal.VerifyAsync($$"""
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client, bool skip)
+            {
+                while (true)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("BLPOP", "q", "0");
+                    {{body}}
+                }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (error is null) return;", false)]
     [Arguments("", true)]
     [Arguments("if (error is null) return; error = null;", true)]

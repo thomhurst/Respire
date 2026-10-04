@@ -242,7 +242,7 @@ internal static partial class ScopeWalker
             graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray, cancellationToken: cancellationToken);
     }
 
-    /// <summary>True when every path from <paramref name="before"/> to exit crosses one of <paramref name="barriers"/>.</summary>
+    /// <summary>True when every path from <paramref name="before"/> to exit or reacquisition crosses one of <paramref name="barriers"/>.</summary>
     public static bool CollectivelyPostDominates(
         SemanticModel semanticModel,
         SyntaxNode scope,
@@ -269,6 +269,11 @@ internal static partial class ScopeWalker
         if (barrierArray.Length == 0)
             return !PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue,
                 beforeBlock, before.SpanStart, [], cancellationToken: cancellationToken);
+
+        // A back edge can replace the owned value without ever reaching the exit block.
+        if (PathExistsAvoiding(graph, semanticModel, beforeBlock, before.SpanStart,
+                beforeBlock, before.SpanStart, barrierArray, startPolicy, cancellationToken, origin: before))
+            return false;
 
         return !PathExistsAvoiding(
             graph,
