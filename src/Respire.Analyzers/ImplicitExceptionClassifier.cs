@@ -180,6 +180,8 @@ internal sealed class ImplicitExceptionClassifier(
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
             type = nullable.TypeArguments[0];
         if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal) return null;
+        if (operation is IUnaryOperation { OperatorMethod: null, OperatorKind: UnaryOperatorKind.Minus } unary && IsIntegral(type))
+            return (IntegralDividendCanOverflow(unary.Operand, type), false);
         if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)
             return (!(operation is IBinaryOperation binary && type?.SpecialType == SpecialType.System_Int32
                 && PromotedArithmeticFitsInt32(binary)), false);
@@ -267,9 +269,12 @@ internal sealed class ImplicitExceptionClassifier(
         return operation switch
         {
             IBinaryOperation { IsLifted: true } binary => IsEmpty(binary.LeftOperand) || IsEmpty(binary.RightOperand),
-            ICompoundAssignmentOperation { IsLifted: true } compound => IsEmpty(compound.Target) || IsEmpty(compound.Value),
+            // A null result still invokes property setters and other potentially throwing stores.
+            ICompoundAssignmentOperation { IsLifted: true, Target: ILocalReferenceOperation or IParameterReferenceOperation } compound
+                => IsEmpty(compound.Target) || IsEmpty(compound.Value),
             IUnaryOperation { IsLifted: true } unary => IsEmpty(unary.Operand),
-            IIncrementOrDecrementOperation { IsLifted: true } increment => IsEmpty(increment.Target),
+            IIncrementOrDecrementOperation { IsLifted: true, Target: ILocalReferenceOperation or IParameterReferenceOperation } increment
+                => IsEmpty(increment.Target),
             _ => false,
         };
 

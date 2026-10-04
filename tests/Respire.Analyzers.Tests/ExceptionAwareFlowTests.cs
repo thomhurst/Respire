@@ -28,7 +28,18 @@ public class ExceptionAwareFlowTests
     [Arguments("if (flag) await owner.SendAsync(); else if (owner is var alias) Take(alias);", false)]
     [Arguments("if (owner is var alias) { if (flag) Take(alias); }", true)]
     [Arguments("if (owner is var alias && alias is var copy) Take(copy);", false)]
+    [Arguments("if (owner is { } alias) Take(alias); else return;", false)]
+    [Arguments("if (owner is { } alias) await FlushAsync(alias); else return;", false)]
+    [Arguments("if (owner is var alias) await alias.SendAsync();", false)]
+    [Arguments("if (owner is { } alias) await alias.SendAsync(); else return;", false)]
+    [Arguments("if (flag) await owner.SendAsync(); else if (owner is var alias) await alias.SendAsync();", false)]
+    [Arguments("if (owner is var alias) { alias = client.CreateBatch(); await alias.SendAsync(); }", true)]
+    [Arguments("if (owner is var alias) { var flush = alias.SendAsync(); await flush; }", false)]
+    [Arguments("if (owner is var alias) { if (flag) await alias.SendAsync(); }", true)]
+    [Arguments("if (owner is var alias && alias is { } copy) await copy.SendAsync(); else return;", false)]
     [Arguments("Take(alias);", true, "bool matched = owner is var alias; alias = client.CreateBatch();")]
+    [Arguments("await alias.SendAsync();", true, "bool matched = owner is var alias; alias = client.CreateBatch();")]
+    [Arguments("await alias.SendAsync();", false, "bool matched = owner is var alias;")]
     [Arguments("Take(alias);", false, "bool matched = owner is var alias;")]
     [Arguments("Take(alias);", true, "bool matched = owner is var alias; if (flag) alias = client.CreateBatch();")]
     [Arguments("Take(copy);", true, "bool matched = owner is var alias; alias = client.CreateBatch(); bool copied = alias is var copy;")]
@@ -41,6 +52,7 @@ public class ExceptionAwareFlowTests
         class Caller
         {
             static void Take(RespireBatch batch) { }
+            static async Task FlushAsync(RespireBatch batch) => await batch.SendAsync();
             async Task Run(RespireClient client, bool flag)
             {
                 var owner = client.CreateBatch();
@@ -443,6 +455,14 @@ public class ExceptionAwareFlowTests
     [Arguments("int", "_ = left / -1;", true)]
     [Arguments("short", "checked { left /= -1; }", true)]
     [Arguments("int", "_ = 1 / right;", false)]
+    [Arguments("byte", "_ = checked(-left);", false)]
+    [Arguments("sbyte", "_ = checked(-left);", false)]
+    [Arguments("short", "_ = checked(-left);", false)]
+    [Arguments("ushort", "_ = checked(-left);", false)]
+    [Arguments("char", "_ = checked(-left);", false)]
+    [Arguments("byte?", "_ = checked(-left);", false)]
+    [Arguments("int", "_ = checked(-left);", true)]
+    [Arguments("long", "_ = checked(-left);", true)]
     public async Task PromotedArithmeticRetainsOperandRanges(string type, string operation, bool warning)
     {
         await Disposal.VerifyAsync($$"""
@@ -488,6 +508,8 @@ public class ExceptionAwareFlowTests
     [Arguments("", "_ = left / 0;", "DivideByZeroException", true)]
     [Arguments("if (left is not null) return;", "_ = left / Throws();", "InvalidOperationException", true)]
     [Arguments("if (left is not null) return;", "_ = left / (right = 0);", "DivideByZeroException", false)]
+    [Arguments("if (left is not null) return;", "Count += left;", "InvalidOperationException", true)]
+    [Arguments("if (left is not null) return;", "Count *= left;", "InvalidOperationException", true)]
     public async Task EmptyLiftedOperandsSkipArithmetic(string setup, string operation, string catchType, bool warning)
     {
         await Disposal.VerifyAsync($$"""
@@ -497,6 +519,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int? Throws() => throw new InvalidOperationException();
+                static int? Count { get => 1; set => throw new InvalidOperationException(); }
                 async Task Run(RespireClient client, int? left, int? right)
                 {
                     {{setup}}
@@ -513,6 +536,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int? Throws() => throw new InvalidOperationException();
+                static int? Count { get => 1; set => throw new InvalidOperationException(); }
                 async Task Run(RespireClient client, int? left, int? right)
                 {
                     {{setup}}
@@ -525,6 +549,32 @@ public class ExceptionAwareFlowTests
             }
             """);
     }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EmptyLiftedAssignmentStillInvokesSetter(bool cleanup) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int? Count { get => 1; set => throw new InvalidOperationException(); }
+            async Task Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                RespirePending<string> pending = null!;
+                int? none = null;
+                try
+                {
+                    Count += (pending = batch.GetStringAsync("key")) is var value ? none : none;
+                    await batch.SendAsync();
+                }
+                catch (InvalidOperationException) { {{(cleanup ? "await batch.SendAsync();" : "")}} }
+                Console.WriteLine({{(cleanup ? "pending.Result" : "{|RESP002:pending.Result|}")}});
+            }
+        }
+        """);
 
     [Test]
     [Arguments("holder = new { Owner = result, Other = Throws() };", "InvalidOperationException", "", true)]

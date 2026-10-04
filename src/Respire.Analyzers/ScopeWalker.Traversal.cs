@@ -510,6 +510,9 @@ internal static partial class ScopeWalker
                 // through captured targets. Their setters still run after the RHS.
                 if (operation is ISimpleAssignmentOperation { Target: IFlowCaptureReferenceOperation target })
                     exceptionSource = _conditions.ResolveCapturedTarget(target);
+                else if (operation is ICompoundAssignmentOperation { Target: IFlowCaptureReferenceOperation compoundTarget }
+                    && _conditions.ResolveCapturedTarget(compoundTarget) is IPropertyReferenceOperation propertyTarget)
+                    exceptionSource = propertyTarget;
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks, allocation, type initialization and dynamic binding precede
