@@ -598,6 +598,11 @@ public class ExceptionAwareFlowTests
     [Arguments("ushort", "checked { left /= right; }", false)]
     [Arguments("uint", "checked { left /= right; }", false)]
     [Arguments("byte", "checked { left <<= 1; }", true)]
+    [Arguments("byte", "checked { left |= right; }", false)]
+    [Arguments("sbyte", "checked { left ^= right; }", false)]
+    [Arguments("short", "checked { left &= right; }", false)]
+    [Arguments("ushort", "checked { left |= right; }", false)]
+    [Arguments("byte?", "checked { left ^= right; }", false)]
     [Arguments("sbyte", "checked { left <<= 1; }", true)]
     [Arguments("short", "checked { left <<= 1; }", true)]
     [Arguments("ushort", "checked { left <<= 1; }", true)]
@@ -659,15 +664,20 @@ public class ExceptionAwareFlowTests
     [Arguments("ushort", "checked { value /= -1; }", "CS0031")]
     [Arguments("char", "checked { value /= -1; }", "CS0266")]
     [Arguments("uint", "checked { value /= -1L; }", "CS0266")]
-    public async Task UnsignedCompoundDivisionRejectsNegativeOperands(string type, string operation, string diagnosticId)
+    [Arguments("byte", "int mask = 256; checked { value |= mask; }", "CS0266")]
+    [Arguments("byte", "int mask = 256; checked { value ^= mask; }", "CS0266")]
+    [Arguments("sbyte", "int mask = 255; checked { value &= mask; }", "CS0266")]
+    [Arguments("byte", "int mask = 256; unchecked { value |= mask; }", "CS0266")]
+    [Arguments("byte?", "int mask = 256; checked { value |= mask; }", "CS0266")]
+    public async Task CompoundAssignmentsRejectIncompatibleOperands(string type, string operation, string diagnosticId)
     {
         var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText($$"""
             class Caller
             {
-                static {{type}} Divide({{type}} value) { {{operation}} return value; }
+                static {{type}} Apply({{type}} value) { {{operation}} return value; }
             }
             """);
-        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("UnsignedDivision",
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("CompoundAssignment",
             [tree], [Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
             new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
         var errors = compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error).ToArray();
