@@ -294,10 +294,11 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
-    [Arguments("catch (ArgumentException) { }")]
-    [Arguments("catch (InvalidOperationException) when (false) { }")]
-    [Arguments("catch (InvalidOperationException) { return; } catch (Exception) { }")]
-    public async Task InapplicableCatchCannotReachCorrelatedRead(string handlers) => await Verify.VerifyAsync(
+    [Arguments("catch (ArgumentException) { }", false)]
+    [Arguments("catch (InvalidOperationException) when (false) { }", false)]
+    [Arguments("catch (InvalidOperationException) { return; } catch (Exception) { }", true)]
+    [Arguments("catch (InvalidOperationException) { return; } catch (OutOfMemoryException) { return; } catch (Exception) { }", false)]
+    public async Task CatchApplicabilityControlsCorrelatedRead(string handlers, bool warning) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -319,13 +320,13 @@ public class PendingReadBeforeFlushAnalyzerTests
                     else await second.SendAsync();
                 }
                 {{{handlers}}}
-                Console.WriteLine(pending.Result);
+                Console.WriteLine({{{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}}});
             }
         }
         """);
 
     [Test]
-    public async Task LocalGotoConservativelyInvalidatesCorrelatedFlush() => await Verify.VerifyAsync(
+    public async Task LocalGotoPreservesCorrelatedFlush() => await Verify.VerifyAsync(
         """
         using System;
         using System.Threading.Tasks;
@@ -343,7 +344,7 @@ public class PendingReadBeforeFlushAnalyzerTests
                     await first.SendAsync();
                 }
                 else await second.SendAsync();
-                Console.WriteLine({|RESP002:pending.Result|});
+                Console.WriteLine(pending.Result);
             }
         }
         """);
@@ -741,9 +742,9 @@ public class PendingReadBeforeFlushAnalyzerTests
 
     [Test]
     [Arguments("catch (InvalidOperationException) { }")]
-    [Arguments("catch (InvalidOperationException) { if (skip) return; }")]
-    [Arguments("catch (InvalidOperationException) when (skip) { return; } catch (Exception) { }")]
-    public async Task CaughtThrowBeforeFlushStillReachesRead(string handlers) => await Verify.VerifyAsync(
+    [Arguments("catch (InvalidOperationException) { if (skip) return; }", false)]
+    [Arguments("catch (InvalidOperationException) when (skip) { return; } catch (Exception) { }", true)]
+    public async Task CaughtThrowBeforeFlushStillReachesRead(string handlers, bool warning = true) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -765,7 +766,7 @@ public class PendingReadBeforeFlushAnalyzerTests
                     else await second.SendAsync();
                 }
                 {{{handlers}}}
-                Console.WriteLine({|RESP002:pending.Result|});
+                Console.WriteLine({{{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}}});
             }
         }
         """);
@@ -1038,8 +1039,6 @@ public class PendingReadBeforeFlushAnalyzerTests
 
     [Test]
     [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { break; }")]
-    [Arguments("try { if (skip) throw new InvalidOperationException(\"x\"); } catch (InvalidOperationException) { throw; } catch (Exception) { break; }")]
-    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { } } catch { break; }")]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { } } catch (ArgumentException) { break; }")]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw new ArgumentException(); } } catch (InvalidOperationException) { break; }")]
     [Arguments("try { try { if (skip) throw null; } catch (NullReferenceException) { } } catch { break; }")]
@@ -1076,15 +1075,17 @@ public class PendingReadBeforeFlushAnalyzerTests
 
     [Test]
     [Arguments("try { if (skip) throw new ArgumentException(); } catch (ArgumentException) { break; }")]
+    [Arguments("try { if (skip) throw new InvalidOperationException(\"x\"); } catch (InvalidOperationException) { throw; } catch (Exception) { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { } } catch { break; }")]
     [Arguments("try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) when (skip) { } catch (Exception) { break; }")]
     [Arguments("try { Console.WriteLine(); } catch (ArgumentException) { break; }")]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (ArgumentException) { } } catch { break; }")]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw; } } catch { break; }")]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) { throw new ArgumentException(); } } catch (ArgumentException) { break; }")]
-    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) when (skip) { } } catch { break; }")]
+    [Arguments("try { try { if (skip) throw new InvalidOperationException(); } catch (InvalidOperationException) when (skip) { } } catch { break; }", true)]
     [Arguments("try { try { if (skip) throw new InvalidOperationException(); } finally { } } catch { break; }")]
     [Arguments("try { try { Console.WriteLine(); } catch (ArgumentException) { } } catch { break; }")]
-    public async Task ApplicableHandlerExitCanBypassCorrelatedSwitchFlush(string nested) => await Verify.VerifyAsync(
+    public async Task ApplicableHandlerExitCanBypassCorrelatedSwitchFlush(string nested, bool warning = true) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -1110,7 +1111,7 @@ public class PendingReadBeforeFlushAnalyzerTests
                         await second.SendAsync();
                         break;
                 }
-                Console.WriteLine({|RESP002:pending.Result|});
+                Console.WriteLine({{{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}}});
             }
         }
         """);

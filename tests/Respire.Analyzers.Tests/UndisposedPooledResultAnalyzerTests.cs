@@ -32,7 +32,7 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
-    public async Task LocalGotoConservativelyInvalidatesCorrelatedRelease() => await Verify.VerifyAsync(
+    public async Task LocalGotoPreservesCorrelatedRelease() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;
         using Respire;
@@ -40,7 +40,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
             {
-                var {|RESP001:result|} = choice switch
+                var result = choice switch
                 {
                     0 => await client.ExecuteAsync("PING"),
                     _ => existing,
@@ -91,11 +91,11 @@ public class UndisposedPooledResultAnalyzerTests
 
     [Test]
     [Arguments("new System.InvalidOperationException()", "catch (System.ArgumentException) { }")]
-    [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) when (skip) { }")]
+    [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) when (skip) { }", false)]
     [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) { return; }")]
     [Arguments("new System.InvalidOperationException()", "catch (System.InvalidOperationException) { throw; }")]
     [Arguments("(System.InvalidOperationException)null", "catch (System.InvalidOperationException) { }")]
-    public async Task CatchDoesNotGuaranteeCorrelatedRelease(string exception, string handler) => await Verify.VerifyAsync(
+    public async Task CatchDoesNotGuaranteeCorrelatedRelease(string exception, string handler, bool warning = true) => await Verify.VerifyAsync(
         $$$"""
         using System.Threading.Tasks;
         using Respire;
@@ -103,7 +103,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
             {
-                var {|RESP001:result|} = choice switch
+                var {{{(warning ? "{|RESP001:result|}" : "result")}}} = choice switch
                 {
                     0 => await client.ExecuteAsync("PING"),
                     _ => existing,

@@ -193,7 +193,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     batch,
                     allowReassignment: true,
                     allowNamedFlushExtension: true,
-                    before: read)
+                    before: read,
+                    origin: origin)
                 || HasFlushBefore(context, scope, batch, origin, read))
             {
                 continue;
@@ -488,8 +489,27 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowReassignment = false,
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
-        SyntaxNode? before = null)
+        SyntaxNode? before = null,
+        InvocationExpressionSyntax? origin = null)
+        => FindEscapes(context, scope, local, allowedAssignment, allowReassignment,
+                allowNamedFlushExtension, allowLocalAlias, before, origin)
+            .Any(escape => DominatesRead(context, scope, escape, before));
+
+    private static IEnumerable<SyntaxNode> FindEscapes(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol local,
+        AssignmentExpressionSyntax? allowedAssignment = null,
+        bool allowReassignment = false,
+        bool allowNamedFlushExtension = false,
+        bool allowLocalAlias = false,
+        SyntaxNode? before = null,
+        SyntaxNode? origin = null,
+        ImmutableHashSet<ISymbol>? aliases = null,
+        bool includeFlushes = false)
     {
+        if (aliases?.Contains(local) == true) yield break;
+        aliases = (aliases ?? ImmutableHashSet.Create<ISymbol>(SymbolEqualityComparer.Default)).Add(local);
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
             if (before is not null && reference.SpanStart > before.SpanStart)
@@ -507,26 +527,52 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (ScopeWalker.IsNestedInLambda(reference, scope))
+            if (origin is not null && IsReassignedBetween(context, scope, local, origin, reference))
             {
-                if (DominatesRead(context, scope, reference, before))
-                {
-                    return true;
-                }
-
                 continue;
             }
 
+            if (ScopeWalker.IsNestedInLambda(reference, scope))
+            {
+                yield return reference;
+                continue;
+            }
+
+            var operation = GetInspectedValue(context.SemanticModel.GetOperation(reference, context.CancellationToken));
+            if (operation?.Parent is IIsPatternOperation pattern
+                && (pattern.Pattern switch
+                {
+                    IDeclarationPatternOperation declaration => declaration.DeclaredSymbol,
+                    IRecursivePatternOperation recursive => recursive.DeclaredSymbol,
+                    _ => null,
+                }) is ILocalSymbol alias)
+            {
+                // Binding alone does not transfer ownership. Follow uses of the bound value.
+                foreach (var escape in FindEscapes(context, scope, alias, allowReassignment: true,
+                    allowNamedFlushExtension: allowNamedFlushExtension, allowLocalAlias: allowLocalAlias,
+                    before: before, origin: pattern.Syntax, aliases: aliases, includeFlushes: includeFlushes))
+                    yield return escape;
+                continue;
+            }
+            if (includeFlushes && origin is not null
+                && reference.FirstAncestorOrSelf<InvocationExpressionSyntax>() is { } flush
+                && IsFlushInvocation(context, flush, local))
+            {
+                foreach (var completion in GetCompletionExpressions(context, scope, flush, local, origin))
+                    yield return completion;
+                continue;
+            }
+            if (IsInspection(operation))
+                continue;
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
             switch (use.Parent)
             {
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
                     if (member.Parent is not InvocationExpressionSyntax
-                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol
-                        && DominatesRead(context, scope, member, before))
+                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol)
                     {
-                        return true;
+                        yield return member;
                     }
 
                     if (member.Parent is InvocationExpressionSyntax invocation
@@ -534,10 +580,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                             is IMethodSymbol { ReducedFrom: not null }
                         && (!allowNamedFlushExtension
                             || (member.Name.Identifier.ValueText != CommitAsync
-                                && !IsBatchFlushMethodName(member.Name.Identifier.ValueText)))
-                        && DominatesRead(context, scope, invocation, before))
+                                && !IsBatchFlushMethodName(member.Name.Identifier.ValueText))))
                     {
-                        return true;
+                        yield return invocation;
                     }
 
                     break;
@@ -569,17 +614,29 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 default:
-                    if (DominatesRead(context, scope, use, before))
-                    {
-                        return true;
-                    }
-
+                    yield return use;
                     break;
             }
         }
 
-        return false;
     }
+
+    private static IOperation? GetInspectedValue(IOperation? operation)
+    {
+        while (operation?.Parent is IConversionOperation { OperatorMethod: null }
+            or IParenthesizedOperation or ITupleOperation)
+            operation = operation.Parent;
+        return operation;
+    }
+
+    private static bool IsInspection(IOperation? operation)
+        => operation?.Parent is IIsPatternOperation or IIsTypeOperation
+                or ITupleBinaryOperation or IBinaryOperation { OperatorMethod: null }
+            || operation?.Parent is IMemberReferenceOperation and not IMethodReferenceOperation
+            || operation?.Parent is IInvocationOperation invocation && invocation.Instance == operation
+                && invocation.TargetMethod.ReducedFrom is null
+            || operation?.Parent is IArgumentOperation { Parent: IInvocationOperation
+                { TargetMethod: { ContainingType.SpecialType: SpecialType.System_Object, Name: "ReferenceEquals" or "Equals" } } };
 
     private static bool HasFlushBefore(
         SyntaxNodeAnalysisContext context,
@@ -588,235 +645,15 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax origin,
         ExpressionSyntax read)
     {
-        if (HasBranchCorrelatedFlush(context, scope, batch, origin, read))
-        {
-            return true;
-        }
-
         var completions = new List<SyntaxNode>();
-        foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
-        {
-            context.CancellationToken.ThrowIfCancellationRequested();
-
-            if (!IsFlushInvocation(context, invocation, batch))
-            {
-                continue;
-            }
-
-            if (!IsReassignedBetween(context, scope, batch, origin, invocation))
-            {
-                completions.AddRange(GetCompletionExpressions(context, scope, invocation, batch, origin));
-            }
-        }
-
+        // Different paths can satisfy the obligation by transferring the batch or flushing it.
+        completions.AddRange(FindEscapes(context, scope, batch, allowReassignment: true,
+            allowNamedFlushExtension: true, origin: origin, includeFlushes: true));
         return completions.Count > 0
                && ScopeWalker.CanReach(
                    context.SemanticModel, scope, origin, read, context.CancellationToken)
                && !ScopeWalker.CanReachWithoutCrossing(
                    context.SemanticModel, scope, origin, read, completions, context.CancellationToken);
-    }
-
-    private static bool HasBranchCorrelatedFlush(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
-        ExpressionSyntax read)
-    {
-        var conditional = origin.Ancestors().OfType<ConditionalExpressionSyntax>().FirstOrDefault();
-        if (conditional is not null)
-        {
-            return HasConditionalBranchFlush(context, scope, batch, origin, read, conditional);
-        }
-
-        var switchExpression = origin.Ancestors().OfType<SwitchExpressionSyntax>().FirstOrDefault();
-        return switchExpression is not null
-               && HasSwitchBranchFlush(context, scope, batch, origin, read, switchExpression);
-    }
-
-    private static bool HasConditionalBranchFlush(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
-        ExpressionSyntax read,
-        ConditionalExpressionSyntax conditional)
-    {
-        var selectedWhenTrue = conditional.WhenTrue.Span.Contains(origin.Span);
-        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
-        {
-            if (ifStatement.SpanStart <= conditional.SpanStart
-                || ifStatement.SpanStart >= read.SpanStart
-                || !ScopeWalker.Dominates(
-                    context.SemanticModel, scope, ifStatement, read, context.CancellationToken)
-                || !SyntaxFactory.AreEquivalent(
-                    ScopeWalker.Unwrap(conditional.Condition),
-                    ScopeWalker.Unwrap(ifStatement.Condition))
-                || ScopeWalker.HasWriteBetween(
-                    context.SemanticModel,
-                    scope,
-                    conditional.Condition,
-                    conditional,
-                    ifStatement,
-                    context.CancellationToken))
-            {
-                continue;
-            }
-
-            var branch = selectedWhenTrue ? ifStatement.Statement : ifStatement.Else?.Statement;
-            if (branch is not null
-                && HasUnconditionalFlush(context, scope, branch, batch, origin, read, conditional))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasSwitchBranchFlush(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
-        ExpressionSyntax read,
-        SwitchExpressionSyntax switchExpression)
-    {
-        var arm = origin.Ancestors().OfType<SwitchExpressionArmSyntax>().First();
-        foreach (var switchStatement in scope.DescendantNodes().OfType<SwitchStatementSyntax>())
-        {
-            if (switchStatement.SpanStart <= switchExpression.SpanStart
-                || switchStatement.SpanStart >= read.SpanStart
-                || !ScopeWalker.Dominates(
-                    context.SemanticModel, scope, switchStatement, read, context.CancellationToken)
-                || !SyntaxFactory.AreEquivalent(
-                    ScopeWalker.Unwrap(switchExpression.GoverningExpression),
-                    ScopeWalker.Unwrap(switchStatement.Expression))
-                || ScopeWalker.HasWriteBetween(
-                    context.SemanticModel,
-                    scope,
-                    switchExpression.GoverningExpression,
-                    switchExpression,
-                    switchStatement,
-                    context.CancellationToken))
-            {
-                continue;
-            }
-
-            var section = switchStatement.Sections.FirstOrDefault(candidate =>
-                candidate.Labels.Any(label => MatchesSwitchArm(arm, label)));
-            if (section is not null
-                && HasAlignedSwitchPrefix(switchExpression, switchStatement, arm, section)
-                && HasUnconditionalFlush(context, scope, section, batch, origin, read, switchExpression))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasAlignedSwitchPrefix(
-        SwitchExpressionSyntax switchExpression,
-        SwitchStatementSyntax switchStatement,
-        SwitchExpressionArmSyntax arm,
-        SwitchSectionSyntax section)
-    {
-        var armIndex = switchExpression.Arms.IndexOf(arm);
-        var sectionIndex = switchStatement.Sections.IndexOf(section);
-        if (armIndex < 0 || sectionIndex != armIndex)
-        {
-            return false;
-        }
-
-        for (var index = 0; index < armIndex; index++)
-        {
-            if (!switchStatement.Sections[index].Labels.Any(label =>
-                    MatchesSwitchArm(switchExpression.Arms[index], label)))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool MatchesSwitchArm(SwitchExpressionArmSyntax arm, SwitchLabelSyntax label)
-        => (arm.Pattern, label) switch
-        {
-            (DiscardPatternSyntax, DefaultSwitchLabelSyntax) => arm.WhenClause is null,
-            (ConstantPatternSyntax constant, CaseSwitchLabelSyntax @case) =>
-                arm.WhenClause is null && SyntaxFactory.AreEquivalent(constant.Expression, @case.Value),
-            (PatternSyntax pattern, CasePatternSwitchLabelSyntax @case) =>
-                SyntaxFactory.AreEquivalent(pattern, @case.Pattern)
-                && SyntaxFactory.AreEquivalent(arm.WhenClause?.Condition, @case.WhenClause?.Condition),
-            _ => false,
-        };
-
-    private static bool HasUnconditionalFlush(
-        SyntaxNodeAnalysisContext context,
-        SyntaxNode scope,
-        SyntaxNode branch,
-        ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
-        ExpressionSyntax read,
-        ExpressionSyntax pendingSelection)
-    {
-        var branchStart = branch switch
-        {
-            BlockSyntax block => block.Statements.FirstOrDefault(),
-            SwitchSectionSyntax section => section.Statements.FirstOrDefault(),
-            StatementSyntax statement => statement,
-            _ => null,
-        };
-        if (branchStart is null)
-        {
-            return false;
-        }
-
-        foreach (var flush in branch.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
-        {
-            if (IsFlushInvocation(context, flush, batch)
-                && GetCompletionExpression(context, flush) is { } completion
-                && IsTopLevelBranchStatement(context.SemanticModel, completion, branch, read)
-                // A later iteration that recreates the pending value no longer carries
-                // this origin. Finally reads happen before that replacement and remain reachable.
-                && !ScopeWalker.CanReachWithoutCrossing(
-                    context.SemanticModel, scope, branchStart, read, [completion, pendingSelection], context.CancellationToken,
-                    startPolicy: ScopeWalker.BarrierStartPolicy.Include)
-                && !IsReassignedBetween(context, scope, batch, origin, flush))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsTopLevelBranchStatement(
-        SemanticModel semanticModel, SyntaxNode completion, SyntaxNode branch, SyntaxNode read)
-    {
-        var statement = completion.FirstAncestorOrSelf<StatementSyntax>();
-        var statements = branch switch
-        {
-            BlockSyntax block => block.Statements,
-            SwitchSectionSyntax section => section.Statements,
-            _ => default,
-        };
-        if (statements.TakeWhile(previous => !ReferenceEquals(previous, statement))
-            .Any(previous => ScopeExitAnalysis.CanBypassFollowingStatement(semanticModel, previous, ScopeExitAnalysis.ExitMode.FlushProof, read)))
-        {
-            return false;
-        }
-
-        return branch switch
-        {
-            BlockSyntax block => ReferenceEquals(statement?.Parent, block),
-            SwitchSectionSyntax section => ReferenceEquals(statement?.Parent, section),
-            StatementSyntax branchStatement => statement is not null
-                                               && ScopeWalker.IsSame(statement, branchStatement),
-            _ => false,
-        };
     }
 
     private static bool DominatesRead(
@@ -829,8 +666,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
-        InvocationExpressionSyntax flush)
+        SyntaxNode origin,
+        SyntaxNode flush)
         => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
             .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
                               && ScopeWalker.IsSame(assignment.Left, reference)
@@ -852,7 +689,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         InvocationExpressionSyntax invocation,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin)
+        SyntaxNode origin)
     {
         if (GetCompletionExpression(context, invocation) is { } directCompletion)
         {
@@ -895,7 +732,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         ILocalSymbol flush,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
+        SyntaxNode origin,
         ExpressionSyntax completion)
     {
         var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
@@ -969,7 +806,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         ExpressionSyntax definition,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin)
+        SyntaxNode origin)
     {
         var unwrappedDefinition = ScopeWalker.Unwrap(definition);
         foreach (var invocation in definition.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
@@ -995,7 +832,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static bool IsFlushInvocation(
         SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
     {
-        var isBatch = batch.Type.ToDisplayString() == BatchTypeName;
+        var isBatch = batch.Type.WithNullableAnnotation(NullableAnnotation.None).ToDisplayString() == BatchTypeName;
         return ScopeWalker.Unwrap(invocation.Expression) is MemberAccessExpressionSyntax member
                && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                    is IMethodSymbol method
