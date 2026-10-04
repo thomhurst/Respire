@@ -395,6 +395,10 @@ public class ExceptionAwareFlowTests
     [Arguments("", "_ = (int)new int?(1);", "InvalidOperationException", false)]
     [Arguments("if (optional is null) return;", "_ = checked((byte)optional);", "InvalidOperationException", false)]
     [Arguments("if (optional is null) return;", "_ = checked((byte)optional);", "OverflowException", true)]
+    [Arguments("if (boxed is null) return;", "_ = (int)boxed;", "NullReferenceException", false)]
+    [Arguments("", "_ = (int)boxed;", "NullReferenceException", true)]
+    [Arguments("if (boxed is null) return; boxed = null;", "_ = (int)boxed;", "NullReferenceException", true)]
+    [Arguments("if (boxed is null) return;", "_ = (int)boxed;", "InvalidCastException", true)]
     [Arguments("", "_ = GetOptional().Value;", "ArgumentException", true)]
     [Arguments("", "_ = optional.GetValueOrDefault();", "ArgumentException", false)]
     [Arguments("", "_ = GetOptional().GetValueOrDefault();", "ArgumentException", true)]
@@ -410,7 +414,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int? GetOptional() => throw new ArgumentException();
-                async Task Run(RespireClient client, string text, int[] values, int? optional)
+                async Task Run(RespireClient client, string text, int[] values, int? optional, object boxed)
                 {
                     {{setup}}
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
@@ -427,7 +431,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int? GetOptional() => throw new ArgumentException();
-                async Task Run(RespireClient client, string text, int[] values, int? optional)
+                async Task Run(RespireClient client, string text, int[] values, int? optional, object boxed)
                 {
                     {{setup}}
                     var batch = client.CreateBatch();

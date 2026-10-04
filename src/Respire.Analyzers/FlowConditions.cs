@@ -110,6 +110,7 @@ internal sealed class FlowConditions
             IMemberReferenceOperation member => member.Instance,
             IArrayElementReferenceOperation array => array.ArrayReference,
             IConversionOperation { Operand.Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } conversion => conversion.Operand,
+            IConversionOperation { Operand.Type.IsReferenceType: true } conversion => conversion.Operand,
             _ => null,
         };
         if (receiver is not null && Symbol(receiver) is { } symbol)
