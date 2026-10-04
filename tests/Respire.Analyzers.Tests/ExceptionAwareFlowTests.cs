@@ -8,6 +8,16 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    public async Task DecimalNegationHasSymmetricRange()
+    {
+        var minimum = decimal.MinValue;
+        var maximum = decimal.MaxValue;
+        await Assert.That(-minimum).IsEqualTo(maximum);
+        await Assert.That(checked(-minimum)).IsEqualTo(maximum);
+        await Assert.That(-maximum).IsEqualTo(minimum);
+    }
+
+    [Test]
     [Arguments("checked((object)result)", "Throws()", "", true)]
     [Arguments("unchecked((object)result)", "Throws()", "", true)]
     [Arguments("checked((object)result)", "0", "", false)]
@@ -1674,7 +1684,12 @@ public class ExceptionAwareFlowTests
     [Arguments("_ = (uint)value / (uint)divisor;", "OverflowException", false)]
     [Arguments("_ = value % divisor;", "DivideByZeroException", true)]
     [Arguments("_ = value + Throws();", "InvalidOperationException", true)]
-    public async Task ArithmeticUsesSpecificExceptionTypes(string expression, string catchType, bool warning)
+    [Arguments("_ = -value;", "OverflowException", false, "decimal")]
+    [Arguments("_ = checked(-value);", "OverflowException", false, "decimal")]
+    [Arguments("_ = unchecked(-value);", "OverflowException", false, "decimal")]
+    [Arguments("_ = -value;", "OverflowException", false, "decimal?")]
+    [Arguments("_ = value * value;", "OverflowException", true, "decimal")]
+    public async Task ArithmeticUsesSpecificExceptionTypes(string expression, string catchType, bool warning, string type = "int")
     {
         await Disposal.VerifyAsync($$"""
             using System;
@@ -1683,7 +1698,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int Throws() => throw new InvalidOperationException();
-                async Task Run(RespireClient client, int value, int divisor)
+                async Task Run(RespireClient client, {{type}} value, {{type}} divisor)
                 {
                     var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                     try { {{expression}} result.Dispose(); }
@@ -1698,7 +1713,7 @@ public class ExceptionAwareFlowTests
             class Caller
             {
                 static int Throws() => throw new InvalidOperationException();
-                async Task Run(RespireClient client, int value, int divisor)
+                async Task Run(RespireClient client, {{type}} value, {{type}} divisor)
                 {
                     var batch = client.CreateBatch();
                     var pending = batch.GetStringAsync("key");
