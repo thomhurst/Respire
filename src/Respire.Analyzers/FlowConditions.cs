@@ -17,6 +17,9 @@ internal sealed class FlowConditions
     private readonly CancellationToken _cancellationToken;
     private readonly SyntaxNode _scope;
     private readonly Dictionary<CaptureId, IOperation> _captures = new();
+    private readonly Dictionary<CaptureId, ulong> _capturedReceivers = new();
+    private readonly HashSet<CaptureId> _capturedLocations = [];
+    private readonly Dictionary<IOperation, ulong> _locationReceivers = new();
     private readonly HashSet<CaptureId> _ambiguousCaptures = [];
     private readonly HashSet<ISymbol> _unstable = new(SymbolEqualityComparer.Default);
     private readonly HashSet<ISymbol> _relevant = new(SymbolEqualityComparer.Default);
@@ -129,6 +132,8 @@ internal sealed class FlowConditions
                     _captures.Add(capture.Id, capture.Value);
                 break;
             case IAssignmentOperation assignment:
+                if (assignment.Target is IFlowCaptureReferenceOperation location)
+                    _capturedLocations.Add(location.Id);
                 // A declaration initializes the local once per execution. Locals declared in
                 // loops are excluded below as well: the next iteration can choose a new value.
                 if (nested && assignment.Target is not ILocalReferenceOperation { IsDeclaration: true })
@@ -251,6 +256,15 @@ internal sealed class FlowConditions
 
     internal bool IsKnownNonNull(IOperation operation, ulong known, ulong values)
     {
+        if (_locationReceivers.TryGetValue(operation, out var receiverFlag))
+            return receiverFlag != 0 && (known & values & receiverFlag) != 0;
+        while (operation is IConversionOperation { OperatorMethod: null } conversion
+            && (conversion.Conversion.IsIdentity || conversion.Conversion.IsReference))
+            operation = conversion.Operand;
+        // A compiler temporary retains the receiver evaluated before later argument/RHS writes.
+        if (operation is IFlowCaptureReferenceOperation capture)
+            return _capturedReceivers.TryGetValue(capture.Id, out var flag)
+                && flag != 0 && (known & values & flag) != 0;
         if (IsConstructedReceiver(operation)) return true;
         if (Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
         for (var index = 0; index < _predicates.Count; index++)
@@ -264,6 +278,30 @@ internal sealed class FlowConditions
         }
         return false;
     }
+
+    internal void RecordCapturedReceiver(IFlowCaptureOperation capture, ref ulong known, ref ulong values)
+    {
+        var receiver = IsCapturedLocation(capture) ? capture.Value switch
+        {
+            IMemberReferenceOperation member => member.Instance,
+            IArrayElementReferenceOperation array => array.ArrayReference,
+            _ => null,
+        } : capture.Value;
+        if (receiver?.Type?.IsReferenceType != true) return;
+        // Re-evaluating a location in a loop must read the current source facts.
+        _locationReceivers.Remove(receiver);
+        var nonNull = IsKnownNonNull(receiver, known, values);
+        if (!_capturedReceivers.TryGetValue(capture.Id, out var flag))
+            _capturedReceivers.Add(capture.Id, flag = ReservePathFlag());
+        if (IsCapturedLocation(capture)) _locationReceivers[receiver] = flag;
+        known |= flag;
+        values = nonNull ? values | flag : values & ~flag;
+    }
+
+    internal bool IsCapturedLocation(IFlowCaptureOperation capture)
+        => _capturedLocations.Contains(capture.Id)
+            && capture.Value is IPropertyReferenceOperation { Property.ReturnsByRef: false, Property.ReturnsByRefReadonly: false }
+                or IFieldReferenceOperation or IArrayElementReferenceOperation;
 
     internal bool Constrain(IOperation? condition, bool expected, ref ulong known, ref ulong values)
     {

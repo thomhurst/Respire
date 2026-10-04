@@ -8,6 +8,116 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("Take(_ = (result, 0));", false)]
+    [Arguments("Take(_ = (result, 0), Throws());", true)]
+    [Arguments("Take(flag switch { true => result, _ => result });", false)]
+    [Arguments("Take(flag switch { true => result, _ => existing }, Throws());", true)]
+    [Arguments("Take(flag switch { true => existing, _ => result }, Throws());", true)]
+    [Arguments("Take(flag switch { true => result, _ => result }, 0);", false)]
+    public async Task ConsumedExpressionsCompleteBeforeTransfer(string operation, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(RespireResult value, int other = 0) => value.Dispose();
+            static void Take((RespireResult, int) value, int other = 0) => value.Item1.Dispose();
+            async Task Run(RespireClient client, bool flag, RespireResult existing)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} result.Dispose(); }
+                catch (InvalidOperationException) { }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("holder = null;", "new Holder()", true)]
+    [Arguments("holder = new Holder();", "null", false)]
+    [Arguments("if (holder is null) return;", "null", false)]
+    [Arguments("", "new Holder()", true)]
+    public async Task CapturedReceiverRetainsOriginalNullState(string setup, string replacement, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder { public RespireResult Value { set { value.Dispose(); } } }
+        class Caller
+        {
+            async Task Run(RespireClient client, Holder holder)
+            {
+                {{setup}}
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { holder.Value = (holder = {{replacement}}) != null ? result : result; }
+                catch (NullReferenceException) { }
+            }
+        }
+        """);
+
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public int Value; }
+            class Caller
+            {
+                async Task Run(RespireClient client, Holder holder)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { holder.Value = (holder = {{replacement}}) != null ? 1 : 0; await batch.SendAsync(); }
+                    catch (NullReferenceException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("(new string[1])[0] = \"x\";", false)]
+    [Arguments("(new object[1])[0] = \"x\";", false)]
+    [Arguments("strings[0] = \"x\";", false)]
+    [Arguments("objects[0] = new object();", true)]
+    [Arguments("((object[])new string[1])[0] = new object();", true)]
+    [Arguments("((object[])new object[1])[0] = \"x\";", false)]
+    public async Task ExactArrayElementTypeCannotViolateCovariance(string operation, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, string[] strings, object[] objects)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch (ArrayTypeMismatchException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, string[] strings, object[] objects)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch (ArrayTypeMismatchException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("_ = (result, 0);", true)]
     [Arguments("_ = (object)result;", true)]
     [Arguments("_ = flag ? result : default;", true)]

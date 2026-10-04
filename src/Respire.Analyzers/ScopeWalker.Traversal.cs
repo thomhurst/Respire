@@ -167,6 +167,12 @@ internal static partial class ScopeWalker
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
+                    SwitchExpressionArmSyntax { Parent: SwitchExpressionSyntax selection } arm when arm.Expression == expression => selection,
+                    AssignmentExpressionSyntax discarded when discarded.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                        && discarded.Right == expression
+                        && semanticModel.GetOperation(discarded, cancellationToken) is IAssignmentOperation assigned
+                        && IsDiscardedReference(assigned.Target, assigned.Value, barrier)
+                        && GetOutermostTransparentExpression(discarded).Parent is not ExpressionStatementSyntax => discarded,
                     _ => null,
                 };
                 if (wrapper is null) break;
@@ -385,6 +391,12 @@ internal static partial class ScopeWalker
                 Visit(assignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
                 exceptionSource = assignment.Target;
             }
+            else if (operation is IFlowCaptureOperation location && _conditions.IsCapturedLocation(location))
+            {
+                // Capturing storage evaluates its receiver/indexes, not a property getter.
+                foreach (var child in location.Value.ChildOperations)
+                    Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
             else if (!deconstructionStore)
             {
                 foreach (var child in operation.ChildOperations)
@@ -427,6 +439,7 @@ internal static partial class ScopeWalker
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
                         if (arrayAccess.Type?.IsValueType != true
+                            && !HasExactArrayElementType(arrayAccess)
                             && (deconstructionStore || operation is IAssignmentOperation
                                 || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
@@ -504,7 +517,15 @@ internal static partial class ScopeWalker
                 foreach (var child in operation.ChildOperations)
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
+            if (operation is IFlowCaptureOperation captured)
+                _conditions.RecordCapturedReceiver(captured, ref known, ref values);
         }
+
+        private bool HasExactArrayElementType(IArrayElementReferenceOperation access)
+            => access.Type is INamedTypeSymbol { IsSealed: true }
+                || _conditions.ResolveCapturedTarget(access.ArrayReference) is IArrayCreationOperation
+                    { Type: IArrayTypeSymbol array }
+                    && SymbolEqualityComparer.Default.Equals(array.ElementType, access.Type);
 
         private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
 
