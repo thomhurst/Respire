@@ -668,6 +668,10 @@ public class ExceptionAwareFlowTests
     [Arguments("holder = new { result, Other = Throws() };", "InvalidOperationException", "", true)]
     [Arguments("Take(new { Owner = result }, Throws());", "InvalidOperationException", "", true)]
     [Arguments("var owner = new { Owner = result, Other = Throws() };", "InvalidOperationException", "", true)]
+    [Arguments("_ = new { Owner = result, Other = Throws() };", "InvalidOperationException", "", true)]
+    [Arguments("_ = new { Owner = result, Other = 0 };", "InvalidOperationException", "", false)]
+    [Arguments("_ = new { Owner = result, Other = 0 };", "OutOfMemoryException", "", true)]
+    [Arguments("_ = new { Owner = result, Other = Throws() };", "InvalidOperationException", "result.Dispose();", false)]
     public async Task AnonymousOwnerWaitsForConstruction(string operation, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
@@ -682,6 +686,35 @@ public class ExceptionAwareFlowTests
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                 try { {{operation}} }
                 catch ({{catchType}}) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("goto Flush;", "await batch.SendAsync();", false)]
+    [Arguments("if (flag) goto Read; goto Flush;", "await batch.SendAsync();", true)]
+    [Arguments("goto Flush;", "if (flag) await batch.SendAsync();", true)]
+    [Arguments("goto Flush;", "batch = client.CreateBatch(); await batch.SendAsync();", true)]
+    [Arguments("goto Flush;", "if (batch is var alias) await alias.SendAsync();", false)]
+    [Arguments("goto Flush;", "if (flag) Take(batch); else await batch.SendAsync();", false)]
+    public async Task ForwardJumpFlushPrecedesRead(string jump, string completion, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static void Take(RespireBatch batch) { }
+            async Task Run(RespireClient client, bool flag)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                {{jump}}
+                Read:
+                Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                return;
+                Flush:
+                {{completion}}
+                goto Read;
             }
         }
         """);

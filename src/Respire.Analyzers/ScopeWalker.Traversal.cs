@@ -131,8 +131,8 @@ internal static partial class ScopeWalker
                     started, dispatch, ref known, ref values);
 
                 if (started && block.Ordinal == targetBlock.Ordinal
-                    && targetPosition > entryPosition
-                    && targetPosition <= firstBarrier)
+                    && ComparePositions(block, targetPosition, entryPosition) > 0
+                    && ComparePositions(block, targetPosition, firstBarrier) <= 0)
                 {
                     return true;
                 }
@@ -282,13 +282,20 @@ internal static partial class ScopeWalker
             {
                 if (semanticModel.GetOperation(assignment, cancellationToken) is IAssignmentOperation assignmentOperation
                     && IsDiscardedReference(assignmentOperation.Target, assignmentOperation.Value, barrier))
-                    return (null, 0);
-                call = assignment;
-                assignmentTransfer = true;
+                {
+                    // The discard retains nothing, but the anonymous constructor first accepts its values.
+                    if (expression is not AnonymousObjectCreationExpressionSyntax) return (null, 0);
+                }
+                else
+                {
+                    call = assignment;
+                    assignmentTransfer = true;
+                }
             }
             var delegateTransfer = delegateSyntax is not null && call == delegateSyntax;
             if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || delegateTransfer || indexerTransfer || collectionTransfer || operatorTransfer || eventTransfer
-                || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
+                || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax
+                    or AnonymousObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
@@ -327,7 +334,7 @@ internal static partial class ScopeWalker
                     or IExpressionStatementOperation
                     or IDelegateCreationOperation
                     or IEventAssignmentOperation
-                    or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
+                    or IObjectCreationOperation or IAnonymousObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
                     or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
                     or ICompoundAssignmentOperation { OperatorMethod: not null })
@@ -408,6 +415,27 @@ internal static partial class ScopeWalker
                     var unwind = CollectFinallyRegions(block.EnclosingRegion);
                     Enqueue(graph.Blocks[graph.Blocks.Length - 1], unwind, 0, started, known, values, 0);
                 }
+            }
+        }
+
+        private static int ComparePositions(BasicBlock block, int left, int right)
+        {
+            if (left == right || left is int.MinValue or int.MaxValue || right is int.MinValue or int.MaxValue)
+                return left.CompareTo(right);
+            // Roslyn can merge forward-goto destinations into a block in execution order.
+            // Source offsets only order positions within the same top-level operation.
+            var leftIndex = OperationIndex(left);
+            var rightIndex = OperationIndex(right);
+            return leftIndex == rightIndex ? left.CompareTo(right) : leftIndex.CompareTo(rightIndex);
+
+            int OperationIndex(int position)
+            {
+                for (var index = 0; index < block.Operations.Length; index++)
+                {
+                    var span = block.Operations[index].Syntax.Span;
+                    if (span.Start <= position && position <= span.End) return index;
+                }
+                return block.Operations.Length;
             }
         }
 

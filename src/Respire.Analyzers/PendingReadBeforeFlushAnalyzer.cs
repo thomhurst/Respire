@@ -648,7 +648,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         var completions = new List<SyntaxNode>();
         // Different paths can satisfy the obligation by transferring the batch or flushing it.
         completions.AddRange(FindEscapes(context, scope, batch, allowReassignment: true,
-            allowNamedFlushExtension: true, before: read, origin: origin, includeFlushes: true));
+            allowNamedFlushExtension: true, origin: origin, includeFlushes: true));
         return completions.Count > 0
                && ScopeWalker.CanReach(
                    context.SemanticModel, scope, origin, read, context.CancellationToken)
