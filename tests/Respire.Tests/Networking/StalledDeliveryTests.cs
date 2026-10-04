@@ -41,8 +41,11 @@ public class StalledDeliveryTests
         scheduler.Flush();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
-        await Assert.That(scheduler.RescueStalledRunner(499, 500)).IsFalse();
+        await Assert.That(scheduler.RescueStalledRunner(0, 500, out var nextCheck)).IsFalse();
+        // Replies are waiting, so the next check lands exactly on the threshold.
+        await Assert.That(nextCheck).IsEqualTo(500);
+        await Assert.That(scheduler.RescueStalledRunner(499, 500, out nextCheck)).IsFalse();
+        await Assert.That(nextCheck).IsEqualTo(1);
         await Assert.That(secondTask.IsCompleted).IsFalse();
         await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
         await Assert.That(await completed.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(2);
@@ -129,9 +132,12 @@ public class StalledDeliveryTests
         });
 
         await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        // Let the second PONG arrive and queue behind the blocked continuation, then close the
-        // connection well before the stall threshold: teardown must not abandon that reply.
-        await Task.Delay(100);
+        // Wait until the second PONG is parsed and queued behind the blocked continuation, then
+        // close the connection before the stall threshold: teardown must not abandon that reply.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!connection.HasUndeliveredReplies && !completed.Task.IsCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(5);
+        await Assert.That(connection.HasUndeliveredReplies).IsTrue();
         var disposed = connection.DisposeAsync().AsTask();
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await disposed.WaitAsync(TimeSpan.FromSeconds(5));

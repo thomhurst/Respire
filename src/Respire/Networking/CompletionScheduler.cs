@@ -246,29 +246,51 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// </summary>
     /// <returns><see langword="true"/> when delivery was handed off.</returns>
     internal bool RescueStalledRunner(long nowMilliseconds, long stallMilliseconds)
+        => RescueStalledRunner(nowMilliseconds, stallMilliseconds, out _);
+
+    /// <inheritdoc cref="RescueStalledRunner(long, long)"/>
+    /// <param name="nowMilliseconds">The current monotonic time.</param>
+    /// <param name="stallMilliseconds">How long replies may wait behind a runner that is not moving.</param>
+    /// <param name="nextCheckMilliseconds">
+    /// How soon the caller should check again so a stall is caught close to
+    /// <paramref name="stallMilliseconds"/>, or -1 when no runner is executing.
+    /// </param>
+    internal bool RescueStalledRunner(long nowMilliseconds, long stallMilliseconds, out long nextCheckMilliseconds)
     {
         var claim = Volatile.Read(ref _claim);
+        var executing = Volatile.Read(ref _executing);
+        var waiting = executing && MayHaveWaitingReplies(claim);
         // The stall clock starts only once replies are waiting, so a slow continuation with
         // nothing behind it is never handed off as soon as the next reply arrives.
-        if (claim != _observedClaim || !Volatile.Read(ref _executing) || !MayHaveWaitingReplies(claim))
+        if (claim != _observedClaim || !waiting)
         {
             _observedClaim = claim;
             _observedSince = nowMilliseconds;
+            // Once replies wait, check again exactly at the threshold. Otherwise, while a runner
+            // executes, poll often enough that replies queued just after this check are seen
+            // well within the threshold.
+            nextCheckMilliseconds = waiting ? stallMilliseconds
+                : executing ? Math.Max(1, stallMilliseconds / 2)
+                : -1;
             return false;
         }
 
-        if (nowMilliseconds - _observedSince < stallMilliseconds)
+        var remaining = stallMilliseconds - (nowMilliseconds - _observedSince);
+        if (remaining > 0)
         {
+            nextCheckMilliseconds = remaining;
             return false;
         }
+
+        nextCheckMilliseconds = Math.Max(1, stallMilliseconds / 2);
 
         lock (_gate)
         {
             // Only an executing runner can be stuck in caller code. A runner still queued
             // behind a starved pool must remain the single owner, or two would deliver.
             if (!_executing || Volatile.Read(ref _claim) != claim) return false;
-            var waiting = _pendingCount > 0 || (_activeItems is not null && (int)claim < _activeCount);
-            if (!waiting) return false;
+            var stillWaiting = _pendingCount > 0 || (_activeItems is not null && (int)claim < _activeCount);
+            if (!stillWaiting) return false;
             HandOffLocked();
         }
 

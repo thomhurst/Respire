@@ -2989,7 +2989,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
                 }
 
-                RescueStalledDelivery(now);
+                var nextRescueCheck = RescueStalledDelivery(now);
+                if (nextRescueCheck >= 0 && nextRescueCheck < delay.TotalMilliseconds)
+                {
+                    delay = TimeSpan.FromMilliseconds(nextRescueCheck);
+                }
+
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -3010,9 +3015,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private static readonly TimeSpan TeardownRescueInterval = TimeSpan.FromMilliseconds(50);
 
-    private void RescueStalledDelivery(long now)
+    /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
+    internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
+
+    /// <returns>Milliseconds until the rescue wants another check, or -1 when idle.</returns>
+    private long RescueStalledDelivery(long now)
     {
-        if (_completions.RescueStalledRunner(now, StalledDeliveryMilliseconds))
+        var rescued = _completions.RescueStalledRunner(now, StalledDeliveryMilliseconds, out var nextCheck);
+        if (rescued)
         {
             _logger?.LogWarning(
                 "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
@@ -3020,6 +3030,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 + "inside continuations.",
                 Host, Port, StalledDeliveryMilliseconds);
         }
+
+        return nextCheck;
     }
 
     private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
