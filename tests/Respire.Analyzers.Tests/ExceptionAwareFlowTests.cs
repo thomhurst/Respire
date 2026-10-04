@@ -8,6 +8,30 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (error is null) return;", false)]
+    [Arguments("", true)]
+    [Arguments("if (error is null) return; error = null;", true)]
+    [Arguments("error = new Failure();", false)]
+    public async Task NonNullThrownExceptionCannotEnterNullCatch(string setup, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        sealed class Failure : Exception { }
+        class Caller
+        {
+            async Task Run(RespireClient client, Failure error)
+            {
+                {{setup}}
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { throw error; }
+                catch (NullReferenceException) { }
+                Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("Take(new[] { result }, Throws());", "InvalidOperationException", "", true)]
     [Arguments("Take(new RespireResult[] { result }, Throws());", "InvalidOperationException", "", true)]
     [Arguments("Take(new[] { result, ThrowsResult() }, 0);", "InvalidOperationException", "", true)]

@@ -759,6 +759,7 @@ internal static partial class ScopeWalker
                 {
                     var exception = UnwrapException(branch.Source.BranchValue);
                     if (exception is ILocalReferenceOperation or IParameterReferenceOperation
+                        && !_conditions.IsKnownNonNull(exception, known, values)
                         && ScopeExitAnalysis.GetExactThrownType(semanticModel, exception) is null)
                         Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
                 }
