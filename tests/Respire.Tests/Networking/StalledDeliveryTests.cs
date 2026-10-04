@@ -114,7 +114,9 @@ public class StalledDeliveryTests
     public async Task TeardownKeepsRescuingRepliesParsedBeforeTheConnectionClosed()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        // Disable the running rescue so only teardown can deliver the queued reply.
+        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { StalledDeliveryThreshold = TimeSpan.FromHours(1) });
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();

@@ -74,6 +74,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly CancellationTokenSource? _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
     private readonly TimeSpan? _commandTimeout;
+    private readonly long _stalledDeliveryMilliseconds;
     private readonly long _commandTimeoutMilliseconds;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
@@ -213,6 +214,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
         _commandTimeout = options.CommandTimeout;
+        _stalledDeliveryMilliseconds = Math.Max(1L, (long)options.StalledDeliveryThreshold.TotalMilliseconds);
         if (_commandTimeout is { } commandTimeoutValue)
         {
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
@@ -2950,12 +2952,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// How long reply delivery may sit behind one continuation, with other replies waiting,
-    /// before the remaining replies move to another thread.
-    /// </summary>
-    internal const long StalledDeliveryMilliseconds = 500;
-
-    /// <summary>
     /// Enforces <see cref="RespireConnectionOptions.CommandTimeout"/> without per-command
     /// timers: each command is stamped with a deadline at enqueue and this loop expires the
     /// oldest in-flight entries, completing only the caller — the reply is still consumed
@@ -3005,30 +3001,33 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         // Teardown cancels the sweep, but replies parsed before it may still be queued behind a
         // continuation that blocks on one of them. Keep rescuing until the receive loop has
-        // published its final batch and nothing waits on the rescue.
+        // published its final batch and nothing waits on the rescue. The connection is going
+        // away, so replies stuck behind a runner move on after one teardown interval.
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
-            RescueStalledDelivery(Environment.TickCount64);
-            await Task.Delay(TeardownRescueInterval).ConfigureAwait(false);
+            RescueStalledDelivery(Environment.TickCount64, TeardownRescueMilliseconds);
+            await Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds)).ConfigureAwait(false);
         }
     }
 
-    private static readonly TimeSpan TeardownRescueInterval = TimeSpan.FromMilliseconds(50);
+    private const long TeardownRescueMilliseconds = 50;
 
     /// <summary>Exposes whether parsed replies still wait for delivery, for teardown tests.</summary>
     internal bool HasUndeliveredReplies => _completions.HasWaitingReplies;
 
-    /// <returns>Milliseconds until the rescue wants another check, or -1 when idle.</returns>
-    private long RescueStalledDelivery(long now)
+    /// <returns>Milliseconds until the rescue wants another check.</returns>
+    private long RescueStalledDelivery(long now) => RescueStalledDelivery(now, _stalledDeliveryMilliseconds);
+
+    private long RescueStalledDelivery(long now, long stallMilliseconds)
     {
-        var rescued = _completions.RescueStalledRunner(now, StalledDeliveryMilliseconds, out var nextCheck);
+        var rescued = _completions.RescueStalledRunner(now, stallMilliseconds, out var nextCheck);
         if (rescued)
         {
             _logger?.LogWarning(
                 "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
                 + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
                 + "inside continuations.",
-                Host, Port, StalledDeliveryMilliseconds);
+                Host, Port, stallMilliseconds);
         }
 
         return nextCheck;
@@ -3402,6 +3401,12 @@ internal sealed record RespireConnectionOptions
     /// timer. Null disables the cap.
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; }
+
+    /// <summary>
+    /// How long parsed replies may wait behind a continuation that has stopped making progress
+    /// before they are delivered on another thread. Internal: tests isolate rescue paths.
+    /// </summary>
+    internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
     public bool UseTls { get; init; }

@@ -252,8 +252,8 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// <param name="nowMilliseconds">The current monotonic time.</param>
     /// <param name="stallMilliseconds">How long replies may wait behind a runner that is not moving.</param>
     /// <param name="nextCheckMilliseconds">
-    /// How soon the caller should check again so a stall is caught close to
-    /// <paramref name="stallMilliseconds"/>, or -1 when no runner is executing.
+    /// How soon the caller should check again so a stall is handed off between one and one
+    /// and a half <paramref name="stallMilliseconds"/> after replies start waiting.
     /// </param>
     internal bool RescueStalledRunner(long nowMilliseconds, long stallMilliseconds, out long nextCheckMilliseconds)
     {
@@ -266,12 +266,10 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             _observedClaim = claim;
             _observedSince = nowMilliseconds;
-            // Once replies wait, check again exactly at the threshold. Otherwise, while a runner
-            // executes, poll often enough that replies queued just after this check are seen
-            // well within the threshold.
-            nextCheckMilliseconds = waiting ? stallMilliseconds
-                : executing ? Math.Max(1, stallMilliseconds / 2)
-                : -1;
+            // Once replies wait, check again exactly at the threshold. Otherwise poll often
+            // enough that a runner which blocks just after this check, with replies queued
+            // behind it, is seen within half the threshold.
+            nextCheckMilliseconds = waiting ? stallMilliseconds : Math.Max(1, stallMilliseconds / 2);
             return false;
         }
 
