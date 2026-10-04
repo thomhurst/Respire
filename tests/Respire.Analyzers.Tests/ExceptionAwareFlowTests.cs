@@ -335,6 +335,37 @@ public class ExceptionAwareFlowTests
         """);
 
     [Test]
+    [Arguments("holder = new Holder { Owner = result, Other = Throws() };", "", true)]
+    [Arguments("holder = new Holder { Owner = result, Other = 0 };", "", false)]
+    [Arguments("holder = new Holder { Owner = result, Other = Throws() };", "result.Dispose();", false)]
+    [Arguments("var owner = new Holder { Owner = result, Other = Throws() };", "", true)]
+    [Arguments("var owner = new Holder { Owner = result, Other = 0 };", "", false)]
+    [Arguments("holder = new() { Owner = result, Other = Throws() };", "", true)]
+    [Arguments("Take(new Holder { Owner = result, Other = 0 }, Throws());", "", true)]
+    [Arguments("Take(new Holder { Owner = result, Other = 0 }, 0);", "", false)]
+    [Arguments("var owner = existing with { Owner = result, Other = Throws() };", "", true)]
+    [Arguments("var owner = existing with { Owner = result, Other = Throws() };", "result.Dispose();", false)]
+    public async Task MemberInitializerWaitsForConstruction(string operation, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder { public RespireResult Owner; public int Other; }
+        record RecordHolder { public RespireResult Owner; public int Other; }
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(object owner, int other) { }
+            async Task Run(RespireClient client, RecordHolder existing)
+            {
+                Holder holder;
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} }
+                catch (InvalidOperationException) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (fail) throw new InvalidOperationException();", "", true)]
     [Arguments("if (fail) throw new InvalidOperationException();", "result.Dispose();", false)]
     [Arguments("", "", false)]

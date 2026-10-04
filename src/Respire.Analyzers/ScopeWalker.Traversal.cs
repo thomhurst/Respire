@@ -190,6 +190,11 @@ internal static partial class ScopeWalker
                 {
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
                     AnonymousObjectMemberDeclaratorSyntax { Parent: AnonymousObjectCreationExpressionSyntax anonymous } => anonymous,
+                    AssignmentExpressionSyntax { Parent: InitializerExpressionSyntax memberInitializer } member
+                        when member.Right == expression && (memberInitializer.IsKind(SyntaxKind.ObjectInitializerExpression)
+                            || memberInitializer.IsKind(SyntaxKind.WithInitializerExpression)) => memberInitializer,
+                    BaseObjectCreationExpressionSyntax creation when creation.Initializer == expression => creation,
+                    WithExpressionSyntax copy when copy.Initializer == expression => copy,
                     ExpressionElementSyntax { Parent: CollectionExpressionSyntax collection } => collection,
                     InitializerExpressionSyntax arrayInitializer when arrayInitializer.IsKind(SyntaxKind.ArrayInitializerExpression) => arrayInitializer,
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
