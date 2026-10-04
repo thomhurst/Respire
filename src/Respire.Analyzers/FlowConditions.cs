@@ -308,10 +308,19 @@ internal sealed class FlowConditions
             var predicate = _predicates[index];
             var mask = 1UL << index;
             if ((known & mask) == 0 || !SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
-                || predicate.Constant is not (sbyte or byte or short or ushort or int or uint or long or ulong or decimal)
-                || Convert.ToDecimal(predicate.Constant) != 0) continue;
-            if (predicate.Operator == BinaryOperatorKind.Equals && (values & mask) == 0
-                || predicate.Operator is BinaryOperatorKind.LessThan or BinaryOperatorKind.GreaterThan && (values & mask) != 0)
+                || predicate.Constant is not (sbyte or byte or short or ushort or int or uint or long or ulong or decimal)) continue;
+            var constant = Convert.ToDecimal(predicate.Constant);
+            bool? zeroSatisfiesPredicate = predicate.Operator switch
+            {
+                BinaryOperatorKind.Equals => constant == 0,
+                BinaryOperatorKind.NotEquals => constant != 0,
+                BinaryOperatorKind.LessThan => 0 < constant,
+                BinaryOperatorKind.LessThanOrEqual => 0 <= constant,
+                BinaryOperatorKind.GreaterThan => 0 > constant,
+                BinaryOperatorKind.GreaterThanOrEqual => 0 >= constant,
+                _ => null,
+            };
+            if (zeroSatisfiesPredicate is { } zeroMatches && zeroMatches != ((values & mask) != 0))
                 return true;
         }
         return false;
