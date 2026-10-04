@@ -543,6 +543,7 @@ internal static partial class ScopeWalker
                     else if (exceptionSource is IConversionOperation conversion && Exceptions.ConversionExceptions(conversion) is { } conversionExceptions)
                     {
                         if (conversionExceptions.InvalidCast
+                            && !_conditions.IsKnownNull(conversion.Operand, known, values)
                             && !_conditions.IsKnownType(conversion.Operand, conversion.Type, semanticModel.Compilation, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidCastException"), started, known, values);

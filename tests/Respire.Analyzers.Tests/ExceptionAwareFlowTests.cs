@@ -23,6 +23,15 @@ public class ExceptionAwareFlowTests
     [Arguments("if (value is not int) return;", "_ = (int)value;", "InvalidCastException", false)]
     [Arguments("if (value is not string) return;", "_ = (IComparable)value;", "InvalidCastException", false)]
     [Arguments("if (value is not int) return;", "_ = (long)value;", "InvalidCastException", true)]
+    [Arguments("if (value is not null) return;", "_ = (string)value;", "InvalidCastException", false)]
+    [Arguments("if (value != null) return;", "_ = (IComparable)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not null) return;", "_ = (int?)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not null) return;", "_ = (int)value;", "InvalidCastException", false)]
+    [Arguments("if (value is not null) return;", "_ = (int)value;", "NullReferenceException", true)]
+    [Arguments("if (value is not null) return;", "_ = (int?)value;", "NullReferenceException", false)]
+    [Arguments("if (value is not null) return; value = new object();", "_ = (string)value;", "InvalidCastException", true)]
+    [Arguments("if (value is not null) return; value = new object();", "_ = (int?)value;", "InvalidCastException", true)]
+    [Arguments("", "_ = (int?)value;", "InvalidCastException", true)]
     public async Task GuardsExcludeImpossibleArithmeticAndCastFailures(string setup, string operation, string catchType, bool warning)
     {
         await Disposal.VerifyAsync($$"""
