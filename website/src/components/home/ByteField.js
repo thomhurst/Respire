@@ -6,7 +6,9 @@ import {prefersReducedMotion} from './useDemo';
 // new frame into the middle rows and sends a faster ripple through the field.
 
 const seed = [
-  '*2', '$5', 'HELLO', '$1', '3', '%7', '$6', 'server', '$5', 'redis', '*3', '$6', 'CLIENT', '$8', 'TRACKING', '$2', 'ON',
+  '*2', '$5', 'HELLO', '$1', '3', '%7', '$6', 'server', '$5', 'redis', '$7', 'version', '$5', '7.4.0',
+  '$5', 'proto', ':3', '$2', 'id', ':42', '$4', 'mode', '$10', 'standalone', '$4', 'role', '$6', 'master',
+  '$7', 'modules', '*0', '*3', '$6', 'CLIENT', '$8', 'TRACKING', '$2', 'ON',
   '+OK', '*2', '$3', 'GET', '$12', 'user:42:name', '$3', 'Ada', '*2', '$4', 'INCR', '$6', 'visits', ':1024',
   '*3', '$5', 'BLPOP', '$4', 'jobs', '$2', '30', '>2', '$10', 'invalidate', '*1', '$12', 'user:42:name',
   '*2', '$7', 'HGETALL', '$7', 'cart:91', '%2', '$3', 'sku', '$4', 'A-17', '$3', 'qty', '$1', '2',
@@ -24,10 +26,12 @@ const prefixTokens = {
   '>': '--resp-push',
 };
 
-function kinds(text) {
-  // A character is a type prefix when it starts the text or follows "\r\n".
-  return [...text].map((char, index) => {
-    const startsLine = index === 0 || text.slice(index - 4, index) === '\\r\\n';
+// The field works on code points, not UTF-16 units, so an emoji typed into the
+// encoder is one cell and every cell has a matching prefix entry.
+function kinds(chars) {
+  // A character is a type prefix when it starts the stream or follows "\r\n".
+  return chars.map((char, index) => {
+    const startsLine = index === 0 || chars.slice(index - 4, index).join('') === '\\r\\n';
     return startsLine && prefixTokens[char] ? char : '';
   });
 }
@@ -51,15 +55,17 @@ function readTheme(element) {
 
 const ByteField = forwardRef(function ByteField({className}, ref) {
   const canvasRef = useRef(null);
-  const state = useRef({text: seed, kinds: kinds(seed), pulses: [], pointer: null, theme: null});
+  const state = useRef({chars: [...seed], kinds: kinds([...seed]), pulses: [], pointer: null, theme: null});
 
   useImperativeHandle(ref, () => ({
     pulse(text) {
       const current = state.current;
       // Splice the new frame into the stream so it appears near the centre.
-      const middle = Math.floor(current.text.length / 2);
-      const next = current.text.slice(0, middle) + text + current.text.slice(middle + text.length);
-      current.text = next;
+      const middle = Math.floor(current.chars.length / 2);
+      const incoming = [...text].slice(0, middle);
+      const next = [...current.chars];
+      next.splice(middle, incoming.length, ...incoming);
+      current.chars = next;
       current.kinds = kinds(next);
       current.pulses.push(performance.now());
       current.draw?.();
@@ -95,7 +101,7 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
     };
 
     const draw = (now = performance.now()) => {
-      const {text, kinds: prefixes, pulses, pointer, theme} = current;
+      const {chars, kinds: prefixes, pulses, pointer, theme} = current;
       const columns = Math.ceil(width / cellWidth);
       const rows = Math.ceil(height / cellHeight);
       const centreX = width * 0.72;
@@ -109,9 +115,9 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
 
       context.clearRect(0, 0, width, height);
       for (let row = 0; row < rows; row += 1) {
-        const offset = (row * 37) % text.length;
+        const offset = (row * 37) % chars.length;
         for (let column = 0; column < columns; column += 1) {
-          const index = (offset + row * columns + column) % text.length;
+          const index = (offset + row * columns + column) % chars.length;
           const x = column * cellWidth;
           const y = row * cellHeight;
           const distance = Math.hypot(x - centreX, y - centreY);
@@ -128,9 +134,9 @@ const ByteField = forwardRef(function ByteField({className}, ref) {
           const calm = 0.2 + 0.8 * Math.min(Math.max((x / width - 0.25) / 0.45, 0), 1);
           const prefix = prefixes[index];
           const alpha = Math.min((0.045 + glow * 0.22) * calm * (prefix ? 1.6 : 1), 0.6);
-          const [r, g, b] = theme[prefix];
+          const [r, g, b] = theme[prefix] ?? theme[''];
           context.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
-          context.fillText(text[index], x, y);
+          context.fillText(chars[index], x, y);
         }
       }
     };

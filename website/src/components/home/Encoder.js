@@ -1,39 +1,87 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import styles from './demos.module.css';
 
-const encoder = new TextEncoder();
-const byteLength = (text) => encoder.encode(text).length;
+const utf8 = new TextEncoder();
+const strictUtf8 = new TextDecoder('utf-8', {fatal: true});
 
-const escapes = {n: '\n', r: '\r', t: '\t', b: '\b', a: '\x07', '"': '"', '\\': '\\'};
+const escapes = {n: 0x0a, r: 0x0d, t: 0x09, b: 0x08, a: 0x07, '"': 0x22, '\\': 0x5c};
 
-// Decodes the escapes redis-cli accepts inside double quotes: \n, \r, \t, \b,
-// \a, \", \\ and \xHH. Anything else keeps the escaped character.
-function unescape(text) {
-  return text.replace(/\\(x[0-9a-fA-F]{2}|.)/g, (_, code) =>
-    code.length === 3 ? String.fromCharCode(parseInt(code.slice(1), 16)) : escapes[code] ?? code);
+// Decodes a double-quoted redis-cli argument to the bytes redis-cli sends.
+// \n, \r, \t, \b, \a, \", \\ and \xHH are escapes; \xHH is one raw byte, so
+// "\xff" is a single 0xFF byte rather than the UTF-8 encoding of "ÿ".
+function decodeEscapes(text) {
+  const bytes = [];
+  const pattern = /\\(x[0-9a-fA-F]{2}|[\s\S])|([^\\]+)/g;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const [, escape, plain] = match;
+    if (plain !== undefined) {
+      bytes.push(...utf8.encode(plain));
+    } else if (escape.length === 3) {
+      bytes.push(parseInt(escape.slice(1), 16));
+    } else if (escapes[escape] !== undefined) {
+      bytes.push(escapes[escape]);
+    } else {
+      bytes.push(...utf8.encode(escape));
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+function toText(bytes) {
+  try {
+    return strictUtf8.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+// A token is the bytes sent for one argument, plus its text when those bytes
+// are valid UTF-8 (null otherwise).
+function token(bytes) {
+  return {bytes, text: toText(bytes)};
 }
 
 // Splits a redis-cli style line into arguments, honouring quotes.
 export function tokenize(line) {
   const tokens = [];
-  const pattern = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  const pattern = /"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|(\S+)/g;
   let match;
   while ((match = pattern.exec(line)) !== null) {
-    tokens.push(match[1] !== undefined ? unescape(match[1]) : match[2] ?? match[3]);
+    tokens.push(match[1] !== undefined ? token(decodeEscapes(match[1])) : token(utf8.encode(match[2] ?? match[3])));
   }
   return tokens;
 }
 
+// How a payload is shown: readable text as is, anything else in the same
+// escaped form redis-cli prints, for example "\xff" or "a\nb".
+function display({bytes, text}) {
+  if (text !== null && !/[\x00-\x1f\x7f]/.test(text)) {
+    return text;
+  }
+  const named = {0x0a: '\\n', 0x0d: '\\r', 0x09: '\\t', 0x22: '\\"', 0x5c: '\\\\'};
+  const body = [...bytes].map((byte) => named[byte]
+    ?? (byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, '0')}`));
+  return `"${body.join('')}"`;
+}
+
+// Each frame line is [prefix, shown text, bytes on the wire before CRLF].
 export function encode(tokens) {
-  const lines = [['*', String(tokens.length)]];
-  for (const token of tokens) {
-    lines.push(['$', String(byteLength(token))], ['', token]);
+  const count = String(tokens.length);
+  const lines = [['*', count, count.length + 1]];
+  for (const item of tokens) {
+    const length = String(item.bytes.length);
+    lines.push(['$', length, length.length + 1], ['', display(item), item.bytes.length]);
   }
   return lines;
 }
 
+const toWire = (frame) => frame.map(([prefix, payload]) => `${prefix}${payload}\\r\\n`).join('');
+const byteCount = (frame) => frame.reduce((total, line) => total + line[2] + 2, 0);
+
 // JSON string escaping (\n, \", \\, \uXXXX) is also valid C# string syntax.
 const quote = (value) => JSON.stringify(value);
+const byteArray = (bytes) => `new byte[] { ${[...bytes].map((byte) => `0x${byte.toString(16).padStart(2, '0').toUpperCase()}`).join(', ')} }`;
 const isInteger = (value) => /^\d+$/.test(value);
 const isNumber = (value) => value !== '' && Number.isFinite(Number(value));
 const seconds = (value) => `TimeSpan.FromSeconds(${value})`;
@@ -82,12 +130,18 @@ function toCSharp(tokens) {
   if (tokens.length === 0) {
     return '// Type a command above';
   }
-  const [name, ...args] = tokens;
-  const typed = calls[name.toUpperCase()]?.(args);
-  if (typed) {
-    return typed;
+  // Typed calls take strings, so they only apply when every argument is UTF-8.
+  if (tokens.every((item) => item.text !== null)) {
+    const [name, ...args] = tokens.map((item) => item.text);
+    const typed = calls[name.toUpperCase()]?.(args);
+    if (typed) {
+      return typed;
+    }
   }
-  return `using RespireResult result = await redis.ExecuteAsync(\n    ${[name.toUpperCase(), ...args].map(quote).join(', ')});`;
+  const [name, ...args] = tokens;
+  const command = name.text === null ? byteArray(name.bytes) : quote(name.text.toUpperCase());
+  const values = args.map((item) => (item.text === null ? byteArray(item.bytes) : quote(item.text)));
+  return `using RespireResult result = await redis.ExecuteAsync(\n    ${[command, ...values].join(', ')});`;
 }
 
 const kindOf = {'*': 'array', $: 'bulk', '': 'payload'};
@@ -97,16 +151,13 @@ export default function Encoder({onEncode}) {
   const [line, setLine] = useState(examples[0]);
   const tokens = useMemo(() => tokenize(line), [line]);
   const frame = useMemo(() => encode(tokens), [tokens]);
-  const wire = frame.map(([prefix, payload]) => `${prefix}${payload}\\r\\n`).join('');
-  const bytes = frame.reduce((total, [prefix, payload]) => total + byteLength(prefix + payload) + 2, 0);
+  const wire = toWire(frame);
 
-  const update = (next) => {
-    setLine(next);
-    const nextTokens = tokenize(next);
-    if (nextTokens.length > 0) {
-      onEncode?.(encode(nextTokens).map(([prefix, payload]) => `${prefix}${payload}\\r\\n`).join(''));
+  useEffect(() => {
+    if (tokens.length > 0) {
+      onEncode?.(wire);
     }
-  };
+  }, [wire]);
 
   return (
     <div className={styles.encoder}>
@@ -114,7 +165,7 @@ export default function Encoder({onEncode}) {
         <span>Type a Redis command</span>
         <input
           value={line}
-          onChange={(event) => update(event.target.value)}
+          onChange={(event) => setLine(event.target.value)}
           spellCheck={false}
           autoCapitalize="off"
           autoComplete="off"
@@ -122,14 +173,14 @@ export default function Encoder({onEncode}) {
       </label>
       <div className={styles.encoderExamples}>
         {examples.map((example) => (
-          <button key={example} type="button" onClick={() => update(example)} aria-pressed={example === line}>
+          <button key={example} type="button" onClick={() => setLine(example)} aria-pressed={example === line}>
             {example.split(' ')[0]}
           </button>
         ))}
       </div>
       <div className={styles.encoderOutput}>
         <div>
-          <h3>On the wire <span>{bytes} bytes</span></h3>
+          <h3>On the wire <span>{byteCount(frame)} bytes</span></h3>
           <code className={styles.encoderWire} aria-label={wire}>
             {frame.map(([prefix, payload], index) => (
               <span key={index} className={styles[kindOf[prefix]]}>
