@@ -489,7 +489,7 @@ internal static partial class ScopeWalker
                                 implicitExceptionType: "System.InvalidCastException"), started, known, values);
                         if (conversionExceptions.NullReference)
                             Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
-                        if (conversionExceptions.InvalidOperation)
+                        if (conversionExceptions.InvalidOperation && !_conditions.IsKnownNonNull(conversion.Operand, known, values))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidOperationException"), started, known, values);
                         if (conversionExceptions.Overflow)
