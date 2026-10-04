@@ -495,6 +495,14 @@ internal sealed class FlowConditions
             comparison = true;
             expected = !expected;
         }
+        if (comparison is true && comparisonOperator == BinaryOperatorKind.Equals
+            && operand is IPropertyReferenceOperation
+                { Property: { Name: "HasValue", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullable })
+        {
+            operand = nullable;
+            comparison = null;
+            expected = !expected;
+        }
         var symbol = Symbol(operand);
         if (symbol is null || !CanTrackSymbol(symbol)) return true;
 

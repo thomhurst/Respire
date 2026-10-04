@@ -193,6 +193,7 @@ internal static partial class ScopeWalker
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     ImplicitArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
+                    CheckedExpressionSyntax checkedExpression => checkedExpression,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
                     BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) => coalesce,
                     BinaryExpressionSyntax conversion when conversion.IsKind(SyntaxKind.AsExpression) => conversion,
@@ -836,10 +837,16 @@ internal static partial class ScopeWalker
 
             if (branch.Semantics is ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow)
             {
+                var exception = UnwrapException(branch.Source.BranchValue);
+                if (branch.Semantics == ControlFlowBranchSemantics.Throw && exception is not null
+                    && _conditions.IsKnownNull(exception, known, values))
+                {
+                    Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
+                    return;
+                }
                 Dispatch(GetDispatch(branch, continuation), started, known, values);
                 if (branch.Semantics == ControlFlowBranchSemantics.Throw)
                 {
-                    var exception = UnwrapException(branch.Source.BranchValue);
                     if (exception is ILocalReferenceOperation or IParameterReferenceOperation
                         && !_conditions.IsKnownNonNull(exception, known, values)
                         && ScopeExitAnalysis.GetExactThrownType(semanticModel, exception) is null)

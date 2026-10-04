@@ -8,7 +8,54 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("checked((object)result)", "Throws()", "", true)]
+    [Arguments("unchecked((object)result)", "Throws()", "", true)]
+    [Arguments("checked((object)result)", "0", "", false)]
+    [Arguments("checked((object)result)", "Throws()", "result.Dispose();", false)]
+    public async Task CheckedOwnerWaitsForLaterArguments(string owner, string argument, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(object owner, int other) { }
+            async Task Run(RespireClient client)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { Take({{owner}}, {{argument}}); }
+                catch (InvalidOperationException) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("if (error is not null) return;", false)]
+    [Arguments("if (error != null) return;", false)]
+    [Arguments("", true)]
+    [Arguments("if (error is not null) return; error = new ArgumentException();", true)]
+    public async Task NullThrowCannotEnterDeclaredTypeHandler(string setup, bool warning) => await Pending.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            async Task Run(RespireClient client, ArgumentException error)
+            {
+                {{setup}}
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try { throw error; }
+                catch (ArgumentException) { Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}}); }
+                catch (NullReferenceException) { await batch.SendAsync(); }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (optional is not null) return;", false)]
+    [Arguments("if (optional.HasValue) return;", false)]
+    [Arguments("if (optional.HasValue == true) return;", false)]
     [Arguments("if (optional != null) return;", false)]
     [Arguments("if (optional is not null) return; optional = 1;", true)]
     [Arguments("", true)]
@@ -655,6 +702,11 @@ public class ExceptionAwareFlowTests
     [Arguments("", "_ = optional.Value;", "InvalidOperationException", true)]
     [Arguments("if (optional is null) return;", "_ = optional.Value;", "InvalidOperationException", false)]
     [Arguments("if (optional == null) return;", "_ = optional.Value;", "InvalidOperationException", false)]
+    [Arguments("if (!optional.HasValue) return;", "_ = optional.Value;", "InvalidOperationException", false)]
+    [Arguments("if (optional.HasValue == false) return;", "_ = optional.Value;", "InvalidOperationException", false)]
+    [Arguments("if (optional.HasValue != true) return;", "_ = (int)optional;", "InvalidOperationException", false)]
+    [Arguments("if (!optional.HasValue) return; optional = null;", "_ = optional.Value;", "InvalidOperationException", true)]
+    [Arguments("if (!GetOptional().HasValue) return;", "_ = optional.Value;", "InvalidOperationException", true)]
     [Arguments("if (optional is null) return; optional = null;", "_ = optional.Value;", "InvalidOperationException", true)]
     [Arguments("if (optional is null) return;", "_ = GetOptional().Value;", "InvalidOperationException", true)]
     [Arguments("", "_ = new int?().Value;", "InvalidOperationException", true)]
