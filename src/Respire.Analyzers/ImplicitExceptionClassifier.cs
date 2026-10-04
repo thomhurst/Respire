@@ -149,7 +149,8 @@ internal sealed class ImplicitExceptionClassifier(
             type = nullable.TypeArguments[0];
         if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal) return null;
         if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)
-            return (true, false);
+            return (!(operation is IBinaryOperation binary && type?.SpecialType == SpecialType.System_Int32
+                && PromotedArithmeticFitsInt32(binary)), false);
         if (kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder)
         {
             var overflow = type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
@@ -165,6 +166,40 @@ internal sealed class ImplicitExceptionClassifier(
             return (overflow, divideByZero);
         }
         return null;
+    }
+
+    private static bool PromotedArithmeticFitsInt32(IBinaryOperation binary)
+    {
+        if (SmallIntegralRange(binary.LeftOperand) is not { } left
+            || SmallIntegralRange(binary.RightOperand) is not { } right) return false;
+        var range = binary.OperatorKind switch
+        {
+            BinaryOperatorKind.Add => (left.Min + right.Min, left.Max + right.Max),
+            BinaryOperatorKind.Subtract => (left.Min - right.Max, left.Max - right.Min),
+            BinaryOperatorKind.Multiply => (
+                Math.Min(Math.Min(left.Min * right.Min, left.Min * right.Max), Math.Min(left.Max * right.Min, left.Max * right.Max)),
+                Math.Max(Math.Max(left.Min * right.Min, left.Min * right.Max), Math.Max(left.Max * right.Min, left.Max * right.Max))),
+            _ => (long.MinValue, long.MaxValue),
+        };
+        return range.Item1 >= int.MinValue && range.Item2 <= int.MaxValue;
+    }
+
+    private static (long Min, long Max)? SmallIntegralRange(IOperation operand)
+    {
+        // Built-in implicit numeric promotion preserves the source range, including lifted operators.
+        while (operand is IConversionOperation { IsImplicit: true, OperatorMethod: null, Conversion.IsUserDefined: false } conversion)
+            operand = conversion.Operand;
+        var type = operand.Type;
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            type = nullable.TypeArguments[0];
+        return type?.SpecialType switch
+        {
+            SpecialType.System_SByte => (sbyte.MinValue, sbyte.MaxValue),
+            SpecialType.System_Byte => (byte.MinValue, byte.MaxValue),
+            SpecialType.System_Int16 => (short.MinValue, short.MaxValue),
+            SpecialType.System_UInt16 or SpecialType.System_Char => (ushort.MinValue, ushort.MaxValue),
+            _ => null,
+        };
     }
 
     private static bool IntegralDivisionCanOverflow(IOperation divisor)

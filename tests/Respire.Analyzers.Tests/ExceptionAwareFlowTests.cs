@@ -8,6 +8,79 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("byte", "_ = checked(left + right);", false)]
+    [Arguments("byte", "_ = checked(left - right);", false)]
+    [Arguments("byte", "_ = checked(left * right);", false)]
+    [Arguments("sbyte", "_ = checked(left * right);", false)]
+    [Arguments("short", "_ = checked(left + right);", false)]
+    [Arguments("short", "_ = checked(left * right);", false)]
+    [Arguments("ushort", "_ = checked(left + right);", false)]
+    [Arguments("ushort", "_ = checked(left * right);", true)]
+    [Arguments("char", "_ = checked(left - right);", false)]
+    [Arguments("byte?", "_ = checked(left + right);", false)]
+    [Arguments("int", "_ = checked(left + right);", true)]
+    [Arguments("byte", "checked { left += right; }", true)]
+    public async Task PromotedArithmeticRetainsOperandRanges(string type, string operation, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} left, {{type}} right)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { {{operation}} result.Dispose(); }
+                    catch (OverflowException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, {{type}} left, {{type}} right)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { {{operation}} await batch.SendAsync(); }
+                    catch (OverflowException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("holder = new { Owner = result, Other = Throws() };", "InvalidOperationException", "", true)]
+    [Arguments("holder = new { Owner = result, Other = 0 };", "InvalidOperationException", "", false)]
+    [Arguments("holder = new { Owner = result, Other = 0 };", "OutOfMemoryException", "", true)]
+    [Arguments("holder = new { Owner = result, Other = Throws() };", "InvalidOperationException", "result.Dispose();", false)]
+    [Arguments("holder = new { result, Other = Throws() };", "InvalidOperationException", "", true)]
+    [Arguments("Take(new { Owner = result }, Throws());", "InvalidOperationException", "", true)]
+    [Arguments("var owner = new { Owner = result, Other = Throws() };", "InvalidOperationException", "", true)]
+    public async Task AnonymousOwnerWaitsForConstruction(string operation, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Caller
+        {
+            static int Throws() => throw new InvalidOperationException();
+            static void Take(object owner, int other) { }
+            async Task Run(RespireClient client)
+            {
+                object holder;
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{operation}} }
+                catch ({{catchType}}) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (fail) throw new InvalidOperationException();", "", true)]
     [Arguments("if (fail) throw new InvalidOperationException();", "result.Dispose();", false)]
     [Arguments("", "", false)]
@@ -739,6 +812,14 @@ public class ExceptionAwareFlowTests
     [Test]
     [Arguments("_ = Holder.Value;", false)]
     [Arguments("Holder.Initialize();", false)]
+    [Arguments("try { Holder.Initialize(); } catch (InvalidOperationException) { }", false)]
+    [Arguments("try { _ = Holder.Property; } catch (InvalidOperationException) { }", false)]
+    [Arguments("try { Holder.Property = 1; } catch (InvalidOperationException) { }", false)]
+    [Arguments("try { _ = new Holder(); } catch (InvalidOperationException) { }", false)]
+    [Arguments("try { _ = new Holder(); } catch (OutOfMemoryException) { }", true)]
+    [Arguments("try { Holder.Initialize(); } catch (TypeInitializationException) { }", true)]
+    [Arguments("try { Holder.Initialize(); } catch { }", true)]
+    [Arguments("try { if (flag) Holder.Initialize(); } catch (InvalidOperationException) { }", true)]
     [Arguments("_ = Holder.Property;", false)]
     [Arguments("Holder.Property = 1;", false)]
     [Arguments("_ = Holder.Value; try { throw new Exception(); } catch { }", false)]

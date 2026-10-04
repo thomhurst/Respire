@@ -174,6 +174,7 @@ internal static partial class ScopeWalker
                 ExpressionSyntax? wrapper = expression.Parent switch
                 {
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
+                    AnonymousObjectMemberDeclaratorSyntax { Parent: AnonymousObjectCreationExpressionSyntax anonymous } => anonymous,
                     ExpressionElementSyntax { Parent: CollectionExpressionSyntax collection } => collection,
                     InitializerExpressionSyntax arrayInitializer when arrayInitializer.IsKind(SyntaxKind.ArrayInitializerExpression) => arrayInitializer,
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
@@ -505,23 +506,41 @@ internal static partial class ScopeWalker
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.OverflowException"), started, known, values);
                     }
-                    else Dispatch(GetDispatch(successor, continuation, implicitException: true,
-                        implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
-                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
-                            ? "System.TypeInitializationException" : ImplicitExceptionClassifier.KnownPropertyException(exceptionSource),
-                        nullPath: transferFailure == TransferFailure.NullReceiver
-                            || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false }
-                            || ImplicitExceptionClassifier.IsFrameworkLength(exceptionSource),
-                        allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
-                            || exceptionSource is IArrayCreationOperation
-                            || Exceptions.IsTrivialReferenceConstruction(exceptionSource)
-                            || exceptionSource is IAnonymousObjectCreationOperation
-                            || exceptionSource is IConversionOperation boxing && Exceptions.IsBoxing(boxing)
-                            || ImplicitExceptionClassifier.IsStringOnlyConcatenation(exceptionSource)
-                            || ImplicitExceptionClassifier.IsAllocationOnlyInterpolation(exceptionSource)
-                            || exceptionSource is IDelegateCreationOperation
-                            || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
-                        started, known, values);
+                    else
+                    {
+                        var bodyKnown = known;
+                        var bodyValues = values;
+                        if (transferFailure == TransferFailure.None
+                            && exceptionSource is not IFieldReferenceOperation
+                            && InitializationType(exceptionSource) is not null)
+                        {
+                            if (exceptionSource is IObjectCreationOperation { Type.IsReferenceType: true })
+                                Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                    allocationOnly: true), started, known, values);
+                            if (!IsTypeInitialized(exceptionSource, known, values))
+                                Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                                    implicitExceptionType: "System.TypeInitializationException"), started, known, values);
+                            // A body can run only after its declaring type initialized successfully.
+                            RecordTypeInitialized(exceptionSource, ref bodyKnown, ref bodyValues);
+                        }
+                        Dispatch(GetDispatch(successor, continuation, implicitException: true,
+                            implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
+                                || exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
+                                ? "System.TypeInitializationException" : ImplicitExceptionClassifier.KnownPropertyException(exceptionSource),
+                            nullPath: transferFailure == TransferFailure.NullReceiver
+                                || exceptionSource is IFieldReferenceOperation { Field.IsStatic: false }
+                                || ImplicitExceptionClassifier.IsFrameworkLength(exceptionSource),
+                            allocationOnly: transferFailure == TransferFailure.Allocation || arrayAllocation
+                                || exceptionSource is IArrayCreationOperation
+                                || Exceptions.IsTrivialReferenceConstruction(exceptionSource)
+                                || exceptionSource is IAnonymousObjectCreationOperation
+                                || exceptionSource is IConversionOperation boxing && Exceptions.IsBoxing(boxing)
+                                || ImplicitExceptionClassifier.IsStringOnlyConcatenation(exceptionSource)
+                                || ImplicitExceptionClassifier.IsAllocationOnlyInterpolation(exceptionSource)
+                                || exceptionSource is IDelegateCreationOperation
+                                || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
+                            started, bodyKnown, bodyValues);
+                    }
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && Exceptions.DelegateCanDereferenceNull(delegateCreation, known, values))
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
                     if (transferFailure == TransferFailure.Allocation
@@ -535,18 +554,7 @@ internal static partial class ScopeWalker
                             implicitExceptionType: "System.OverflowException"), started, known, values);
                 }
             }
-            // Only the normal continuation proves initialization succeeded. Keep this fact
-            // across writes and later exceptions; a successful type initializer never reruns.
-            if (InitializationType(exceptionSource) is { } initializedType)
-            {
-                if (!_initializedTypes.TryGetValue(initializedType, out var flag))
-                {
-                    flag = _conditions.ReservePathFlag();
-                    _initializedTypes.Add(initializedType, flag);
-                }
-                known |= flag;
-                values |= flag;
-            }
+            RecordTypeInitialized(exceptionSource, ref known, ref values);
             // Construction/allocation can fail before any initializer runs.
             if (initializer is not null)
                 Visit(initializer, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
@@ -565,6 +573,18 @@ internal static partial class ScopeWalker
                     && SymbolEqualityComparer.Default.Equals(array.ElementType, access.Type);
 
         private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
+
+        private void RecordTypeInitialized(IOperation operation, ref ulong known, ref ulong values)
+        {
+            if (InitializationType(operation) is not { } type) return;
+            if (!_initializedTypes.TryGetValue(type, out var flag))
+            {
+                flag = _conditions.ReservePathFlag();
+                _initializedTypes.Add(type, flag);
+            }
+            known |= flag;
+            values |= flag;
+        }
 
         private bool IsTypeInitialized(IOperation operation, ulong known, ulong values)
             => InitializationType(operation) is { } type && _initializedTypes.TryGetValue(type, out var flag)
@@ -666,7 +686,7 @@ internal static partial class ScopeWalker
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
             return operation switch
             {
-                IObjectCreationOperation { Type.IsReferenceType: true } => TransferFailure.Allocation,
+                IObjectCreationOperation { Type.IsReferenceType: true } or IAnonymousObjectCreationOperation => TransferFailure.Allocation,
                 IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
                     when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 IDeconstructionAssignmentOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
