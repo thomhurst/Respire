@@ -504,8 +504,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
         SyntaxNode? before = null,
-        InvocationExpressionSyntax? origin = null)
+        InvocationExpressionSyntax? origin = null,
+        ImmutableHashSet<ISymbol>? aliases = null)
     {
+        if (aliases?.Contains(local) == true) yield break;
+        aliases = (aliases ?? ImmutableHashSet.Create<ISymbol>(SymbolEqualityComparer.Default)).Add(local);
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
             if (before is not null && reference.SpanStart > before.SpanStart)
@@ -534,7 +537,17 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsInspection(context.SemanticModel.GetOperation(reference, context.CancellationToken)))
+            var operation = GetInspectedValue(context.SemanticModel.GetOperation(reference, context.CancellationToken));
+            if (operation?.Parent is IIsPatternOperation { Pattern: IDeclarationPatternOperation { DeclaredSymbol: ILocalSymbol alias } })
+            {
+                // Binding alone does not transfer ownership. Follow uses of the bound value.
+                foreach (var escape in FindEscapes(context, scope, alias, allowReassignment: true,
+                    allowNamedFlushExtension: allowNamedFlushExtension, allowLocalAlias: allowLocalAlias,
+                    before: before, origin: origin, aliases: aliases))
+                    yield return escape;
+                continue;
+            }
+            if (IsInspection(operation))
                 continue;
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
@@ -593,19 +606,22 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
     }
 
-    private static bool IsInspection(IOperation? operation)
+    private static IOperation? GetInspectedValue(IOperation? operation)
     {
         while (operation?.Parent is IConversionOperation { OperatorMethod: null }
             or IParenthesizedOperation or ITupleOperation)
             operation = operation.Parent;
-        return operation?.Parent is IIsPatternOperation or IIsTypeOperation
+        return operation;
+    }
+
+    private static bool IsInspection(IOperation? operation)
+        => operation?.Parent is IIsPatternOperation or IIsTypeOperation
                 or ITupleBinaryOperation or IBinaryOperation { OperatorMethod: null }
             || operation?.Parent is IMemberReferenceOperation and not IMethodReferenceOperation
             || operation?.Parent is IInvocationOperation invocation && invocation.Instance == operation
                 && invocation.TargetMethod.ReducedFrom is null
             || operation?.Parent is IArgumentOperation { Parent: IInvocationOperation
                 { TargetMethod: { ContainingType.SpecialType: SpecialType.System_Object, Name: "ReferenceEquals" or "Equals" } } };
-    }
 
     private static bool HasFlushBefore(
         SyntaxNodeAnalysisContext context,

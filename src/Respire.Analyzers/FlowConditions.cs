@@ -532,6 +532,8 @@ internal sealed class FlowConditions
                 comparison = typePattern.MatchedType;
                 comparisonOperator = BinaryOperatorKind.None;
             }
+            else if (pattern is IDeclarationPatternOperation { MatchesNull: true })
+                return expected;
             else if (pattern is IDeclarationPatternOperation { MatchesNull: false } declarationPattern)
             {
                 comparison = declarationPattern.MatchedType;
