@@ -67,7 +67,8 @@ internal sealed class ImplicitExceptionClassifier(
             || !operation.ConstantValue.HasValue && (operation switch
             {
                 IBinaryOperation binary => ArithmeticMayThrow(binary.OperatorKind, binary.IsChecked, binary.Type),
-                ICompoundAssignmentOperation assignment => ArithmeticMayThrow(assignment.OperatorKind, assignment.IsChecked, assignment.Type),
+                ICompoundAssignmentOperation assignment => ArithmeticMayThrow(assignment.OperatorKind, assignment.IsChecked, assignment.Type)
+                    || CheckedShiftNarrowingMayThrow(assignment),
                 IIncrementOrDecrementOperation increment => ArithmeticMayThrow(BinaryOperatorKind.Add, increment.IsChecked, increment.Type),
                 IUnaryOperation { OperatorKind: UnaryOperatorKind.Minus } unary =>
                     unary.IsChecked && IsIntegral(unary.Type),
@@ -166,7 +167,13 @@ internal sealed class ImplicitExceptionClassifier(
             Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0 };
     }
 
-    internal static (bool Overflow, bool DivideByZero)? ArithmeticExceptions(IOperation operation)
+    private bool CheckedShiftNarrowingMayThrow(ICompoundAssignmentOperation assignment)
+        => assignment is { OperatorKind: BinaryOperatorKind.LeftShift, OperatorMethod: null, OutConversion.IsIdentity: false }
+            && (assignment.IsChecked || IsCheckedContext(assignment.Syntax))
+            && SmallIntegralRange(assignment.Target) is not null
+            && !(assignment.Value.ConstantValue is { HasValue: true, Value: int count } && (count & 31) == 0);
+
+    internal (bool Overflow, bool DivideByZero)? ArithmeticExceptions(IOperation operation)
     {
         var kind = operation switch
         {
@@ -180,6 +187,8 @@ internal sealed class ImplicitExceptionClassifier(
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
             type = nullable.TypeArguments[0];
         if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal) return null;
+        if (kind == BinaryOperatorKind.LeftShift && operation is ICompoundAssignmentOperation shift)
+            return (CheckedShiftNarrowingMayThrow(shift), false);
         if (operation is IUnaryOperation { OperatorMethod: null, OperatorKind: UnaryOperatorKind.Minus } unary && IsIntegral(type))
             return (IntegralDividendCanOverflow(unary.Operand, type), false);
         if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)

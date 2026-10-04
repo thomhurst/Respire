@@ -226,6 +226,16 @@ public class ExceptionAwareFlowTests
     }
 
     [Test]
+    public async Task CheckedByteCompoundShiftChecksNarrowingAtRuntime()
+    {
+        byte value = 128;
+        var overflow = false;
+        try { checked { value <<= 1; } }
+        catch (OverflowException) { overflow = true; }
+        await Assert.That(overflow).IsTrue();
+    }
+
+    [Test]
     [Arguments("checked((object)result)", "Throws()", "", true)]
     [Arguments("unchecked((object)result)", "Throws()", "", true)]
     [Arguments("checked((object)result)", "0", "", false)]
@@ -497,6 +507,18 @@ public class ExceptionAwareFlowTests
     [Arguments("byte", "checked { left /= 2; }", false)]
     [Arguments("ushort", "checked { left /= right; }", false)]
     [Arguments("uint", "checked { left /= right; }", false)]
+    [Arguments("byte", "checked { left <<= 1; }", true)]
+    [Arguments("sbyte", "checked { left <<= 1; }", true)]
+    [Arguments("short", "checked { left <<= 1; }", true)]
+    [Arguments("ushort", "checked { left <<= 1; }", true)]
+    [Arguments("char", "checked { left <<= 1; }", true)]
+    [Arguments("byte?", "checked { left <<= 1; }", true)]
+    [Arguments("byte", "unchecked { left <<= 1; }", false)]
+    [Arguments("int", "checked { left <<= 1; }", false)]
+    [Arguments("byte", "checked { left >>= 1; }", false)]
+    [Arguments("byte", "checked { left <<= 0; }", false)]
+    [Arguments("byte", "checked { left <<= 32; }", false)]
+    [Arguments("byte?", "left = null; checked { left <<= 1; }", false)]
     [Arguments("int", "_ = 1 / right;", false)]
     [Arguments("byte", "_ = checked(-left);", false)]
     [Arguments("sbyte", "_ = checked(-left);", false)]

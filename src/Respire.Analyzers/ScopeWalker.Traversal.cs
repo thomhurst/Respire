@@ -613,7 +613,7 @@ internal static partial class ScopeWalker
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
                     }
-                    else if (ImplicitExceptionClassifier.ArithmeticExceptions(exceptionSource) is { } arithmetic)
+                    else if (Exceptions.ArithmeticExceptions(exceptionSource) is { } arithmetic)
                     {
                         if (arithmetic.Overflow)
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
