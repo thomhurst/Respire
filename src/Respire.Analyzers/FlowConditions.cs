@@ -262,6 +262,26 @@ internal sealed class FlowConditions
 
     internal IOperation ResolveCapturedTarget(IOperation operation) => Unwrap(operation);
 
+    internal bool IsKnownNull(IOperation operation, ulong known, ulong values)
+    {
+        while (operation is IConversionOperation { OperatorMethod: null } conversion
+            && (conversion.Conversion.IsIdentity || conversion.Conversion.IsReference))
+            operation = conversion.Operand;
+        if (operation.ConstantValue is { HasValue: true, Value: null }
+            || operation is IDefaultValueOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+                or IObjectCreationOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, Arguments.Length: 0 })
+            return true;
+        // Do not re-read a captured local after intervening writes.
+        if (operation is IFlowCaptureReferenceOperation
+            || Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
+        for (var index = 0; index < _predicates.Count; index++)
+            if (_predicates[index] is { Constant: null, Operator: BinaryOperatorKind.Equals } predicate
+                && SymbolEqualityComparer.Default.Equals(predicate.Symbol, symbol)
+                && (known & values & (1UL << index)) != 0)
+                return true;
+        return false;
+    }
+
     internal bool IsKnownNonNull(IOperation operation, ulong known, ulong values)
     {
         if (_locationReceivers.TryGetValue(operation, out var receiverFlag))

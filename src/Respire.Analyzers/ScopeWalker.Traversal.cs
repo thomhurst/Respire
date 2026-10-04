@@ -394,7 +394,8 @@ internal static partial class ScopeWalker
         }
 
         private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
-            int continuation, bool started, int dispatch, ref ulong known, ref ulong values, bool deconstructionStore = false)
+            int continuation, bool started, int dispatch, ref ulong known, ref ulong values, bool deconstructionStore = false,
+            IOperation? storedValue = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
@@ -492,6 +493,9 @@ internal static partial class ScopeWalker
                 && !(exceptionSource is IPropertyReferenceOperation
                     { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullableReceiver }
                     && _conditions.IsKnownNonNull(nullableReceiver, known, values))
+                && !(exceptionSource is IConversionOperation nullableBoxing
+                    && Exceptions.IsBoxing(nullableBoxing)
+                    && _conditions.IsKnownNull(nullableBoxing.Operand, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier
                     && !completionOperation
                     && !(operation.Syntax.Span.End == firstBarrier
@@ -514,6 +518,7 @@ internal static partial class ScopeWalker
                                 implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
                         if (arrayAccess.Type?.IsValueType != true
                             && !HasExactArrayElementType(arrayAccess)
+                            && !IsNullArrayStore(operation, storedValue, known, values)
                             && (deconstructionStore || operation is IAssignmentOperation
                                 || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
@@ -608,6 +613,12 @@ internal static partial class ScopeWalker
                     { Type: IArrayTypeSymbol array }
                     && SymbolEqualityComparer.Default.Equals(array.ElementType, access.Type);
 
+        private bool IsNullArrayStore(IOperation operation, IOperation? storedValue, ulong known, ulong values)
+        {
+            storedValue ??= (operation as ISimpleAssignmentOperation)?.Value;
+            return storedValue is not null && _conditions.IsKnownNull(storedValue, known, values);
+        }
+
         private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
 
         private void RecordTypeInitialized(IOperation operation, ref ulong known, ref ulong values)
@@ -696,6 +707,7 @@ internal static partial class ScopeWalker
         {
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
+            var storedValue = value;
             if (value is not null) value = _conditions.ResolveCapturedTarget(value);
             if (target is ITupleOperation targets)
             {
@@ -711,7 +723,7 @@ internal static partial class ScopeWalker
             // Receivers and indexes were evaluated before the RHS; only the store runs now.
             // At the owning target, model pre-entry failures but not the accepting setter's body.
             Visit(target, block, entryPosition, transferred ? TransferPosition(target.Syntax) : firstBarrier,
-                continuation, started, dispatch, ref known, ref values, deconstructionStore: true);
+                continuation, started, dispatch, ref known, ref values, deconstructionStore: true, storedValue: storedValue);
             _conditions.Forget(target, ref known, ref values);
             return transferred;
         }

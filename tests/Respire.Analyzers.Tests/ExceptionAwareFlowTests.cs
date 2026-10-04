@@ -8,6 +8,48 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("if (optional is not null) return;", false)]
+    [Arguments("if (optional != null) return;", false)]
+    [Arguments("if (optional is not null) return; optional = 1;", true)]
+    [Arguments("", true)]
+    [Arguments("if (optional is null) return;", true)]
+    public async Task EmptyNullableBoxingCannotAllocate(string setup, bool warning)
+    {
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int? optional)
+                {
+                    {{setup}}
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { object boxed = optional; result.Dispose(); }
+                    catch (OutOfMemoryException) { }
+                }
+            }
+            """);
+        await Pending.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task Run(RespireClient client, int? optional)
+                {
+                    {{setup}}
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { object boxed = optional; await batch.SendAsync(); }
+                    catch (OutOfMemoryException) { }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("await batch.ExecuteAsync(ThrowToken());", "", true)]
     [Arguments("await batch.ExecuteAsync(default);", "", false)]
     [Arguments("await batch.ExecuteAsync(ThrowToken());", "await batch.SendAsync();", false)]
@@ -863,6 +905,12 @@ public class ExceptionAwareFlowTests
     [Arguments("if (values is null) return;", "_ = values[0];", "NullReferenceException", false)]
     [Arguments("if (values is null) return;", "_ = values[0];", "IndexOutOfRangeException", true)]
     [Arguments("if (values is null) return;", "values[0] = new object();", "ArrayTypeMismatchException", true)]
+    [Arguments("if (values is null) return;", "values[0] = null;", "ArrayTypeMismatchException", false)]
+    [Arguments("if (values is null) return;", "values[0] = (object)null;", "ArrayTypeMismatchException", false)]
+    [Arguments("if (values is null) return;", "values[0] = default(object);", "ArrayTypeMismatchException", false)]
+    [Arguments("if (values is null) return;", "(values[0], _) = ((object)null, 0);", "ArrayTypeMismatchException", false)]
+    [Arguments("", "values[0] = null;", "NullReferenceException", true)]
+    [Arguments("if (values is null) return;", "values[0] = null;", "IndexOutOfRangeException", true)]
     [Arguments("if (values is null) return; values = null;", "_ = values[0];", "NullReferenceException", true)]
     [Arguments("", "_ = values[0];", "NullReferenceException", true)]
     public async Task ArrayReceiverUsesNonNullEvidence(string setup, string operation, string catchType, bool warning)
