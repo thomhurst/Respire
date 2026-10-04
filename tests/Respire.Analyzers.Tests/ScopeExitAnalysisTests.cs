@@ -8,6 +8,50 @@ namespace Respire.Analyzers.Tests;
 public class ScopeExitAnalysisTests
 {
     [Test]
+    [Arguments("T", "where T : Exception, IMarker", true)]
+    [Arguments("T", "where T : InvalidOperationException, IMarker", true)]
+    [Arguments("T", "where T : ArgumentException, IMarker", false)]
+    [Arguments("T, U", "where T : U where U : Exception, IMarker", true)]
+    [Arguments("T, U", "where T : U where U : ArgumentException, IMarker", false)]
+    public async Task GenericInterfaceConstraintsPreservePossibleCatch(string parameters, string constraints, bool warning)
+    {
+        await VerifyDisposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            interface IMarker { }
+            class Caller
+            {
+                async Task Run<{{parameters}}>(RespireClient client, T error) {{constraints}}
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { throw error; }
+                    catch (InvalidOperationException) { }
+                    catch (Exception) { result.Dispose(); }
+                }
+            }
+            """);
+        await Verify.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            interface IMarker { }
+            class Caller
+            {
+                async Task Run<{{parameters}}>(RespireClient client, T error) {{constraints}}
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    try { throw error; }
+                    catch (InvalidOperationException) { }
+                    catch (Exception) { await batch.SendAsync(); }
+                    Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("InvalidOperationException", "catch (Exception) { throw; }", false)]
     [Arguments("T", "catch (Exception) { throw; }", false)]
     [Arguments("Exception", "catch (Exception) { throw; }", false)]
@@ -194,8 +238,9 @@ public class ScopeExitAnalysisTests
     [Arguments("", "error", true)]
     [Arguments("var local = new ArgumentException(\"x\");", "local", false)]
     [Arguments("Exception local = new ArgumentException(\"x\");", "local", false)]
-    [Arguments("var local = new ArgumentException(\"x\"); if (skip) local = null;", "local", true)]
-    [Arguments("var local = new ArgumentException(\"x\"); var (copy, other) = (local, local); (local, other) = (null, copy);", "local", true)]
+    // Both the declared exception type and the null-throw path are handled by a flush.
+    [Arguments("var local = new ArgumentException(\"x\"); if (skip) local = null;", "local", false)]
+    [Arguments("var local = new ArgumentException(\"x\"); var (copy, other) = (local, local); (local, other) = (null, copy);", "local", false)]
     public async Task ExactNullOrUnreassignedThrownValueSelectsFinallyHandler(string setup, string thrown, bool warning)
     {
         var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
