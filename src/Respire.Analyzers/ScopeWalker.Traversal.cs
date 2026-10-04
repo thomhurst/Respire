@@ -245,6 +245,14 @@ internal static partial class ScopeWalker
                     IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
                     or ICompoundAssignmentOperation { OperatorMethod: not null };
             if (operatorTransfer) call = expression!.Parent;
+            var eventAssignment = expression?.Parent is AssignmentExpressionSyntax eventSyntax
+                ? semanticModel.GetOperation(eventSyntax, cancellationToken) as IEventAssignmentOperation : null;
+            var eventTransfer = eventAssignment is not null;
+            if (eventAssignment is not null)
+            {
+                if (!eventAssignment.Adds) return (null, 0);
+                call = expression!.Parent;
+            }
             var collectionTransfer = expression?.Parent is InitializerExpressionSyntax collectionElement
                 && (collectionElement.IsKind(SyntaxKind.ComplexElementInitializerExpression)
                     || collectionElement.IsKind(SyntaxKind.CollectionInitializerExpression));
@@ -279,7 +287,7 @@ internal static partial class ScopeWalker
                 assignmentTransfer = true;
             }
             var delegateTransfer = delegateSyntax is not null && call == delegateSyntax;
-            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || delegateTransfer || indexerTransfer || collectionTransfer || operatorTransfer
+            if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || delegateTransfer || indexerTransfer || collectionTransfer || operatorTransfer || eventTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
@@ -318,6 +326,7 @@ internal static partial class ScopeWalker
                 if (operation.Syntax == call && operation is IInvocationOperation or IFunctionPointerInvocationOperation or IDynamicInvocationOperation
                     or IExpressionStatementOperation
                     or IDelegateCreationOperation
+                    or IEventAssignmentOperation
                     or IObjectCreationOperation or IDynamicObjectCreationOperation or ISimpleAssignmentOperation or IDeconstructionAssignmentOperation
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
                     or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
@@ -549,7 +558,7 @@ internal static partial class ScopeWalker
                     && !completionOperation
                     && !collectionTransfer
                     && !(operation.Syntax.Span.End == firstBarrier
-                        && operation is ISimpleAssignmentOperation
+                        && operation is ISimpleAssignmentOperation or IEventAssignmentOperation
                             or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
                             or ICompoundAssignmentOperation { OperatorMethod: not null })
                     && Exceptions.MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
@@ -708,6 +717,8 @@ internal static partial class ScopeWalker
                 IBinaryOperation { OperatorMethod: { } binaryOperator } => binaryOperator.ContainingType,
                 IUnaryOperation { OperatorMethod: { } unaryOperator } => unaryOperator.ContainingType,
                 ICompoundAssignmentOperation { OperatorMethod: { } compoundOperator } => compoundOperator.ContainingType,
+                IEventAssignmentOperation { EventReference: IEventReferenceOperation { Event.IsStatic: true } eventReference }
+                    => eventReference.Event.ContainingType,
                 IObjectCreationOperation { Type: INamedTypeSymbol createdType } => createdType,
                 _ => null,
             };
@@ -794,6 +805,14 @@ internal static partial class ScopeWalker
         {
             if (operation is ISimpleAssignmentOperation assignment)
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
+            if (operation is IEventAssignmentOperation eventAssignment)
+            {
+                if (eventAssignment.EventReference is IEventReferenceOperation { Instance: { } receiver }
+                    && Exceptions.CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values))
+                    return TransferFailure.NullReceiver;
+                return InitializationType(operation) is not null && !IsTypeInitialized(operation, known, values)
+                    ? TransferFailure.TypeInitialization : TransferFailure.None;
+            }
             return operation switch
             {
                 IObjectCreationOperation { Type.IsReferenceType: true } or IAnonymousObjectCreationOperation => TransferFailure.Allocation,

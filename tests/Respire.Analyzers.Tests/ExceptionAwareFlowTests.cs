@@ -8,6 +8,35 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("publisher.Changed -= result.Dispose;", "", "", true)]
+    [Arguments("publisher.Changed -= () => result.Dispose();", "", "", true)]
+    [Arguments("publisher.Changed -= new Action(result.Dispose);", "", "", true)]
+    [Arguments("publisher.Changed += result.Dispose;", "InvalidOperationException", "", false)]
+    [Arguments("publisher.Changed += result.Dispose;", "NullReferenceException", "", true)]
+    [Arguments("publisher.Changed += result.Dispose;", "OutOfMemoryException", "", true)]
+    [Arguments("publisher.Changed += result.Dispose;", "NullReferenceException", "result.Dispose();", false)]
+    [Arguments("Publisher.StaticChanged += result.Dispose;", "TypeInitializationException", "", true)]
+    public async Task EventCaptureTransfersOnlyAtAddEntry(string operation, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Publisher
+        {
+            static Publisher() { }
+            public event Action Changed { add { throw new InvalidOperationException(); } remove { } }
+            public static event Action StaticChanged { add { } remove { } }
+        }
+        class Caller
+        {
+            async Task Run(RespireClient client, Publisher publisher)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                {{(catchType.Length == 0 ? operation : $"try {{ {operation} }} catch ({catchType}) {{ {cleanup} }}")}}
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (flag) Take(owner); else await owner.SendAsync();", false)]
     [Arguments("if (flag) Take(owner);", true)]
     [Arguments("if (flag) await owner.SendAsync();", true)]
