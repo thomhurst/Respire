@@ -414,6 +414,9 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// Transfers ownership from the executing runner to a newly queued one, moving the active
     /// batch's unclaimed replies to the front of the queue. The old runner sees the new
     /// generation and exits once its current continuation returns. Caller holds the gate.
+    /// Used only by <see cref="ReleaseCurrentRunner"/>, so the caller is the runner itself,
+    /// blocked inside a continuation. That is always a source's final reply, so unlike
+    /// <see cref="TryRescueHandOffLocked"/> it needs no multi-reply guard.
     /// </summary>
     private void HandOffLocked()
     {
