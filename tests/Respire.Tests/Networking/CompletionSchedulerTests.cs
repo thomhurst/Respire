@@ -131,4 +131,25 @@ public class CompletionSchedulerTests
 
         await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }
+
+    [Test]
+    public async Task RunWhileAwaitingStillDeliversWhenTheOperationCompletesBeforeRegistration()
+    {
+        // The read finishes in the window between the receive loop's IsCompleted check and the
+        // awaiter registering its continuation.
+        var source = new PendingResponsePool(1).Rent();
+        var pending = source.Task.AsTask();
+        var scheduler = new CompletionScheduler();
+        scheduler.Add(source, RespValue.Integer(42));
+        await Assert.That(scheduler.FlushDeferred()).IsTrue();
+        var completedRead = new ValueTask<int>(Task.FromResult(7));
+        var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Task.Run(async () => resumed.TrySetResult(
+            await new CompletionScheduler.RunWhileAwaiting<int>(completedRead, scheduler)));
+
+        await Assert.That(await resumed.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(7);
+        using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.AsInteger()).IsEqualTo(42);
+        await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    }
 }

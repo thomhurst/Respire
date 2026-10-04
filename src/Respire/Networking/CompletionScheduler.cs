@@ -258,6 +258,19 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// The awaiting loop resumes independently on whichever thread completes the operation,
     /// so a continuation that blocks here never stalls it.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// If the operation completes between the caller's completion check and registration, the
+    /// socket and task sources still queue the continuation to the pool rather than run it on
+    /// this stack, so the loop resumes elsewhere and the runner still executes here.
+    /// </para>
+    /// <para>
+    /// The runner does not isolate exceptions from caller continuations, exactly as when it runs
+    /// as a pool work item: an exception escaping one surfaces through the async method
+    /// builder's suspension path, which rethrows it on the thread pool, as unhandled pool work
+    /// item exceptions are.
+    /// </para>
+    /// </remarks>
     internal readonly struct RunWhileAwaiting<T>(ValueTask<T> operation, CompletionScheduler scheduler)
         : ICriticalNotifyCompletion
     {
