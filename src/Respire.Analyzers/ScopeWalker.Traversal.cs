@@ -171,8 +171,10 @@ internal static partial class ScopeWalker
                 return (block, awaited.Span.End);
             }
             var scope = origin is null ? graph.OriginalOperation.Syntax : GetEnclosingScope(origin);
-            var capture = barrier.Ancestors().TakeWhile(node => node != scope)
+            SyntaxNode? capture = barrier.Ancestors().TakeWhile(node => node != scope)
                 .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
+            if (capture is null && semanticModel.GetOperation(barrier, cancellationToken) is IMethodReferenceOperation)
+                capture = barrier;
             if (capture is not null)
             {
                 foreach (var block in graph.Blocks)
@@ -239,7 +241,8 @@ internal static partial class ScopeWalker
             }
             if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
-                && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression)
+                && (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) || assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
+                && assignment.Right == expression)
             {
                 if (semanticModel.GetOperation(assignment, cancellationToken) is IAssignmentOperation assignmentOperation
                     && IsDiscardedReference(assignmentOperation.Target, assignmentOperation.Value, barrier))
@@ -341,9 +344,10 @@ internal static partial class ScopeWalker
         private static int TransferPosition(SyntaxNode operation) => operation switch
         {
             BaseObjectCreationExpressionSyntax { ArgumentList: { } arguments } => arguments.CloseParenToken.SpanStart,
-            // Operators have no closing call token after the last operand. Include that
-            // operand's complete evaluation, then exclude the accepting operator body.
-            BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax => operation.Span.End,
+            // Operators and assignments have no closing call token after the last operand.
+            // Include its final conversion, then exclude the accepting operator or setter body.
+            BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax
+                or AssignmentExpressionSyntax => operation.Span.End,
             _ => operation.Span.End - 1,
         };
 
@@ -500,7 +504,8 @@ internal static partial class ScopeWalker
                 && (operation.Syntax.Span.End <= firstBarrier
                     && !completionOperation
                     && !(operation.Syntax.Span.End == firstBarrier
-                        && operation is IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
+                        && operation is ISimpleAssignmentOperation
+                            or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
                     && Exceptions.MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)

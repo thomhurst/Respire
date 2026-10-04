@@ -1145,7 +1145,12 @@ public class ExceptionAwareFlowTests
     [Arguments("Action owner = delegate { result.Dispose(); };", "OutOfMemoryException", true)]
     [Arguments("Action owner = new Action(() => result.Dispose());", "OutOfMemoryException", true)]
     [Arguments("Action owner = () => result.Dispose();", "InvalidOperationException", false)]
-    public async Task CapturedOwnerWaitsForDelegateAllocation(string capture, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
+    [Arguments("Action owner = result.Dispose;", "OutOfMemoryException", true)]
+    [Arguments("Action owner = new Action(result.Dispose);", "OutOfMemoryException", true)]
+    [Arguments("Action owner = (Action)result.Dispose;", "OutOfMemoryException", true)]
+    [Arguments("Action owner = result.Dispose;", "InvalidOperationException", false)]
+    [Arguments("Action owner = result.Dispose;", "OutOfMemoryException", false, "result.Dispose();")]
+    public async Task CapturedOwnerWaitsForDelegateAllocation(string capture, string catchType, bool warning, string cleanup = "") => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
         using Respire;
@@ -1155,7 +1160,35 @@ public class ExceptionAwareFlowTests
             {
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                 try { {{capture}} }
-                catch ({{catchType}}) { }
+                catch ({{catchType}}) { {{cleanup}} }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("if (holder is not null) return;", "holder ??= result;", "OutOfMemoryException", "", true)]
+    [Arguments("if (holder is not null) return;", "holder ??= result;", "OutOfMemoryException", "result.Dispose();", false)]
+    [Arguments("if (holder is not null) return;", "holder ??= result;", "InvalidOperationException", "", false)]
+    [Arguments("holder = new object();", "holder ??= result;", "OutOfMemoryException", "", true)]
+    [Arguments("", "target.Value ??= result;", "OutOfMemoryException", "", true)]
+    [Arguments("", "buffer[index] ??= result;", "OutOfMemoryException", "", true)]
+    [Arguments("", "buffer[index] ??= result;", "IndexOutOfRangeException", "", true)]
+    [Arguments("", "holder = result;", "OutOfMemoryException", "", true)]
+    [Arguments("", "holder = result;", "OutOfMemoryException", "result.Dispose();", false)]
+    [Arguments("", "holder = result;", "InvalidOperationException", "", false)]
+    public async Task AssignmentWaitsForConversion(string setup, string assignment, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        class Holder { public object Value { get; set; } }
+        class Caller
+        {
+            async Task Run(RespireClient client, Holder target, object[] buffer, int index, object holder)
+            {
+                {{setup}}
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                try { {{assignment}} }
+                catch ({{catchType}}) { {{cleanup}} }
             }
         }
         """);
