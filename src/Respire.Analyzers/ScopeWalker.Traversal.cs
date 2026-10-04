@@ -872,7 +872,7 @@ internal static partial class ScopeWalker
         private List<ControlFlowRegion> CollectFinallyRegions(ControlFlowRegion from, ControlFlowRegion? until = null)
         {
             var finalizers = new List<ControlFlowRegion>();
-            for (var region = from; region is not null && region != until && region != graph.Root; region = region.EnclosingRegion)
+            foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, from).TakeWhile(region => region != until))
                 if (region.Kind == ControlFlowRegionKind.Try
                     && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
                     finalizers.Add(region.EnclosingRegion.NestedRegions.Last());
@@ -1022,7 +1022,7 @@ internal static partial class ScopeWalker
             }
             if (branch.Semantics == ControlFlowBranchSemantics.Rethrow)
             {
-                for (var region = branch.Source.EnclosingRegion; region is not null && region != graph.Root; region = region.EnclosingRegion)
+                foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, branch.Source.EnclosingRegion))
                 {
                     if (region.Kind == ControlFlowRegionKind.Catch)
                     {
@@ -1044,7 +1044,7 @@ internal static partial class ScopeWalker
             var candidates = new List<(ControlFlowRegion Handler, ControlFlowRegion? Filter,
                 ControlFlowRegion[] Unwind, int Continuation, bool Certain)>();
             // Handlers of a containing graph (outside a lambda or local function) cannot catch here.
-            for (var region = branch.Source.EnclosingRegion; region is not null && region != graph.Root; region = region.EnclosingRegion)
+            foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, branch.Source.EnclosingRegion))
             {
                 if (region.Kind == ControlFlowRegionKind.Try
                     && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndCatch)
