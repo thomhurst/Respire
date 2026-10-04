@@ -82,6 +82,33 @@ internal sealed class FlowConditions
                             pending.Push(graph.Blocks[handler.FirstBlockOrdinal]);
         }
 
+        // A relevant receiver can inherit its null state through earlier local copies.
+        var assignments = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
+        foreach (var block in graph.Blocks)
+            foreach (var operation in block.Operations.Concat(block.BranchValue is { } value ? [value] : []))
+                CollectAssignments(operation);
+        var relevantSymbols = new Stack<ISymbol>(_relevant);
+        while (relevantSymbols.Count != 0)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (assignments.TryGetValue(relevantSymbols.Pop(), out var sources))
+                foreach (var source in sources)
+                    if (_relevant.Add(source)) relevantSymbols.Push(source);
+        }
+
+        void CollectAssignments(IOperation operation)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation) return;
+            if (operation is ISimpleAssignmentOperation { IsRef: false } assignment
+                && Symbol(assignment.Target) is { } target && Symbol(assignment.Value) is { } source)
+            {
+                if (!assignments.TryGetValue(target, out var sources)) assignments.Add(target, sources = []);
+                sources.Add(source);
+            }
+            foreach (var child in operation.ChildOperations) CollectAssignments(child);
+        }
+
         void AddBranch(ControlFlowBranch? branch)
         {
             if (branch?.Destination is { } destination)
@@ -178,21 +205,24 @@ internal sealed class FlowConditions
     {
         if (operation is IAssignmentOperation assignment)
         {
+            var simple = assignment is ISimpleAssignmentOperation { IsRef: false };
+            var nonNull = simple && IsKnownNonNull(assignment.Value, known, values);
+            var isNull = simple && IsKnownNull(assignment.Value, known, values);
             Forget(assignment.Target, ref known, ref values);
-            if (assignment is ISimpleAssignmentOperation { IsRef: false }
-                && IsConstructedReceiver(assignment.Value)
+            if ((nonNull || isNull)
+                && assignment.Target.Type is { IsReferenceType: true } or { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
                 && Symbol(assignment.Target) is { } symbol && _relevant.Contains(symbol)
                 && !_unstable.Contains(symbol)
                 && symbol is not ILocalSymbol { RefKind: not RefKind.None }
                 && symbol is not IParameterSymbol { RefKind: not RefKind.None })
             {
-                // Construction proves non-null only after the assignment executes.
-                // Subsequent writes forget this fact through the same path-state mask.
+                // Snapshot the completed RHS before forgetting the target (including self-copies).
+                // Subsequent writes invalidate the copied fact normally.
                 var index = PredicateIndex(symbol, null, BinaryOperatorKind.Equals);
                 if (index >= 0)
                 {
                     known |= 1UL << index;
-                    values &= ~(1UL << index);
+                    values = isNull ? values | (1UL << index) : values & ~(1UL << index);
                 }
             }
         }
@@ -333,7 +363,7 @@ internal sealed class FlowConditions
         if (operation is IFlowCaptureReferenceOperation capture)
             return _capturedReceivers.TryGetValue(capture.Id, out var flag)
                 && flag != UnknownPathFlag && (known & values & flag) != 0;
-        if (IsConstructedReceiver(operation)) return true;
+        if (operation.ConstantValue is { HasValue: true, Value: not null } || IsConstructedReceiver(operation)) return true;
         if (Symbol(operation) is not { } symbol || _unstable.Contains(symbol)) return false;
         for (var index = 0; index < _predicates.Count; index++)
         {

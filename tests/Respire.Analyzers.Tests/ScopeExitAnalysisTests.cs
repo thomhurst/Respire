@@ -206,7 +206,8 @@ public class ScopeExitAnalysisTests
     [Arguments("var error = new InvalidOperationException(); error = null;", "throw error", "catch (InvalidOperationException) { }", true)]
     [Arguments("var error = new InvalidOperationException(); Reset(ref error);", "throw error", "catch (InvalidOperationException) { }", true)]
     [Arguments("var error = new InvalidOperationException(); Action reset = () => error = null; reset();", "throw error", "catch (InvalidOperationException) { }", true)]
-    [Arguments("var error = skip ? new InvalidOperationException() : null;", "throw error", "catch (InvalidOperationException) { }", true)]
+    [Arguments("var error = skip ? new InvalidOperationException() : null;", "throw error", "catch (InvalidOperationException) { }", false)]
+    [Arguments("var error = skip ? null : new InvalidOperationException();", "throw error", "catch (InvalidOperationException) { }", true)]
     [Arguments("var error = new InvalidOperationException();", "throw error", "catch (ArgumentException) { }", true)]
     public async Task ExactNullOrUnreassignedThrownValueSelectsReleaseHandler(
         string setup, string thrown, string handler, bool warning)

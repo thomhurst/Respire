@@ -32,6 +32,13 @@ public class ExceptionAwareFlowTests
     [Arguments("if (value is not null) return; value = new object();", "_ = (string)value;", "InvalidCastException", true)]
     [Arguments("if (value is not null) return; value = new object();", "_ = (int?)value;", "InvalidCastException", true)]
     [Arguments("", "_ = (int?)value;", "InvalidCastException", true)]
+    [Arguments("value = \"ready\";", "_ = ((string)value).Length;", "NullReferenceException", false)]
+    [Arguments("var source = \"ready\"; value = source;", "_ = ((string)value).Length;", "NullReferenceException", false)]
+    [Arguments("object source = value; if (source is null) return; value = source;", "_ = ((string)value).Length;", "NullReferenceException", false)]
+    [Arguments("if (value is null) return; value = value;", "_ = ((string)value).Length;", "NullReferenceException", false)]
+    [Arguments("value = \"ready\"; value = null;", "_ = ((string)value).Length;", "NullReferenceException", true)]
+    [Arguments("value = null;", "_ = (string)value;", "InvalidCastException", false)]
+    [Arguments("value = \"ready\"; value = Console.ReadLine();", "_ = ((string)value).Length;", "NullReferenceException", true)]
     public async Task GuardsExcludeImpossibleArithmeticAndCastFailures(string setup, string operation, string catchType, bool warning)
     {
         await Disposal.VerifyAsync($$"""
@@ -413,11 +420,14 @@ public class ExceptionAwareFlowTests
     [Arguments("new Holder() { Owner = result, Other = Throws() };", "result.Dispose();", false)]
     [Arguments("new Holder() { Owner = result, Other = flag ? Throws() : 0 };", "", true)]
     [Arguments("new Holder() { Owner = result, Other = flag ? 1 : 0 };", "", false)]
-    public async Task MemberInitializerWaitsForConstruction(string operation, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+    [Arguments("new Holder() { Owner = result, Other = Throws() };", "", false, "public RespireResult Owner { set { value.Dispose(); } }")]
+    [Arguments("holder = new Holder() { Owner = result, Other = Throws() };", "", false, "public RespireResult Owner { set { value.Dispose(); } }")]
+    [Arguments("var owner = new Holder() { Owner = result, Other = Throws() };", "", false, "public RespireResult Owner { set { value.Dispose(); } }")]
+    public async Task MemberInitializerWaitsForConstruction(string operation, string cleanup, bool warning, string ownerMember = "public RespireResult Owner;") => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
         using Respire;
-        class Holder { public RespireResult Owner; public int Other; }
+        class Holder { {{ownerMember}} public int Other; }
         record RecordHolder { public RespireResult Owner; public int Other; }
         class Caller
         {
@@ -624,13 +634,17 @@ public class ExceptionAwareFlowTests
     [Arguments("new Owner { { result, Throws() } }", "result.Dispose();", false)]
     [Arguments("new Owner { { (result, 0), Throws() } }", "", true)]
     [Arguments("new Owner { { (result, 0), 0 } }", "", false)]
-    public async Task CollectionInitializerWaitsForAddArguments(string creation, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
+    [Arguments("new Owner { (object)result }", "", true, "OutOfMemoryException", "struct")]
+    [Arguments("new Owner { (object)result }", "result.Dispose();", false, "OutOfMemoryException", "struct")]
+    [Arguments("new Owner { (object)result }", "", false, "InvalidOperationException", "struct")]
+    public async Task CollectionInitializerWaitsForAddArguments(string creation, string cleanup, bool warning, string catchType = "InvalidOperationException", string ownerKind = "class") => await Disposal.VerifyAsync($$"""
         using System;
         using System.Collections;
         using System.Threading.Tasks;
         using Respire;
-        class Owner : IEnumerable
+        {{ownerKind}} Owner : IEnumerable
         {
+            public void Add(object value) { }
             public void Add(RespireResult value) => value.Dispose();
             public void Add(RespireResult value, int other) => value.Dispose();
             public void Add((RespireResult, int) value, int other) => value.Item1.Dispose();
@@ -643,7 +657,7 @@ public class ExceptionAwareFlowTests
             {
                 var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
                 try { _ = {{creation}}; }
-                catch (InvalidOperationException) { {{cleanup}} }
+                catch ({{catchType}}) { {{cleanup}} }
             }
         }
         """);

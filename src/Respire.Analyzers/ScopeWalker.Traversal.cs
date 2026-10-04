@@ -29,6 +29,7 @@ internal static partial class ScopeWalker
         private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
         private readonly HashSet<(int Block, int Position)> _returnBarriers = [];
         private readonly HashSet<SyntaxNode> _completionOperations = [];
+        private readonly HashSet<SyntaxNode> _collectionTransfers = [];
         private ulong _transferFlags;
         private readonly Dictionary<INamedTypeSymbol, ulong> _initializedTypes = new(SymbolEqualityComparer.Default);
         // Interned continuations keep each finally's return destination in the search state.
@@ -198,7 +199,8 @@ internal static partial class ScopeWalker
                     AnonymousObjectMemberDeclaratorSyntax { Parent: AnonymousObjectCreationExpressionSyntax anonymous } => anonymous,
                     AssignmentExpressionSyntax { Parent: InitializerExpressionSyntax memberInitializer } member
                         when member.Right == expression && (memberInitializer.IsKind(SyntaxKind.ObjectInitializerExpression)
-                            || memberInitializer.IsKind(SyntaxKind.WithInitializerExpression)) => memberInitializer,
+                            || memberInitializer.IsKind(SyntaxKind.WithInitializerExpression))
+                            && semanticModel.GetOperation(member.Left, cancellationToken) is not IPropertyReferenceOperation { Property.SetMethod: not null } => memberInitializer,
                     BaseObjectCreationExpressionSyntax creation when creation.Initializer == expression => creation,
                     WithExpressionSyntax copy when copy.Initializer == expression => copy,
                     ExpressionElementSyntax { Parent: CollectionExpressionSyntax collection } => collection,
@@ -275,7 +277,8 @@ internal static partial class ScopeWalker
                         {
                             // Returns and local initializers transfer ownership only after
                             // the complete expression, including its final conversion.
-                            var position = returnTransfer || initializerTransfer || constructionCompletion ? call.Span.End : TransferPosition(call);
+                            var position = returnTransfer || initializerTransfer || constructionCompletion || collectionTransfer ? call.Span.End : TransferPosition(call);
+                            if (collectionTransfer) _collectionTransfers.Add(call);
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
@@ -501,7 +504,9 @@ internal static partial class ScopeWalker
             // Receiver checks, allocation, type initialization and dynamic binding precede
             // callee entry, where responsibility transfers. Callee-body failures are excluded.
             var completionOperation = _completionOperations.Contains(operation.Syntax);
-            var transferFailure = TransferPosition(operation.Syntax) == firstBarrier && !completionOperation
+            var collectionTransfer = operation is IInvocationOperation { IsImplicit: true }
+                && _collectionTransfers.Contains(operation.Syntax) && operation.Syntax.Span.End == firstBarrier;
+            var transferFailure = (TransferPosition(operation.Syntax) == firstBarrier || collectionTransfer) && !completionOperation
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
             if (!deconstructionStoresHandled && operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
@@ -521,6 +526,7 @@ internal static partial class ScopeWalker
                     && _conditions.IsKnownNull(nullableBoxing.Operand, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier
                     && !completionOperation
+                    && !collectionTransfer
                     && !(operation.Syntax.Span.End == firstBarrier
                         && operation is ISimpleAssignmentOperation
                             or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
