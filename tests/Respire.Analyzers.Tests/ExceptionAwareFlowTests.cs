@@ -494,6 +494,9 @@ public class ExceptionAwareFlowTests
     [Arguments("byte?", "_ = left / -1;", false)]
     [Arguments("int", "_ = left / -1;", true)]
     [Arguments("short", "checked { left /= -1; }", true)]
+    [Arguments("byte", "checked { left /= 2; }", false)]
+    [Arguments("ushort", "checked { left /= right; }", false)]
+    [Arguments("uint", "checked { left /= right; }", false)]
     [Arguments("int", "_ = 1 / right;", false)]
     [Arguments("byte", "_ = checked(-left);", false)]
     [Arguments("sbyte", "_ = checked(-left);", false)]
@@ -535,6 +538,29 @@ public class ExceptionAwareFlowTests
                 }
             }
             """);
+    }
+
+    [Test]
+    [Arguments("byte", "checked { value /= -1; }", "CS0031")]
+    [Arguments("byte", "checked { value /= -2; }", "CS0031")]
+    [Arguments("byte", "unchecked { value /= -1; }", "CS0031")]
+    [Arguments("ushort", "checked { value /= -1; }", "CS0031")]
+    [Arguments("char", "checked { value /= -1; }", "CS0266")]
+    [Arguments("uint", "checked { value /= -1L; }", "CS0266")]
+    public async Task UnsignedCompoundDivisionRejectsNegativeOperands(string type, string operation, string diagnosticId)
+    {
+        var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText($$"""
+            class Caller
+            {
+                static {{type}} Divide({{type}} value) { {{operation}} return value; }
+            }
+            """);
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("UnsignedDivision",
+            [tree], [Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+        var errors = compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error).ToArray();
+        await Assert.That(errors.Length).IsEqualTo(1);
+        await Assert.That(errors[0].Id).IsEqualTo(diagnosticId);
     }
 
     [Test]
