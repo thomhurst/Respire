@@ -504,7 +504,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         bool allowNamedFlushExtension = false,
         bool allowLocalAlias = false,
         SyntaxNode? before = null,
-        InvocationExpressionSyntax? origin = null,
+        SyntaxNode? origin = null,
         ImmutableHashSet<ISymbol>? aliases = null)
     {
         if (aliases?.Contains(local) == true) yield break;
@@ -538,12 +538,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             var operation = GetInspectedValue(context.SemanticModel.GetOperation(reference, context.CancellationToken));
-            if (operation?.Parent is IIsPatternOperation { Pattern: IDeclarationPatternOperation { DeclaredSymbol: ILocalSymbol alias } })
+            if (operation?.Parent is IIsPatternOperation { Pattern: IDeclarationPatternOperation { DeclaredSymbol: ILocalSymbol alias } } pattern)
             {
                 // Binding alone does not transfer ownership. Follow uses of the bound value.
                 foreach (var escape in FindEscapes(context, scope, alias, allowReassignment: true,
                     allowNamedFlushExtension: allowNamedFlushExtension, allowLocalAlias: allowLocalAlias,
-                    before: before, origin: origin, aliases: aliases))
+                    before: before, origin: pattern.Syntax, aliases: aliases))
                     yield return escape;
                 continue;
             }
@@ -666,7 +666,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         ILocalSymbol batch,
-        InvocationExpressionSyntax origin,
+        SyntaxNode origin,
         SyntaxNode flush)
         => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
             .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment

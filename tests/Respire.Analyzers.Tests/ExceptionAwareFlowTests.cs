@@ -28,7 +28,13 @@ public class ExceptionAwareFlowTests
     [Arguments("if (flag) await owner.SendAsync(); else if (owner is var alias) Take(alias);", false)]
     [Arguments("if (owner is var alias) { if (flag) Take(alias); }", true)]
     [Arguments("if (owner is var alias && alias is var copy) Take(copy);", false)]
-    public async Task BatchTransferAndFlushCoverDifferentPaths(string operation, bool warning) => await Pending.VerifyAsync($$"""
+    [Arguments("Take(alias);", true, "bool matched = owner is var alias; alias = client.CreateBatch();")]
+    [Arguments("Take(alias);", false, "bool matched = owner is var alias;")]
+    [Arguments("Take(alias);", true, "bool matched = owner is var alias; if (flag) alias = client.CreateBatch();")]
+    [Arguments("Take(copy);", true, "bool matched = owner is var alias; alias = client.CreateBatch(); bool copied = alias is var copy;")]
+    [Arguments("Take(copy);", true, "bool matched = owner is var alias; bool copied = alias is var copy; copy = client.CreateBatch();")]
+    [Arguments("Take(copy);", false, "bool matched = owner is var alias; bool copied = alias is var copy; alias = client.CreateBatch();")]
+    public async Task BatchTransferAndFlushCoverDifferentPaths(string operation, bool warning, string setup = "") => await Pending.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
         using Respire;
@@ -38,6 +44,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, bool flag)
             {
                 var owner = client.CreateBatch();
+                {{setup}}
                 var pending = owner.GetStringAsync("key");
                 {{operation}}
                 Console.WriteLine({{(warning ? "{|RESP002:pending.Result|}" : "pending.Result")}});
