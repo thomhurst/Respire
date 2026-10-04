@@ -76,6 +76,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly TimeSpan? _responseTimeout;
     private readonly TimeSpan? _commandTimeout;
     private readonly long _stalledDeliveryMilliseconds;
+    private readonly long _teardownRescueBudgetMilliseconds;
     private readonly long _commandTimeoutMilliseconds;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
@@ -216,6 +217,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _responseTimeout = options.ResponseTimeout;
         _commandTimeout = options.CommandTimeout;
         _stalledDeliveryMilliseconds = Math.Max(1L, (long)options.StalledDeliveryThreshold.TotalMilliseconds);
+        _teardownRescueBudgetMilliseconds = Math.Max(1L, (long)options.RetirementDrainFallbackTimeout.TotalMilliseconds);
         if (_commandTimeout is { } commandTimeoutValue)
         {
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
@@ -3017,10 +3019,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Replies parsed before teardown may still be queued behind a continuation that blocks
         // on one of them. Keep rescuing until the receive loop has published its final batch
         // and nothing waits. The connection is going away, so this checks at a short interval
-        // and only for as long as such replies exist.
+        // and only for as long as such replies exist. The budget keeps disposal from waiting
+        // on a replacement runner that a starved pool never starts; that runner still owns the
+        // replies and delivers them whenever it runs.
+        var teardownStarted = Environment.TickCount64;
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
-            RescueStalledDelivery(Environment.TickCount64, TeardownRescueMilliseconds);
+            var now = Environment.TickCount64;
+            if (now - teardownStarted >= _teardownRescueBudgetMilliseconds)
+            {
+                _logger?.LogWarning(
+                    "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
+                    + "finishing disposal and leaving them to the queued delivery runner.",
+                    Host, Port, _teardownRescueBudgetMilliseconds);
+                break;
+            }
+
+            RescueStalledDelivery(now, TeardownRescueMilliseconds);
             await Task.Delay(TimeSpan.FromMilliseconds(TeardownRescueMilliseconds)).ConfigureAwait(false);
         }
     }
