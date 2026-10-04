@@ -444,6 +444,9 @@ internal static partial class ScopeWalker
                 && !(ImplicitExceptionClassifier.IsFrameworkLength(exceptionSource)
                     && exceptionSource is IPropertyReferenceOperation { Instance: { } lengthReceiver }
                     && _conditions.IsKnownNonNull(lengthReceiver, known, values))
+                && !(exceptionSource is IPropertyReferenceOperation
+                    { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullableReceiver }
+                    && _conditions.IsKnownNonNull(nullableReceiver, known, values))
                 && (operation.Syntax.Span.End <= firstBarrier
                     && !(operation.Syntax.Span.End == firstBarrier
                         && operation is IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null })
