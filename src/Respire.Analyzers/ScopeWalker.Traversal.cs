@@ -166,6 +166,7 @@ internal static partial class ScopeWalker
                 ExpressionSyntax? wrapper = expression.Parent switch
                 {
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
+                    ExpressionElementSyntax { Parent: CollectionExpressionSyntax collection } => collection,
                     InitializerExpressionSyntax arrayInitializer when arrayInitializer.IsKind(SyntaxKind.ArrayInitializerExpression) => arrayInitializer,
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     ImplicitArrayCreationExpressionSyntax array when array.Initializer == expression => array,

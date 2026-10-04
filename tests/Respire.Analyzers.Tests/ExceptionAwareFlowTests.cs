@@ -42,6 +42,13 @@ public class ExceptionAwareFlowTests
     [Arguments("Take(new[] { new[] { result } }, Throws());", "InvalidOperationException", "", true)]
     [Arguments("_ = new[] { result };", "InvalidOperationException", "", true)]
     [Arguments("var owners = new[] { result };", "InvalidOperationException", "", false)]
+    [Arguments("Take([result], Throws());", "InvalidOperationException", "", true)]
+    [Arguments("Take([result, ThrowsResult()], 0);", "InvalidOperationException", "", true)]
+    [Arguments("Take([result], 0);", "InvalidOperationException", "", false)]
+    [Arguments("Take([result], 0);", "OutOfMemoryException", "", true)]
+    [Arguments("Take([result], Throws());", "InvalidOperationException", "result.Dispose();", false)]
+    [Arguments("_ = (RespireResult[])[result];", "InvalidOperationException", "", true)]
+    [Arguments("RespireResult[] owners = [result];", "InvalidOperationException", "", false)]
     public async Task ArrayInitializerWaitsForOuterTransfer(string operation, string catchType, string cleanup, bool warning) => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
