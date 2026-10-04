@@ -8,6 +8,29 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments("_ = (result, 0);", true)]
+    [Arguments("_ = (object)result;", true)]
+    [Arguments("_ = flag ? result : default;", true)]
+    [Arguments("(_, _) = (result, 0);", true)]
+    [Arguments("(_, (_, _)) = (0, (result, 0));", true)]
+    [Arguments("RespireResult owner; (owner, _) = (result, 0);", false)]
+    [Arguments("(RespireResult, int) _; _ = (result, 0);", false)]
+    [Arguments("_ = new Owner(result);", false)]
+    public async Task WrappedDiscardsDoNotTransferOwnership(string operation, bool warning) => await Disposal.VerifyAsync($$"""
+        using System.Threading.Tasks;
+        using Respire;
+        class Owner { public Owner(RespireResult result) { result.Dispose(); } }
+        class Caller
+        {
+            async Task Run(RespireClient client, bool flag)
+            {
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                {{operation}}
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("if (holder is null) return;", "Action action = holder.Method;", "NullReferenceException", false)]
     [Arguments("if (holder is null) return;", "Action action = holder.Method;", "OutOfMemoryException", true)]
     [Arguments("if (holder is null) return; holder = null;", "Action action = holder.Method;", "NullReferenceException", true)]

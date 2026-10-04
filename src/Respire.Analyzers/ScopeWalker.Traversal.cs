@@ -195,6 +195,9 @@ internal static partial class ScopeWalker
                 && expression.Parent is AssignmentExpressionSyntax assignment
                 && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression)
             {
+                if (semanticModel.GetOperation(assignment, cancellationToken) is IAssignmentOperation assignmentOperation
+                    && IsDiscardedReference(assignmentOperation.Target, assignmentOperation.Value, barrier))
+                    return (null, 0);
                 call = assignment;
                 assignmentTransfer = true;
             }
@@ -249,6 +252,20 @@ internal static partial class ScopeWalker
             foreach (var child in operation.ChildOperations)
                 if (FindDelegateCreation(child, capture) is { } found) return found;
             return null;
+        }
+
+        private bool IsDiscardedReference(IOperation target, IOperation value, SyntaxNode reference)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!value.Syntax.Span.Contains(reference.Span)) return false;
+            if (target is IDiscardOperation) return true;
+            while (value is IConversionOperation { OperatorMethod: null } conversion)
+                value = conversion.Operand;
+            if (target is ITupleOperation targets && value is ITupleOperation sources
+                && targets.Elements.Length == sources.Elements.Length)
+                for (var index = 0; index < targets.Elements.Length; index++)
+                    if (IsDiscardedReference(targets.Elements[index], sources.Elements[index], reference)) return true;
+            return false;
         }
 
         private static int TransferPosition(SyntaxNode operation) => operation switch
