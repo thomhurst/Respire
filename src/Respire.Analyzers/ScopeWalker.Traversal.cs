@@ -224,6 +224,8 @@ internal static partial class ScopeWalker
                                     candidate.Operations.Concat(candidate.BranchValue is { } branchValue ? [branchValue] : [])
                                         .Any(candidateOperation => ContainsReference(candidateOperation, reference)));
                                 var flag = _conditions.ReservePathFlag();
+                                // Barriers stop paths. Omitting an unproven barrier only adds
+                                // reachable paths, so exhaustion can retain a warning, never hide one.
                                 if (triggerBlock is null || flag == 0) return (null, 0);
                                 _transferFlags |= flag;
                                 _transferTriggers[reference] = _transferTriggers.TryGetValue(reference, out var existing) ? existing | flag : flag;

@@ -8,6 +8,34 @@ namespace Respire.Analyzers.Tests;
 public class ExceptionAwareFlowTests
 {
     [Test]
+    [Arguments(2, false, false)]
+    [Arguments(65, false, true)]
+    [Arguments(2, true, true)]
+    [Arguments(65, true, true)]
+    public async Task TransferFlagLimitRetainsWarning(int arms, bool throwingArgument, bool warning)
+    {
+        // Each selected owner reference reserves a distinct transfer flag before traversal.
+        var selections = string.Join(", ", Enumerable.Range(0, arms - 1)
+            .Select(index => $"{index} => (result, 0)").Append("_ => (result, 0)"));
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                static void Take((RespireResult, int) value, int other) => value.Item1.Dispose();
+                static int Throws() => throw new InvalidOperationException();
+                async Task Run(RespireClient client, int choice)
+                {
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    try { Take(choice switch { {{selections}} }, {{(throwingArgument ? "Throws()" : "0")}}); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("Take(_ = (result, 0));", false)]
     [Arguments("Take(_ = (result, 0), Throws());", true)]
     [Arguments("Take(flag switch { true => result, _ => result });", false)]
