@@ -251,8 +251,9 @@ only by already in-flight tokens and become collectible when those reads finish.
 
 Standardized counters include `db.system.name=redis` and `redis.client.library=Respire:<version>`.
 An invalidated key can remove multiple cached responses or none; eviction measurements count
-responses actually removed. Local writes, explicit clearing, and continuity flushes omit the
-optional reason because no standard value describes them. `GetStatistics().Evictions` retains
+responses removed by capacity limits, expiration, or server invalidation. Local writes,
+explicit clearing, and continuity flushes do not increment the standardized eviction counter.
+`GetStatistics().Evictions` retains
 its existing capacity, expiration, and flush semantics. These prerelease metric renames replace
 the old hit/miss/eviction names without dual emission.
 

@@ -910,7 +910,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly Action<CacheRemoval> _recordRemoval;
         private int _trimming;
         private long _sizeBytes;
-        private bool _retired;
+        // Read and transition only under _removalLock; Retire is the only transition.
+        private StoreState _state;
+
+        private enum StoreState { Active, Retired }
 
         public CacheStore(RespireClientSideCacheOptions options, Action<CacheRemoval> recordRemoval)
         {
@@ -926,9 +929,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             lock (_removalLock)
             {
-                if (_retired) return 0;
+                if (_state == StoreState.Retired) return 0;
                 var count = Count;
-                _retired = true;
+                _state = StoreState.Retired;
                 return count;
             }
         }
@@ -992,7 +995,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             var entry = new CacheEntry(payload, size, expiresAt);
             lock (_removalLock)
             {
-                if (_retired) return;
+                if (_state == StoreState.Retired) return;
                 if (_entries.TryGetValue(key, out var previous))
                 {
                     if (_entries.TryUpdate(key, entry, previous))
@@ -1043,7 +1046,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_dependencyLock)
             lock (_removalLock)
             {
-                if (_retired) return false;
+                if (_state == StoreState.Retired) return false;
                 if (_queries.TryGetValue(query, out var previous))
                 {
                     if (!_queries.TryUpdate(query, entry, previous))
@@ -1093,13 +1096,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_removalLock)
             {
                 _entries.TryRemove(key, out entry);
-                if (entry is not null) Interlocked.Add(ref _sizeBytes, -entry.Size);
-                reportRemoval = !_retired;
+                reportRemoval = entry is not null && AccountRemoval(entry.Size);
             }
-            if (entry is not null)
-            {
-                if (reportRemoval) removed++;
-            }
+            if (reportRemoval) removed++;
 
             lock (_dependencyLock)
             {
@@ -1114,8 +1113,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     lock (_removalLock)
                     {
                         _queries.TryRemove(query, out queryEntry);
-                        if (queryEntry is not null) Interlocked.Add(ref _sizeBytes, -queryEntry.Size);
-                        reportRemoval = !_retired;
+                        reportRemoval = queryEntry is not null && AccountRemoval(queryEntry.Size);
                     }
                     if (queryEntry is not null)
                     {
@@ -1137,8 +1135,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 {
                     return false;
                 }
-                reportRemoval = !_retired;
-                Interlocked.Add(ref _sizeBytes, -expected.Size);
+                reportRemoval = AccountRemoval(expected.Size);
             }
 
             RecordRemoval(reason, reportRemoval);
@@ -1148,6 +1145,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private void RecordRemoval(CacheRemoval reason, bool reportRemoval)
         {
             if (reportRemoval && reason is (CacheRemoval.Capacity or CacheRemoval.Expiration)) _recordRemoval(reason);
+        }
+
+        // Call under _removalLock after a successful removal, before publication can trim
+        // against stale bytes. Reporting stays outside the gates and excludes retired stores.
+        private bool AccountRemoval(long size)
+        {
+            Interlocked.Add(ref _sizeBytes, -size);
+            return _state == StoreState.Active;
         }
 
         private bool Remove(
@@ -1165,9 +1170,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     {
                         return false;
                     }
-                    reportRemoval = !_retired;
-                    // Account for removal before another publication can trim against the old size.
-                    Interlocked.Add(ref _sizeBytes, -expected.Size);
+                    reportRemoval = AccountRemoval(expected.Size);
                 }
 
                 RemoveDependencies(in query, expected.Dependencies);
