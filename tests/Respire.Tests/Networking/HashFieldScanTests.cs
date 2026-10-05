@@ -160,6 +160,8 @@ public class HashFieldScanTests
     [Arguments("*2\r\n$2\r\n-1\r\n*0\r\n")]
     [Arguments("*2\r\n$20\r\n18446744073709551616\r\n*0\r\n")]
     [Arguments("*0\r\n")]
+    [Arguments("+OK\r\n")]
+    [Arguments(":7\r\n")]
     public async Task EnumerationAndPagesRejectMalformedCursors(string reply)
     {
         var bytes = System.Text.Encoding.ASCII.GetBytes(reply);

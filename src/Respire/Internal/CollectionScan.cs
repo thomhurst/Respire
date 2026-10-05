@@ -36,8 +36,7 @@ internal static class CollectionScan
             T[] page;
             try
             {
-                cursor = ParseCursor(in reply, operation);
-                var elements = reply.AsArray();
+                var elements = ParsePage(in reply, operation, out cursor);
                 page = parsePage(in elements[1]);
             }
             finally
@@ -54,13 +53,15 @@ internal static class CollectionScan
         while (cursor != 0);
     }
 
-    internal static ulong ParseCursor(in RespValue reply, string operation)
+    internal static ReadOnlySpan<RespValue> ParsePage(in RespValue reply, string operation, out ulong cursor)
     {
-        var parts = reply.AsArray();
-        if (reply.Type != RespDataType.Array || parts.Length != 2
-            || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var cursor))
+        if (reply.Type != RespDataType.Array)
             throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
-        return cursor;
+        var parts = reply.AsArray();
+        if (parts.Length != 2
+            || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out cursor))
+            throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
+        return parts;
     }
 
     internal static RespireValue[] Arguments(

@@ -47,8 +47,7 @@ internal sealed partial class HashCommands
 
     internal static RespireHashScanPage ParseFieldsPage(in RespValue reply)
     {
-        var cursor = CollectionScan.ParseCursor(in reply, "HSCAN");
-        var parts = reply.AsArray();
+        var parts = CollectionScan.ParsePage(in reply, "HSCAN", out var cursor);
         return new(cursor, ResponseReader.StringArray(in parts[1]));
     }
 }

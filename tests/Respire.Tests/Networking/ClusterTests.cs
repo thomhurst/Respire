@@ -289,6 +289,54 @@ public class ClusterTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ReadFrom_MixedFreshAndContinuationPagesRevalidateBeforeSending(bool freshFirst, bool removeReplica)
+    {
+        byte[]? topology = null;
+        var reply = "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Volatile.Read(ref topology)
+                : command.StartsWith("HSCAN ", StringComparison.Ordinal) ? reply : null,
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        topology = ClusterTopology(primary.Port, replica.Port);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Volatile.Read(ref topology) : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        await reads.Hashes.ScanFieldsPageAsync("key");
+        ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
+        if (removeReplica) Volatile.Write(ref topology, ClusterTopologyWithoutReplicas(replica.Port));
+        using var batch = reads.CreateBatch();
+        var first = batch.Hashes.ScanFieldsPage("key", freshFirst ? 0UL : 7UL);
+        var second = batch.Hashes.ScanFieldsPage("key", freshFirst ? 7UL : 0UL);
+        if (removeReplica)
+        {
+            await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireConnectionException>();
+            await Assert.That(() => first.Result).Throws<RespireConnectionException>();
+            await Assert.That(() => second.Result).Throws<RespireConnectionException>();
+            await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("HSCAN ", StringComparison.Ordinal))).IsEqualTo(1);
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+            await Assert.That(first.Result.Cursor).IsEqualTo(7UL);
+            await Assert.That(second.Result.Cursor).IsEqualTo(7UL);
+            await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("HSCAN ", StringComparison.Ordinal)).ToArray())
+                .IsEquivalentTo(new[] { "HSCAN key 0 NOVALUES", $"HSCAN key {(freshFirst ? 0 : 7)} NOVALUES", $"HSCAN key {(freshFirst ? 7 : 0)} NOVALUES" });
+        }
+        await Assert.That(replica.ReceivedCommands).Contains("CLUSTER SLOTS");
+    }
+
+    [Test]
     public async Task ReadFrom_TouchKeepsTypedAndRawCallsOnPrimary()
     {
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply);
@@ -2365,7 +2413,8 @@ public class ClusterTests
             [],
             FakeRespServer.OkReply,
             "+QUEUED\r\n"u8.ToArray(),
-            "*1\r\n+OK\r\n"u8.ToArray(),
+            "+QUEUED\r\n"u8.ToArray(),
+            "*2\r\n+OK\r\n*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray(),
         };
         await using var primary = new FakeRespServer(primaryReplies);
         await using var replica = new FakeRespServer(FakeRespServer.OkReply);
@@ -2382,11 +2431,13 @@ public class ClusterTests
 
         await using var transaction = client.WithReadFrom(RespireReadFrom.Replica).CreateTransaction();
         var pending = transaction.Strings.Set("{tenant}key", "value");
+        var page = transaction.Hashes.ScanFieldsPage("{tenant}key");
         await transaction.CommitAsync();
 
         await Assert.That(pending.Result).IsTrue();
+        await Assert.That(page.Result.IsComplete).IsTrue();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
-            ["CLUSTER SLOTS", "MULTI", "SET {tenant}key value", "EXEC"]);
+            ["CLUSTER SLOTS", "MULTI", "SET {tenant}key value", "HSCAN {tenant}key 0 NOVALUES", "EXEC"]);
         await Assert.That(replica.ReceivedCommands).IsEmpty();
     }
 

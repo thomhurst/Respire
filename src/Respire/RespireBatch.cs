@@ -387,36 +387,13 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         CancellationToken cancellationToken)
     {
         RespireConnection connection;
+        RespireConnection? continuationConnection;
         try
         {
             if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                 slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
-            var hasCursor = false;
-            var isContinuation = false;
-            var configuredReadFrom = _client.GetBatchReadFromPolicy();
-            if (configuredReadFrom != RespireReadFrom.Primary)
-            {
-                foreach (var operation in operations)
-                {
-                    if (operation.IsCursorContinuation is not { } continuation) continue;
-                    hasCursor = true;
-                    isContinuation |= continuation;
-                }
-            }
-            // Consult the configured policy even when writes force this group onto the primary.
-            // This records fresh pages and preserves the issuing node for continuations.
-            connection = hasCursor && slot is { } cursorSlot
-                ? await _client.Core.ReadRouter.Cursors.GetClusterConnectionAsync(
-                    _client.Core.Cluster!, cursorSlot, configuredReadFrom, affinity: null, isContinuation, cancellationToken).ConfigureAwait(false)
-                : await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
-            if (hasCursor && readFrom != configuredReadFrom)
-            {
-                // A cursor pin identifies its issuing connection, not its current role.
-                // Resolve the current primary separately before allowing writes on that connection.
-                var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
-                if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer))
-                    throw new NotSupportedException("A cursor page pinned to a replica cannot share its batch group with writes. Keep cursor pages in a read-only group.");
-            }
+            (connection, continuationConnection) = await AcquireGroupConnectionsAsync(
+                slot, operations, readFrom, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -434,7 +411,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             try
             {
-                sends[i] = operations[i].StartClusterSend(_client, connection, cancellationToken);
+                var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
+                sends[i] = operations[i].StartClusterSend(_client, operationConnection, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -444,15 +422,56 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         for (var i = 0; i < operations.Count; i++)
         {
+            var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
             _ = await operations[i].CompleteClusterSendAsync(
-                    _client, connection, sends[i], readFrom, cancellationToken)
+                    _client, operationConnection, sends[i], readFrom, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    // Operations in one slot group share a pipeline and run in order. One write sends the whole
-    // group to the primary: splitting reads onto a replica would let a later read in the batch
-    // miss an earlier write to the same slot.
+    private async ValueTask<(RespireConnection Connection, RespireConnection? Continuation)> AcquireGroupConnectionsAsync(
+        int? slot, List<Op> operations, RespireReadFrom readFrom, CancellationToken cancellationToken)
+    {
+        var configuredReadFrom = _client.GetBatchReadFromPolicy();
+        var hasFreshCursor = false;
+        var hasContinuation = false;
+        if (configuredReadFrom != RespireReadFrom.Primary)
+        {
+            foreach (var operation in operations)
+            {
+                if (operation.IsCursorContinuation is not { } continuation) continue;
+                hasFreshCursor |= !continuation;
+                hasContinuation |= continuation;
+            }
+        }
+        if ((!hasFreshCursor && !hasContinuation) || slot is not { } cursorSlot)
+            return (await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false), null);
+
+        // Capture the issuing connection before a fresh scan can revalidate and replace the shared pin.
+        var cursors = _client.Core.ReadRouter.Cursors;
+        var cluster = _client.Core.Cluster!;
+        var continuationConnection = hasContinuation
+            ? await cursors.GetClusterConnectionAsync(cluster, cursorSlot, configuredReadFrom,
+                affinity: null, isContinuation: true, cancellationToken).ConfigureAwait(false)
+            : null;
+        var connection = hasFreshCursor
+            ? await cursors.GetClusterConnectionAsync(cluster, cursorSlot, configuredReadFrom,
+                affinity: null, isContinuation: false, cancellationToken).ConfigureAwait(false)
+            : continuationConnection!;
+        if (readFrom != configuredReadFrom)
+        {
+            // A cursor pin identifies its issuing connection, not its current role.
+            // Resolve the current primary separately before allowing any writes in this group.
+            var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
+            if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer)
+                || (continuationConnection is not null && !ReferenceEquals(continuationConnection.Multiplexer, primary.Multiplexer)))
+                throw new NotSupportedException("A cursor page pinned to a replica cannot share its batch group with writes. Keep cursor pages in a read-only group.");
+        }
+        return (connection, continuationConnection);
+    }
+
+    // One write sends the whole slot group through the primary pipeline in queue order:
+    // splitting reads onto a replica would let a later read miss an earlier same-slot write.
     private RespireReadFrom GetGroupReadFrom(List<Op> operations)
     {
         var policy = _client.GetBatchReadFromPolicy();
