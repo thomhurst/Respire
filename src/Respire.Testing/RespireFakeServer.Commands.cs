@@ -119,5 +119,7 @@ public sealed partial class RespireFakeServer
         ["ZREMRANGEBYSCORE"] = new(4, 4, static (server, _, args) => server.SortedSetRange(args, SortedSetRangeKind.Score, remove: true)),
         ["ZREMRANGEBYLEX"] = new(4, 4, static (server, _, args) => server.SortedSetRange(args, SortedSetRangeKind.Lex, remove: true)),
         ["ZINTERCARD"] = new(3, int.MaxValue, static (server, _, args) => server.SortedSetIntersectCount(args)),
+        ["XLEN"] = new(2, 2, static (server, _, args) => FakeReply.Integer(server.Find(args[1])?.Stream.Entries.Count ?? 0)),
+        ["XCFGSET"] = new(2, int.MaxValue, static (server, _, args) => server.StreamConfigure(args)),
     };
 }

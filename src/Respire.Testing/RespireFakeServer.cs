@@ -276,6 +276,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     {
         if (!_entries.TryGetValue(key, out var entry)) return null;
         if (entry.ExpiresAt is { } expires && expires <= Now) { DeleteEntry(key); return null; }
+        if (entry.Data is FakeStream stream) ExpireStreamIdentities(stream);
         return entry;
     }
 

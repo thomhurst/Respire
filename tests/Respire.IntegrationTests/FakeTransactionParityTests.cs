@@ -229,12 +229,17 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["LPUSH", "key", "old"] ], ["LPUSHX", "key", "new"], true),
             new([ ["LPUSH", "key", "old"] ], ["LPOP", "key"], true),
             new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMIN", "key"], true),
+            new([], ["XADD", "key", "*", "field", "value"], true),
+            new([], ["XADD", "key", "NOMKSTREAM", "*", "field", "value"], false),
+            new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "1"], false),
+            new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "100"], false),
+            new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "0"], false, Error: true),
         };
         if (useFake) AssertMutationCoverage(scenarios);
         var unsupported = new HashSet<string>(StringComparer.Ordinal);
         if (!useFake)
         {
-            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX" })
+            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX", "XCFGSET" })
             {
                 using var info = await writer.CommandAsync("COMMAND", "INFO", command);
                 if (info.AsArray()[0].IsNull) unsupported.Add(command);
@@ -308,7 +313,9 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",
             "SUNION", "SDIFF", "SINTERCARD", "LLEN", "LRANGE", "LINDEX", "LPOS", "ZCARD",
             "ZSCORE", "ZMSCORE", "ZRANK", "ZREVRANK", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE",
-            "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZINTERCARD",
+            "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZINTERCARD", "XLEN",
+            // XCFGSET changes metadata without signaling watched keys (Redis keyModified signal=0).
+            "XCFGSET",
         ];
         var commands = (System.Collections.IDictionary)typeof(RespireFakeServer)
             .GetField("Commands", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
