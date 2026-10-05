@@ -221,6 +221,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
     }
 
+    /// <summary>Creates isolated documents after the initial FT.CREATE scan finishes so each document is indexed once.</summary>
     private static async Task CreateDocumentsAsync(RespireClient client, RespireSearchClient search, string index)
     {
         await search.CreateIndexAsync(index, new()

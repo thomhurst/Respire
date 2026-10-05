@@ -11,6 +11,7 @@ namespace Respire.IntegrationTests;
 [Category(TestCategories.ProtocolIndependent)]
 public class ReplicaReadRoutingIntegrationTests
 {
+    /// <summary>Proves commands from a different trace cannot contaminate routing assertions.</summary>
     [Test]
     [NotInParallel]
     public void RouteListenerIgnoresUnrelatedCommandTraces()
@@ -35,6 +36,7 @@ public class ReplicaReadRoutingIntegrationTests
         routes["SET"].Should().ContainSingle().Which.Should().Be(new RespireEndpoint("127.0.0.1", 1234));
     }
 
+    /// <summary>Checks eligible nearest reads and primary writes on Redis and Valkey replica topologies.</summary>
     [Test]
     [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
@@ -73,6 +75,7 @@ public class ReplicaReadRoutingIntegrationTests
         (await reader.GetStringAsync("nearest-key", deadline.Token)).Should().Be("value");
     }
 
+    /// <summary>Checks that prefixed read views route catalog reads to a validated replica while writes remain primary.</summary>
     [Test]
     [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true)]
@@ -184,11 +187,12 @@ public class ReplicaReadRoutingIntegrationTests
             .Throws<RespireConnectionException>();
     }
 
+    /// <summary>Starts an independent trace so a shared test-runner trace cannot mix parallel command observations.</summary>
     private static Activity StartRoutingScope()
-        // Do not inherit a test-runner trace shared with other tests or background commands.
         => new Activity("routing-test").SetIdFormat(ActivityIdFormat.W3C)
             .SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded).Start();
 
+    /// <summary>Collects command endpoints only from the specified routing test trace.</summary>
     private static ActivityListener Listen(ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>> routes, ActivityTraceId traceId)
     {
         var listener = new ActivityListener

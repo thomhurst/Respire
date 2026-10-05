@@ -18,14 +18,14 @@ from every measured method. The disabled baseline copies the raw bytes into the 
 kind of destination without framing or invoking a codec. This baseline isolates the
 incremental transformation cost; it is not a complete client-operation benchmark.
 
-The matrix contains 64-byte and 16 KiB values, each with either repeated ASCII record
+The matrix contains 64-byte, 1 KiB, and 16 KiB values, each with either repeated ASCII record
 text or pseudorandom bytes generated with seed 527. The source records a SHA-256 digest
 of every input. Repeated text models high redundancy; random bytes model low redundancy,
 not a universal distribution of application data. The two compression thresholds are
 0 (try compression even for small values) and the default 1 KiB. Raw cases repeat across
 threshold groups so each group has a measured baseline; raw behavior has no threshold.
 
-Each direction has 40 cases: five implementations, two sizes, two patterns, and two
+Each direction has 60 cases: five implementations, three sizes, two patterns, and two
 thresholds. Encode and decode run in separate jobs on .NET 8 and .NET 10. Codec options
 keep the default 8 MiB decoded-size ceiling. All output capacity is allocated during
 setup and reused with `ResetWrittenCount`, which does not clear the previous output.
@@ -44,7 +44,7 @@ They do not describe the separately allocating array-returning codec APIs.
 The repository's **Value codec benchmarks** Actions workflow runs only this fixture.
 Run it manually with `workflow_dispatch`, or add the `benchmark-value-codecs` label to
 a pull request that changes the codec or benchmark paths. Full measurements are opt-in
-because all four runtime/direction jobs can take up to 35 minutes each.
+because all four runtime/direction jobs can take up to 50 minutes each.
 Each job first performs a Dry validation, then one representative Brotli case with the
 Default job, then the complete directional matrix with two Default-job launches.
 Warmup and measurement iteration counts remain BenchmarkDotNet's adaptive defaults;
@@ -73,6 +73,9 @@ RESP bulk-string bytes additionally include `$length\r\n` and trailing `\r\n`.
 Neither count includes command/key bytes, Redis object overhead, replication, or TLS.
 
 ## Measured trade-offs (2026-09-30)
+
+These historical measurements predate context pooling in the Zstandard codec and
+the addition of 1 KiB cases. They describe the recorded revision, not current costs.
 
 [Run 36702369606](https://github.com/thomhurst/Respire/actions/runs/36702369606) measured revision
 `cbe996aad493afc41357ee78e75380c06a602738`. All four jobs passed: 40 cases each,
