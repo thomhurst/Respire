@@ -1,32 +1,28 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Respire.Commands;
-using Respire.Networking;
-using Respire.Protocol;
 
 namespace Respire.HealthChecks;
 
 /// <summary>Checks Redis through an existing client or the active client of an existing failover group.</summary>
 /// <remarks>
-/// This check does not own or dispose clients. RespireClient probes reuse existing command connections.
+/// This check does not own or dispose clients. IRespireHealthProbe implementations reuse existing command connections.
 /// Other IRespireClient implementations are probed through PingAsync when IsConnected is true;
-/// their implementation controls connection creation and cancellation handling.
+/// their implementation controls connection creation. Probe waits are bounded even if asynchronous work ignores cancellation.
 /// </remarks>
 public sealed class RespireHealthCheck : IHealthCheck
 {
-    private const string AllNodesUnsupported = "All-node probes require a RespireClient with an owned routing snapshot.";
+    private const string AllNodesUnsupported = "All-node probes require a client implementing IRespireHealthProbe.";
     private readonly IRespireClient? _client;
     private readonly RespireFailoverGroup? _group;
     private readonly RespireHealthCheckOptions _options;
 
     /// <summary>Creates a health check for an existing client.</summary>
-    /// <exception cref="NotSupportedException">All-node probing is requested for a custom client.</exception>
+    /// <exception cref="NotSupportedException">All-node probing is requested for a client without IRespireHealthProbe.</exception>
     public RespireHealthCheck(IRespireClient client, RespireHealthCheckOptions? options = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _options = options ?? new();
         _options.Validate();
-        if (_options.ProbeAllNodes && client is not RespireClient)
+        if (_options.ProbeAllNodes && client is not IRespireHealthProbe)
             throw new NotSupportedException(AllNodesUnsupported);
     }
 
@@ -60,15 +56,18 @@ public sealed class RespireHealthCheck : IHealthCheck
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(_options.ProbeTimeout);
-            using var capacity = new SemaphoreSlim(_options.MaxConcurrentProbes);
             var errors = new List<Exception>();
             RespireNodeHealth[] nodes;
-            if (client is RespireClient concrete)
+            if (client is IRespireHealthProbe probe)
             {
-                var targets = concrete.CaptureHealthConnections(_options.ProbeAllNodes);
-                var results = await Task.WhenAll(targets.Select(target => ProbeAsync(
-                    target.Endpoint, target.Connection, capacity, deadline.Token))).ConfigureAwait(false);
-                nodes = results.Select(result => result.Node).ToArray();
+                var results = await probe.ProbeHealthAsync(new()
+                {
+                    ProbeAllNodes = _options.ProbeAllNodes,
+                    MaxConcurrentProbes = _options.MaxConcurrentProbes,
+                    Timeout = _options.ProbeTimeout,
+                }, deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
+                nodes = results.Select(result => new RespireNodeHealth(result.Endpoint, result.IsConnected,
+                    result.Latency, result.Error?.GetType().Name)).ToArray();
                 errors.AddRange(results.Where(result => result.Error is not null).Select(result => result.Error!));
             }
             else
@@ -77,7 +76,7 @@ public sealed class RespireHealthCheck : IHealthCheck
                     throw new NotSupportedException(AllNodesUnsupported);
                 if (!client.IsConnected)
                     throw new RespireConnectionException("The existing Respire client is not connected.");
-                var latency = await client.PingAsync(deadline.Token).ConfigureAwait(false);
+                var latency = await client.PingAsync(deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
                 nodes = [new(client.Endpoint, true, latency, null)];
             }
             data["nodes"] = nodes;
@@ -103,35 +102,6 @@ public sealed class RespireHealthCheck : IHealthCheck
         catch (Exception error)
         {
             return new(context.Registration.FailureStatus, "Respire health probe failed.", error, data);
-        }
-    }
-
-    private static async Task<(RespireNodeHealth Node, Exception? Error)> ProbeAsync(
-        RespireEndpoint endpoint, RespireConnection? connection,
-        SemaphoreSlim capacity, CancellationToken cancellationToken)
-    {
-        var connected = connection?.IsAcceptingCommands == true;
-        var entered = false;
-        try
-        {
-            if (!connected)
-                throw new RespireConnectionException("The node has no existing usable command connection.");
-            await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
-            entered = true;
-            var started = Stopwatch.GetTimestamp();
-            using var reply = await connection!.SendAsync(new RawCommand(RespCommands.Ping),
-                cancellationToken, commandName: "PING", pinToConnection: true).ConfigureAwait(false);
-            reply.ThrowIfError();
-            if (reply.AsString() != "PONG") throw new RespireProtocolException("PING did not return PONG.");
-            return (new(endpoint, true, Stopwatch.GetElapsedTime(started), null), null);
-        }
-        catch (Exception error)
-        {
-            return (new(endpoint, connected, null, error.GetType().Name), error);
-        }
-        finally
-        {
-            if (entered) capacity.Release();
         }
     }
 }
