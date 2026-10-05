@@ -9,6 +9,24 @@ public sealed class Redis810StreamReadContainer() : StandaloneRedisTestContainer
 public class StreamReadLimitIntegrationTests(Redis810StreamReadContainer fixture)
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task AcknowledgingAbsentGroupMatchesRedis(int protocol)
+    {
+        await using var fake = new Respire.Testing.RespireFakeServer();
+        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var redisClient = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
+            with { Protocol = (RespProtocol)protocol });
+        var key = $"ack-absent:{Guid.NewGuid():N}";
+        foreach (var client in new[] { fakeClient, redisClient })
+        {
+            (await client.Streams.AcknowledgeAsync(key, "absent", "1-0")).Should().Be(0);
+            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("field", "value"));
+            (await client.Streams.AcknowledgeAsync(key, "absent", "1-0")).Should().Be(0);
+        }
+    }
+
+    [Test]
     [Arguments(2, false)]
     [Arguments(3, false)]
     [Arguments(2, true)]

@@ -183,13 +183,13 @@ public sealed partial class RespireFakeServer
         StreamRequest request;
         lock (_gate)
         {
-            if (connection.Transaction is not null) return ExecuteLocked(connection, args, scope);
+            if (connection.Transaction is not null) return ExecuteLocked(connection, args, scope, out _);
             try { request = ParseStreamRequest(args); }
             catch (Exception error) when (error is FormatException or OverflowException)
             {
-                return ExecuteLocked(connection, args, scope);
+                return ExecuteLocked(connection, args, scope, out _);
             }
-            if (request.Block is null) return ExecuteLocked(connection, args, scope);
+            if (request.Block is null) return ExecuteLocked(connection, args, scope, out _);
             // Resolve $ once for the whole blocking call. Retrying after a wake must not skip new entries.
             args = args.ToArray();
             for (var i = 0; i < request.Ids.Length; i++)
@@ -201,7 +201,7 @@ public sealed partial class RespireFakeServer
                     var last = Find(request.Keys[i])?.Stream.Last ?? RespireStreamId.Beginning;
                     args[args.Length - request.Ids.Length + i] = Encoding.UTF8.GetBytes(last.ToString());
                 }
-                catch (WrongTypeException) { return ExecuteLocked(connection, args, scope); }
+                catch (WrongTypeException) { return ExecuteLocked(connection, args, scope, out _); }
                 catch { connection.Failed = true; throw; }
             }
         }
