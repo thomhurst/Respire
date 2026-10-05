@@ -1635,14 +1635,14 @@ public sealed partial class RespireClient : IRespireClient
                 "MGET",
                 new CmdN(Verbs.MGet, MapKeys(keys)),
                 cancellationToken,
-                this,
-                (RespireClient client, in RespValue response) =>
+                (Client: this, Converter: converter),
+                static ((RespireClient Client, ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
                 {
                     var values = response.AsArray();
                     var result = new TResult[values.Length];
                     for (var i = 0; i < values.Length; i++)
                     {
-                        result[i] = converter(client, in values[i]);
+                        result[i] = state.Converter(state.Client, in values[i]);
                     }
 
                     return result;
@@ -1662,16 +1662,16 @@ public sealed partial class RespireClient : IRespireClient
 
             return ConvertResponseAsync(
                 "MGET",
-                new CmdN(Verbs.MGet, arguments),
+                new MGetCommand(arguments, clusterSlot),
                 cancellationToken,
-                this,
-                (RespireClient client, in RespValue response) =>
+                (Client: this, Converter: converter),
+                static ((RespireClient Client, ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
                 {
                     var values = response.AsArray();
                     var converted = new TResult[values.Length];
                     for (var i = 0; i < values.Length; i++)
                     {
-                        converted[i] = converter(client, in values[i]);
+                        converted[i] = state.Converter(state.Client, in values[i]);
                     }
 
                     return converted;
@@ -1742,7 +1742,8 @@ public sealed partial class RespireClient : IRespireClient
                 cancellationToken,
                 converter,
                 allKeys,
-                generation);
+                generation,
+                cachedClusterSlot);
     }
 
     // Retirement is read last: Invalidate retires the still-current generation before it
@@ -1850,10 +1851,11 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter,
         RespireKey[]? allKeys,
-        SentinelRouter.Generation? generation)
+        SentinelRouter.Generation? generation,
+        int? clusterSlot)
     {
         var fetchedResult = await (cache.CoalesceConcurrentMisses
-            ? GetManySharedAndCacheAsync(missingKeys, result, missingIndexes, missingCount, cache, cancellationToken, converter)
+            ? GetManySharedAndCacheAsync(missingKeys, result, missingIndexes, missingCount, cache, cancellationToken, converter, clusterSlot)
             : FetchManyAndCacheAsync(missingKeys, missingCount, cache, cancellationToken,
                 (Client: this, Result: result, Indexes: missingIndexes, Converter: converter),
                 static ((RespireClient Client, TResult[] Result, int[] Indexes, ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
@@ -1862,7 +1864,7 @@ public sealed partial class RespireClient : IRespireClient
                     for (var index = 0; index < values.Length; index++)
                         state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
                     return state.Result;
-                })).ConfigureAwait(false);
+                }, clusterSlot: clusterSlot)).ConfigureAwait(false);
 
         return allKeys is null || IsCacheGenerationCurrent(generation)
             ? fetchedResult
@@ -1904,16 +1906,16 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask<TResult[]> GetManySharedAndCacheAsync<TResult>(
         RespireKey[] missingKeys, TResult[] result, int[] missingIndexes, int missingCount,
         ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
-        ResponseConverter<RespireClient, TResult> converter)
+        ResponseConverter<RespireClient, TResult> converter, int? clusterSlot = null)
     {
         var identityArguments = new RespireValue[missingCount];
         for (var i = 0; i < missingCount; i++) identityArguments[i] = missingKeys[i].AsValue();
         var identity = new ClientCacheCommandKey("MGET", identityArguments);
         using var response = await cache.CoalesceReadAsync(
-            identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache),
+            identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache, Slot: clusterSlot),
             static (state, token) => state.Client.FetchManyAndCacheAsync(
                 state.Keys, state.Count, state.Cache, token, state.Client,
-                static (RespireClient _, in RespValue value) => value, transferResponse: true), cancellationToken).ConfigureAwait(false);
+                static (RespireClient _, in RespValue value) => value, transferResponse: true, clusterSlot: state.Slot), cancellationToken).ConfigureAwait(false);
         var values = response.AsArray();
         if (values.Length != missingCount)
             throw new RespireProtocolException($"MGET returned {values.Length} values for {missingCount} keys.");
@@ -1928,7 +1930,7 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask<TResult> FetchManyAndCacheAsync<TState, TResult>(
         RespireKey[] missingKeys, int missingCount, ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken, TState state, ResponseConverter<TState, TResult> converter,
-        bool transferResponse = false)
+        bool transferResponse = false, int? clusterSlot = null)
     {
         var generation = _core.Sentinel?.Current;
         if (cache.CoalesceConcurrentMisses && cache.TryPeek(in missingKeys[0], out var firstCached))
@@ -1977,7 +1979,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             response = await SendTrackedAsync(
-                "MGET", new CmdN(Verbs.MGet, arguments), cancellationToken, onRedirect,
+                "MGET", new MGetCommand(arguments, clusterSlot), cancellationToken, onRedirect,
                 track: Array.Exists(tokens, static token => token.State.CanCache)).ConfigureAwait(false);
             var values = response.AsArray();
             if (values.Length != missingCount)
