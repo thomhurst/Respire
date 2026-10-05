@@ -371,10 +371,17 @@ internal static class RespireTelemetry
         return selection.Includes(RespireMetricGroups.Command) && OperationDuration.Enabled && selection.IncludesCommand(operation);
     }
 
-    internal static long CaptureStartTimestamp(string operation) => IsOperationEnabled(operation) ? Stopwatch.GetTimestamp() : 0;
+    /// <summary>Retains metric eligibility and timing before connection acquisition can await.</summary>
+    internal readonly record struct OperationStart(long Timestamp, bool MetricEnabled);
 
-    internal static long CaptureBatchStartTimestamp<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
-        => Source.HasListeners() || IsBatchMetricEnabled(prefix, operations, operationName) ? Stopwatch.GetTimestamp() : 0;
+    internal static OperationStart CaptureOperationStart(string operation)
+        => CaptureOperationStart(IsCommandMetricEnabled(operation));
+
+    internal static OperationStart CaptureBatchStart<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
+        => CaptureOperationStart(IsBatchMetricEnabled(prefix, operations, operationName));
+
+    private static OperationStart CaptureOperationStart(bool metricEnabled)
+        => new(Source.HasListeners() || metricEnabled ? Stopwatch.GetTimestamp() : 0, metricEnabled);
 
     private static bool IsBatchMetricEnabled<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
     {
@@ -388,22 +395,22 @@ internal static class RespireTelemetry
     }
 
     internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
-        Func<T, string> operationName, int database, long started, Exception error, RespireEndpoint? endpoint = null)
+        Func<T, string> operationName, int database, OperationStart started, Exception error, RespireEndpoint? endpoint = null)
     {
-        if (started == 0) return;
-        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        if (started.Timestamp == 0) return;
+        var metricEnabled = started.MetricEnabled;
         if (!Source.HasListeners() && !metricEnabled) return;
         var operation = BatchOperationName(prefix, operations, operationName);
         int? batchSize = operations.Count == 1 ? null : operations.Count;
         StartOperationCore(operation, endpoint?.Host, endpoint?.Port ?? DefaultRedisPort, database,
-            batchSize, null, started, metricEnabled).Complete(operation, endpoint?.Host,
+            batchSize, null, started.Timestamp, metricEnabled).Complete(operation, endpoint?.Host,
                 endpoint?.Port ?? DefaultRedisPort, database, error: error, batchSize: batchSize);
     }
 
-    internal static void RecordUnroutedFailure(string operation, int database, long started,
+    internal static void RecordUnroutedFailure(string operation, int database, OperationStart started,
         Exception error, string? storedProcedureName = null, int? batchSize = null, RespireEndpoint? endpoint = null)
     {
-        if (started == 0) return;
+        if (started.Timestamp == 0) return;
         // No data connection was acquired. Use an endpoint only when the caller can identify
         // the intended server; never identify a Sentinel seed or historical generation.
         var host = endpoint?.Host;
@@ -440,9 +447,9 @@ internal static class RespireTelemetry
         int database,
         int? batchSize = null,
         string? storedProcedureName = null,
-        long started = 0)
+        OperationStart? started = null)
         => StartOperationCore(operation, host, port, database, batchSize, storedProcedureName,
-            started, IsCommandMetricEnabled(operation));
+            started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation));
 
     private static OperationScope StartOperationCore(string operation, string? host, int port, int database,
         int? batchSize, string? storedProcedureName, long started, bool metricEnabled)
@@ -498,9 +505,9 @@ internal static class RespireTelemetry
 
     public static OperationScope StartBatchOperation<T>(
         string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
-        int database, out string operation, long started = 0)
+        int database, out string operation, OperationStart? started = null)
     {
-        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
         if (!Source.HasListeners() && !metricEnabled)
         {
             operation = prefix;
@@ -509,7 +516,7 @@ internal static class RespireTelemetry
 
         operation = BatchOperationName(prefix, operations, operationName);
         return StartOperationCore(operation, null, DefaultRedisPort, database,
-            operations.Count == 1 ? null : operations.Count, null, started, metricEnabled);
+            operations.Count == 1 ? null : operations.Count, null, started?.Timestamp ?? 0, metricEnabled);
     }
 
     public static OperationScope StartBatchOperation<T>(
@@ -520,9 +527,9 @@ internal static class RespireTelemetry
         int port,
         int database,
         out string operation,
-        long started = 0)
+        OperationStart? started = null)
     {
-        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
         if (!Source.HasListeners() && !metricEnabled)
         {
             operation = prefix;
@@ -536,7 +543,7 @@ internal static class RespireTelemetry
             port,
             database,
             operations.Count == 1 ? null : operations.Count,
-            null, started, metricEnabled);
+            null, started?.Timestamp ?? 0, metricEnabled);
     }
 
     private static string BatchOperationName<T>(

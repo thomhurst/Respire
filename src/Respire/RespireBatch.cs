@@ -221,7 +221,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
-        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureBatchStartTimestamp("PIPELINE", _ops, static op => op.Operation);
+        var sentinelStarted = core.Sentinel is null ? default : RespireTelemetry.CaptureBatchStart("PIPELINE", _ops, static op => op.Operation);
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "PIPELINE",
             _ops,

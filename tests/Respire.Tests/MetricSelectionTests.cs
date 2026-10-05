@@ -25,7 +25,7 @@ public class MetricSelectionTests
         await Assert.That(capture.Items.Count(item => item.Name.StartsWith("redis.", StringComparison.Ordinal))).IsEqualTo(2);
         await Assert.That(capture.Items.Any(item => item.Name == "db.client.operation.duration")).IsFalse();
         await Assert.That(capture.Items.Any(item => item.Name == "respire.pubsub.delivery.gaps")).IsTrue();
-        await Assert.That(RespireTelemetry.CaptureStartTimestamp("GET")).IsEqualTo(0L);
+        await Assert.That(RespireTelemetry.CaptureOperationStart("GET").Timestamp).IsEqualTo(0L);
     }
 
     [Test]
@@ -224,14 +224,14 @@ public class MetricSelectionTests
         using var capture = new Capture();
         foreach (var commands in new[] { new[] { "GET" }, new[] { "GET", "GET" }, new[] { "GET", "SET" }, Array.Empty<string>() })
         {
-            var started = RespireTelemetry.CaptureBatchStartTimestamp(prefix, commands, static command => command);
-            await Assert.That(started == 0).IsEqualTo(commands.Contains("SET"));
+            var started = RespireTelemetry.CaptureBatchStart(prefix, commands, static command => command);
+            await Assert.That(started.Timestamp == 0).IsEqualTo(commands.Contains("SET"));
             var scope = RespireTelemetry.StartBatchOperation(prefix, commands, static command => command, 0, out var operation, started);
             scope.Complete(operation, null, 6379, 0, batchSize: commands.Length == 1 ? null : commands.Length);
         }
         await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(3);
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Command, CommandBlockList = [prefix] });
-        await Assert.That(RespireTelemetry.CaptureBatchStartTimestamp(prefix, Array.Empty<string>(), static command => command)).IsEqualTo(0L);
+        await Assert.That(RespireTelemetry.CaptureBatchStart(prefix, Array.Empty<string>(), static command => command).Timestamp).IsEqualTo(0L);
     }
 
     [Test]
@@ -244,6 +244,111 @@ public class MetricSelectionTests
         selected.Complete("GET", "metric.example", 6379, 0);
         RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0).Complete("GET", "metric.example", 6379, 0);
         await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("operation")]
+    [Arguments("PIPELINE")]
+    [Arguments("MULTI")]
+    [Arguments("WAIT")]
+    [Arguments("unrouted-operation")]
+    [Arguments("unrouted-batch")]
+    public async Task CapturedSelectionSurvivesConfigurationChangesBeforeScopeCreation(string kind)
+    {
+        foreach (var trace in new[] { false, true })
+        foreach (var enabled in new[] { false, true })
+        foreach (var filter in new[] { false, true })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = filter || enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+                CommandBlockList = filter && !enabled ? ["GET"] : [],
+            });
+            using var capture = new Capture(trace);
+            string[] commands = ["GET", "GET"];
+            var compound = kind is not ("operation" or "unrouted-operation");
+            var prefix = kind == "unrouted-batch" ? "PIPELINE" : kind;
+            var started = compound
+                ? RespireTelemetry.CaptureBatchStart(prefix, commands, static command => command)
+                : RespireTelemetry.CaptureOperationStart("GET");
+            RespireMetrics.Configure(new()
+            {
+                Groups = filter || !enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+                CommandBlockList = filter && enabled ? ["GET"] : [],
+            });
+            if (kind == "unrouted-operation")
+                RespireTelemetry.RecordUnroutedFailure("GET", 0, started, DisabledError);
+            else if (kind == "unrouted-batch")
+                RespireTelemetry.RecordUnroutedBatchFailure(prefix, commands, static command => command, 0, started, DisabledError);
+            else if (compound)
+                RespireTelemetry.StartBatchOperation(prefix, commands, static command => command, "metric.example", 6379, 0,
+                    out var operation, started).Complete(operation, "metric.example", 6379, 0, batchSize: commands.Length);
+            else
+                RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0, started: started)
+                    .Complete("GET", "metric.example", 6379, 0);
+            await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(enabled ? 1 : 0);
+            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+        }
+    }
+
+    [Test]
+    [Arguments("blocking", false)]
+    [Arguments("blocking", true)]
+    [Arguments("stream-upload", false)]
+    [Arguments("stream-upload", true)]
+    [Arguments("durability", false)]
+    [Arguments("durability", true)]
+    public async Task DedicatedConnectionAcquisitionRetainsMetricSelection(string kind, bool failHandshake)
+    {
+        foreach (var enabled in new[] { false, true })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+            });
+            await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Protocol = RespProtocol.Resp2,
+                Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, ClientName = "metric-selection",
+            });
+            var acquisitions = 0;
+            server.ReplyOverride = (id, command) =>
+            {
+                if (id > 0 && command == "CLIENT SETNAME metric-selection")
+                {
+                    Interlocked.Increment(ref acquisitions);
+                    RespireMetrics.Configure(new() { Groups = enabled ? RespireMetricGroups.None : RespireMetricGroups.Command });
+                    return failHandshake ? "-ERR acquisition failed\r\n"u8.ToArray() : FakeRespServer.OkReply;
+                }
+                return command.StartsWith("BLPOP ", StringComparison.Ordinal) ? "*-1\r\n"u8.ToArray()
+                    : command.StartsWith("WAIT ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
+            };
+            using var capture = new Capture();
+            if (failHandshake)
+                await Assert.That(Execute).Throws<RespireConnectionException>();
+            else
+                await Execute();
+            await Assert.That(acquisitions).IsEqualTo(1);
+            await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(enabled ? 1 : 0);
+
+            async Task Execute()
+            {
+                if (kind == "blocking")
+                    await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan);
+                else if (kind == "stream-upload")
+                {
+                    using var stream = new MemoryStream("private-payload"u8.ToArray());
+                    await client.Strings.SetAsync("private-key", stream, stream.Length);
+                }
+                else
+                {
+                    using var batch = client.CreateBatch();
+                    _ = batch.Set("private-key", "private-payload");
+                    await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+                }
+            }
+        }
     }
 
     [Test]
@@ -296,13 +401,13 @@ public class MetricSelectionTests
             RespireTelemetry.RecordCacheRequest(true);
             RespireTelemetry.RecordCacheEvictions(1, "ttl");
             RespireTelemetry.RecordMaintenanceNotification("metric.example", 6379, "MOVING");
-            var started = RespireTelemetry.CaptureStartTimestamp("GET");
+            var started = RespireTelemetry.CaptureOperationStart("GET");
             RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0, started: started)
                 .Complete("GET", "metric.example", 6379, 0);
-            var batchStarted = RespireTelemetry.CaptureBatchStartTimestamp("PIPELINE", commands, static command => command);
+            var batchStarted = RespireTelemetry.CaptureBatchStart("PIPELINE", commands, static command => command);
             RespireTelemetry.StartBatchOperation("PIPELINE", commands, static command => command, 0, out var operation, batchStarted)
                 .Complete(operation, null, 6379, 0);
-            RespireTelemetry.RecordUnroutedBatchFailure("MULTI", commands, static command => command, 0, 1, DisabledError);
+            RespireTelemetry.RecordUnroutedBatchFailure("MULTI", commands, static command => command, 0, new(1, false), DisabledError);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }

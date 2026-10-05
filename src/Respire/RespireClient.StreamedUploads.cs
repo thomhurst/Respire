@@ -57,7 +57,7 @@ public sealed partial class RespireClient
                     .ConfigureAwait(false);
             }
 
-            var started = RespireTelemetry.CaptureStartTimestamp(operation);
+            var started = RespireTelemetry.CaptureOperationStart(operation);
             RespireTelemetry.OperationScope telemetry = default;
             var telemetryStarted = false;
             RespireConnection? connection = null;

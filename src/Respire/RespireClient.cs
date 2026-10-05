@@ -3533,7 +3533,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            var started = RespireTelemetry.CaptureStartTimestamp(operation);
+            var started = RespireTelemetry.CaptureOperationStart(operation);
             RespireTelemetry.OperationScope telemetry = default;
             var telemetryStarted = false;
             RespireConnection? connection = null;
@@ -4078,7 +4078,7 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
-        var started = RespireTelemetry.CaptureStartTimestamp(script.EvalShaOperation);
+        var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
         var telemetry = default(RespireTelemetry.OperationScope);
         RespireConnection? connection = null;
         try

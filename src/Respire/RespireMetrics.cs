@@ -43,7 +43,8 @@ public sealed record RespireMetricsOptions
 
 /// <summary>Selects Redis metrics for every Respire client in the process, independently of tracing.</summary>
 /// <remarks>Respire does not create or own an OpenTelemetry provider. Configure is atomic; in-flight
-/// operations retain their selection at start. Respire-specific instruments are unaffected.</remarks>
+/// operations retain their selection when telemetry starts, including selection captured before
+/// connection acquisition. Respire-specific instruments are unaffected.</remarks>
 public static class RespireMetrics
 {
     private static Selection _selection = new(new());

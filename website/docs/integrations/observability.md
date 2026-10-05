@@ -54,8 +54,10 @@ RespireMetrics.Configure(new RespireMetricsOptions
 
 Configure before creating clients or attaching exporters. Respire validates and copies
 both lists; mutating the supplied collections or `RespireMetrics.Configuration` cannot
-alter the active selection. A replacement is atomic and affects newly created operation
-scopes. An already selected scope can finish after replacement. Configuration does not
+alter the active selection. A replacement is atomic and affects newly started telemetry.
+An operation retains its selection when telemetry starts. Paths that capture selection before
+connection acquisition retain it through the wait and through acquisition failure. An already
+selected operation can finish after replacement. Configuration does not
 create or own an OpenTelemetry provider, meter listener, exporter, or tracing listener.
 There is no client-specific override because the meter is shared by the process.
 
