@@ -1,0 +1,47 @@
+name: Run samples
+description: Runs the prebuilt public API samples and verifies their scenarios executed.
+
+inputs:
+  framework:
+    description: Target framework the samples were built for.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run testing package sample
+      shell: bash
+      run: |
+        for suite in FakeTests ContainerTests; do
+          dotnet run --project samples/Respire.Samples.Testing -c Release -f ${{ inputs.framework }} --no-build -- \
+            --treenode-filter "/*/*/$suite/*" \
+            --results-directory "$GITHUB_WORKSPACE/SampleTestResults" \
+            --report-trx \
+            --report-trx-filename "testing-sample-$suite-${{ inputs.framework }}.trx"
+        done
+
+    - name: Verify sample scenarios executed
+      shell: python
+      run: |
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+        for suite, minimum in (("FakeTests", 8), ("ContainerTests", 4)):
+            report = Path(f"SampleTestResults/testing-sample-{suite}-${{ inputs.framework }}.trx")
+            assert report.is_file(), f"Missing sample test report: {report}"
+            counters = ET.parse(report).getroot().find(".//{*}Counters")
+            assert counters is not None, f"{report} has no counters"
+            executed = int(counters.attrib["executed"])
+            assert executed >= minimum, f"{suite}: expected at least {minimum} executed scenarios; got {executed}"
+            print(f"{suite}: verified {executed} executed scenarios (minimum {minimum}).")
+
+    - name: Upload sample test reports
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: testing-sample-${{ inputs.framework }}
+        path: SampleTestResults/
+        if-no-files-found: error
+
+    - name: Run Azure credential sample without connecting
+      shell: bash
+      run: dotnet run --project samples/Respire.Samples.Azure -c Release -f ${{ inputs.framework }} --no-build

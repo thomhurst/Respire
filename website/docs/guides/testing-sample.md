@@ -27,7 +27,7 @@ dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --
 ```
 
 Use `-f net8.0` for .NET 8. Omit the filter to run all 12 cases, requiring Docker.
-The sample workflow runs both suites on both frameworks and retains test reports.
+The CI workflow runs both suites on both frameworks and retains test reports.
 Container startup errors fail the run rather than silently skipping integration coverage.
 
 Each case owns its server and clients. Clients and subscriptions are disposed first; fixture

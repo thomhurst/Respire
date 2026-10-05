@@ -1,5 +1,11 @@
 name: CI
 
+# The single PR test workflow. Each job builds only the projects it runs, for one framework;
+# the Modular Pipeline workflow compiles the whole solution for every framework and verifies the packages.
+#   - net10.0 runs the full suite (RESP3), plus the integration suites again on RESP2.
+#   - net8.0 runs a smoke set: the framework-conditional code paths, the fake-server
+#     client path, and the public samples, including one against a real Redis container.
+
 on:
   workflow_dispatch:
   push:
@@ -14,19 +20,193 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
+permissions:
+  contents: read
+  checks: write
+
 concurrency:
   # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  verify-command-catalog:
-    name: Verify Command Catalog
+  build-and-test-net10:
+    # The name is a required status check.
+    name: Build and Test (net10.0)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RESPIRE_TEST_PROTOCOL: '3'
+      DOCKER_HOST: unix:///var/run/docker.sock
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build
+        run: |
+          for project in \
+            tests/Respire.Tests \
+            tests/Respire.Analyzers.Tests \
+            tests/Respire.IntegrationTests \
+            tests/Respire.Coordination.Tests \
+            tests/Respire.Azure.Tests \
+            tests/Respire.DataProtection.Tests \
+            tests/Respire.Caching.Tests \
+            tests/Respire.Caching.Hybrid.Tests \
+            samples/Respire.Samples.Testing \
+            samples/Respire.Samples.Azure
+          do
+            dotnet build "$project" -c Release -f net10.0
+          done
+
+      - name: Run Unit Tests
+        run: |
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
+            --maximum-parallel-tests 4 \
+            --results-directory "$GITHUB_WORKSPACE/TestResults" \
+            --report-trx \
+            --report-trx-filename "Respire.Tests-net10.0.trx" \
+            --coverage \
+            --coverage-output coverage.cobertura.xml \
+            --coverage-output-format cobertura
+
+      - name: Run hedging regressions without operation tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: |
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
+            --maximum-parallel-tests 4 \
+            --treenode-filter '/*/*/HedgedReadTests/*' \
+            --results-directory "$GITHUB_WORKSPACE/TestResults" \
+            --report-trx \
+            --report-trx-filename "Respire.HedgedReads.Uninstrumented-net10.0.trx"
+
+      - name: Run Analyzer Tests
+        run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
+
+      - name: Run Integration Tests
+        run: dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build
+
+      - name: Run Coordination Tests
+        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4
+
+      - name: Run Azure Integration Tests
+        run: dotnet run --project tests/Respire.Azure.Tests -c Release -f net10.0 --no-build
+
+      - name: Run DataProtection Tests
+        run: dotnet run --project tests/Respire.DataProtection.Tests -c Release -f net10.0 --no-build
+
+      - name: Run Caching Tests
+        run: |
+          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
+          dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
+
+      - name: Run samples
+        uses: ./.github/actions/run-samples
+        with:
+          framework: net10.0
+
+      - name: Generate Code Coverage Report
+        if: always()
+        run: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          reportgenerator \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"CoverageReport" \
+            -assemblyfilters:"-*Tests*;-*Benchmarks*;-*Samples*;-*Pipeline*" \
+            -reporttypes:"Html;JsonSummary;MarkdownSummaryGithub;Cobertura"
+          if [ -f CoverageReport/SummaryGithub.md ]; then
+            cat CoverageReport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Generate Test Report
+        uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: Unit Test Results (net10.0)
+          path: 'TestResults/*.trx'
+          reporter: dotnet-trx
+          fail-on-error: false
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-net10.0
+          path: |
+            TestResults/
+            CoverageReport/
+          retention-days: 30
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: CoverageReport/Cobertura.xml
+          flags: unittests
+          name: unit-tests
+          fail_ci_if_error: false
+
+  integration-tests-resp2:
+    name: Integration Tests (net10.0, RESP2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RESPIRE_TEST_PROTOCOL: '2'
+      DOCKER_HOST: unix:///var/run/docker.sock
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build
+        run: |
+          for project in \
+            tests/Respire.IntegrationTests \
+            tests/Respire.Coordination.Tests \
+            tests/Respire.DataProtection.Tests \
+            tests/Respire.Caching.Tests \
+            tests/Respire.Caching.Hybrid.Tests
+          do
+            dotnet build "$project" -c Release -f net10.0
+          done
+
+      - name: Run Integration Tests
+        run: dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build
+
+      - name: Run Coordination Tests
+        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4
+
+      - name: Run DataProtection Tests
+        run: dotnet run --project tests/Respire.DataProtection.Tests -c Release -f net10.0 --no-build
+
+      - name: Run Caching Tests
+        run: |
+          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
+          dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
+
+      - name: Run Caching Tests on Redis 7.4
+        env:
+          RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
+        run: dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
+
+  build-and-test-net8:
+    # The name is a required status check. This job is a smoke run; net10.0 carries the full suite.
+    name: Build and Test (net8.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Repository tooling checks need no .NET build; they ride along in the lightest job.
       - name: Verify command catalog generation
         shell: pwsh
         run: ./scripts/Test-CommandCatalog.ps1
@@ -42,171 +222,44 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
 
-  build-and-test:
-    name: Build and Test
-    runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        framework: [net8.0, net10.0]
-      fail-fast: false
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
 
-      - name: Setup .NET SDKs
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-      
-      - name: Restore dependencies
-        run: dotnet restore
-      
       - name: Build
-        run: dotnet build -c Release --no-restore
-
-      - name: Pack documentation dependencies
-        if: matrix.framework == 'net10.0'
-        run: dotnet pack Respire.slnx -c Release --no-build -p:Version=0.0.0-docs -o artifacts/package/release
-
-      - name: Publish generated commands with Native AOT from packed NuGet assets
-        if: matrix.framework == 'net10.0'
-        run: >-
-          dotnet publish tests/Respire.GeneratedCommands.Smoke -c Release -r linux-x64
-          -p:RespirePackageVersion=0.0.0-docs
-          -p:RestoreAdditionalProjectSources=${{ github.workspace }}/artifacts/package/release
-          -o artifacts/generated-commands-smoke
-
-      - name: Execute generated commands with RESP2 and RESP3
-        if: matrix.framework == 'net10.0'
-        shell: bash
         run: |
-          container=$(docker run --rm -d -p 127.0.0.1::6379 redis:8.4-alpine)
-          trap 'docker stop "$container" >/dev/null' EXIT
-          for attempt in {1..30}; do
-            if docker exec "$container" redis-cli ping | grep -q PONG; then break; fi
-            sleep 1
+          for project in \
+            tests/Respire.Tests \
+            samples/Respire.Samples.Testing \
+            samples/Respire.Samples.Azure
+          do
+            dotnet build "$project" -c Release -f net8.0
           done
-          endpoint=$(docker port "$container" 6379/tcp)
-          artifacts/generated-commands-smoke/Respire.GeneratedCommands.Smoke "$endpoint"
 
-      - name: Compile documentation snippets
-        if: matrix.framework == 'net10.0'
-        shell: pwsh
-        run: ./scripts/Verify-DocSnippets.ps1 -PackagesPath artifacts/package/release -Version 0.0.0-docs
-      
-      - name: Run Unit Tests
+      # Utf8StringTests and TlsTests cover the code behind #if NET9_0_OR_GREATER / NET10_0_OR_GREATER;
+      # FakeServerTests and ConnectionStringParsingTests exercise the client end to end.
+      - name: Run unit smoke tests
         run: |
-          dotnet run --project tests/Respire.Tests/Respire.Tests.csproj \
-            -c Release \
-            -f ${{ matrix.framework }} \
-            --no-build
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+            --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*'
 
-      - name: Run Analyzer Tests
-        if: matrix.framework == 'net10.0'
-        run: |
-          dotnet run --project tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj \
-            -c Release \
-            -f net10.0 \
-            --no-build
-      
-      - name: Run Integration Tests
-        run: |
-          dotnet run --project tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj \
-            -c Release \
-            -f ${{ matrix.framework }} \
-            --no-build
-        env:
-          DOCKER_HOST: unix:///var/run/docker.sock
-
-      - name: Run Coordination Tests
-        run: |
-          dotnet run --project tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj \
-            -c Release -f ${{ matrix.framework }} --no-build -- --maximum-parallel-tests 4
-        env:
-          DOCKER_HOST: unix:///var/run/docker.sock
-
-      - name: Run Azure Integration Tests
-        run: |
-          dotnet run --project tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj \
-            -c Release -f ${{ matrix.framework }} --no-build
-
-      - name: Run DataProtection Tests
-        run: |
-          dotnet run --project tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj \
-            -c Release -f ${{ matrix.framework }} --no-build
-        env:
-          DOCKER_HOST: unix:///var/run/docker.sock
-
-      - name: Run Caching Tests
-        run: |
-          dotnet run --project tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj \
-            -c Release \
-            -f ${{ matrix.framework }} \
-            --no-build
-          dotnet run --project tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj \
-            -c Release \
-            -f ${{ matrix.framework }} \
-            --no-build
-        env:
-          DOCKER_HOST: unix:///var/run/docker.sock
-      
-      # Coverage and test reports are not available with dotnet run
-      # TUnit will handle its own output formatting
-      
-      - name: Add Results to GitHub Summary
-        if: always()
-        run: |
-          echo "## 🧪 CI Results (${{ matrix.framework }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### ✅ Build & Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Framework**: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
-          echo "- **Unit Tests**: Executed with TUnit" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Tests**: Executed with TUnit" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner**: ${{ runner.os }} - ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          
-          # Add allocation optimization status
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🎯 Performance Optimizations Active" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Write coalescing: pipelined commands batched into single sends" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Pooled IValueTaskSource completion sources (no Task allocations)" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Direct socket I/O with pooled buffers (single-copy receive path)" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Struct commands with pre-compiled RESP prefixes" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Target**: zero caller-thread allocations per operation" >> $GITHUB_STEP_SUMMARY
-      
-      # Test artifacts are not generated with dotnet run
+      - name: Run samples
+        uses: ./.github/actions/run-samples
+        with:
+          framework: net8.0
 
   performance-validation:
     name: Performance Validation
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: build-and-test-net10
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-      
-      - name: Setup .NET SDKs  
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-      
-      - name: Restore and Build
-        run: |
-          dotnet restore
-          dotnet build -c Release --no-restore
-      
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
       - name: Run Performance Benchmarks
         run: |
           cd benchmarks/Respire.Benchmarks
@@ -217,26 +270,26 @@ jobs:
             --memory-randomization false \
             --max-relative-error 0.05 \
             --iterationCount 10 || true
-      
+
       - name: Analyze Performance Results
         run: |
           echo "## 🚀 Performance Validation Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           RESULTS_DIR="benchmarks/Respire.Benchmarks/PerformanceResults/results"
           if [ -d "$RESULTS_DIR" ]; then
             for file in "$RESULTS_DIR"/*.md; do
               if [ -f "$file" ]; then
                 echo "### 📈 GET Operation Performance" >> $GITHUB_STEP_SUMMARY
                 echo "" >> $GITHUB_STEP_SUMMARY
-                
+
                 if grep -q "Mean" "$file"; then
                   echo "#### Key Performance Metrics:" >> $GITHUB_STEP_SUMMARY
                   echo '```' >> $GITHUB_STEP_SUMMARY
                   grep -E "(Method|Mean|Error|StdDev|Allocated)" "$file" | head -15 >> $GITHUB_STEP_SUMMARY
                   echo '```' >> $GITHUB_STEP_SUMMARY
                 fi
-                
+
                 echo "" >> $GITHUB_STEP_SUMMARY
                 echo "<details>" >> $GITHUB_STEP_SUMMARY
                 echo "<summary>📄 Full Performance Report</summary>" >> $GITHUB_STEP_SUMMARY
@@ -253,11 +306,7 @@ jobs:
             echo "This is expected for quick CI runs - detailed performance testing" >> $GITHUB_STEP_SUMMARY
             echo "should be done in dedicated benchmark workflows." >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Performance validation completed on $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
-      
+
       - name: Upload Performance Results
         uses: actions/upload-artifact@v7
         if: always()

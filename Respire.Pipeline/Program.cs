@@ -46,7 +46,6 @@ public class Program
 
         await builder
             .AddModule<RunUnitTestsModule>()
-            .AddModule<RunBenchmarkModule>() 
             .AddModule<NugetVersionGeneratorModule>()
             .AddModule<BuildProjectsModule>()
             .AddModule<PackProjectsModule>()

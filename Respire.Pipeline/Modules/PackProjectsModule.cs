@@ -9,7 +9,7 @@ using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
-[DependsOn<RunBenchmarkModule>]
+[DependsOn<RunUnitTestsModule>]
 public class PackProjectsModule : Module<CommandResult[]>
 {
     private readonly IConfiguration _configuration;

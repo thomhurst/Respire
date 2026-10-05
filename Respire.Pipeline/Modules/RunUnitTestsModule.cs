@@ -37,9 +37,10 @@ public class RunUnitTestsModule : Module<CommandResult[]>
     {
         context.Logger.LogInformation("Running unit tests...");
 
+        // The library test suites run in the CI workflow; the pipeline only tests itself.
         var testProjects = _configuration.GetSection("TestProjects").Get<string[]>() ?? new[]
         {
-            "../tests/Respire.Tests/Respire.Tests.csproj"
+            "../tests/Respire.Pipeline.Tests/Respire.Pipeline.Tests.csproj"
         };
 
         var results = new List<CommandResult>();
