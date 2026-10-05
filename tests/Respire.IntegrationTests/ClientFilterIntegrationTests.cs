@@ -8,6 +8,87 @@ namespace Respire.IntegrationTests;
 public class ClientFilterIntegrationTests
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ValkeyFiltersIndependentlyChangeSelectionAndKillCounts(int protocol)
+    {
+        await using var container = new RedisBuilder("valkey/valkey:9.0-alpine").Build();
+        await container.StartAsync();
+        var options = new RespireOptions
+        {
+            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
+            Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+        };
+        await using var admin = await RespireClient.ConnectAsync(options);
+        await admin.Server.AclSetUserAsync("filter-user", ["on", ">test-password", "+@all", "~*", "&*"]);
+        var handle = await admin.Server.GetClientConnectionAsync();
+        string[] cases = ["type", "user", "address", "local-address", "name", "flags", "library", "version", "database", "capabilities", "ip",
+            "excluded-type", "excluded-ids", "excluded-user", "excluded-address", "excluded-local-address", "excluded-name",
+            "excluded-flags", "excluded-library", "excluded-version", "excluded-database", "excluded-capabilities", "excluded-ip"];
+        foreach (var filter in cases)
+        {
+            await using var target = await RespireClient.ConnectAsync(options with
+            {
+                Username = "filter-user", Password = "test-password", ClientName = "filter-target", Database = 1,
+            });
+            var targetHandle = await target.Server.GetClientConnectionAsync();
+            await targetHandle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "filter-library");
+            await targetHandle.SetInfoAsync(RespireClientInfoAttribute.LibraryVersion, "1.2.3");
+            await targetHandle.SetNoEvictAsync(true);
+            using (var response = await target.ExecuteAsync("CLIENT", "CAPA", "redirect")) { }
+            var info = await targetHandle.InfoAsync();
+            var ip = info.Address[..info.Address.LastIndexOf(':')].Trim('[', ']');
+            var baseline = new RespireClientFilterOptions { Ids = [targetHandle.Id] };
+            var (matches, excludes) = filter switch
+            {
+                "type" => (baseline with { Type = RespireClientType.Normal }, baseline with { Type = RespireClientType.PubSub }),
+                "user" => (baseline with { User = "filter-user" }, baseline with { User = "default" }),
+                "address" => (baseline with { Address = info.Address }, baseline with { Address = "127.0.0.1:1" }),
+                "local-address" => (baseline with { LocalAddress = info.Attributes["laddr"] }, baseline with { LocalAddress = "127.0.0.1:1" }),
+                "name" => (baseline with { Name = "filter-target" }, baseline with { Name = "different" }),
+                "flags" => (baseline with { Flags = "e" }, baseline with { Flags = "b" }),
+                "library" => (baseline with { LibraryName = "filter-library" }, baseline with { LibraryName = "different" }),
+                "version" => (baseline with { LibraryVersion = "1.2.3" }, baseline with { LibraryVersion = "different" }),
+                "database" => (baseline with { Database = 1 }, baseline with { Database = 0 }),
+                "capabilities" => (baseline with { Capabilities = "r" }, baseline with { ExcludedCapabilities = "r" }),
+                "ip" => (baseline with { Ip = ip }, baseline with { Ip = "192.0.2.1" }),
+                "excluded-type" => (baseline with { ExcludedType = RespireClientType.PubSub }, baseline with { ExcludedType = RespireClientType.Normal }),
+                "excluded-ids" => (baseline with { ExcludedIds = [handle.Id] }, baseline with { ExcludedIds = [targetHandle.Id] }),
+                "excluded-user" => (baseline with { ExcludedUser = "default" }, baseline with { ExcludedUser = "filter-user" }),
+                "excluded-address" => (baseline with { ExcludedAddress = "127.0.0.1:1" }, baseline with { ExcludedAddress = info.Address }),
+                "excluded-local-address" => (baseline with { ExcludedLocalAddress = "127.0.0.1:1" }, baseline with { ExcludedLocalAddress = info.Attributes["laddr"] }),
+                "excluded-name" => (baseline with { ExcludedName = "different" }, baseline with { ExcludedName = "filter-target" }),
+                "excluded-flags" => (baseline with { ExcludedFlags = "b" }, baseline with { ExcludedFlags = "e" }),
+                "excluded-library" => (baseline with { ExcludedLibraryName = "different" }, baseline with { ExcludedLibraryName = "filter-library" }),
+                "excluded-version" => (baseline with { ExcludedLibraryVersion = "different" }, baseline with { ExcludedLibraryVersion = "1.2.3" }),
+                "excluded-database" => (baseline with { ExcludedDatabase = 0 }, baseline with { ExcludedDatabase = 1 }),
+                "excluded-capabilities" => (baseline with { ExcludedCapabilities = "r" }, baseline with { Capabilities = "r" }),
+                "excluded-ip" => (baseline with { ExcludedIp = "192.0.2.1" }, baseline with { ExcludedIp = ip }),
+                _ => throw new InvalidOperationException(filter),
+            };
+            if (filter == "excluded-capabilities")
+            {
+                // A fresh client has no redirect capability; use that absence to exercise NOT-CAPA independently.
+                await using var ordinary = await RespireClient.ConnectAsync(options);
+                var ordinaryHandle = await ordinary.Server.GetClientConnectionAsync();
+                matches = matches with { Ids = [ordinaryHandle.Id] };
+                excludes = excludes with { Ids = [ordinaryHandle.Id] };
+                await Check(matches, excludes, ordinaryHandle.Id, filter);
+            }
+            else await Check(matches, excludes, targetHandle.Id, filter);
+        }
+
+        async Task Check(RespireClientFilterOptions matches, RespireClientFilterOptions excludes, long id, string filter)
+        {
+            (await handle.ClientsAsync(matches)).Select(row => row.Id).Should().Equal([id], filter);
+            (await handle.ClientsAsync(excludes)).Should().BeEmpty(filter);
+            (await handle.KillClientsAsync(excludes)).Should().Be(0, filter);
+            (await handle.KillClientsAsync(matches)).Should().Be(1, filter);
+            (await handle.ClientsAsync(new() { Ids = [id] })).Should().BeEmpty(filter);
+        }
+    }
+
+    [Test]
     [Arguments("redis:8.10-alpine", 2, 0)]
     [Arguments("redis:8.10-alpine", 3, 0)]
     [Arguments("redis:8.10-alpine", 2, 1)]

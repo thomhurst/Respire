@@ -129,8 +129,9 @@ argument (use `default` if unused), preserving existing calls such as `ClientsAs
 
 `KillClientsAsync` returns the number closed, including zero, and requires `AllowAdmin`.
 The existing `KillClientAsync(id, ...)` overload retains its boolean return and behavior.
-An empty KILL filter is rejected; explicitly supplying `SkipMe` alone selects every
-connection except the executing socket when true. `SkipMe` does not protect other sockets
+An empty or `SkipMe`-only KILL filter is rejected unless `AllowUnfilteredKill = true`
+explicitly opts into closing all matching connections. With that opt-in and no `SkipMe`
+value, the command uses `SKIPME yes`. `SkipMe` does not protect other sockets
 owned by the same client. A null value preserves the server default: true for KILL and
 false for LIST. Killing the handle's socket invalidates that handle. Cancellation cannot
 undo connections already closed by the server.
@@ -155,7 +156,10 @@ client configured for that endpoint. Queueing never reserves a connection handle
 idle at least that long. Both require positive whole seconds. Database numbers must be
 nonnegative and IDs positive. Unsupported filters remain server errors; Respire does not
 silently remove them or emulate selection with a separate LIST followed by KILL.
-`RespireClientType.Primary` uses the compatible `MASTER` wire token.
+`RespireClientType.Primary` uses the compatible `MASTER` wire token. For KILL,
+`Replica` uses `SLAVE`, supported before Redis 5 as well as by current Redis/Valkey.
+All typed filter paths, including pinned handles and queues, validate and snapshot options
+synchronously before returning. Invalid options throw immediately, before any command is sent or queued.
 
 Redis through 8.10 accepts LIST `Type` or `Ids` separately, but rejects their combination
 with a syntax error. Valkey 8.1+ supports combined LIST filters. KILL supports combined

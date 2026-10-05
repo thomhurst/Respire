@@ -8,6 +8,51 @@ namespace Respire.Tests.Networking;
 public class ClientFilterCommandTests
 {
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task SkipMeAloneFailsSynchronouslyAcrossAllPaths(bool skipMe)
+    {
+        await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var handle = await client.Server.GetClientConnectionAsync();
+        using var batch = client.CreateBatch();
+        await using var tx = client.CreateTransaction();
+        var options = new RespireClientFilterOptions { SkipMe = skipMe };
+        await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
+        var invalid = options with { Ids = [0] };
+        await Assert.That(() => { _ = client.Server.ClientsAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => { _ = handle.ClientsAsync(invalid); }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.Server.Clients(invalid)).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => tx.Server.Clients(invalid)).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
+    }
+
+    [Test]
+    public async Task ExplicitUnfilteredKillAndReplicaTokensUseCompatibleWireForms()
+    {
+        await using var server = new FakeRespServer(4, ":0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await client.Server.KillClientsAsync(new() { AllowUnfilteredKill = true });
+        await client.Server.KillClientsAsync(new() { AllowUnfilteredKill = true, SkipMe = false });
+        await client.Server.KillClientsAsync(new() { Type = RespireClientType.Replica });
+        await client.Server.KillClientsAsync(new() { ExcludedType = RespireClientType.Replica });
+        await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo([
+            "CLIENT KILL SKIPME yes", "CLIENT KILL SKIPME no", "CLIENT KILL TYPE slave", "CLIENT KILL NOT-TYPE slave"]);
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]

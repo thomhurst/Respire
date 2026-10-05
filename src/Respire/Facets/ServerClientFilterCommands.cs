@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Respire.Commands;
 using Respire.Protocol;
 
 namespace Respire;
@@ -40,22 +41,31 @@ internal sealed partial class ServerCommands
 public sealed partial class RespireServerClientConnection
 {
     /// <summary>Lists matching clients on this handle's endpoint, using its original socket.</summary>
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    public async ValueTask<RespireServerClientInfo[]> ClientsAsync(RespireClientFilterOptions options,
+    /// <remarks>Options are validated synchronously before I/O.</remarks>
+    public ValueTask<RespireServerClientInfo[]> ClientsAsync(RespireClientFilterOptions options,
         CancellationToken cancellationToken = default)
+        => ReadClientsAsync(ClientFilterArguments.Build(options, false), cancellationToken);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireServerClientInfo[]> ReadClientsAsync(CmdN command, CancellationToken cancellationToken)
     {
-        using var reply = await SendAsync("CLIENT LIST", ClientFilterArguments.Build(options, false), cancellationToken).ConfigureAwait(false);
+        using var reply = await SendAsync("CLIENT LIST", command, cancellationToken).ConfigureAwait(false);
         return ServerCommands.ParseClientList(in reply);
     }
 
     /// <summary>Kills matching clients on this handle's endpoint and returns the count. Requires AllowAdmin.</summary>
     /// <remarks>SkipMe refers to this handle's socket only. Killing it invalidates the handle; it never reconnects.</remarks>
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    public async ValueTask<long> KillClientsAsync(RespireClientFilterOptions options,
+    public ValueTask<long> KillClientsAsync(RespireClientFilterOptions options,
         CancellationToken cancellationToken = default)
     {
         EnsureAdmin("CLIENT KILL");
-        using var reply = await SendAsync("CLIENT KILL", ClientFilterArguments.Build(options, true), cancellationToken).ConfigureAwait(false);
+        return KillClientsCoreAsync(ClientFilterArguments.Build(options, true), cancellationToken);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<long> KillClientsCoreAsync(CmdN command, CancellationToken cancellationToken)
+    {
+        using var reply = await SendAsync("CLIENT KILL", command, cancellationToken).ConfigureAwait(false);
         return reply.AsInteger();
     }
 }

@@ -26,6 +26,8 @@ public enum RespireClientType
 /// </remarks>
 public sealed record RespireClientFilterOptions
 {
+    /// <summary>Explicitly permits KILL without a selector, including a SkipMe-only call. Ignored by LIST.</summary>
+    public bool AllowUnfilteredKill { get; init; }
     /// <summary>Include only this connection class.</summary>
     public RespireClientType? Type { get; init; }
     /// <summary>Include any of these positive client IDs; empty means no ID filter.</summary>
@@ -115,8 +117,12 @@ internal static class ClientFilterArguments
         AddNumber("NOT-DB", options.ExcludedDatabase);
         Add("NOT-CAPA", options.ExcludedCapabilities);
         Add("NOT-IP", options.ExcludedIp);
-        if (kill && args.Count == 0)
-            throw new ArgumentException("CLIENT KILL requires at least one explicit filter.", nameof(options));
+        if (kill && args.Count == (options.SkipMe.HasValue ? 2 : 0))
+        {
+            if (!options.AllowUnfilteredKill)
+                throw new ArgumentException("CLIENT KILL requires a selector or AllowUnfilteredKill = true.", nameof(options));
+            if (!options.SkipMe.HasValue) Add("SKIPME", "yes");
+        }
         return new CmdN(kill ? Verbs.ClientKill : Verbs.ClientList, args.ToArray());
 
         void Add(string token, string? value)
@@ -142,7 +148,7 @@ internal static class ClientFilterArguments
             {
                 RespireClientType.Normal => "normal",
                 RespireClientType.Primary => "master",
-                RespireClientType.Replica => "replica",
+                RespireClientType.Replica => kill ? "slave" : "replica",
                 RespireClientType.PubSub => "pubsub",
                 _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown client type."),
             });
