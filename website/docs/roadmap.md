@@ -5,36 +5,76 @@ description: What Respire supports today and what remains before a stable releas
 
 # Status and roadmap
 
-Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, typed command surface, pipelining, blocking command routing, pub/sub, streams, transactions, caching, dependency injection, and telemetry are implemented. Public APIs may still change.
+Respire is pre-release. The features below are implemented, but public APIs may still change.
+Server and protocol requirements vary by feature; each linked guide describes its limits.
 
 ## Available now
 
-- Redis-style URI and `RespireOptions` connections
-- Automatic RESP3 preference with unsupported-HELLO fallback, strict protocol overrides, and typed RESP2/RESP3 reply normalization
-- Multiplexed connection pool with automatic pipelining
-- String, key, hash, list, set, sorted-set, stream, bitmap, HyperLogLog, geo, script, and server facets
-- Generated descriptors for every audited Redis, Valkey, module, KeyDB, and Dragonfly command
-- Blocking list and stream commands on dedicated pooled connections
-- Batches, transactions, and optimistic concurrency with `WATCH`
-- Pub/sub, pattern subscriptions, and Redis 7 sharded pub/sub
-- [Typed standalone keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md)
-- Lazy/eager Redis Sentinel discovery and reactive primary handoff after disconnect or READONLY
-- Typed JSON serialization and custom `IRespireSerializer`
-- Raw and interpolated command execution
-- Automatic reconnect and pub/sub resubscription
-- TLS connections through `rediss://` or `RespireOptions.UseTls`
-- [Renewable credential providers](guides/renewable-credentials.md) for live AUTH and independent Sentinel credentials, with
-  [Azure Managed Redis](guides/azure-managed-redis.md) and [AWS IAM](guides/aws-iam-credentials.md) adapters
-- Bounded RESP3 server-assisted client-side caching for eligible Redis reads, with OPTIN or BCAST/prefix tracking
-- Dependency injection, distributed caching, `HybridCache`, and OpenTelemetry
-- An in-memory testing server with controlled expiry/faults, Redis/Valkey container fixtures,
-  and a [shared test sample](guides/testing-sample.md) for both supported frameworks
+### Connections, routing, and recovery
 
-## Not implemented yet
+- [Connections](fundamentals/connections.md) through Redis-style URIs, StackExchange.Redis connection
+  strings, or `RespireOptions`, with lazy/eager connection, TLS, and automatic pipelining.
+- [RESP3 preference](fundamentals/connections.md#protocol-negotiation) with bounded RESP2 fallback,
+  explicit protocol overrides, and typed reply normalization.
+- [Redis Cluster](fundamentals/connections.md#redis-cluster-endpoint-identity) routing with periodic
+  topology refresh, redirect recovery, and same-slot transactions.
+- [Automatic Sentinel failover](fundamentals/connections.md#redis-sentinel): monitors subscribe to
+  primary-switch and down events, rediscover the service, and validate the replacement with `ROLE`.
+  Reactive recovery remains available after disconnects or `READONLY` replies.
+- [Replica selection](fundamentals/connections.md#read-from-replicas) through `ReadFrom` and
+  `WithReadFrom`, including nearest reads, [hedged reads](fundamentals/connections.md#hedged-reads),
+  and [availability-zone affinity](fundamentals/connections.md#availability-zone-affinity).
+- [Reconnect policies](guides/reconnect-policy.md), automatic pub/sub resubscription,
+  [maintenance notifications and handoffs](fundamentals/connections.md#maintenance-notifications),
+  and health-checked [failover groups](guides/failover-groups.md) across deployments.
+- [Renewable credentials](guides/renewable-credentials.md), independent Sentinel authentication,
+  and [Azure Managed Redis](guides/azure-managed-redis.md) / [AWS IAM](guides/aws-iam-credentials.md) adapters.
 
-| Capability | Current behavior |
-| --- | --- |
-| Redis Cluster gaps | Cluster routing, same-slot `WATCH` transactions, and sharded pub/sub are supported; typed notification fan-out remains unavailable in cluster mode |
+### Commands and coordination
+
+- Typed string, key, collection, stream, bitmap, HyperLogLog, geo, script, and server facets;
+  an audited [command catalog and raw/interpolated execution](guides/raw-commands.md), plus
+  [source-generated custom commands](guides/generated-commands.md).
+- [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
+  use dedicated connections where needed to keep multiplexed traffic moving.
+- [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
+  [durability acknowledgements](guides/durability-acknowledgements.md).
+- [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.
+  Typed [keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md)
+  include Cluster routing to the owning primary for exact keys and fan-out across primaries for patterns.
+  Reconnects can lose notifications; topology changes can lose or duplicate them.
+- [Managed distributed locks](guides/distributed-locks.md) and [coordination](guides/coordination.md)
+  with fencing tokens, leases, semaphores, and rate limiting.
+- Typed [JSON](guides/json.md), [Search](guides/search.md), [TimeSeries](guides/timeseries.md),
+  [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
+
+### Caching, integration, and testing
+
+- Bounded RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md),
+  with OPTIN or BCAST/prefix tracking for eligible reads.
+- Typed serialization and custom serializers, with optional [value compression codecs](guides/value-codecs.md).
+- [Dependency injection](integrations/dependency-injection.md),
+  [Microsoft distributed caching and `HybridCache`](integrations/caching.md), and
+  [OpenTelemetry traces and metrics](integrations/observability.md).
+- An [in-memory testing server](guides/in-memory-testing.md) with controlled expiry and faults,
+  [Redis/Valkey container fixtures](guides/testing-containers.md), and a
+  [shared test sample](guides/testing-sample.md) for .NET 8 and .NET 10.
+
+## Planned work
+
+These open epics track remaining work, not release commitments. Follow their linked issues for
+acceptance criteria, dependencies, and current status:
+
+- [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
+  circuit breakers, and further connection/API work.
+- [Typed command coverage](https://github.com/thomhurst/Respire/issues/858): Redis 8.10 / Valkey 9.1
+  commands, missing options, and module/admin APIs.
+- [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
+  messaging, caching, and other libraries that currently depend on StackExchange.Redis.
+- [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
+  source-generated object mapping, coherent `HybridCache` L1, and field-level caching research.
+- [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
+  examples for the expanded feature set.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison.
 

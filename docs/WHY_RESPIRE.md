@@ -30,7 +30,7 @@ string? name = await redis.GetStringAsync("user:42:name");
 
 Redis tracks opted-in reads and pushes invalidations when keys change. Respire owns bounded local
 storage, negative entries, multi-key dependencies, mutation fencing, reconnect flushes, and race
-protection; the next read refreshes lazily. StackExchange.Redis 3.1.13 does not include an
+protection; the next read refreshes lazily. StackExchange.Redis 3.3.1 does not include an
 equivalent built-in cache. Its keyspace notifications can support a custom solution, but the
 application must build and operate that solution.
 
@@ -128,4 +128,5 @@ The full surface, conventions, and roadmap live in
 ## Coming from StackExchange.Redis
 
 See [Coming from StackExchange.Redis](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
-for a feature comparison and an API migration map.
+for the versioned feature comparison, upstream evidence, and API migration map, including
+RESP3 defaults, connection groups, smart client handoffs, and command retry behavior.
