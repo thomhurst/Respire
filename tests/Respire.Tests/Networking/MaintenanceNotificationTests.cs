@@ -913,6 +913,9 @@ public class MaintenanceNotificationTests
         await Task.Delay(400); // Exceed the normal 300 ms deadline while the source is being read.
         await sourceServer.SendRawAsync(Moving(1, targetServer.Port));
         await WaitForPort(multiplexer, targetServer.Port);
+        // The handoff publishes the target before it stops admission on the old socket. A
+        // payload completed in between is accepted and drained by the source instead.
+        await WaitForRetirement(staleSelection);
         await pipe.Writer.WriteAsync("ta"u8.ToArray());
 
         using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1440,23 +1443,25 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task FailingRetirementCacheFenceObserverDoesNotFailPublishedHandoff()
     {
-        // Isolate the process-wide continuity metric from other handoffs.
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 2);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The continuity metric is process-wide and untagged. The handoff invokes the cache flush
+        // and publishes its metrics in one synchronous section, so a value set by this handoff's
+        // flush callback isolates its measurement from other tests' handoffs.
+        var observe = new AsyncLocal<bool>();
         using var continuity = MeterFor("respire.client_cache.continuity_flushes", (value, _) =>
         {
-            if (value == 1) published.TrySetResult();
+            if (observe.Value && value == 1) published.TrySetResult();
         });
         var logger = new HandoffFailureLogger();
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             logger: logger,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
-                CredentialCacheInvalidation = () => 1,
+                CredentialCacheInvalidation = () => { observe.Value = true; return 1; },
                 CredentialCacheRetirementFence = () => throw new InvalidOperationException("Metrics observer failure."),
             });
 
