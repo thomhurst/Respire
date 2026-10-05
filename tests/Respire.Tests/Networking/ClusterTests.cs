@@ -318,6 +318,7 @@ public class ClusterTests
     }
 
     [Test]
+    [ParallelLimiter<TimingSensitive>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadFrom_HealthyRefreshTimeoutDoesNotShrinkWithMasterCount(bool stallFirstTwo)
@@ -337,18 +338,19 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         Volatile.Write(ref topology, ClusterTopology(first.Port, replica.Port));
         foreach (var server in new[] { first, second, third })
         {
-            server.DelayCommand("CLUSTER SLOTS", 750);
+            // Scaled 2x for scheduling slack: one reply still exceeds a timeout split across three masters.
+            server.DelayCommand("CLUSTER SLOTS", 1_500);
             server.SuppressReply = command => stallFirstTwo && !ReferenceEquals(server, third) && command == "CLUSTER SLOTS";
             server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
         }
         await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10))).IsEqualTo("value");
     }
 
     [Test]
