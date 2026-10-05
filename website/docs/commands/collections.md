@@ -214,6 +214,16 @@ is rejected because its absolute value cannot fit in a signed 64-bit integer. Sa
 never removes members. Generic variants deserialize members, including binary-safe `byte[]`.
 A missing scalar generic result is `default(T)`; counted missing results are empty arrays.
 
+`RankWithScoreAsync(key, member, descending: false)` returns a nullable `SortedSetRank`
+containing the zero-based `Rank` and `Score`. Use `descending: true` for reverse rank.
+A missing key or member returns `null`. This uses Redis 7.2+ `ZRANK`/`ZREVRANK WITHSCORE`;
+the existing `RankAsync` still returns only the rank. Batches and transactions expose
+the matching `RankWithScore` method.
+
+```csharp
+SortedSetRank? position = await redis.SortedSets.RankWithScoreAsync("scores", "ada", descending: true);
+```
+
 `CountByLexAsync` and `RemoveRangeByLexAsync` accept `RespireLexRange`, with inclusive,
 exclusive, or infinite bounds. Lexicographical operations require all members to have the
 same score. `IntersectCountAsync` (Redis 7+) returns only intersection cardinality; a

@@ -99,6 +99,8 @@ public sealed partial class RespireFakeServer
 
     private FakeReply SortedSetRank(byte[][] args, bool reverse)
     {
+        var withScore = args.Length == 4;
+        if (withScore && Token(args[3]) != "WITHSCORE") return FakeReply.Error("ERR syntax error");
         var set = Find(args[1])?.SortedSet;
         if (set is null || !set.TryGetValue(args[2], out var score)) return FakeReply.Null;
         var target = new KeyValuePair<byte[], double>(args[2], score);
@@ -108,7 +110,7 @@ public sealed partial class RespireFakeServer
             var order = CompareSortedSetEntries(entry, target);
             if (reverse ? order > 0 : order < 0) rank++;
         }
-        return FakeReply.Integer(rank);
+        return withScore ? FakeReply.Array([FakeReply.Integer(rank), FakeReply.Double(score)]) : FakeReply.Integer(rank);
     }
 
     private static int CompareSortedSetEntries(KeyValuePair<byte[], double> left, KeyValuePair<byte[], double> right)
