@@ -161,6 +161,8 @@ Use `AddAliasAsync`, `UpdateAliasAsync`, and `DeleteAliasAsync` for
 `FT.ALIASADD`, `FT.ALIASUPDATE`, and `FT.ALIASDEL`. After preparing and verifying a
 replacement index, atomically switch the alias without interrupting callers:
 
+Without a Search coordinator, the alias and target index must resolve to the same server.
+
 ```csharp
 using Respire;
 using Respire.Search;
