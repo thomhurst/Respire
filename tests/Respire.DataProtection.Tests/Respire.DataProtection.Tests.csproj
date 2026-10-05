@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire.DataProtection/Respire.DataProtection.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="TUnit" />
+    <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+  </ItemGroup>
+</Project>

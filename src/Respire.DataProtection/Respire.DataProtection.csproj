@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.DataProtection</PackageId>
+    <Title>Respire.DataProtection</Title>
+    <Description>ASP.NET Core DataProtection key storage backed by Respire.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" />
+  </ItemGroup>
+</Project>
