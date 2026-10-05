@@ -20,13 +20,14 @@ public class ZstdValueCodecTests
         new Random(980).NextBytes(random);
         var repeated = new byte[16384];
         for (var index = 0; index < repeated.Length; index++) repeated[index] = (byte)(index % 97);
-        var large = new byte[1024 * 1024 + 1];
+        var boundary = new byte[65536];
+        var large = new byte[65537];
         // Alternate incompressible input (TryWrap returns false), compressed input, and discarded
         // large workspaces. Each resulting frame must match a completely fresh context.
         foreach (var level in new[] { 3, 10, -1, 0, 22, 1, -131072, 3 })
         {
             var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
-            foreach (var payload in new[] { random, repeated, large, repeated })
+            foreach (var payload in new[] { random, repeated, boundary, large, repeated })
             {
                 using var fresh = new Compressor(level);
                 var compressed = fresh.Wrap(payload).ToArray();
