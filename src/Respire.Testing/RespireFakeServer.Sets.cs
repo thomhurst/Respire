@@ -117,4 +117,23 @@ public sealed partial class RespireFakeServer
         }
         return FakeReply.Integer(matches);
     }
+
+    private FakeReply SetCombineCount(byte[][] args, SetOperation operation)
+    {
+        var count = Integer(args[1]);
+        if (count <= 0) return FakeReply.Error("ERR numkeys should be greater than 0");
+        if (count > args.Length - 2) return FakeReply.Error("ERR Number of keys can't be greater than number of args");
+        long limit = 0;
+        for (var index = 2 + (int)count; index < args.Length; index++)
+        {
+            var option = Token(args[index]);
+            if (option == "APPROX" && operation == SetOperation.Union) continue;
+            if (option != "LIMIT" || ++index == args.Length) return FakeReply.Error("ERR syntax error");
+            limit = Integer(args[index]);
+            if (limit < 0) return FakeReply.Error("ERR LIMIT can't be negative");
+        }
+        // The deterministic fake uses the exact count even when approximation is requested.
+        var cardinality = CombineSets(ReadSets(args, 2, (int)count), operation).Count;
+        return FakeReply.Integer(limit == 0 ? cardinality : Math.Min(cardinality, limit));
+    }
 }

@@ -311,7 +311,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
             "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",
             "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",
-            "SUNION", "SDIFF", "SINTERCARD", "LLEN", "LRANGE", "LINDEX", "LPOS", "ZCARD",
+            "SUNION", "SDIFF", "SINTERCARD", "SDIFFCARD", "SUNIONCARD", "LLEN", "LRANGE", "LINDEX", "LPOS", "ZCARD",
             "ZSCORE", "ZMSCORE", "ZRANK", "ZREVRANK", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE",
             "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZINTERCARD", "XLEN",
             // XCFGSET changes metadata without signaling watched keys (Redis keyModified signal=0).

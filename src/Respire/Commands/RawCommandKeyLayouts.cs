@@ -88,7 +88,7 @@ internal static class RawCommandKeyLayouts
         Add(LayoutKind.CountedAfterName,
             "EVAL", "EVALSHA", "EVAL_RO", "EVALSHA_RO", "FCALL", "FCALL_RO");
         Add(LayoutKind.Counted,
-            "LMPOP", "ZMPOP", "SINTERCARD", "ZDIFF", "ZINTER", "ZUNION", "ZINTERCARD");
+            "LMPOP", "ZMPOP", "SINTERCARD", "SDIFFCARD", "SUNIONCARD", "ZDIFF", "ZINTER", "ZUNION", "ZINTERCARD");
         AddMutation(LayoutKind.CountedWithDestination, MutationKind.FirstArgument,
             ["ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE"]);
         // Immediate-only additions do not expand the conservative deferred allowlist.
