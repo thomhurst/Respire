@@ -18,6 +18,15 @@ internal interface IRespireSearchCommands
     [RespireCommand("FT.SUGLEN", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> GetSuggestionCountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    [RespireCommand("FT.SYNUPDATE")]
+    ValueTask<RespireResult> UpdateSynonymsAsync(string index, string groupId, string[] termsAndOptions, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.SYNDUMP", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> GetSynonymsAsync(string index, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.TAGVALS", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> GetTagValuesAsync(string index, string field, CancellationToken cancellationToken = default);
+
     /// <summary>Creates an index from command arguments.</summary>
     [RespireCommand("FT.CREATE")]
     ValueTask<RespireResult> CreateAsync(string index, RespireValue[] arguments, CancellationToken cancellationToken = default);
