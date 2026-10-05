@@ -30,7 +30,7 @@ string? name = await redis.GetStringAsync("user:42:name");
 
 Redis tracks opted-in reads and pushes invalidations when keys change. Respire owns bounded local
 storage, negative entries, multi-key dependencies, mutation fencing, reconnect flushes, and race
-protection; the next read refreshes lazily. StackExchange.Redis 3.1.13 does not include an
+protection; the next read refreshes lazily. StackExchange.Redis 3.3.1 does not include an
 equivalent built-in cache. Its keyspace notifications can support a custom solution, but the
 application must build and operate that solution.
 
@@ -126,6 +126,15 @@ The full surface, conventions, and roadmap live in
 [API_DESIGN.md](API_DESIGN.md).
 
 ## Coming from StackExchange.Redis
+
+StackExchange.Redis 3.3.1 also attempts RESP3 by default, supports geo-failover through
+connection groups, and offers opt-in smart client handoffs and command retries classified by
+side effects. These are shared capabilities or areas where Respire still has work planned,
+not reasons on their own to switch. Respire's reconnect policy does not provide a general
+command retry wrapper, and its failover groups select a client for new operations without
+replaying in-flight calls. See the upstream
+[configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Configuration.md)
+and [failover/retry documentation](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Failover.md).
 
 See [Coming from StackExchange.Redis](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
 for a feature comparison and an API migration map.

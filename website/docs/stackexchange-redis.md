@@ -12,6 +12,9 @@ This page compares the two and maps common StackExchange.Redis code to Respire.
 
 Comparisons describe StackExchange.Redis 3.3.1, the version used by Respire's comparison
 benchmarks. Recheck the StackExchange.Redis claims on this page when that version changes.
+The upstream [configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Configuration.md)
+and [failover/retry documentation](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Failover.md)
+describe its RESP3 defaults, smart client handoffs, connection groups, and retry categories.
 
 :::note Pre-release
 Respire's public API may still change before a stable release. See the [roadmap](./roadmap).
@@ -40,7 +43,7 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Command surface | Flat methods on `IDatabase` (`HashGet`, `ListLeftPush`) | Facets per data type (`redis.Hashes.GetStringAsync`) |
 | Values | `RedisValue` union | Typed results; `RespireValue` for arguments |
 | Automatic pipelining | Yes | Yes |
-| Protocol | RESP2 or RESP3, selected by the `protocol` option | RESP3 preferred by default, with RESP2 fallback |
+| Protocol | RESP3 attempted by default when `HELLO` is enabled and the configured server version is 6+; RESP2 fallback and explicit override | RESP3 preferred by default, with RESP2 fallback |
 | Server-assisted client-side cache | No | Yes, opt-in |
 | Blocking commands (`BLPOP`, `BLMOVE`, ...) | No typed APIs; they would stall the shared connection | Typed APIs on dedicated pooled connections |
 | Pub/sub | Handlers or `ChannelMessageQueue` | `IAsyncEnumerable` subscriptions with delivery-gap markers |
@@ -51,6 +54,8 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Fire-and-forget | `CommandFlags.FireAndForget` on any command | `ExecuteFireAndForgetAsync` for raw commands |
 | Multiple databases | `GetDatabase(n)` per call | One database per client (`Database` option) |
 | Health-checked failover between deployments | `ConnectGroupAsync` connection groups | [`RespireFailoverGroup`](./guides/failover-groups); read `ActiveClient` for each operation |
+| Smart client handoffs | Opt-in maintenance notifications and endpoint handoff | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications); combining handoff with failover groups is tracked in [#893](https://github.com/thomhurst/Respire/issues/893) |
+| Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | Connection recovery and specific routing retries; a general per-command retry policy is tracked in [#862](https://github.com/thomhurst/Respire/issues/862) |
 | Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
 | `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
 | Module commands | Raw `Execute` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
