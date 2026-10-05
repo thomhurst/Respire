@@ -5,9 +5,46 @@ namespace Respire;
 /// <summary>Optimistic transaction helpers that repeat WATCH, read, queue, and EXEC after a WATCH conflict.</summary>
 public static class RespireTransactionRetryExtensions
 {
+    /// <summary>Runs a watched transaction with a primary-routed, uncached client view for callback reads.</summary>
+    /// <remarks>
+    /// Each attempt supplies a view preserving the client's prefix, database, and serialization settings.
+    /// The view shares the caller's connections and is not owned by this helper. Use it for reads and
+    /// queue writes on the supplied transaction. Do not commit or dispose the transaction yourself.
+    /// Custom clients must support WithReadFrom and WithoutClientCache. Captured external clients
+    /// retain their own routing and caching settings. Retry and cancellation semantics match RunTransactionAsync.
+    /// </remarks>
+    public static ValueTask RunTransactionWithReadsAsync(
+        this IRespireClient client, RespireKey[] watchKeys,
+        Func<IRespireClient, RespireWatchedTransaction, CancellationToken, ValueTask> action,
+        RespireTransactionRetryOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        return RunTransactionAsync(client, watchKeys, (transaction, token) =>
+            action(CreateReadView(client), transaction, token),
+            options, cancellationToken);
+    }
+
+    /// <summary>Runs a watched transaction with safe callback reads and returns the successful attempt's result.</summary>
+    /// <remarks>See the non-generic overload for view ownership and callback contracts.</remarks>
+    public static ValueTask<T> RunTransactionWithReadsAsync<T>(
+        this IRespireClient client, RespireKey[] watchKeys,
+        Func<IRespireClient, RespireWatchedTransaction, CancellationToken, ValueTask<T>> action,
+        RespireTransactionRetryOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        return RunTransactionAsync(client, watchKeys, (transaction, token) =>
+            action(CreateReadView(client), transaction, token),
+            options, cancellationToken);
+    }
+
+    // Called inside each attempt's callback deliberately: never share a view across retries.
+    private static IRespireClient CreateReadView(IRespireClient client)
+        => client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
+
     /// <summary>Runs a new watched transaction on each attempt until EXEC succeeds or the attempt limit is reached.</summary>
     /// <remarks>
     /// Read inputs inside the callback using a primary-routed, uncached client view, then queue writes on the transaction.
+    /// Prefer RunTransactionWithReadsAsync when the helper should supply that read view for every attempt.
     /// The callback can run more than once; avoid external side effects and do not commit or dispose it yourself.
     /// Only a false EXEC result is retried. Callback, connection, timeout, cancellation, server, and Cluster routing
     /// exceptions propagate without replay. WATCH and queued keys retain the existing same-slot Cluster requirement.
@@ -31,7 +68,8 @@ public static class RespireTransactionRetryExtensions
     }
 
     /// <summary>Runs a watched transaction and returns only the successful attempt's callback result.</summary>
-    /// <remarks>See the non-generic overload for retry and callback contracts. Queued pending values complete only after EXEC.</remarks>
+    /// <remarks>See the non-generic overload for retry and callback contracts. Queued pending values complete only after EXEC.
+    /// Prefer RunTransactionWithReadsAsync when the helper should supply a primary-routed, uncached read view.</remarks>
     public static ValueTask<T> RunTransactionAsync<T>(
         this IRespireClient client, RespireKey[] watchKeys,
         Func<RespireWatchedTransaction, CancellationToken, ValueTask<T>> action,

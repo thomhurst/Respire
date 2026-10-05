@@ -8,6 +8,34 @@ namespace Respire.IntegrationTests;
 public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestContainer fixture)
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task RetryReadViewPreservesSameSlotAndPrefix(int protocol)
+    {
+        await using var root = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true,
+            Protocol = (RespProtocol)protocol,
+        });
+        var client = root.WithKeyPrefix($"safe-watch:{Guid.NewGuid():N}:");
+        await client.SetAsync("{a}:balance", "1");
+        var attempts = 0;
+        var result = await client.RunTransactionWithReadsAsync(["{a}:balance"], async (reads, transaction, token) =>
+        {
+            var current = int.Parse((await reads.GetStringAsync("{a}:balance", token))!);
+            Action crossSlot = () => transaction.Set("{b}:bad", "wrong");
+            crossSlot.Should().Throw<InvalidOperationException>();
+            if (++attempts == 1) await client.SetAsync("{a}:balance", "2", cancellationToken: token);
+            _ = transaction.Set("{a}:balance", current + 10);
+            return current + 10;
+        });
+        result.Should().Be(12);
+        attempts.Should().Be(2);
+        (await client.GetStringAsync("{a}:balance")).Should().Be("12");
+        await client.Keys.DeleteAsync("{a}:balance");
+    }
+
+    [Test]
     [Arguments(2, false)]
     [Arguments(2, true)]
     [Arguments(3, false)]
