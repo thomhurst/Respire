@@ -250,16 +250,15 @@ therefore fetch fresh state even if tracking invalidations from earlier writes a
 
 ## Automatic WATCH conflict retries
 
-`RunTransactionAsync` creates a fresh watched transaction for every attempt and retries only
+`RunTransactionWithReadsAsync` creates a fresh watched transaction for every attempt and retries only
 when `EXEC` reports a WATCH conflict. The callback reads inputs and queues writes; the helper
 commits and disposes the transaction. `MaxAttempts` includes the first attempt and defaults
 to five. Exhaustion throws `RespireTransactionConflictException` with its `Attempts` count.
 
 ```csharp
-var reads = redis.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
-long updated = await redis.RunTransactionAsync(
+long updated = await redis.RunTransactionWithReadsAsync(
     ["balance"],
-    async (transaction, token) =>
+    async (reads, transaction, token) =>
     {
         var current = long.Parse(await reads.GetStringAsync("balance", token) ?? "0");
         transaction.Set("balance", current - 100);
@@ -281,9 +280,16 @@ queued pending values cannot be inspected until after commit. The non-generic ov
 accepts a callback without a result. WATCH key arrays and binary key storage are copied before
 the first await, so later caller changes cannot change the keys being watched on a retry.
 Callbacks that queue no commands still validate WATCH through an empty MULTI/EXEC before
-returning a decision. The helper does not enforce the routing or caching settings of clients
-captured by the callback; supplying a safe read view directly is tracked in
-[#949](https://github.com/thomhurst/Respire/issues/949).
+returning a decision. Each attempt supplies a primary-routed view that bypasses the local cache
+and preserves the client's key prefix, database, and serializer. Views share the caller's
+connections; the helper does not dispose the client. Custom clients must support `WithReadFrom`
+and `WithoutClientCache`; unsupported views fail without retrying.
+
+The original `RunTransactionAsync` overloads remain available for callbacks that manage their
+own reads. The separate method name preserves existing calls, including untyped `null` callback
+validation. Neither helper can enforce routing or caching settings on clients captured by the
+callback, or prevent writes through a read view. Read every optimistic input through the supplied
+view, include those keys in WATCH, and queue writes on the transaction.
 
 Backoff receives the one-based failed attempt number and returns a nonnegative delay of at
 most 2,147,483,647 milliseconds. The failed transaction is disposed before the delay; caller
