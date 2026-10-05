@@ -107,8 +107,7 @@ requests run in development mode and do not publish packages.
 ### Core Modules
 - `NugetVersionGeneratorModule`: Generates semantic versions based on Git information
 - `BuildProjectsModule`: Builds the solution in Release configuration
-- `RunUnitTestsModule`: Executes unit tests
-- `RunBenchmarkModule`: Runs performance benchmarks
+- `RunUnitTestsModule`: Executes the pipeline's own tests (the library suites run in the CI workflow)
 - `PackProjectsModule`: Creates NuGet packages
 - `PackagePathsParserModule`: Finds generated package files
 - `PackageFilesRemovalModule`: Cleans up old packages

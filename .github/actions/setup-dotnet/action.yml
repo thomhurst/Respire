@@ -1,0 +1,23 @@
+name: Set up .NET
+description: Installs the .NET SDKs the repository builds with and restores the NuGet package cache.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET SDKs
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: |
+          8.0.x
+          10.0.x
+
+    # Keyed per job: each job restores a different project set, so a shared key would let
+    # whichever job saved first hand the others an incomplete cache.
+    - name: Cache NuGet packages
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ github.job }}-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', '**/*.csproj') }}
+        restore-keys: |
+          nuget-${{ runner.os }}-${{ github.job }}-
+          nuget-${{ runner.os }}-
