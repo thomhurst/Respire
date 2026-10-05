@@ -15,6 +15,9 @@ public class ClientFilterCommandTests
     [Arguments(4)]
     [Arguments(5)]
     [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    [Arguments(9)]
     public async Task MatchAllFiltersFailSynchronouslyAcrossAllPaths(int filter)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
@@ -34,7 +37,10 @@ public class ClientFilterCommandTests
             3 => new RespireClientFilterOptions { Capabilities = "" },
             4 => new RespireClientFilterOptions { ExcludedAddress = "" },
             5 => new RespireClientFilterOptions { ExcludedLocalAddress = "" },
-            _ => new RespireClientFilterOptions { ExcludedIp = "" },
+            6 => new RespireClientFilterOptions { ExcludedIp = "" },
+            7 => new RespireClientFilterOptions { ExcludedName = "" },
+            8 => new RespireClientFilterOptions { ExcludedLibraryName = "" },
+            _ => new RespireClientFilterOptions { ExcludedLibraryVersion = "" },
         };
         await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();

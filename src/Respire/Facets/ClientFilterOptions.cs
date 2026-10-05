@@ -68,13 +68,13 @@ public sealed record RespireClientFilterOptions
     public string? ExcludedAddress { get; init; }
     /// <summary>Exclude this local address and port. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedLocalAddress { get; init; }
-    /// <summary>Exclude this connection name. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this connection name. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedName { get; init; }
     /// <summary>Exclude these connection flags. Requires Valkey 9+.</summary>
     public string? ExcludedFlags { get; init; }
-    /// <summary>Exclude this library name. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this library name. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedLibraryName { get; init; }
-    /// <summary>Exclude this library version. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this library version. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedLibraryVersion { get; init; }
     /// <summary>Exclude this database number. Requires Valkey 9+.</summary>
     public int? ExcludedDatabase { get; init; }
@@ -91,8 +91,12 @@ internal static class ClientFilterArguments
         ArgumentNullException.ThrowIfNull(options);
         if (options.Flags is "" || options.Capabilities is "")
             throw new ArgumentException("Flags and Capabilities must be nonempty when specified.", nameof(options));
+        // Empty address/metadata exclusions can exclude nobody, bypassing the unfiltered-kill guard.
+        // Empty excluded flag/capability sets instead exclude everybody, so remain valid.
         if (options.ExcludedAddress is "" || options.ExcludedLocalAddress is "" || options.ExcludedIp is "")
             throw new ArgumentException("ExcludedAddress, ExcludedLocalAddress and ExcludedIp must be nonempty when specified.", nameof(options));
+        if (options.ExcludedName is "" || options.ExcludedLibraryName is "" || options.ExcludedLibraryVersion is "")
+            throw new ArgumentException("ExcludedName, ExcludedLibraryName and ExcludedLibraryVersion must be nonempty when specified.", nameof(options));
         var args = new List<RespireValue>();
         var hasSelector = false;
         AddType("TYPE", options.Type, nameof(options.Type));

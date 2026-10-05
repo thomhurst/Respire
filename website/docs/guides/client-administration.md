@@ -136,6 +136,18 @@ owned by the same client. A null value preserves the server default: true for KI
 false for LIST. Killing the handle's socket invalidates that handle. Cancellation cannot
 undo connections already closed by the server.
 
+**Exclusion-only filters can close almost every connection on a node.** They count as
+selectors: `ExcludedType = RespireClientType.PubSub`, for example, permits KILL without
+`AllowUnfilteredKill` and selects every non-pub/sub connection except the executing socket
+when `SkipMe` is true. Prefer a positive selector such as an owned client ID when possible.
+`SkipMe` protects only the executing socket, including when the caller owns other pooled
+or multiplexed connections.
+
+Empty excluded addresses, IPs, names, library names, and library versions are rejected
+before sending or queueing because those values can exclude no connections. Empty
+`ExcludedFlags` and `ExcludedCapabilities` instead exclude every connection and select
+none; they remain valid. Null means that the corresponding filter is omitted.
+
 Both batches and transactions expose `Server.Clients(filter)` and `Server.KillClients(filter)`.
 They return owned typed rows and a count respectively. These commands are supported inside
 MULTI/EXEC; their filters run when EXEC executes. A queue targets its execution node, not a
