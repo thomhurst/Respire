@@ -79,7 +79,7 @@ public class FakeSortedSetServerTests
             var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, args); }).Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains(command);
         }
-        await Assert.That(async () => { using var ignored = await client.ExecuteAsync("ZRANK", "key", "member", "WITHSCORE"); }).Throws<RespireServerException>();
+        await Assert.That(async () => { using var ignored = await client.ExecuteAsync("ZRANK", "key", "member", "INVALID"); }).Throws<RespireServerException>();
         await Assert.That(await client.SortedSets.ScoreAsync("key", "member")).IsEqualTo(1);
         await Assert.That(await client.ExistsAsync("destination")).IsFalse();
     }
