@@ -16,7 +16,7 @@ namespace Respire.Json;
 /// </para>
 /// <para>
 /// The default <see cref="RespireJsonPath"/> is the legacy root path <c>.</c>, which returns one value.
-/// Paths that start with <c>$</c> use JSONPath, which returns an array of every match.
+/// Paths that start with <c>$</c> and Redis 8.10 projection expressions use JSONPath array replies.
 /// </para>
 /// </remarks>
 public sealed class RespireJsonClient
@@ -34,6 +34,24 @@ public sealed class RespireJsonClient
 
     /// <summary>Low-level source-generated commands for the documented RedisJSON command set.</summary>
     public IRespireJsonCommands Commands => _commands;
+
+    /// <summary>Applies an RFC 7396 merge patch using caller-supplied serialization metadata.</summary>
+    /// <remarks>
+    /// Object members set to JSON null are removed; arrays and other non-object values replace the
+    /// matching value. The metadata controls property names, converters, and null serialization.
+    /// Argument and serialization failures are reported through the returned task.
+    /// </remarks>
+    public async ValueTask MergeAsync<T>(
+        RespireKey key,
+        T patch,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var utf8Json = JsonSerializer.SerializeToUtf8Bytes(patch, jsonTypeInfo);
+        using var result = await _commands.MergeAsync(key, path.Value, utf8Json, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Gets one typed JSON value.</summary>
     /// <remarks>

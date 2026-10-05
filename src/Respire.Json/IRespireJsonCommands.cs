@@ -9,6 +9,21 @@ namespace Respire.Json;
 [RespireCommands]
 public interface IRespireJsonCommands
 {
+    /// <summary>JSON.MERGE applies an RFC 7396 merge patch.</summary>
+    [RespireCommand("JSON.MERGE", Mutation = RespireCacheMutation.SingleKey)]
+    ValueTask<RespireResult> MergeAsync(RespireKey key, string path, RespireValue json,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>JSON.ARRLEN returns a legacy length or JSONPath lengths, including null for non-arrays.</summary>
+    [RespireCommand("JSON.ARRLEN", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ArrayLengthAsync(RespireKey key, string path,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>JSON.NUMPOWBY raises matching numbers to a power.</summary>
+    [RespireCommand("JSON.NUMPOWBY", Mutation = RespireCacheMutation.SingleKey)]
+    ValueTask<RespireResult> NumberPowerByAsync(RespireKey key, string path, double exponent,
+        CancellationToken cancellationToken = default);
+
     /// <summary>JSON.GET with formatting options and one or more paths.</summary>
     [RespireCommand("JSON.GET", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> GetAsync(RespireKey key, string[] optionsAndPaths,

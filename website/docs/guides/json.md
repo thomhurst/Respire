@@ -51,6 +51,25 @@ The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath
 
 ## Low-level commands
 
+`MergeAsync<T>(key, patch, jsonTypeInfo, path)` applies an RFC 7396 merge patch using the
+supplied `System.Text.Json` metadata. Object members serialized as JSON `null` are deleted;
+arrays and scalar values replace the selected value. Configure null handling deliberately:
+omitting a null member from the serialized patch leaves that member unchanged.
+
+The generated `Commands.MergeAsync`, `Commands.ArrayLengthAsync`, and
+`Commands.NumberPowerByAsync` expose `JSON.MERGE`, `JSON.ARRLEN`, and `JSON.NUMPOWBY`.
+`ArrayLengthAsync` preserves null entries for JSONPath matches that are not arrays.
+
+Redis 8.10 projection expressions, including `$.items.sum()`, `sum($.items)`, and
+`($.price + 1)`, return JSON arrays too. Typed reads unwrap that outer array using the
+supplied result metadata, just like ordinary JSONPath matches. A projection can yield no
+value; `GetManyAsync` then returns an empty array. See the
+[Redis JSONPath reference](https://redis.io/docs/latest/develop/data-types/json/path/).
+For projections written in legacy notation, use `RespireJsonPath.Projection("items.sum()")`
+to declare the array response shape explicitly, or write the rooted form `$.items.sum()`.
+Respire does not parse the complete Redis expression grammar. A projection path compares
+equal to another path only when both its text and response shape match.
+
 `RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, and toggle commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use. Conditional `JSON.SET` and `JSON.DEBUG MEMORY` take fixed modifier tokens, so they are available only through the typed `SetAsync`, `SetJsonAsync`, and `GetMemoryUsageAsync` methods.
 
 ## Key prefixes, Cluster, and client-side caching
