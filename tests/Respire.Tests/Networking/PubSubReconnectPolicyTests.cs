@@ -32,13 +32,13 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task DiscoveryTelemetryContainsListenerAndLoggerFailures()
     {
         var failure = new InvalidOperationException("Injected metric listener failure.");
         using var logger = new ThrowingTelemetryLogger(failure);
-        using var listener = ThrowOnReconnectMeasurements(6379, failure);
-        var endpoint = new RespireEndpoint("127.0.0.1", 6379);
+        // A unique host keeps the throwing listener away from other tests' reconnects.
+        var endpoint = new RespireEndpoint($"discovery-telemetry-{Guid.NewGuid():N}.invalid", 6379);
+        using var listener = ThrowOnReconnectMeasurements(endpoint, failure);
 
         RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, TimeSpan.Zero, logger);
         RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-monitor", 1, null, logger);
@@ -47,7 +47,6 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ThrowingTelemetryAndLoggerDoNotStrandRecoveryStates(bool scoped)
@@ -62,7 +61,7 @@ public class PubSubReconnectPolicyTests
         });
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
-        using var listener = ThrowOnReconnectMeasurements(server.Port, failure);
+        using var listener = ThrowOnReconnectMeasurements(new("127.0.0.1", server.Port), failure);
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -91,7 +90,7 @@ public class PubSubReconnectPolicyTests
         await Assert.That(Volatile.Read(ref logger.Failures)).IsEqualTo(2);
     }
 
-    private static MeterListener ThrowOnReconnectMeasurements(int port, Exception failure)
+    private static MeterListener ThrowOnReconnectMeasurements(RespireEndpoint endpoint, Exception failure)
     {
         var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>
@@ -102,8 +101,13 @@ public class PubSubReconnectPolicyTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            bool host = false, port = false;
             foreach (var tag in tags)
-                if (tag.Key == "server.port" && Equals(tag.Value, port)) throw failure;
+            {
+                host |= tag.Key == "server.address" && Equals(tag.Value, endpoint.Host);
+                port |= tag.Key == "server.port" && Equals(tag.Value, endpoint.Port);
+            }
+            if (host && port) throw failure;
         });
         listener.Start();
         return listener;

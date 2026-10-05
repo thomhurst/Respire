@@ -321,7 +321,6 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DedicatedTelemetryUsesEndpointAfterMoving(bool streaming)
@@ -339,13 +338,17 @@ public class MaintenanceNotificationTests
 
         var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        // Another listener (such as TUnit's) can sample activities this one declines, and the
+        // callbacks still observe them, so filter on the operation as well as the endpoint.
+        bool IsOperation(Activity activity) => activity.OperationName is "SET" or "BLPOP"
+            && TestTelemetry.IsFrom(activity, source.Port, target.Port);
         using var listener = new ActivityListener
         {
             ShouldListenTo = activitySource => activitySource.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name is "SET" or "BLPOP"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = started.Enqueue,
-            ActivityStopped = stopped.Enqueue,
+            ActivityStarted = activity => { if (IsOperation(activity)) started.Enqueue(activity); },
+            ActivityStopped = activity => { if (IsOperation(activity)) stopped.Enqueue(activity); },
         };
         ActivitySource.AddActivityListener(listener);
         if (streaming)
@@ -362,7 +365,6 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
@@ -387,6 +389,8 @@ public class MaintenanceNotificationTests
         if (acquisitionFails) target.SuppressReply = command => command == "HELLO 3";
 
         var name = aof ? "WAITAOF SET" : "WAIT SET";
+        bool IsOperation(Activity activity) => activity.OperationName == name
+            && TestTelemetry.IsFrom(activity, source.Port, target.Port);
         var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
@@ -394,8 +398,8 @@ public class MaintenanceNotificationTests
             ShouldListenTo = activitySource => activitySource.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == name
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = started.Enqueue,
-            ActivityStopped = stopped.Enqueue,
+            ActivityStarted = activity => { if (IsOperation(activity)) started.Enqueue(activity); },
+            ActivityStopped = activity => { if (IsOperation(activity)) stopped.Enqueue(activity); },
         };
         ActivitySource.AddActivityListener(listener);
         using var batch = client.CreateBatch();
@@ -421,7 +425,6 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task DedicatedAcquisitionFailureRecordsOneActivityForIntendedEndpoint()
     {
         await using var server = Server(maxConnections: 4);
@@ -433,7 +436,10 @@ public class MaintenanceNotificationTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStopped = stopped.Enqueue,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, server.Port)) stopped.Enqueue(activity);
+            },
         };
         ActivitySource.AddActivityListener(listener);
         await Assert.That(async () => await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray())))
@@ -482,7 +488,6 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments("standalone")]
     [Arguments("cluster")]
     [Arguments("sentinel")]
@@ -506,8 +511,14 @@ public class MaintenanceNotificationTests
             ShouldListenTo = activitySource => activitySource.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = activity => { if (activity.OperationName == "SET") started.Enqueue(activity); },
-            ActivityStopped = activity => { if (activity.OperationName == "SET") stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port)) started.Enqueue(activity);
+            },
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port)) stopped.Enqueue(activity);
+            },
         };
         ActivitySource.AddActivityListener(listener);
         await using var payload = new PausedFirstReadStream();
@@ -2171,7 +2182,6 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel] // Isolate the bounded process-wide diagnostic listener workload.
     public async Task OverflowDropsAreReportedOnceDeliveryResumes()
     {
         var host = $"maintenance-overflow-{Guid.NewGuid():N}";

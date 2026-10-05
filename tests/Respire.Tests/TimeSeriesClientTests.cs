@@ -497,7 +497,6 @@ public class TimeSeriesClientTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task MultiAdd_DisposalBetweenChunksPreservesOriginalException()
     {
         await using var server = new FakeRespServer(Frame("*1\r\n:11\r\n"));
@@ -509,7 +508,11 @@ public class TimeSeriesClientTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "TS.MADD"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStopped = _ => disposal ??= client.DisposeAsync().AsTask(),
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "TS.MADD" && TestTelemetry.IsFrom(activity, server.Port))
+                    disposal ??= client.DisposeAsync().AsTask();
+            },
         };
         ActivitySource.AddActivityListener(listener);
         var error = await Assert.That(async () => await timeSeries.MultiAddAsync(
@@ -520,7 +523,6 @@ public class TimeSeriesClientTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task MultiAdd_UnexpectedFailureAfterConfirmedChunkPreservesOriginalException(bool resourceFailure)
@@ -537,6 +539,9 @@ public class TimeSeriesClientTests
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
                 if (options.Name != "TS.MADD") return ActivitySamplingResult.None;
+                // Other tests' TS.MADD activities share the process-wide source; never fail them.
+                if (options.Tags?.Any(tag => tag.Key == "server.port" && Equals(tag.Value, server.Port)) != true)
+                    return ActivitySamplingResult.None;
                 if (++sampled == 2) throw failure;
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
