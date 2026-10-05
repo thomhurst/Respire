@@ -381,39 +381,51 @@ public class ClusterTests
     }
 
     [Test]
-    [ParallelLimiter<TimingSensitive>]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ReadFrom_HealthyRefreshTimeoutDoesNotShrinkWithMasterCount(bool stallFirstTwo)
+    public async Task ReadFrom_HealthyRefreshTimeoutDoesNotShrinkWithMasterCount(bool stallOthers)
     {
+        // Each probe's CLUSTER SLOTS deadline starts when the probe is queued, before a busy
+        // runner may write it. Eight masters let the reply exceed any per-master share of the
+        // refresh budget ((5 s + 5 s) / 8) by a fixed margin while leaving three seconds of the
+        // healthy probe's own five-second deadline for scheduling delay.
+        const int masterCount = 8;
+        const int replyDelayMilliseconds = 2_000;
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
         };
-        await using var first = new FakeRespServer(8, FakeRespServer.OkReply);
-        await using var second = new FakeRespServer(8, FakeRespServer.OkReply);
-        await using var third = new FakeRespServer(8, FakeRespServer.OkReply);
-        var topology = Encoding.ASCII.GetBytes("*3\r\n" +
-            $"*3\r\n:0\r\n:5000\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
-            $"*3\r\n:5001\r\n:10000\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n" +
-            $"*3\r\n:10001\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{third.Port}\r\n");
-        first.ReplyOverride = (_, _) => Volatile.Read(ref topology);
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        var masters = Enumerable.Range(0, masterCount).Select(_ => new FakeRespServer(8, FakeRespServer.OkReply)).ToArray();
+        try
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(2),
-            Endpoints = [new("127.0.0.1", first.Port)],
-        });
-        Volatile.Write(ref topology, ClusterTopology(first.Port, replica.Port));
-        foreach (var server in new[] { first, second, third })
-        {
-            // Scaled 2x for scheduling slack: one reply still exceeds a timeout split across three masters.
-            server.DelayCommand("CLUSTER SLOTS", 1_500);
-            server.SuppressReply = command => stallFirstTwo && !ReferenceEquals(server, third) && command == "CLUSTER SLOTS";
-            server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
+            var rangeSize = ClusterHash.SlotCount / masterCount;
+            var ranges = new StringBuilder($"*{masterCount}\r\n");
+            for (var index = 0; index < masterCount; index++)
+                ranges.Append($"*3\r\n:{index * rangeSize}\r\n:{(index + 1) * rangeSize - 1}\r\n" +
+                    $"*2\r\n$9\r\n127.0.0.1\r\n:{masters[index].Port}\r\n");
+            var topology = Encoding.ASCII.GetBytes(ranges.ToString());
+            var healthy = masters[ClusterHash.GetSlot("key") / rangeSize];
+            masters[0].ReplyOverride = (_, _) => Volatile.Read(ref topology);
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+                ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+                Endpoints = [new("127.0.0.1", masters[0].Port)],
+            });
+            Volatile.Write(ref topology, ClusterTopology(masters[0].Port, replica.Port));
+            foreach (var server in masters)
+            {
+                server.DelayCommand("CLUSTER SLOTS", replyDelayMilliseconds);
+                server.SuppressReply = command => stallOthers && !ReferenceEquals(server, healthy) && command == "CLUSTER SLOTS";
+                server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
+            }
+            await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(15))).IsEqualTo("value");
         }
-        await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(10))).IsEqualTo("value");
+        finally
+        {
+            foreach (var server in masters) await server.DisposeAsync();
+        }
     }
 
     [Test]
@@ -1011,10 +1023,11 @@ public class ClusterTests
             => $"*4\r\n:{start}\r\n:{end}\r\n*2\r\n+127.0.0.1\r\n:{owner}\r\n*2\r\n+127.0.0.1\r\n:{replicaPort}\r\n";
         var topology = Encoding.ASCII.GetBytes($"*2\r\n{Range(0, 8191, otherPrimary.Port, otherReplica.Port)}{Range(8192, 16383, primary.Port, replica.Port)}");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+        // Default deadlines: the primaries below fail their probes outright, so the refresh round
+        // ends without waiting for a timeout, and no read here depends on a short deadline.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromMilliseconds(250), CommandTimeout = TimeSpan.FromMilliseconds(250),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
         var key = Enumerable.Range(0, 100).Select(i => $"key:{i}").First(value => ClusterHash.GetSlot(value) >= 8192);
@@ -1028,9 +1041,12 @@ public class ClusterTests
             : Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ClusterTopologyWithoutReplicas(primary.Port))
                 .Replace(":0\r\n:16383", ":8192\r\n:16383"));
         // Keep this regression focused on the replica's partial reply; concurrent primary
-        // discovery must not win with its original full snapshot before that reply arrives.
-        primary.SuppressReply = command => command == "CLUSTER SLOTS";
-        otherPrimary.SuppressReply = command => command == "CLUSTER SLOTS";
+        // discovery must not win with its original full snapshot. The primaries' probes fail at
+        // once, so the replica's empty evidence publishes when its reply arrives instead of
+        // after a stalled probe's deadline.
+        var unavailable = "-ERR topology unavailable\r\n"u8.ToArray();
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? unavailable : null;
+        otherPrimary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? unavailable : null;
         ReplicaRoutes(client)[slot]!.MarkValidated(TimeSpan.Zero);
         try { await reads.Strings.GetStringAsync(key); }
         catch (RespireConnectionException) { }
@@ -4212,13 +4228,19 @@ public class ClusterTests
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
     }
 
+    // The idle-read watchdog also guards setup round trips (the seed's CLUSTER SLOTS, ASKING),
+    // which a busy runner can delay by hundreds of milliseconds. An aborted seed connection then
+    // waits on a fake server that accepts no replacement. One second covers that setup, and the
+    // blocking reply still arrives a full watchdog period after the watchdog would have fired.
+    private static readonly TimeSpan BlockingWatchdog = TimeSpan.FromSeconds(1);
+    private const int BlockingReplyDelayMilliseconds = 2_000;
+
     [Test]
-    [ParallelLimiter<TimingSensitive>] // The watchdog must not fire on a handshake slowed by the full suite's socket workload.
     public async Task ClusterBlockingCommand_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");
         await using var target = new FakeRespServer(2, FakeRespServer.PongReply);
-        target.DelayReply(0, 600);
+        target.DelayReply(0, BlockingReplyDelayMilliseconds);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
@@ -4226,10 +4248,10 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200),
+            ConnectionIdleReadTimeout = BlockingWatchdog,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         var response = await client.SendBlockingAsync(
             "BLPOP", new Cmd1(Verbs.BLPop, "key"), timeout.Token);
@@ -4239,13 +4261,12 @@ public class ClusterTests
     }
 
     [Test]
-    [ParallelLimiter<TimingSensitive>] // The watchdog must not fire on a handshake slowed by the full suite's socket workload.
     public async Task ClusterBlockingAskRetry_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");
         await using var target = new FakeRespServer(
             2, FakeRespServer.OkReply, FakeRespServer.PongReply);
-        target.DelayReply(1, 600);
+        target.DelayReply(1, BlockingReplyDelayMilliseconds);
         await using var initial = new FakeRespServer(
             2, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         var topology = Encoding.ASCII.GetBytes(
@@ -4255,10 +4276,10 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200),
+            ConnectionIdleReadTimeout = BlockingWatchdog,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         var response = await client.SendBlockingAsync(
             "BLPOP", new Cmd1(Verbs.BLPop, "key"), timeout.Token);
