@@ -60,6 +60,8 @@ the session confirms `MULTI` before sending any imports. A rejected `MULTI` leav
 fieldsets usable. A rejected `EXEC` closes the session because Redis may still be in transaction
 mode. Transactions require one in-flight slot per queued command plus one for `EXEC`;
 exceeding `MaxInflightCommands` fails before `MULTI` and preserves prepared fieldsets.
+Credential renewal waits outside the complete `MULTI`/`EXEC` sequence. Credential expiry and
+renewal deadlines still apply; a transaction cannot extend the connection's authentication lifetime.
 Execution errors fault the affected pending and do not roll back other commands. Session
 transactions do not provide WATCH. `ExecuteAndWaitForReplicationAsync` and
 `ExecuteAndWaitForAofAsync` reject session batches because their execution contract creates a
@@ -93,8 +95,9 @@ Disposal does not wait for an in-flight operation: it closes the connection, cau
 operation to fail without replay.
 
 Ordinary command errors leave the session usable. Routing errors, `READONLY`, and errors
-that leave transaction state uncertain invalidate it. Cancellation before an
-immediate send leaves its fieldsets intact. After an uncertain send, some imports may have
+that leave transaction state uncertain invalidate it. Cancellation proven to occur before
+admission leaves its fieldsets intact, including a batch waiting for credential renewal.
+Cancellation of an admitted command still expires the session. After an uncertain send, some imports may have
 executed; inspect application data before retrying. Disposing a queue before execution does
 not dispose the session or discard fieldsets prepared earlier.
 

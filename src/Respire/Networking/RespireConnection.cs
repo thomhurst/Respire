@@ -854,7 +854,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TCommand command, CancellationToken cancellationToken, string commandName)
         where TCommand : struct, IRespCommand
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+            throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
         var deadline = CommandDeadline.After(_commandTimeoutMilliseconds);

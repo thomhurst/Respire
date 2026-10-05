@@ -281,8 +281,131 @@ public class HashImportTests
     private sealed class ImportCredentials(RespireCredentials current) : IRespireCredentialProvider
     {
         public RespireCredentials Current = current;
+        public int Calls;
         public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(Current);
+        {
+            Interlocked.Increment(ref Calls);
+            return ValueTask.FromResult(Current);
+        }
+    }
+
+    [Test]
+    public async Task PreCanceledBatchPreservesPreparedFieldsets()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        using var batch = session.CreateBatch();
+        var unsent = batch.Hashes.Import("unsent", "schema", "value");
+        await Assert.That(async () => await batch.ExecuteAsync(new(true))).Throws<OperationCanceledException>();
+        await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        await Assert.That(await client.ExistsAsync("unsent")).IsFalse();
+        await session.SetAsync("later", "schema", "retained");
+        await Assert.That(await client.Hashes.GetStringAsync("later", "field")).IsEqualTo("retained");
+    }
+
+    [Test]
+    public async Task BatchCanceledDuringRenewalPreservesSession()
+    {
+        var clock = new Respire.Testing.CredentialTestClock();
+        var provider = new ImportCredentials(new("user", "first", clock.GetUtcNow().AddSeconds(30)));
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        server.SuppressReply = command => command == "AUTH user second";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            CredentialProvider = provider, CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        var commands = server.ReceivedCommands.ToArray();
+        var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "HIMPORT PREPARE schema field")];
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        while (!server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
+                   item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId))
+            await Task.Delay(5, deadline.Token);
+        using var batch = session.CreateBatch();
+        _ = batch.Hashes.Import("unsent", "schema", "value");
+        using var cancel = new CancellationTokenSource();
+        var execute = batch.ExecuteAsync(cancel.Token).AsTask();
+        await Assert.That(execute.IsCompleted).IsFalse();
+        cancel.Cancel();
+        await Assert.That(async () => await execute.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands.Contains("HIMPORT SET unsent schema value")).IsFalse();
+        await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
+        await Assert.That(await session.SetAsync("later", "schema", ["retained"], deadline.Token)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CredentialRenewalWaitsUntilImportTransactionFinishes(bool expireCredentials)
+    {
+        var clock = new Respire.Testing.CredentialTestClock();
+        var provider = new ImportCredentials(new("user", "first", clock.GetUtcNow().AddSeconds(30)));
+        await using var server = new FakeRespServer(30, FakeRespServer.OkReply);
+        var inMulti = false;
+        var importConnection = 0;
+        server.SuppressReply = command =>
+        {
+            if (command != "MULTI") return false;
+            inMulti = true;
+            return true;
+        };
+        server.ReplyOverride = (connectionId, command) =>
+        {
+            if (connectionId != importConnection) return FakeRespServer.OkReply;
+            if (command == "EXEC") { inMulti = false; return "*1\r\n+OK\r\n"u8.ToArray(); }
+            return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            CredentialProvider = provider, CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+        await using var transaction = session.CreateTransaction();
+        var imported = transaction.Hashes.Import("key", "schema", "value");
+        var commit = transaction.CommitAsync(deadline.Token).AsTask();
+        while (!server.ReceivedCommands.Contains("MULTI")) await Task.Delay(5, deadline.Token);
+        var commands = server.ReceivedCommands.ToArray();
+        var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "MULTI")];
+        importConnection = connectionId;
+        var previousCalls = Volatile.Read(ref provider.Calls);
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        while (Volatile.Read(ref provider.Calls) == previousCalls) await Task.Delay(5, deadline.Token);
+        // Leave MULTI's reply withheld while the independent refresh worker runs.
+        await Task.Delay(100, deadline.Token);
+        await Assert.That(server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
+            item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId)).IsFalse();
+        if (expireCredentials)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            await Assert.That(async () => await commit.WaitAsync(deadline.Token)).Throws<RespireException>();
+            await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
+            return;
+        }
+        await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
+        await commit.WaitAsync(deadline.Token);
+        await Assert.That(imported.Result).IsTrue();
+        while (!server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
+                   item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId))
+            await Task.Delay(5, deadline.Token);
+        commands = server.ReceivedCommands.Select((command, index) => (command, index))
+            .Where(item => server.ReceivedConnectionIds[item.index] == connectionId)
+            .Select(item => item.command).ToArray();
+        await Assert.That(Array.IndexOf(commands, "AUTH user second")).IsGreaterThan(Array.IndexOf(commands, "EXEC"));
+        await Assert.That(await session.SetAsync("later", "schema", ["value"], deadline.Token)).IsTrue();
     }
 
     [Test]

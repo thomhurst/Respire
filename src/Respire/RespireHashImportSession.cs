@@ -232,8 +232,9 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     }
 
     internal static bool RequiresExpiration(Exception error)
-        => error is not RespireServerException server || ClusterRouter.IsRedirect(server)
-            || server.Code == RespireErrorCodes.ReadOnly;
+        => error is not RespireCommandNotSubmittedException
+            && (error is not RespireServerException server || ClusterRouter.IsRedirect(server)
+                || server.Code == RespireErrorCodes.ReadOnly);
 
     internal ValueTask ExpireIfUncertainAsync(Exception error)
         => RequiresExpiration(error) ? ExpireAsync(error) : ValueTask.CompletedTask;

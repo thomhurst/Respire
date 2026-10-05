@@ -270,6 +270,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         Exception? operationError = null;
         Exception? importError = null;
         var importTransactionStarted = false;
+        RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
         try
         {
@@ -408,13 +409,17 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
         finally
         {
-            if (_importSession is not null && operationError is not null)
+            try
             {
-                if (importTransactionStarted)
-                    await _importSession.ExpireAsync(importError ?? operationError).ConfigureAwait(false);
-                else
-                    await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
+                if (_importSession is not null && operationError is not null)
+                {
+                    if (importTransactionStarted)
+                        await _importSession.ExpireAsync(importError ?? operationError).ConfigureAwait(false);
+                    else
+                        await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
+                }
             }
+            finally { credentialSequence.Dispose(); }
             if (_ops.Count != 0)
             {
                 core.ClientCache?.FlushForUnknownCommand();
@@ -479,6 +484,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     {
                         if (_importSession is not null)
                         {
+                            credentialSequence = await connection.AcquireCredentialSequenceAsync(token).ConfigureAwait(false);
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
@@ -554,6 +560,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             catch (Exception error)
             {
+                if (_importSession is not null && error is RespireCommandNotSubmittedException)
+                    importError = error;
                 discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
                 throw;
             }

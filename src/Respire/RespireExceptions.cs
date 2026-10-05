@@ -252,7 +252,8 @@ public sealed class RespireTimeoutException : RespireException
 }
 
 /// <summary>
-/// Cancellation observed while a command waited for in-flight capacity, before it was enqueued.
+/// Cancellation observed before a command or exclusive protocol sequence was admitted,
+/// including in-flight capacity and credential-renewal waits.
 /// It is still an <see cref="OperationCanceledException"/> carrying the caller's token for ordinary
 /// callers; lock release uses it as proof that no delete was sent. Every command cancelled in that
 /// wait now surfaces this subtype, so code that matches the exact runtime type
