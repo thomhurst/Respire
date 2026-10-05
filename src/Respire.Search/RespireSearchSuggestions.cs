@@ -41,14 +41,18 @@ public sealed partial class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(suggestion);
         if (double.IsNaN(score)) throw new ArgumentOutOfRangeException(nameof(score), "A suggestion score cannot be NaN.");
-        var arguments = new List<RespireValue>(3);
-        if (options?.Increment == true) arguments.Add("INCR");
-        if (options?.Payload is { } payload)
+        var increment = options?.Increment == true;
+        var payload = options?.Payload;
+        var count = (increment ? 1 : 0) + (payload.HasValue ? 2 : 0);
+        RespireValue[] arguments = count == 0 ? [] : new RespireValue[count];
+        var offset = 0;
+        if (increment) arguments[offset++] = "INCR";
+        if (payload is { } bytes)
         {
-            arguments.Add("PAYLOAD");
-            arguments.Add(payload);
+            arguments[offset++] = "PAYLOAD";
+            arguments[offset] = bytes;
         }
-        using var result = await _commands.AddSuggestionAsync(key, suggestion, score, [.. arguments], cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.AddSuggestionAsync(key, suggestion, score, arguments, cancellationToken).ConfigureAwait(false);
         return ReadSuggestionCount(result, "FT.SUGADD");
     }
 
@@ -81,16 +85,19 @@ public sealed partial class RespireSearchClient
         if (options?.Max is <= 0) throw new ArgumentOutOfRangeException(nameof(options), options.Max, "Max must be positive.");
         var withScores = options?.WithScores == true;
         var withPayloads = options?.WithPayloads == true;
-        var arguments = new List<RespireValue>(5);
-        if (options?.Fuzzy == true) arguments.Add("FUZZY");
-        if (withScores) arguments.Add("WITHSCORES");
-        if (withPayloads) arguments.Add("WITHPAYLOADS");
+        var fuzzy = options?.Fuzzy == true;
+        var count = (fuzzy ? 1 : 0) + (withScores ? 1 : 0) + (withPayloads ? 1 : 0) + (options?.Max is not null ? 2 : 0);
+        RespireValue[] arguments = count == 0 ? [] : new RespireValue[count];
+        var argumentOffset = 0;
+        if (fuzzy) arguments[argumentOffset++] = "FUZZY";
+        if (withScores) arguments[argumentOffset++] = "WITHSCORES";
+        if (withPayloads) arguments[argumentOffset++] = "WITHPAYLOADS";
         if (options?.Max is { } max)
         {
-            arguments.Add("MAX");
-            arguments.Add(max);
+            arguments[argumentOffset++] = "MAX";
+            arguments[argumentOffset] = max;
         }
-        using var result = await _commands.GetSuggestionsAsync(key, prefix, [.. arguments], cancellationToken).ConfigureAwait(false);
+        using var result = await _commands.GetSuggestionsAsync(key, prefix, arguments, cancellationToken).ConfigureAwait(false);
         if (result.Type != RespDataType.Array || result.IsNull)
             throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
         var width = 1 + (withScores ? 1 : 0) + (withPayloads ? 1 : 0);
@@ -112,9 +119,12 @@ public sealed partial class RespireSearchClient
 
     private static long ReadSuggestionCount(RespireResult result, string command)
     {
-        if (result.Type != RespDataType.Integer || result.AsInteger() < 0)
-            throw RespireSearchReply.Unexpected(command, "a nonnegative integer was expected");
-        return result.AsInteger();
+        if (result.Type == RespDataType.Integer)
+        {
+            var count = result.AsInteger();
+            if (count >= 0) return count;
+        }
+        throw RespireSearchReply.Unexpected(command, "a nonnegative integer was expected");
     }
 
     private static RespireResult ReadSuggestionString(RespireResult result)
