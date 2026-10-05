@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using Respire.Serialization;
 using Respire.Testing;
@@ -10,6 +11,62 @@ namespace Respire.Tests;
 
 public class TransactionReadViewTests
 {
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task UnsupportedCustomViewDisposesWatchWithoutRetry(bool rejectCacheView, bool generic)
+    {
+        await using var server = new RespireFakeServer();
+        await using var root = await RespireClient.ConnectAsync(server.CreateOptions());
+        var client = DispatchProxy.Create<IRespireClient, UnsupportedViewClient>();
+        var proxy = (UnsupportedViewClient)client;
+        proxy.Root = root;
+        proxy.RejectCacheView = rejectCacheView;
+        var callbacks = 0;
+        Exception? observed = null;
+        try
+        {
+            if (generic)
+                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) => { callbacks++; return ValueTask.FromResult(1); });
+            else
+                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) => { callbacks++; return ValueTask.CompletedTask; });
+        }
+        catch (Exception error) { observed = error; }
+
+        await Assert.That(observed).IsSameReferenceAs(proxy.Failure);
+        await Assert.That(proxy.Attempts).IsEqualTo(1);
+        await Assert.That(callbacks).IsEqualTo(0);
+        await Assert.That(() => { _ = proxy.Transaction!.Set("watched", "never"); }).Throws<InvalidOperationException>();
+        await root.SetAsync("still-owned", "value");
+        await Assert.That(await root.GetStringAsync("still-owned")).IsEqualTo("value");
+    }
+
+    public class UnsupportedViewClient : DispatchProxy
+    {
+        public IRespireClient Root { get; set; } = null!;
+        public bool RejectCacheView { get; set; }
+        public int Attempts { get; private set; }
+        public RespireWatchedTransaction? Transaction { get; private set; }
+        public NotSupportedException Failure { get; } = new("custom view unavailable");
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args) => method!.Name switch
+        {
+            nameof(IRespireClient.CreateTransactionAsync) => CreateTransactionAsync((RespireKey[])args![0]!, (CancellationToken)args[1]!),
+            nameof(IRespireClient.WithReadFrom) when RejectCacheView => this,
+            nameof(IRespireClient.WithReadFrom) or nameof(IRespireClient.WithoutClientCache) => throw Failure,
+            _ => throw new InvalidOperationException($"Unexpected custom-client call: {method.Name}"),
+        };
+
+        private async ValueTask<RespireWatchedTransaction> CreateTransactionAsync(RespireKey[] keys, CancellationToken token)
+        {
+            Attempts++;
+            Transaction = await Root.CreateTransactionAsync(keys, token);
+            return Transaction;
+        }
+    }
+
     [Test]
     public async Task ReadsBypassCacheAndReplicaAndPreserveClientSettings()
     {
@@ -152,9 +209,10 @@ public class TransactionReadViewTests
     public async Task ValidationRemainsSynchronous()
     {
         await using var client = RespireClient.Create("127.0.0.1:1");
-        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionWithReadsAsync([], null!); });
-        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionAsync([], null!); });
-        Assert.Throws<ArgumentOutOfRangeException>(() => { _ = client.RunTransactionWithReadsAsync([], (_, _, _) => ValueTask.CompletedTask, new() { MaxAttempts = 0 }); });
+        // Void callbacks deliberately discard ValueTask: only synchronous validation can satisfy these assertions.
+        await Assert.That(() => { _ = client.RunTransactionWithReadsAsync([], null!); }).Throws<ArgumentNullException>();
+        await Assert.That(() => { _ = client.RunTransactionAsync([], null!); }).Throws<ArgumentNullException>();
+        await Assert.That(() => { _ = client.RunTransactionWithReadsAsync([], (_, _, _) => ValueTask.CompletedTask, new() { MaxAttempts = 0 }); }).Throws<ArgumentOutOfRangeException>();
     }
 
     private static byte[] Reply(string command, string value, bool replica) => command switch

@@ -20,7 +20,7 @@ public static class RespireTransactionRetryExtensions
     {
         ArgumentNullException.ThrowIfNull(action);
         return RunTransactionAsync(client, watchKeys, (transaction, token) =>
-            action(client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache(), transaction, token),
+            action(CreateReadView(client), transaction, token),
             options, cancellationToken);
     }
 
@@ -33,9 +33,12 @@ public static class RespireTransactionRetryExtensions
     {
         ArgumentNullException.ThrowIfNull(action);
         return RunTransactionAsync(client, watchKeys, (transaction, token) =>
-            action(client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache(), transaction, token),
+            action(CreateReadView(client), transaction, token),
             options, cancellationToken);
     }
+
+    private static IRespireClient CreateReadView(IRespireClient client)
+        => client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
 
     /// <summary>Runs a new watched transaction on each attempt until EXEC succeeds or the attempt limit is reached.</summary>
     /// <remarks>
