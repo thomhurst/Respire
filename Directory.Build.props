@@ -30,6 +30,7 @@
       Respire.DependencyInjection;
       Respire.HealthChecks;
       Respire.Json;
+      Respire.OutputCaching;
       Respire.Probabilistic;
       Respire.Search;
       Respire.TimeSeries;

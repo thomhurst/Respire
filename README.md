@@ -171,6 +171,7 @@ The client connects lazily, so startup never waits for Redis. The cache uses the
 | `Respire.HealthChecks` | ASP.NET Core health checks using existing client connections |
 | `Respire.Caching`, `Respire.Caching.Hybrid` | `IDistributedCache` and `HybridCache` |
 | [`Respire.DataProtection`](docs/DATA_PROTECTION.md) | ASP.NET Core DataProtection keys in a Redis list |
+| `Respire.OutputCaching` | [ASP.NET Core output caching](docs/OUTPUT_CACHING.md), including buffer APIs and tag eviction |
 | `Respire.Json`, `.Search`, `.TimeSeries`, `.Probabilistic` | Typed module APIs such as `redis.Json` |
 | `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 

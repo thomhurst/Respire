@@ -48,6 +48,7 @@ $requiredPackages = @(
     'Respire.HealthChecks'
     'Respire.Azure'
     'Respire.Json'
+    'Respire.OutputCaching'
     'Respire.Search'
     'Respire.TimeSeries'
     'Respire.Testing.Containers'
