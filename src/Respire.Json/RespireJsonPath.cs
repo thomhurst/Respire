@@ -4,7 +4,7 @@ namespace Respire.Json;
 /// <remarks>
 /// The string constructor treats paths starting with <c>$</c> as JSONPath; all others are legacy.
 /// Use <see cref="Projection"/> for Redis 8.10 expressions returning an array of scalar results.
-/// Use <see cref="Legacy"/> for collection projections returning one direct array, even with a leading <c>$</c>.
+/// Use <see cref="DirectArray"/> for collection projections returning one direct array, even with a leading <c>$</c>.
 /// Legacy paths return one value. Equality compares the path text and response shape, so
 /// <c>default(RespireJsonPath)</c> equals <see cref="Root"/>.
 /// </remarks>
@@ -25,8 +25,16 @@ public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
     private RespireJsonPath(string value, bool usesJsonPath) : this(value) => _usesJsonPath = usesJsonPath;
 
     /// <summary>Declares a single-value reply without modifying the path text.</summary>
-    /// <remarks>Overrides decoding without validating syntax, including for <c>$</c> paths. Use for direct array projections such as <c>$.obj.keys()</c>.</remarks>
+    /// <remarks>Overrides decoding without validating syntax, including for <c>$</c> paths. For collection projections, <see cref="DirectArray"/> makes the intent explicit.</remarks>
     public static RespireJsonPath Legacy(string path) => new(path, usesJsonPath: false);
+
+    /// <summary>Declares a projection reply containing one direct JSON array, without a matches wrapper.</summary>
+    /// <remarks>
+    /// Use array result metadata for expressions such as <c>$.obj.keys()</c> and <c>$.items.append(9)</c>.
+    /// This is single-value decoding, equivalent to <see cref="Legacy"/>. It preserves the expression
+    /// and does not validate its syntax or result type.
+    /// </remarks>
+    public static RespireJsonPath DirectArray(string expression) => Legacy(expression);
 
     /// <summary>Declares an array of matches without modifying the path text.</summary>
     /// <remarks>Overrides decoding without validating syntax, including for paths without <c>$</c>. The caller must select the shape returned by Redis.</remarks>
@@ -37,7 +45,7 @@ public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
     /// Use this for expressions such as <c>sum($.items)</c>, <c>($.price + 1)</c>, or
     /// <c>items.sum()</c>. The expression is sent unchanged; Redis validates its syntax.
     /// Collection projections such as <c>$.obj.keys()</c> and <c>$.items.append(9)</c> return a direct
-    /// array instead of a matches wrapper. Use <see cref="Legacy"/> with array metadata for those results.
+    /// array instead of a matches wrapper. Use <see cref="DirectArray"/> with array metadata for those results.
     /// </remarks>
     public static RespireJsonPath Projection(string expression) => JsonPath(expression);
 

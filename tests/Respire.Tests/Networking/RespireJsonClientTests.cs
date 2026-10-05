@@ -40,6 +40,10 @@ public partial class RespireJsonClientTests
         await Assert.That(RespireJsonPath.Legacy("items.sum()").ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
         await Assert.That(RespireJsonPath.JsonPath("items.sum()")).IsEqualTo(projection);
         await Assert.That(RespireJsonPath.Legacy("$.x").ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
+        var directArray = RespireJsonPath.DirectArray("$.obj.keys()");
+        await Assert.That(directArray.Value).IsEqualTo("$.obj.keys()");
+        await Assert.That(directArray.ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
+        await Assert.That(directArray).IsEqualTo(RespireJsonPath.Legacy("$.obj.keys()"));
         await Assert.That(RespireJsonPath.JsonPath("items").ResponseShape).IsEqualTo(RespireJsonResponseShape.MatchedValues);
         await Assert.That(projection == new RespireJsonPath("items.sum()")).IsFalse();
         var rooted = RespireJsonPath.Projection("$.items.sum()");
