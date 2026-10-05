@@ -64,9 +64,9 @@ public sealed record RespireClientFilterOptions
     public IReadOnlyList<long> ExcludedIds { get; init; } = [];
     /// <summary>Exclude this ACL username. Requires Valkey 9+.</summary>
     public string? ExcludedUser { get; init; }
-    /// <summary>Exclude this remote address and port. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this remote address and port. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedAddress { get; init; }
-    /// <summary>Exclude this local address and port. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this local address and port. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedLocalAddress { get; init; }
     /// <summary>Exclude this connection name. Requires Valkey 9+.</summary>
     public string? ExcludedName { get; init; }
@@ -80,7 +80,7 @@ public sealed record RespireClientFilterOptions
     public int? ExcludedDatabase { get; init; }
     /// <summary>Exclude these capabilities. Requires Valkey 9+.</summary>
     public string? ExcludedCapabilities { get; init; }
-    /// <summary>Exclude this remote IP address. Requires Valkey 9+.</summary>
+    /// <summary>Exclude this remote IP address. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedIp { get; init; }
 }
 
@@ -91,6 +91,8 @@ internal static class ClientFilterArguments
         ArgumentNullException.ThrowIfNull(options);
         if (options.Flags is "" || options.Capabilities is "")
             throw new ArgumentException("Flags and Capabilities must be nonempty when specified.", nameof(options));
+        if (options.ExcludedAddress is "" || options.ExcludedLocalAddress is "" || options.ExcludedIp is "")
+            throw new ArgumentException("ExcludedAddress, ExcludedLocalAddress and ExcludedIp must be nonempty when specified.", nameof(options));
         var args = new List<RespireValue>();
         var hasSelector = false;
         AddType("TYPE", options.Type, nameof(options.Type));
