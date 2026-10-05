@@ -2586,7 +2586,9 @@ public sealed partial class RespireClient : IRespireClient
         ReadAffinity? cursorAffinity = null,
         HedgeOriginalRoute? hedgeOriginalRoute = null,
         bool isHedge = false,
-        RespireReadFrom? cursorReadFromOverride = null)
+        RespireReadFrom? cursorReadFromOverride = null,
+        bool suppressTelemetry = false,
+        ClusterScriptTelemetry? scriptTelemetry = null)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -2657,9 +2659,13 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 try
                 {
-                    var result = await SendOnConnectionAsync(
-                            operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
+                    scriptTelemetry?.UseConnection(connection);
+                    var result = await (suppressTelemetry
+                        ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
                             commandDeadline, allowStreamingConnectionReroute: false)
+                        : SendOnConnectionAsync(
+                            operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
+                            commandDeadline, allowStreamingConnectionReroute: false))
                         .ConfigureAwait(false);
                     if (cursorAffinity is not null && slot is { } issuedCursorSlot
                         && connection.Multiplexer is { } cursorNode)
@@ -3525,15 +3531,15 @@ public sealed partial class RespireClient : IRespireClient
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
+            var started = RespireTelemetry.CaptureOperationStart(operation);
             if (core.Cluster is { } cluster)
             {
                 return await SendBlockingClusterAsync(
                         operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
-                        cancellationTimeout, callerCancellationToken, readFrom)
+                        cancellationTimeout, callerCancellationToken, readFrom, started)
                     .ConfigureAwait(false);
             }
 
-            var started = RespireTelemetry.CaptureOperationStart(operation);
             RespireTelemetry.OperationScope telemetry = default;
             var telemetryStarted = false;
             RespireConnection? connection = null;
@@ -3644,16 +3650,18 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName,
         bool noRedirect,
         TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
-        RespireReadFrom readFrom)
+        RespireReadFrom readFrom,
+        RespireTelemetry.OperationStart started)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         // Role fallback narrows readFrom, but the physical-zone preference belongs to the whole read.
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null, preferredZone).ConfigureAwait(false);
+        DedicatedConnectionPool pool;
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
+        RespireConnection? telemetryConnection = null;
         var sendAsking = false;
         RespireConnection? askingSource = null;
         RespireServerException? askRedirect = null;
@@ -3662,6 +3670,7 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter.DiscoveryRound? discovery = null;
         try
         {
+            pool = await cluster.GetReadDedicatedPoolAsync(slot, readFrom, cancellationToken, discovery: null, preferredZone).ConfigureAwait(false);
             for (var attempt = 0; ; attempt++)
             {
                 RespireConnection? connection = null;
@@ -3683,6 +3692,7 @@ public sealed partial class RespireClient : IRespireClient
                         RethrowPreservingStackTrace(fallback.OriginalFailure);
                         throw;
                     }
+                    telemetryConnection = connection;
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -3690,7 +3700,7 @@ public sealed partial class RespireClient : IRespireClient
                             connection.Host,
                             connection.Port,
                             core.Options.Database,
-                            storedProcedureName: storedProcedureName);
+                            storedProcedureName: storedProcedureName, started: started);
                         telemetryStarted = true;
                     }
                     else
@@ -3783,7 +3793,6 @@ public sealed partial class RespireClient : IRespireClient
                         : null;
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
                         acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
-                    telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
                         await pool.DiscardAsync(connection).ConfigureAwait(false);
@@ -3793,6 +3802,14 @@ public sealed partial class RespireClient : IRespireClient
                     throw;
                 }
             }
+        }
+        catch (Exception error)
+        {
+            if (!telemetryStarted)
+                RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database, started, error, storedProcedureName);
+            else
+                telemetry.Complete(core, operation, storedProcedureName, error, telemetryConnection);
+            throw;
         }
         finally { discovery?.Finish(); }
     }
@@ -4054,31 +4071,41 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         var core = _core;
+        var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
         if (core.Cluster is { } cluster)
         {
             var arguments = tail[1..];
-            RespValue clusterReply;
+            // Disabled telemetry needs no shared state. Active telemetry spans both physical commands.
+            var scriptTelemetry = started.Timestamp == 0 ? null : new ClusterScriptTelemetry(core, script, started);
             try
             {
-                clusterReply = await SendClusterAsync(
+                RespValue clusterReply;
+                try
+                {
+                    clusterReply = await SendClusterAsync(
                         script.EvalShaOperation, cluster,
                         new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
-                        cancellationToken, script.Sha1, allowReadFrom: true)
-                    .ConfigureAwait(false);
-            }
-            catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
-            {
-                clusterReply = await SendClusterAsync(
+                        cancellationToken, script.Sha1, allowReadFrom: true,
+                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
+                }
+                catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
+                {
+                    clusterReply = await SendClusterAsync(
                         script.EvalOperation, cluster,
                         new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
-                        cancellationToken, script.Sha1, allowReadFrom: true)
-                    .ConfigureAwait(false);
+                        cancellationToken, script.Sha1, allowReadFrom: true,
+                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
+                }
+                scriptTelemetry?.Complete();
+                return new RespireResult(in clusterReply, core.Options.Serializer);
             }
-
-            return new RespireResult(in clusterReply, _core.Options.Serializer);
+            catch (Exception error)
+            {
+                scriptTelemetry?.Complete(error);
+                throw;
+            }
         }
 
-        var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
         var telemetry = default(RespireTelemetry.OperationScope);
         RespireConnection? connection = null;
         try
@@ -4128,6 +4155,8 @@ public sealed partial class RespireClient : IRespireClient
         var cache = core.ClientCache;
         var mutationFence = cache is null || script.IsReadOnly ? default : cache.BeginUnknownMutation();
         var responseOwnsFence = false;
+        var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
+        var telemetryDispatched = false;
         try
         {
             var requiresIdentity = !captureSendTimestampOnly && (requireReliableCorrectionOrdering
@@ -4162,21 +4191,29 @@ public sealed partial class RespireClient : IRespireClient
                 connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
             var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied);
             ValueTask<RespireResult> response;
+            telemetryDispatched = true;
             if (core.Cluster is { } router)
             {
                 response = ExecuteTrackedClusterScriptAsync(
-                    execution, router, connection, script, tail, requiresIdentity, cancellationToken);
+                    execution, router, connection, script, tail, requiresIdentity, cancellationToken, started);
             }
             else
             {
                 execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution);
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution, started);
             }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
                 : response;
             responseOwnsFence = mutationFence.IsRequired;
             return execution;
+        }
+        catch (Exception error)
+        {
+            if (!telemetryDispatched)
+                RespireTelemetry.RecordUnroutedFailure(script.EvalShaOperation, core.Options.Database, started, error, script.Sha1,
+                    endpoint: core.Cluster is null && core.Sentinel is null ? core.Endpoint : (RespireEndpoint?)null);
+            throw;
         }
         finally
         {
@@ -4311,21 +4348,32 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireValue[] tail,
         bool requiresIdentity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RespireTelemetry.OperationStart started)
     {
+        var telemetry = started.Timestamp == 0 ? null : new ClusterScriptTelemetry(_core, script, started);
         try
         {
-            return await ExecuteTrackedClusterCommandAsync(
-                    execution, cluster, connection, script.EvalShaOperation, script.EvalShaVerb, script.Sha1, script.Sha1, tail,
-                    requiresIdentity, cancellationToken)
-                .ConfigureAwait(false);
+            RespireResult result;
+            try
+            {
+                result = await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, connection, script.EvalShaOperation, script.EvalShaVerb, script.Sha1, tail,
+                    requiresIdentity, cancellationToken, telemetry).ConfigureAwait(false);
+            }
+            catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
+            {
+                result = await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, execution.Connection, script.EvalOperation, script.EvalVerb, script.Source, tail,
+                    requiresIdentity, cancellationToken, telemetry).ConfigureAwait(false);
+            }
+            telemetry?.Complete();
+            return result;
         }
-        catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
+        catch (Exception error)
         {
-            return await ExecuteTrackedClusterCommandAsync(
-                    execution, cluster, execution.Connection, script.EvalOperation, script.EvalVerb, script.Source, script.Sha1, tail,
-                    requiresIdentity, cancellationToken)
-                .ConfigureAwait(false);
+            telemetry?.Complete(error);
+            throw;
         }
     }
 
@@ -4339,10 +4387,10 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         Verb verb,
         RespireValue body,
-        string storedProcedureName,
         RespireValue[] tail,
         bool requiresIdentity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ClusterScriptTelemetry? telemetry)
     {
         var command = new Cmd2N(verb, body, tail[0], tail[1..]);
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -4357,9 +4405,10 @@ public sealed partial class RespireClient : IRespireClient
                 try
                 {
                     execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                    var reply = await SendOnConnectionAsync(
+                    telemetry?.UseConnection(connection);
+                    var reply = await SendOnConnectionCoreAsync(
                             operation, connection, new SendTimestampCommand<Cmd2N>(command, execution),
-                            cancellationToken, storedProcedureName, sendAsking)
+                            cancellationToken, sendAsking)
                         .ConfigureAwait(false);
                     return new RespireResult(in reply, _core.Options.Serializer);
                 }
@@ -4407,7 +4456,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken,
-        TrackedScriptExecution execution)
+        TrackedScriptExecution execution,
+        RespireTelemetry.OperationStart started)
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
@@ -4415,7 +4465,7 @@ public sealed partial class RespireClient : IRespireClient
             connection.Host,
             connection.Port,
             core.Options.Database,
-            storedProcedureName: script.Sha1);
+            storedProcedureName: script.Sha1, started: started);
         try
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(

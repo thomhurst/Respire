@@ -352,6 +352,151 @@ public class MetricSelectionTests
     }
 
     [Test]
+    [Arguments("blocking", false)]
+    [Arguments("blocking", true)]
+    [Arguments("stream-upload", false)]
+    [Arguments("stream-upload", true)]
+    [Arguments("script", false)]
+    [Arguments("script", true)]
+    [Arguments("tracked-script", false)]
+    [Arguments("tracked-script", true)]
+    public async Task ClusterAcquisitionRetainsMetricSelection(string kind, bool failHandshake)
+    {
+        foreach (var enabled in new[] { false, true })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+            });
+            var acquisitions = 0;
+            await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+            {
+                ReplyOverride = (_, command) =>
+                {
+                    if (command == "CLIENT SETNAME cluster-metric-selection")
+                    {
+                        Interlocked.Increment(ref acquisitions);
+                        RespireMetrics.Configure(new() { Groups = enabled ? RespireMetricGroups.None : RespireMetricGroups.Command });
+                        return failHandshake ? "-ERR acquisition failed\r\n"u8.ToArray() : FakeRespServer.OkReply;
+                    }
+                    return command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
+                        : command.StartsWith("BLPOP ", StringComparison.Ordinal) ? "*-1\r\n"u8.ToArray()
+                        : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
+                },
+            };
+            await using var client = RespireClient.Create(new RespireOptions
+            {
+                Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)], ClientName = "cluster-metric-selection",
+            });
+            using var capture = new Capture();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            if (failHandshake) await Assert.That(Execute).Throws<RespireConnectionException>();
+            else await Execute();
+            await Assert.That(acquisitions > 0).IsTrue();
+            var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration").ToArray();
+            await Assert.That(measurements.Length).IsEqualTo(enabled ? 1 : 0);
+            if (enabled)
+                await Assert.That(measurements[0].Tags["db.operation.name"])
+                    .IsEqualTo(kind switch { "blocking" => "BLPOP", "script" or "tracked-script" => "EVALSHA", _ => "SET" });
+
+            async Task Execute()
+            {
+                if (kind == "blocking")
+                    await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan, cancellationToken: deadline.Token);
+                else if (kind == "stream-upload")
+                {
+                    using var stream = new MemoryStream("private-payload"u8.ToArray());
+                    await client.Strings.SetAsync("private-key", stream, stream.Length, cancellationToken: deadline.Token);
+                }
+                else if (kind == "tracked-script")
+                {
+                    var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
+                        [], [], deadline.Token, captureSendTimestampOnly: true);
+                    using var result = await execution.Response;
+                }
+                else
+                    using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"), cancellationToken: deadline.Token)) { }
+            }
+        }
+    }
+
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task ClusterScriptFallbackRetainsOneLogicalMeasurement(bool readOnly, bool failFallback, bool tracked)
+    {
+        var script = RespireScript.Create("return 1", readOnly);
+        foreach (var trace in new[] { false, true })
+        foreach (var mode in new[] { "all", "allow-initial", "block-initial", "allow-fallback", "enable-between", "disable-between" })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = mode == "enable-between" ? RespireMetricGroups.None : RespireMetricGroups.Command,
+                CommandAllowList = mode == "allow-initial" ? [script.EvalShaOperation]
+                    : mode == "allow-fallback" ? [script.EvalOperation] : [],
+                CommandBlockList = mode == "block-initial" ? [script.EvalShaOperation] : [],
+            });
+            await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+            {
+                ReplyOverride = (_, command) =>
+                {
+                    if (command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))
+                    {
+                        if (mode is "enable-between" or "disable-between")
+                            RespireMetrics.Configure(new() { Groups = mode == "enable-between" ? RespireMetricGroups.Command : RespireMetricGroups.None });
+                        return "-NOSCRIPT No matching script\r\n"u8.ToArray();
+                    }
+                    return command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
+                        : command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal)
+                            ? failFallback ? "-ERR script failed\r\n"u8.ToArray() : ":1\r\n"u8.ToArray()
+                            : FakeRespServer.OkReply;
+                },
+            };
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
+            });
+            using var capture = new Capture(trace);
+            if (failFallback)
+                await Assert.That(async () => { using var result = await Execute(); }).Throws<RespireServerException>();
+            else
+                using (var result = await Execute()) await Assert.That(result.AsInteger()).IsEqualTo(1L);
+            var enabled = mode is "all" or "allow-initial" or "disable-between";
+            var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration").ToArray();
+            await Assert.That(measurements.Length).IsEqualTo(enabled ? 1 : 0);
+            if (enabled)
+            {
+                await Assert.That(measurements[0].Tags["db.operation.name"]).IsEqualTo(script.EvalShaOperation);
+                await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsEqualTo(failFallback);
+            }
+            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+            if (trace)
+            {
+                var activity = capture.Activities.Single();
+                await Assert.That(activity.GetTagItem("db.operation.name")).IsEqualTo(script.EvalShaOperation);
+                await Assert.That(activity.Status == ActivityStatusCode.Error).IsEqualTo(failFallback);
+            }
+            await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
+            await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
+
+            async ValueTask<RespireResult> Execute()
+            {
+                if (!tracked) return await client.Scripts.ExecuteAsync(script);
+                var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], default, captureSendTimestampOnly: true);
+                return await execution.Response;
+            }
+        }
+    }
+
+    [Test]
     public async Task RawCommandLabelBudgetIsBoundedWithoutChangingTraces()
     {
         var names = new MetricOperationNames(2);

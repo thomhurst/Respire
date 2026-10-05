@@ -50,14 +50,14 @@ public sealed partial class RespireClient
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
+            var started = RespireTelemetry.CaptureOperationStart(operation);
             if (core.Cluster is { } cluster)
             {
                 return await SendStreamedUploadClusterAsync(
-                        operation, cluster, command, cancellationToken, noRedirect)
+                        operation, cluster, command, cancellationToken, noRedirect, started)
                     .ConfigureAwait(false);
             }
 
-            var started = RespireTelemetry.CaptureOperationStart(operation);
             RespireTelemetry.OperationScope telemetry = default;
             var telemetryStarted = false;
             RespireConnection? connection = null;
@@ -148,7 +148,8 @@ public sealed partial class RespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        bool noRedirect)
+        bool noRedirect,
+        RespireTelemetry.OperationStart started)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -159,22 +160,16 @@ public sealed partial class RespireClient
         var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
         DedicatedConnectionPool pool;
         ClusterRouter.StreamRouteVersion routeVersion;
-        try
-        {
-            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null)
-                .ConfigureAwait(false);
-        }
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
-        {
-            throw timeout;
-        }
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
+        RespireConnection? telemetryConnection = null;
         UploadAskState asking = default;
 
         ClusterRouter.DiscoveryRound? discovery = null;
         try
         {
+            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null)
+                .ConfigureAwait(false);
             for (var attempt = 0; ; attempt++)
             {
                 RespireConnection? connection = null;
@@ -188,13 +183,14 @@ public sealed partial class RespireClient
                         acquisitionToken, discovery,
                         kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
+                    telemetryConnection = connection;
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
                             operation,
                             connection.Host,
                             connection.Port,
-                            core.Options.Database);
+                            core.Options.Database, started: started);
                         telemetryStarted = true;
                     }
                     else
@@ -282,7 +278,6 @@ public sealed partial class RespireClient
                         ex, acquisitionCancellation, cancellationToken, operation, commandDeadline);
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
                         acquiringRedirectPool || connection is null, slot, noRedirect);
-                    telemetry.Complete(core, operation, null, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
                         await pool.DiscardAsync(connection).ConfigureAwait(false);
@@ -293,11 +288,17 @@ public sealed partial class RespireClient
                 }
             }
         }
-        // Acquisition inside the retirement catch bypasses the per-attempt catch above.
-        // Translate that cancellation here while the outer finally still finishes discovery.
-        catch (Exception error) when (TranslateDedicatedAcquisitionCancellation(error, acquisitionCancellation, cancellationToken, operation, commandDeadline) is { } timeout)
+        // Initial discovery and acquisition after retirement also belong to the selected operation.
+        catch (Exception error)
         {
-            throw timeout;
+            var timeoutError = TranslateDedicatedAcquisitionCancellation(
+                error, acquisitionCancellation, cancellationToken, operation, commandDeadline);
+            if (!telemetryStarted)
+                RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database, started, timeoutError ?? error);
+            else
+                telemetry.Complete(core, operation, null, timeoutError ?? error, telemetryConnection);
+            if (timeoutError is not null) throw timeoutError;
+            throw;
         }
         finally { discovery?.Finish(); }
     }
