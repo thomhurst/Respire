@@ -40,7 +40,7 @@ public sealed record RespireClientFilterOptions
     public string? LocalAddress { get; init; }
     /// <summary>Exclude the executing connection. Null preserves the server default (yes for KILL, no for LIST).</summary>
     public bool? SkipMe { get; init; }
-    /// <summary>Match connections at least this old, in whole seconds (MAXAGE).</summary>
+    /// <summary>Match connections at least this old, in whole seconds (MAXAGE), for both LIST and KILL.</summary>
     public long? MaximumAgeSeconds { get; init; }
     /// <summary>Match the connection name. Requires Valkey 9+.</summary>
     public string? Name { get; init; }

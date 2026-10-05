@@ -156,6 +156,9 @@ client configured for that endpoint. Queueing never reserves a connection handle
 idle at least that long. Both require positive whole seconds. Database numbers must be
 nonnegative and IDs positive. Unsupported filters remain server errors; Respire does not
 silently remove them or emulate selection with a separate LIST followed by KILL.
+Valkey 9 uses seconds for MAXAGE on both LIST and KILL. Its
+[shared filter implementation](https://github.com/valkey-io/valkey/blob/9.0.0/src/networking.c#L4765)
+compares whole-second connection ages, despite the CLIENT LIST reference's milliseconds wording.
 `RespireClientType.Primary` uses the compatible `MASTER` wire token. For KILL,
 `Replica` uses `SLAVE`, supported before Redis 5 as well as by current Redis/Valkey.
 All typed filter paths, including pinned handles and queues, validate and snapshot options

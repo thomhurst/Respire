@@ -10,6 +10,40 @@ public class ClientFilterIntegrationTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ValkeyListMaximumAgeUsesWholeSeconds(int protocol)
+    {
+        await using var container = new RedisBuilder("valkey/valkey:9.0-alpine").Build();
+        await container.StartAsync();
+        var options = new RespireOptions
+        {
+            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
+            Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+        };
+        await using var admin = await RespireClient.ConnectAsync(options);
+        await using var target = await RespireClient.ConnectAsync(options);
+        var handle = await target.Server.GetClientConnectionAsync();
+        // Wait for the server's own whole-second age. A milliseconds interpretation
+        // would include this target for the negative LIST threshold below.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        long age;
+        do
+        {
+            var info = await handle.InfoAsync(deadline.Token);
+            age = long.Parse(info.Attributes["age"], System.Globalization.CultureInfo.InvariantCulture);
+            if (age < 2) await Task.Delay(25, deadline.Token);
+        } while (age < 2);
+        var matching = new RespireClientFilterOptions { Ids = [handle.Id], MaximumAgeSeconds = age };
+        var tooYoung = matching with { MaximumAgeSeconds = age + 60 };
+        (await admin.Server.ClientsAsync(matching, default)).Select(client => client.Id).Should().Equal(handle.Id);
+        (await admin.Server.ClientsAsync(tooYoung, default)).Should().BeEmpty();
+        (await admin.Server.KillClientsAsync(tooYoung)).Should().Be(0);
+        (await handle.InfoAsync()).Id.Should().Be(handle.Id);
+        (await admin.Server.KillClientsAsync(matching)).Should().Be(1);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ValkeyFiltersIndependentlyChangeSelectionAndKillCounts(int protocol)
     {
         await using var container = new RedisBuilder("valkey/valkey:9.0-alpine").Build();
