@@ -38,6 +38,26 @@ internal interface IRespireSearchCommands
     [RespireCommand("FT.TAGVALS", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> GetTagValuesAsync(string index, string field, CancellationToken cancellationToken = default);
 
+    /// <summary>Lists indexes on the selected server.</summary>
+    [RespireCommand("FT._LIST", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ListIndexesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Adds an alias for an existing index.</summary>
+    [RespireCommand("FT.ALIASADD")]
+    ValueTask<RespireResult> AddAliasAsync(string alias, string index, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes an alias without deleting its index.</summary>
+    [RespireCommand("FT.ALIASDEL")]
+    ValueTask<RespireResult> DeleteAliasAsync(string alias, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates or atomically redirects an alias to an existing index.</summary>
+    [RespireCommand("FT.ALIASUPDATE")]
+    ValueTask<RespireResult> UpdateAliasAsync(string alias, string index, CancellationToken cancellationToken = default);
+
+    /// <summary>Lists aliases for an index.</summary>
+    [RespireCommand("FT.ALIASLIST", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ListAliasesAsync(string index, CancellationToken cancellationToken = default);
+
     /// <summary>Creates an index from command arguments.</summary>
     [RespireCommand("FT.CREATE")]
     ValueTask<RespireResult> CreateAsync(string index, RespireValue[] arguments, CancellationToken cancellationToken = default);
