@@ -12,6 +12,30 @@ public class SearchSpellCheckTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task OptionsOwnDictionaryListsAfterInitialization(int protocol)
+    {
+        var includes = new List<string> { "included" };
+        string[] excludes = ["excluded"];
+        var options = new RespireSearchSpellCheckOptions
+        {
+            IncludeDictionaries = includes,
+            ExcludeDictionaries = excludes,
+        };
+        includes.Clear();
+        excludes[0] = "changed";
+        var clone = options with { Distance = 2 };
+        await using var server = Server(_ => "*0\r\n");
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        await client.Search.SpellCheckAsync("index", "helo", clone);
+        await Assert.That(server.ReceivedCommands.Last()).IsEqualTo(
+            "FT.SPELLCHECK index helo DISTANCE 2 TERMS INCLUDE included TERMS EXCLUDE excluded");
+        await Assert.That(() => ((IList<string>)options.IncludeDictionaries)[0] = "changed").Throws<NotSupportedException>();
+        await Assert.That(() => ((IList<string>)options.ExcludeDictionaries)[0] = "changed").Throws<NotSupportedException>();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task OptionsAndOwnedScoreAssociationsMatchBothProtocols(int protocol)
     {
         var reply = protocol == 2

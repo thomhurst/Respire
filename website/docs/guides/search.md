@@ -108,9 +108,9 @@ await search.DeleteDictionaryTermsAsync("book-vocabulary", terms);
 These commands require Search 1.4 or later; `DIALECT` requires Search 2.4.3 or later.
 Redis 8.10 integration tests cover RESP2 and RESP3. `Distance` accepts 1–4, and
 `Dialect` accepts 1–4; omitted values use server defaults. Include and exclude lists
-emit repeated `TERMS INCLUDE` / `TERMS EXCLUDE` clauses. Prevent concurrent mutation
-of these lists while invoking `SpellCheckAsync`; each call captures options before
-its first asynchronous wait. Inclusion supplies extra
+emit repeated `TERMS INCLUDE` / `TERMS EXCLUDE` clauses. Options copy these lists
+during initialization and expose read-only snapshots. Later changes to the input
+lists cannot affect an options instance or its record copies. Inclusion supplies extra
 suggestions. Exclusion suppresses spellchecking of matching **query terms**. For
 example, excluding a dictionary containing `reids` suppresses corrections for `reids`.
 Each correction retains its query term and scored suggestions, including empty

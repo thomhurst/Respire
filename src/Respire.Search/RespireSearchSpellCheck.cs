@@ -4,17 +4,28 @@ using Respire.Protocol;
 namespace Respire.Search;
 
 /// <summary>Options for FT.SPELLCHECK.</summary>
-/// <remarks>Callers must prevent concurrent mutation of dictionary lists while invoking SpellCheckAsync. Each call captures options before its first asynchronous wait.</remarks>
+/// <remarks>Dictionary lists are copied during initialization. Later changes to the input lists do not affect these options or their record copies.</remarks>
 public sealed record RespireSearchSpellCheckOptions
 {
+    private readonly IReadOnlyList<string> _includeDictionaries = [];
+    private readonly IReadOnlyList<string> _excludeDictionaries = [];
+
     /// <summary>Maximum Levenshtein distance, from 1 through 4. Null uses the server default (1).</summary>
     public int? Distance { get; init; }
 
     /// <summary>Dictionaries whose terms supply additional suggestions.</summary>
-    public IReadOnlyList<string> IncludeDictionaries { get; init; } = [];
+    public IReadOnlyList<string> IncludeDictionaries
+    {
+        get => _includeDictionaries;
+        init => _includeDictionaries = CopyDictionaries(value, nameof(IncludeDictionaries));
+    }
 
     /// <summary>Dictionaries whose matching query terms are excluded from spellchecking.</summary>
-    public IReadOnlyList<string> ExcludeDictionaries { get; init; } = [];
+    public IReadOnlyList<string> ExcludeDictionaries
+    {
+        get => _excludeDictionaries;
+        init => _excludeDictionaries = CopyDictionaries(value, nameof(ExcludeDictionaries));
+    }
 
     /// <summary>Query dialect, from 1 through 4 on Redis 8.10. Null uses the server default. Requires Search 2.4.3 or later.</summary>
     public int? Dialect { get; init; }
@@ -25,8 +36,6 @@ public sealed record RespireSearchSpellCheckOptions
             throw new ArgumentOutOfRangeException(nameof(Distance), Distance, "Distance must be between 1 and 4.");
         if (Dialect is < 1 or > 4)
             throw new ArgumentOutOfRangeException(nameof(Dialect), Dialect, "Dialect must be between 1 and 4.");
-        ArgumentNullException.ThrowIfNull(IncludeDictionaries);
-        ArgumentNullException.ThrowIfNull(ExcludeDictionaries);
         var count = checked(3 * (IncludeDictionaries.Count + ExcludeDictionaries.Count)
             + (Distance.HasValue ? 2 : 0) + (Dialect.HasValue ? 2 : 0));
         if (count == 0) return [];
@@ -57,6 +66,12 @@ public sealed record RespireSearchSpellCheckOptions
             }
         }
     }
+
+    private static IReadOnlyList<string> CopyDictionaries(IReadOnlyList<string> dictionaries, string parameter)
+    {
+        ArgumentNullException.ThrowIfNull(dictionaries, parameter);
+        return dictionaries.Count == 0 ? [] : Array.AsReadOnly(dictionaries.ToArray());
+    }
 }
 
 /// <summary>An owned spelling suggestion and its server-calculated score.</summary>
@@ -75,7 +90,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
         using var result = await _commands.DictionaryAddAsync(dictionary, CopyDictionaryTerms(terms), cancellationToken).ConfigureAwait(false);
-        return ReadSuggestionCount(result, "FT.DICTADD");
+        return RespireSearchReply.ReadIntegerCount(result, "FT.DICTADD");
     }
 
     /// <summary>Deletes dictionary terms with FT.DICTDEL and returns the number removed.</summary>
@@ -83,7 +98,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
         using var result = await _commands.DictionaryDeleteAsync(dictionary, CopyDictionaryTerms(terms), cancellationToken).ConfigureAwait(false);
-        return ReadSuggestionCount(result, "FT.DICTDEL");
+        return RespireSearchReply.ReadIntegerCount(result, "FT.DICTDEL");
     }
 
     /// <summary>Returns owned dictionary terms with FT.DICTDUMP. Term order is unspecified.</summary>
@@ -132,7 +147,7 @@ public sealed partial class RespireSearchClient
             if (entry.Count != 3 || RespireSearchReply.ReadString(entry[0], SpellCheckCommand) != "TERM")
                 throw RespireSearchReply.Unexpected(SpellCheckCommand, "a three-element TERM entry was expected");
             corrections[i] = new(RespireSearchReply.ReadString(entry[1], SpellCheckCommand),
-                ReadSpellingSuggestions(entry[2], RespDataType.Array, termIndex: 1, scoreIndex: 0));
+                ReadSpellingSuggestionsResp2(entry[2]));
         }
         return corrections;
     }
@@ -149,24 +164,41 @@ public sealed partial class RespireSearchClient
         for (var i = 0; i < corrections.Length; i++)
         {
             corrections[i] = new(RespireSearchReply.ReadString(terms[i * 2], SpellCheckCommand),
-                ReadSpellingSuggestions(terms[i * 2 + 1], RespDataType.Map, termIndex: 0, scoreIndex: 1));
+                ReadSpellingSuggestionsResp3(terms[i * 2 + 1]));
         }
         return corrections;
     }
 
-    private static RespireSearchSpellingSuggestion[] ReadSpellingSuggestions(
-        RespireResult result, RespDataType pairType, int termIndex, int scoreIndex)
+    private static RespireSearchSpellingSuggestion[] ReadSpellingSuggestionsResp2(RespireResult result)
     {
         RequireSpellArray(result);
         var suggestions = new RespireSearchSpellingSuggestion[result.Count];
         for (var i = 0; i < suggestions.Length; i++)
         {
             var pair = result[i];
-            if (pair.Type != pairType || pair.IsNull || pair.Count != 2)
-                throw RespireSearchReply.Unexpected(SpellCheckCommand, "a suggestion/score pair was expected");
-            suggestions[i] = new(RespireSearchReply.ReadString(pair[termIndex], SpellCheckCommand), ReadSpellingScore(pair[scoreIndex]));
+            RequireSpellingPair(pair, RespDataType.Array);
+            suggestions[i] = new(RespireSearchReply.ReadString(pair[1], SpellCheckCommand), ReadSpellingScore(pair[0]));
         }
         return suggestions;
+    }
+
+    private static RespireSearchSpellingSuggestion[] ReadSpellingSuggestionsResp3(RespireResult result)
+    {
+        RequireSpellArray(result);
+        var suggestions = new RespireSearchSpellingSuggestion[result.Count];
+        for (var i = 0; i < suggestions.Length; i++)
+        {
+            var pair = result[i];
+            RequireSpellingPair(pair, RespDataType.Map);
+            suggestions[i] = new(RespireSearchReply.ReadString(pair[0], SpellCheckCommand), ReadSpellingScore(pair[1]));
+        }
+        return suggestions;
+    }
+
+    private static void RequireSpellingPair(RespireResult pair, RespDataType type)
+    {
+        if (pair.Type != type || pair.IsNull || pair.Count != 2)
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "a suggestion/score pair was expected");
     }
 
     private static double ReadSpellingScore(RespireResult value)
